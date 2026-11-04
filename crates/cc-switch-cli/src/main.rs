@@ -1,8 +1,10 @@
 //! cc-switch CLI（A 方案）
 //!
-//! 只暴露 codex / agy 两个应用，不改官方源码的 AppType、不做 Cargo feature
+//! 默认只暴露 codex / agy 两个应用，不改官方源码的 AppType、不做 Cargo feature
 //! 编译剔除：其他应用的代码仍在库里，只是不在 CLI 里列出、不让切。
 //! 这是刻意选的便宜方案，见仓库根目录的 CLI 设计文档。
+//! P4 之后应用选择是配置化的：`~/.cc-switch/frontend-apps.json` 的 cli 一项
+//! 决定 --app 接受哪些应用，缺文件时默认就是 codex / agy。
 //!
 //! - codex：供应商切换走官方 ProviderService（live 写入引擎、字节保留），
 //!   代理走官方 ProxyService（前台 serve），推理参数走 #8970 解耦逻辑。
@@ -22,14 +24,14 @@ use std::path::{Path, PathBuf};
 use std::process::{exit, Command};
 use std::sync::Arc;
 
-use cc_switch_core::{AppState, AppType, Database, ProviderService};
+use cc_switch_core::{frontend_apps, AppState, AppType, Database, ProviderService};
 
-const VERSION: &str = "cc-switch-cli 0.1.0 (A方案, 基于官方 cc-switch v4.0.25, 仅 codex/agy)";
+const VERSION: &str = "cc-switch-cli 0.1.0 (A方案, 基于官方 cc-switch v4.0.25, 白名单默认 codex/agy)";
 
 fn help() -> &'static str {
     "用法: cc-switch-cli [--app codex|agy] <命令> [参数]\n\
      \n\
-     本 CLI（A 方案）只支持 codex / agy，其他应用请用 GUI。\n\
+     本 CLI 默认只支持 codex / agy；白名单见 ~/.cc-switch/frontend-apps.json 的 cli 一项，改配置可换应用。\n\
      未改官方源码的 AppType，也未做编译剔除，其他应用只是不在 CLI 里出现。\n\
      \n\
      codex:\n\
@@ -112,19 +114,29 @@ fn open_state() -> AppState {
 }
 
 fn parse_app(args: &[String]) -> (AppType, Vec<String>) {
-    let mut app = AppType::Codex;
+    // P4：应用选择配置化。白名单缺文件/解析失败时 load_whitelist 回退默认，
+    // 绝不会为空；默认应用取白名单第一项（默认配置下就是 codex）。
+    let whitelist = frontend_apps::load_whitelist("cli");
+    let mut app = whitelist.first().cloned().unwrap_or(AppType::Codex);
     let mut rest: Vec<String> = Vec::new();
     let mut i = 0;
     while i < args.len() {
         if args[i] == "--app" {
-            let v = args.get(i + 1).unwrap_or_else(|| err("--app 后面要跟 codex 或 agy"));
-            app = match v.as_str() {
-                "codex" => AppType::Codex,
-                "agy" | "antigravity" | "antigravity-cli" => AppType::Agy,
-                other => err(&format!(
-                    "本 CLI（A 方案）只支持 codex / agy，不支持 {other}；其他应用请用 GUI"
-                )),
-            };
+            let v = args.get(i + 1).unwrap_or_else(|| err("--app 后面要跟应用名"));
+            let parsed = frontend_apps::parse_app_name(v)
+                .unwrap_or_else(|| err(&format!("不支持的应用名 {v}")));
+            if !whitelist.contains(&parsed) {
+                let allowed = whitelist
+                    .iter()
+                    .map(|a| a.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                err(&format!(
+                    "应用 {} 不在 CLI 白名单里（~/.cc-switch/frontend-apps.json 的 cli 一项），当前允许：{allowed}",
+                    parsed.as_str()
+                ));
+            }
+            app = parsed;
             i += 2;
         } else {
             rest.push(args[i].clone());
@@ -148,6 +160,7 @@ fn main() {
     if args[0] == "config" && args.get(1).map(|s| s.as_str()) == Some("path") {
         println!("{}", app_dir().display());
         println!("{}", cli_config_path().display());
+        println!("{}", frontend_apps::whitelist_path().display());
         return;
     }
 
