@@ -9,6 +9,14 @@ description = "cc-switch backend core: database, providers, proxy, live writers.
 name = "cc_switch_core"
 path = "src/lib.rs"
 
+[features]
+default = ["session-monitor"]
+# 会话聚合与监控：只有 GUI 仪表盘用。CLI 关掉它（default-features = false），
+# 代理自身的请求日志不受影响（那是 proxy/usage，不在这个 feature 里）。
+# 注意：session_usage_codex 不在这个 feature 里——数据库 v15->v16 迁移依赖它的
+# reset，关掉会改迁移语义，所以 codex 那份常驻。
+session-monitor = []
+
 [dependencies]
 serde_json = { version = "1.0", features = ["preserve_order"] }
 serde = { version = "1.0", features = ["derive"] }

@@ -10,6 +10,7 @@ pub mod error;
 pub mod events;
 pub mod live;
 pub mod kimi_config;
+#[cfg(feature = "session-monitor")]
 pub mod kimi_session;
 pub mod claude_desktop_config;
 pub mod pi_config;
@@ -39,6 +40,7 @@ pub mod provider_routing;
 pub mod proxy;
 pub mod services;
 pub mod settings;
+#[cfg(feature = "session-monitor")]
 pub mod session_manager;
 pub mod store;
 

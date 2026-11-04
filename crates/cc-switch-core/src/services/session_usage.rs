@@ -28,30 +28,13 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::OnceLock;
 use std::time::SystemTime;
 
-/// 同步结果
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionSyncResult {
-    pub imported: u32,
-    pub skipped: u32,
-    pub files_scanned: u32,
-    pub suspected_duplicates: u32,
-    pub deferred_files: u32,
-    pub errors: Vec<String>,
-}
+pub(crate) use crate::services::session_common::{
+    estimated_first_token_ms, estimated_latency_ms, metadata_modified_nanos,
+    parse_timestamp_millis, update_sync_state, update_sync_state_on_conn, EstimatedTiming,
+};
+pub use crate::services::session_common::SessionSyncResult;
 
-impl SessionSyncResult {
-    pub fn merge(&mut self, other: SessionSyncResult) {
-        self.imported = self.imported.saturating_add(other.imported);
-        self.skipped = self.skipped.saturating_add(other.skipped);
-        self.files_scanned = self.files_scanned.saturating_add(other.files_scanned);
-        self.suspected_duplicates = self
-            .suspected_duplicates
-            .saturating_add(other.suspected_duplicates);
-        self.deferred_files = self.deferred_files.saturating_add(other.deferred_files);
-        self.errors.extend(other.errors);
-    }
-}
+
 
 pub fn session_sync_mutex() -> &'static tokio::sync::Mutex<()> {
     static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
@@ -227,27 +210,14 @@ struct ParsedAssistantUsage {
 }
 
 /// 估算出的请求耗时短于这个毫秒数就不要：真实请求不可能这么快，多半是起点取错了。
-const MIN_PLAUSIBLE_LATENCY_MS: i64 = 100;
 
 /// 估算出的请求耗时长于这个毫秒数也不要：中间多半夹了休眠或长时间的重试等待。
-const MAX_PLAUSIBLE_LATENCY_MS: i64 = 60 * 60 * 1000;
 
 /// 会话日志没有请求计时，耗时只能拿两个时间戳相减估出来（含首字等待）。
 /// 落在合理范围之外的返回 None，入库时写 0，表示没有计时。
 ///
 /// Shared by the Claude and Codex session parsers.
-pub(crate) fn estimated_latency_ms(start_ms: i64, end_ms: i64) -> Option<i64> {
-    let latency = end_ms.checked_sub(start_ms)?;
-    (MIN_PLAUSIBLE_LATENCY_MS..=MAX_PLAUSIBLE_LATENCY_MS)
-        .contains(&latency)
-        .then_some(latency)
-}
 
-pub(crate) fn parse_timestamp_millis(timestamp: &str) -> Option<i64> {
-    chrono::DateTime::parse_from_rfc3339(timestamp)
-        .ok()
-        .map(|dt| dt.timestamp_millis())
-}
 
 /// 一行日志在对话链上的位置，只留估算请求耗时用得到的三样。
 struct ChainNode {
@@ -392,14 +362,6 @@ fn thinking_block_start_ms(value: &serde_json::Value, block_end_ms: i64) -> Opti
 }
 
 /// 首字时间：起点到开始输出。必须落在 (0, 耗时] 之间，否则说明起点或首字取错了。
-pub(crate) fn estimated_first_token_ms(
-    start_ms: i64,
-    first_output_ms: i64,
-    latency_ms: i64,
-) -> Option<i64> {
-    let first_token = first_output_ms.checked_sub(start_ms)?;
-    (first_token > 0 && first_token <= latency_ms).then_some(first_token)
-}
 
 /// 沿父链往上最多走这么多行。
 const MAX_CHAIN_HOPS: usize = 32;
@@ -1014,49 +976,13 @@ pub(crate) fn get_sync_state(db: &Database, file_path: &str) -> Result<(i64, i64
 ///
 /// `session_log_sync.last_modified` 旧数据是秒级时间戳；新写入纳秒值不需要
 /// schema 迁移，旧值会自然触发一次增量重扫，并继续依赖行 offset 避免重复导入。
-pub(crate) fn metadata_modified_nanos(metadata: &fs::Metadata) -> i64 {
-    metadata
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-        .map(|d| d.as_nanos().min(i64::MAX as u128) as i64)
-        .unwrap_or(0)
-}
 
 /// 更新 session_log_sync 表中某条目的同步进度。
 ///
 /// Shared by all session_usage_* parsers.
-pub(crate) fn update_sync_state(
-    db: &Database,
-    file_path: &str,
-    last_modified: i64,
-    last_offset: i64,
-) -> Result<(), AppError> {
-    let conn = lock_conn!(db.conn);
-    update_sync_state_on_conn(&conn, file_path, last_modified, last_offset)
-}
 
 /// [`update_sync_state`] 的免锁版本，供调用方在已持锁的事务内把游标推进
 /// 与数据插入绑成原子提交。
-pub(crate) fn update_sync_state_on_conn(
-    conn: &rusqlite::Connection,
-    file_path: &str,
-    last_modified: i64,
-    last_offset: i64,
-) -> Result<(), AppError> {
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-
-    conn.prepare_cached(
-        "INSERT OR REPLACE INTO session_log_sync (file_path, last_modified, last_line_offset, last_synced_at)
-         VALUES (?1, ?2, ?3, ?4)",
-    )
-    .and_then(|mut stmt| stmt.execute(rusqlite::params![file_path, last_modified, last_offset, now]))
-    .map_err(|e| AppError::Database(format!("更新同步状态失败: {e}")))?;
-    Ok(())
-}
 
 /// 写入字节游标（Grok 等按行流式扫描）。`last_line_offset` 置 0，表示
 /// 行号/事件计数游标已退役；存量 Grok 行的事件计数只在 `last_byte_offset`
@@ -1100,13 +1026,6 @@ enum SessionRowOutcome {
     Skipped,
 }
 
-/// 按日志时间戳估出来的计时：耗时（含首字等待）和首字时间（推不出来为 None）。
-/// Claude 和 Codex 的会话日志导入共用。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct EstimatedTiming {
-    pub(crate) latency_ms: i64,
-    pub(crate) first_token_ms: Option<i64>,
-}
 
 /// 已经在库里的那一行里，判断要不要补全用得到的几样。
 struct StoredSessionRow {

@@ -781,6 +781,7 @@ mod integration_tests {
 
     #[test]
     #[serial]
+    #[cfg(feature = "session-monitor")]
     fn key_profile_sessions_are_listed_and_resume_with_their_provider() {
         let _home = HomeGuard::new();
         let db = Database::memory().unwrap();

@@ -4794,6 +4794,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "session-monitor")]
     fn test_effective_usage_dedup_prefers_proxy_for_session_sources() -> Result<(), AppError> {
         let db = Database::memory()?;
 
