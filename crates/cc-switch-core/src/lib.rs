@@ -1,6 +1,13 @@
 //! cc-switch backend core: database, providers, proxy, live writers.
 //! No Tauri, no plugins, no WebKit. GUI / CLI / TUI are frontends on top.
 
+/// 前端（GUI / CLI / TUI）沿用官方库根的常用名字，不用改调用点。
+pub use crate::app_config::AppType;
+pub use crate::database::Database;
+pub use crate::proxy::usage::logger::set_cli_usage_recording;
+pub use crate::services::ProviderService;
+pub use crate::store::AppState;
+
 pub mod agy_config;
 pub mod app_config;
 pub mod codex_config;

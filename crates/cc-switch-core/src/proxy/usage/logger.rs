@@ -14,7 +14,9 @@ use rusqlite::OptionalExtension;
 /// 默认 true，保持上游 GUI 行为不变；CLI 在启动代理前按 cli.json 把它设为 false。
 static CLI_USAGE_RECORDING: AtomicBool = AtomicBool::new(true);
 
-pub(crate) fn set_cli_usage_recording(enabled: bool) {
+/// CLI 专用的用量记录开关（GUI 不走这里，见 cli.json 的 usage_recording）。
+/// 代理自身的请求日志仍照常写库；关掉时只是不把 CLI 代理的请求计入用量统计。
+pub fn set_cli_usage_recording(enabled: bool) {
     CLI_USAGE_RECORDING.store(enabled, Ordering::Relaxed);
 }
 

@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::process::{exit, Command};
 use std::sync::Arc;
 
-use cc_switch_lib::{AppState, AppType, Database, ProviderService};
+use cc_switch_core::{AppState, AppType, Database, ProviderService};
 
 const VERSION: &str = "cc-switch-cli 0.1.0 (A方案, 基于官方 cc-switch v4.0.25, 仅 codex/agy)";
 
@@ -519,7 +519,7 @@ fn cmd_proxy(state: &AppState, app: AppType, args: &[String]) {
                 err("proxy serve 只适用于 codex；agy 不走代理，请用 agy launch");
             }
             let enabled = usage_recording_enabled();
-            cc_switch_lib::set_cli_usage_recording(enabled);
+            cc_switch_core::set_cli_usage_recording(enabled);
             println!(
                 "启动 codex 代理（前台，Ctrl-C 退出；用量记录: {}，仅对本进程生效）",
                 if enabled { "开" } else { "关" }

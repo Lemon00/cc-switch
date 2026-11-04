@@ -1,0 +1,24 @@
+[package]
+name = "cc-switch-cli"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+
+[[bin]]
+name = "cc-switch-cli"
+path = "src/main.rs"
+
+[dependencies]
+# 只依赖后端核心，不碰 Tauri/GTK/WebKit。session-monitor 默认关：
+# CLI 不读客户端会话文件做聚合，代理自身的请求日志不受影响。
+cc-switch-core = { path = "../cc-switch-core", default-features = false }
+serde_json = { version = "1.0", features = ["preserve_order"] }
+tokio = { version = "1", features = ["rt-multi-thread", "signal"] }
+
+[profile.release]
+# 与 GUI 主 crate 保持一致：体积优先，thin LTO + strip。
+codegen-units = 16
+lto = "thin"
+opt-level = "s"
+panic = "unwind"
+strip = "symbols"
