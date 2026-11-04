@@ -14,7 +14,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use tauri::{AppHandle, Emitter};
+use crate::events::EventSink;
+use std::sync::Arc;
 
 /// 前端监听的事件名
 pub const EVENT_USAGE_LOG_RECORDED: &str = "usage-log-recorded";
@@ -22,7 +23,7 @@ pub const EVENT_USAGE_LOG_RECORDED: &str = "usage-log-recorded";
 /// 防抖窗口：合并 200ms 内的多次通知。
 const DEBOUNCE_WINDOW: Duration = Duration::from_millis(200);
 
-static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
+static EVENT_SINK: OnceLock<Arc<dyn EventSink>> = OnceLock::new();
 
 /// 防抖标记：true 表示已有调度任务在等待 emit，后续通知合并到该任务。
 static EMIT_SCHEDULED: AtomicBool = AtomicBool::new(false);
@@ -31,11 +32,11 @@ static EMIT_SCHEDULED: AtomicBool = AtomicBool::new(false);
 ///
 /// 重复调用是无害的（OnceLock 仅首次写入生效），但应用启动期只该被
 /// `lib.rs::run` 调一次。
-pub fn init(handle: AppHandle) {
-    if APP_HANDLE.set(handle).is_err() {
+pub fn init(sink: Arc<dyn EventSink>) {
+    if EVENT_SINK.set(sink).is_err() {
         log::debug!("usage_events::init 重复调用，已忽略");
     } else {
-        log::info!("[usage-event] AppHandle 已注入，事件推送启用");
+        log::info!("[usage-event] 事件接收端已注入，事件推送启用");
     }
 }
 
@@ -47,8 +48,8 @@ pub fn notify_log_recorded() {
     #[cfg(test)]
     TEST_NOTIFY_COUNT.with(|count| count.set(count.get().saturating_add(1)));
 
-    // AppHandle 未注入（典型出现在单元测试或 setup 之前）：直接放弃。
-    let Some(handle) = APP_HANDLE.get() else {
+    // 接收端未注入（典型出现在单元测试或 setup 之前）：直接放弃。
+    let Some(sink) = EVENT_SINK.get() else {
         return;
     };
 
@@ -57,16 +58,13 @@ pub fn notify_log_recorded() {
         return;
     }
 
-    let handle = handle.clone();
+    let sink = sink.clone();
     std::thread::spawn(move || {
         std::thread::sleep(DEBOUNCE_WINDOW);
         // 必须先清标志再 emit：万一 emit 期间又有新通知进来，
         // 下一轮防抖窗口会重新调度，不会丢失。
         EMIT_SCHEDULED.store(false, Ordering::Release);
-
-        if let Err(e) = handle.emit(EVENT_USAGE_LOG_RECORDED, ()) {
-            log::warn!("emit {EVENT_USAGE_LOG_RECORDED} 失败: {e}");
-        }
+        sink.emit(EVENT_USAGE_LOG_RECORDED, serde_json::Value::Null);
     });
 }
 

@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
+use crate::events::EventSink;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
@@ -75,7 +75,7 @@ fn persist_auto_sync_error(settings: &mut WebDavSyncSettings, error: &AppError) 
     let _ = settings::update_webdav_sync_status(settings.status.clone());
 }
 
-fn emit_auto_sync_status_updated(app: &AppHandle, status: &str, error: Option<&str>) {
+fn emit_auto_sync_status_updated(sink: &dyn EventSink, status: &str, error: Option<&str>) {
     let payload = match error {
         Some(message) => json!({
             "source": "auto",
@@ -88,14 +88,12 @@ fn emit_auto_sync_status_updated(app: &AppHandle, status: &str, error: Option<&s
         }),
     };
 
-    if let Err(err) = app.emit("webdav-sync-status-updated", payload) {
-        log::debug!("[WebDAV] failed to emit sync status update event: {err}");
-    }
+    sink.emit("webdav-sync-status-updated", payload);
 }
 
 async fn run_auto_sync_upload(
     db: &crate::database::Database,
-    app: &AppHandle,
+    sink: &dyn EventSink,
 ) -> Result<(), AppError> {
     if !should_run_auto_sync(settings::get_webdav_sync_settings().as_ref()) {
         return Ok(());
@@ -119,12 +117,12 @@ async fn run_auto_sync_upload(
     };
     match result {
         Ok(_) => {
-            emit_auto_sync_status_updated(app, "success", None);
+            emit_auto_sync_status_updated(sink, "success", None);
             Ok(())
         }
         Err(err) => {
             persist_auto_sync_error(&mut sync_settings, &err);
-            emit_auto_sync_status_updated(app, "error", Some(&err.to_string()));
+            emit_auto_sync_status_updated(sink, "error", Some(&err.to_string()));
             Err(err)
         }
     }
@@ -143,7 +141,7 @@ pub fn notify_db_changed(table: &str) {
     let _ = enqueue_change_signal(tx, table);
 }
 
-pub fn start_worker(db: Arc<crate::database::Database>, app: tauri::AppHandle) {
+pub fn start_worker(db: Arc<crate::database::Database>, sink: Arc<dyn EventSink>) {
     if DB_CHANGE_TX.get().is_some() {
         return;
     }
@@ -154,15 +152,15 @@ pub fn start_worker(db: Arc<crate::database::Database>, app: tauri::AppHandle) {
         return;
     }
 
-    tauri::async_runtime::spawn(async move {
-        run_worker_loop(db, rx, app).await;
+    tokio::task::spawn(async move {
+        run_worker_loop(db, rx, sink).await;
     });
 }
 
 async fn run_worker_loop(
     db: Arc<crate::database::Database>,
     mut rx: Receiver<String>,
-    app: tauri::AppHandle,
+    sink: Arc<dyn EventSink>,
 ) {
     while let Some(first_table) = rx.recv().await {
         let started_at = Instant::now();
@@ -182,7 +180,7 @@ async fn run_worker_loop(
             "[WebDAV][AutoSync] Triggered by table={first_table}, merged_changes={merged_count}"
         );
 
-        if let Err(err) = run_auto_sync_upload(&db, &app).await {
+        if let Err(err) = run_auto_sync_upload(&db, sink.as_ref()).await {
             log::warn!("[WebDAV][AutoSync] Upload failed: {err}");
         }
     }

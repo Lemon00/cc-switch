@@ -11,7 +11,6 @@ use crate::proxy::switch_lock::SwitchLockManager;
 use crate::proxy::types::*;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tauri::Emitter;
 use tokio::sync::RwLock;
 
 use crate::live::project::claude::PROXY_TOKEN_PLACEHOLDER;
@@ -20,8 +19,9 @@ use crate::live::project::claude::PROXY_TOKEN_PLACEHOLDER;
 pub struct ProxyService {
     db: Arc<Database>,
     server: Arc<RwLock<Option<ProxyServer>>>,
-    /// AppHandle，用于传递给 ProxyServer 以支持故障转移时的 UI 更新
-    app_handle: Arc<RwLock<Option<tauri::AppHandle>>>,
+    /// 前端钩子（事件、OAuth、托盘刷新、故障转移状态），GUI/CLI 在
+    /// AppState 建好后注入；默认全部是 no-op/None。
+    hooks: Arc<RwLock<crate::events::FrontendHooks>>,
     switch_locks: SwitchLockManager,
 }
 
@@ -61,15 +61,15 @@ impl ProxyService {
         Self {
             db,
             server: Arc::new(RwLock::new(None)),
-            app_handle: Arc::new(RwLock::new(None)),
+            hooks: Arc::new(RwLock::new(crate::events::FrontendHooks::default())),
             switch_locks: SwitchLockManager::new(),
         }
     }
 
-    /// 设置 AppHandle（在应用初始化时调用）
-    pub fn set_app_handle(&self, handle: tauri::AppHandle) {
-        futures::executor::block_on(async {
-            *self.app_handle.write().await = Some(handle);
+    /// 设置前端钩子（在应用初始化、AppState 包进 Arc 之后调用）。
+    pub fn set_hooks(&self, hooks: crate::events::FrontendHooks) {
+        crate::block_on(async {
+            *self.hooks.write().await = hooks;
         });
     }
 
@@ -94,10 +94,10 @@ impl ProxyService {
         result
     }
 
-    /// 托盘在后台线程比对、变了才重建，这里不等它。
+    /// 托盘在后台线程比对、变了才重建，这里不等它。CLI 不注入钩子则跳过。
     async fn notify_tray(&self) {
-        if let Some(handle) = self.app_handle.read().await.as_ref() {
-            crate::tray::schedule_tray_status_check(handle);
+        if let Some(refresh) = self.hooks.read().await.tray_refresh.clone() {
+            refresh();
         }
     }
 
@@ -136,8 +136,8 @@ impl ProxyService {
         }
 
         // 4. 创建并启动服务器
-        let app_handle = self.app_handle.read().await.clone();
-        let server = ProxyServer::new(config.clone(), self.db.clone(), app_handle);
+        let hooks = self.hooks.read().await.clone();
+        let server = ProxyServer::new(config.clone(), self.db.clone(), hooks);
         let info = server
             .start()
             .await
@@ -212,11 +212,7 @@ impl ProxyService {
     }
 
     pub(crate) async fn emit(&self, event: &str, payload: Value) {
-        if let Some(handle) = self.app_handle.read().await.as_ref() {
-            if let Err(error) = handle.emit(event, payload) {
-                log::warn!("发送事件 {event} 失败: {error}");
-            }
-        }
+        self.hooks.read().await.sink.emit(event, payload);
     }
 
     async fn stop_server(&self) -> Result<(), String> {
@@ -572,8 +568,8 @@ impl ProxyService {
 
     /// 按 `config` 起一个新服务，动态端口回写进库。
     async fn start_with(&self, config: &ProxyConfig) -> Result<ProxyServer, String> {
-        let app_handle = self.app_handle.read().await.clone();
-        let server = ProxyServer::new(config.clone(), self.db.clone(), app_handle);
+        let hooks = self.hooks.read().await.clone();
+        let server = ProxyServer::new(config.clone(), self.db.clone(), hooks);
         let info = server.start().await.map_err(|e| e.to_string())?;
         if let Err(e) = self
             .persist_ephemeral_listen_port_if_needed(config, info.port)

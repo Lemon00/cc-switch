@@ -46,8 +46,8 @@ pub struct ProxyState {
     pub gemini_shadow: Arc<GeminiShadowStore>,
     /// Codex Chat bridge history，用于恢复 previous_response_id 指向的 tool call
     pub codex_chat_history: Arc<CodexChatHistoryStore>,
-    /// AppHandle，用于发射事件和更新托盘菜单
-    pub app_handle: Option<tauri::AppHandle>,
+    /// 前端钩子（OAuth、事件、托盘刷新、故障转移状态）
+    pub hooks: crate::events::FrontendHooks,
     /// 故障转移切换管理器
     pub failover_manager: Arc<FailoverSwitchManager>,
 }
@@ -65,7 +65,7 @@ pub struct ProxyServer {
 impl ProxyState {
     /// 测试用：用这个数据库、其余都是默认值的状态。
     pub(crate) fn for_test(db: Arc<Database>) -> Self {
-        ProxyServer::new(ProxyConfig::default(), db, None).state
+        ProxyServer::new(ProxyConfig::default(), db, crate::events::FrontendHooks::default()).state
     }
 }
 
@@ -73,7 +73,7 @@ impl ProxyServer {
     pub fn new(
         config: ProxyConfig,
         db: Arc<Database>,
-        app_handle: Option<tauri::AppHandle>,
+        hooks: crate::events::FrontendHooks,
     ) -> Self {
         // 创建共享的 ProviderRouter（熔断器状态将跨所有请求保持）
         let provider_router = Arc::new(ProviderRouter::new(db.clone()));
@@ -89,7 +89,7 @@ impl ProxyServer {
             provider_router,
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
-            app_handle,
+            hooks,
             failover_manager,
         };
 

@@ -2,14 +2,23 @@
 //!
 //! 处理故障转移成功后的供应商切换逻辑，包括：
 //! - 去重控制（避免多个请求同时触发）
-//! - 托盘菜单更新
-//! - 前端事件发射
+//! - 前端事件发射（通过 EventSink，GUI 转发给前端；CLI 为 no-op）
+//! - 托盘刷新钩子（GUI 注入；CLI 不提供）
 
 use crate::error::AppError;
+use crate::events::EventSink;
+use crate::store::AppState;
 use std::collections::HashSet;
 use std::sync::Arc;
-use tauri::{Emitter, Manager};
 use tokio::sync::RwLock;
+
+/// 故障转移切换时的前端上下文。CLI 只给 state（路由记录照常工作），
+/// sink 与 tray_refresh 为空时对应行为跳过。
+pub struct FailoverContext<'a> {
+    pub state: &'a AppState,
+    pub sink: Option<&'a dyn EventSink>,
+    pub tray_refresh: Option<Arc<dyn Fn() + Send + Sync>>,
+}
 
 /// 故障转移切换管理器
 ///
@@ -29,15 +38,13 @@ impl FailoverSwitchManager {
 
     /// 尝试执行故障转移切换
     ///
-    /// 如果相同的切换已在进行中，则跳过；否则执行切换逻辑。
-    ///
     /// # Returns
     /// - `Ok(true)` - 切换成功执行
     /// - `Ok(false)` - 切换已在进行中，跳过
     /// - `Err(e)` - 切换过程中发生错误
     pub async fn try_switch(
         &self,
-        app_handle: Option<&tauri::AppHandle>,
+        ctx: Option<&FailoverContext<'_>>,
         app_type: &str,
         provider_id: &str,
         provider_name: &str,
@@ -56,7 +63,7 @@ impl FailoverSwitchManager {
 
         // 执行切换（确保最后清理 pending 标记）
         let result = self
-            .do_switch(app_handle, app_type, provider_id, provider_name)
+            .do_switch(ctx, app_type, provider_id, provider_name)
             .await;
 
         // 清理 pending 标记
@@ -70,7 +77,7 @@ impl FailoverSwitchManager {
 
     async fn do_switch(
         &self,
-        app_handle: Option<&tauri::AppHandle>,
+        ctx: Option<&FailoverContext<'_>>,
         app_type: &str,
         provider_id: &str,
         provider_name: &str,
@@ -86,36 +93,40 @@ impl FailoverSwitchManager {
 
         log::info!("[FO-001] 切换: {app_type} → {provider_name}");
 
-        let mut switched = false;
+        let Some(ctx) = ctx else {
+            // 没有前端上下文时无法记录路由，切换不执行（与旧逻辑中
+            // app_handle 为 None 时 switched 保持 false 一致）。
+            return Ok(false);
+        };
 
-        if let Some(app) = app_handle {
-            if let Some(app_state) = app.try_state::<crate::store::AppState>() {
-                // 只换代理的路由，不写客户端文件。
-                switched = crate::mode::controller::record_failover_route(
-                    app_state.inner(),
-                    &app_enum,
-                    provider_id,
-                )
-                .await
-                .map_err(AppError::Message)?;
+        // 只换代理的路由，不写客户端文件。
+        let switched = crate::mode::controller::record_failover_route(
+            ctx.state,
+            &app_enum,
+            provider_id,
+        )
+        .await
+        .map_err(AppError::Message)?;
 
-                if !switched {
-                    return Ok(false);
-                }
+        if !switched {
+            return Ok(false);
+        }
 
-                // Linux 重建原生菜单，其它平台通知托盘面板（不挂原生菜单）
-                crate::tray::refresh_tray_menu(app);
-            }
+        // GUI 注入的托盘刷新钩子；CLI 不提供则跳过。
+        if let Some(refresh) = &ctx.tray_refresh {
+            refresh();
+        }
 
-            // 发射事件到前端
-            let event_data = serde_json::json!({
-                "appType": app_type,
-                "providerId": provider_id,
-                "source": "failover"  // 标识来源是故障转移
-            });
-            if let Err(e) = app.emit("provider-switched", event_data) {
-                log::error!("[Failover] 发射事件失败: {e}");
-            }
+        // 发射事件到前端
+        if let Some(sink) = ctx.sink {
+            sink.emit(
+                "provider-switched",
+                serde_json::json!({
+                    "appType": app_type,
+                    "providerId": provider_id,
+                    "source": "failover"  // 标识来源是故障转移
+                }),
+            );
         }
 
         Ok(switched)

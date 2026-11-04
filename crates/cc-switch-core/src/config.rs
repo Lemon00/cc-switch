@@ -309,10 +309,18 @@ pub fn get_claude_settings_path() -> PathBuf {
     settings
 }
 
+/// 应用配置目录覆盖（GUI 注入；CLI/测试不设则用默认 ~/.cc-switch）。
+static CONFIG_DIR_OVERRIDE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// 供前端注入配置目录覆盖；只能成功设置一次，重复设置会被忽略。
+pub fn set_app_config_dir_override(path: PathBuf) {
+    let _ = CONFIG_DIR_OVERRIDE.set(path);
+}
+
 /// 获取应用配置目录路径 (~/.cc-switch)
 pub fn get_app_config_dir() -> PathBuf {
-    if let Some(custom) = crate::app_store::get_app_config_dir_override() {
-        return custom;
+    if let Some(custom) = CONFIG_DIR_OVERRIDE.get() {
+        return custom.clone();
     }
 
     let default_dir = get_home_dir().join(".cc-switch");
