@@ -10,6 +10,7 @@ pub use crate::store::AppState;
 
 pub mod agy_config;
 pub mod app_config;
+pub mod background;
 pub mod codex_config;
 pub mod config;
 pub mod database;

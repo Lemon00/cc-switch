@@ -787,7 +787,9 @@ pub fn after_refresh() {
     let Some(state) = state_slot().get().cloned() else {
         return;
     };
-    tokio::task::spawn(async move {
+    // 同 start_worker：调用方可为同步上下文（见 background 模块说明），不用
+    // tokio::task::spawn。
+    crate::background::spawn_background(async move {
         crate::mode::controller::resync_codex_if_behind(&state).await;
     });
 }
@@ -796,7 +798,8 @@ pub fn after_refresh() {
 /// 定时器：从进程启动开始计时的话，每次只运行几小时的用户永远等不到刷新。
 pub fn start_background_checks(state: crate::store::AppState) {
     let _ = state_slot().set(state.clone());
-    tokio::task::spawn(async move {
+    // 从 GUI setup（无 ambient tokio runtime）调用，用后台 runtime，见 background 模块。
+    crate::background::spawn_background(async move {
         loop {
             crate::mode::controller::check_codex_official_models(&state).await;
             tokio::time::sleep(CHECK_EVERY).await;

@@ -143,7 +143,11 @@ pub fn start_worker(db: Arc<crate::database::Database>, sink: Arc<dyn EventSink>
         return;
     }
 
-    tokio::task::spawn(async move {
+    // NOTE: must not use tokio::task::spawn here: start_worker is called from
+    // GUI setup, which has no ambient tokio runtime (that panicked on startup).
+    // The background runtime below is ambient-independent, like the old
+    // tauri::async_runtime::spawn was.
+    crate::background::spawn_background(async move {
         run_worker_loop(db, rx, sink).await;
     });
 }
