@@ -6,7 +6,21 @@ use crate::database::{Database, PRICING_SOURCE_REQUEST, PRICING_SOURCE_RESPONSE}
 use crate::error::AppError;
 use crate::services::sql_helpers::{INPUT_TOKEN_SEMANTICS_FRESH, INPUT_TOKEN_SEMANTICS_TOTAL};
 use crate::services::usage_stats::{find_model_pricing_row, is_placeholder_pricing_model};
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use rusqlite::OptionalExtension;
+
+/// CLI 专属用量记录开关（仅对 CLI 自己的代理进程生效，GUI 进程不受影响）。
+/// 默认 true，保持上游 GUI 行为不变；CLI 在启动代理前按 cli.json 把它设为 false。
+static CLI_USAGE_RECORDING: AtomicBool = AtomicBool::new(true);
+
+pub(crate) fn set_cli_usage_recording(enabled: bool) {
+    CLI_USAGE_RECORDING.store(enabled, Ordering::Relaxed);
+}
+
+pub(crate) fn cli_usage_recording_enabled() -> bool {
+    CLI_USAGE_RECORDING.load(Ordering::Relaxed)
+}
 use rust_decimal::Decimal;
 use sha2::{Digest, Sha256};
 
@@ -112,6 +126,10 @@ impl<'a> UsageLogger<'a> {
 
     /// 记录成功的请求
     pub fn log_request(&self, log: &RequestLog) -> Result<(), AppError> {
+        // CLI 用量开关关时：直接跳过写库，转发本身不受影响。
+        if !cli_usage_recording_enabled() {
+            return Ok(());
+        }
         let conn = crate::database::lock_conn!(self.db.conn);
 
         let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) =
@@ -322,6 +340,9 @@ impl<'a> UsageLogger<'a> {
         session_id: Option<String>,
         provider_type: Option<String>,
     ) -> Result<(), AppError> {
+        if !cli_usage_recording_enabled() {
+            return Ok(());
+        }
         let request_model = model.clone();
         let log = RequestLog {
             request_id,

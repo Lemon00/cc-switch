@@ -83,6 +83,13 @@ pub use services::{
     SkillService, SpeedtestService,
 };
 pub use settings::{update_settings, AppSettings};
+
+/// CLI 专属用量记录开关：只影响调用进程内的代理用量写库（见
+/// `proxy::usage::logger`），GUI 进程的默认值和行为不变。
+/// CLI 在 `proxy serve` 启动前按 cli.json 调用它；默认 true。
+pub fn set_cli_usage_recording(enabled: bool) {
+    crate::proxy::usage::logger::set_cli_usage_recording(enabled);
+}
 pub use store::AppState;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
