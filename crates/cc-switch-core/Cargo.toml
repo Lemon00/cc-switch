@@ -16,6 +16,9 @@ default = ["session-monitor"]
 # 注意：session_usage_codex 不在这个 feature 里——数据库 v15->v16 迁移依赖它的
 # reset，关掉会改迁移语义，所以 codex 那份常驻。
 session-monitor = []
+# 供 GUI 测试用的测试辅助（TestAgentDir、sync_mutex 等）：正常构建不编，
+# GUI 的 dev-dependency 开它；核心自己的 cargo test 因 cfg(test) 也可见。
+test-support = []
 
 [dependencies]
 serde_json = { version = "1.0", features = ["preserve_order"] }
