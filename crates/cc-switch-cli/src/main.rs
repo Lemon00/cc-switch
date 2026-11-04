@@ -16,22 +16,25 @@
 //! `FrontendHooks::default()` 会让 failover/OAuth 静默失效。
 //!
 //! - codex：供应商切换走官方 ProviderService（live 写入引擎、字节保留），
-//!   代理走官方 ProxyService（前台 serve），推理参数走 #8970 解耦逻辑。
+//!   代理走官方 ProxyService（`proxy enable` 拉起后台进程、`proxy disable` 停止），
+//!   推理参数走 #8970 解耦逻辑。
 //! - agy：上游明确不支持 switch（`agy.switch.unsupported`），卡片只作用于
 //!   它打开的终端。所以本 CLI 不提供 agy switch，只提供 agy launch：
 //!   官方登录卡 → `agy --model=<显示名>`；第三方 Key 卡 →
 //!   `agy --gemini_dir=<私有目录>`，Key/地址只经子进程环境传入，不进命令文本。
 //! - 用量记录：仅对 CLI 自己的代理进程生效，默认关。开关存在
 //!   `<配置目录>/cli.json`（`{"usage_recording": false}`），
-//!   `proxy serve` 启动前按它调用 `set_cli_usage_recording`，
+//!   `proxy enable` 拉起的后台进程启动前按它调用 `set_cli_usage_recording`，
 //!   GUI 进程的默认值和行为不受影响。
 //! - 会话模块：本 CLI 不提供会话历史、回放、会话扫描、用量同步命令。
 
 use std::env;
-use std::fs;
-use std::path::PathBuf;
-use std::process::{exit, Command};
+use std::fs::{self, OpenOptions};
+use std::path::{Path, PathBuf};
+use std::process::{exit, Command, Stdio};
 use std::sync::{Arc, Weak};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use cc_switch_core::events::{EventSink, FrontendHooks, OAuthStateProvider};
 use cc_switch_core::proxy::providers::codex_oauth_auth::CodexOAuthManager;
@@ -42,6 +45,10 @@ use tokio::sync::RwLock;
 
 const VERSION: &str =
     "cc-switch-cli 0.1.0 (A方案, 基于官方 cc-switch v4.0.25, 白名单默认 codex/agy)";
+
+/// `proxy enable` 拉起的后台进程用的内部命令。不出现在 help 里，也不做参数校验包装：
+/// 它始终由本 CLI 自己用同一个可执行文件 + 同一个 `--app` 拉起。
+const PROXY_DAEMON_CMD: &str = "__proxy-daemon";
 
 fn help() -> &'static str {
     "用法: cc-switch-cli [--app codex|agy] <命令> [参数]\n\
@@ -58,7 +65,8 @@ fn help() -> &'static str {
      \x20\x20\x20\x20 --supports-thinking false --thinking-param none --effort-param reasoning_effort\n\
      \x20\x20\x20\x20 # ^ #8970 组合：只透传 reasoning_effort，不注入 thinking\n\
      \x20 cc-switch-cli --app codex proxy show\n\
-     \x20 cc-switch-cli --app codex proxy serve   # 前台代理，Ctrl-C 退出\n\
+     \x20 cc-switch-cli --app codex proxy enable    # 启动后台代理（守护进程，立即返回）\n\
+     \x20 cc-switch-cli --app codex proxy disable   # 停止后台代理\n\
      \x20 cc-switch-cli --app codex proxy usage [on|off]  # 默认 off，仅对本 CLI 代理生效\n\
      \n\
      agy（Antigravity CLI，不支持 switch，见上文）:\n\
@@ -88,6 +96,240 @@ fn cli_config_path() -> PathBuf {
     app_dir().join("cli.json")
 }
 
+fn proxy_pid_path() -> PathBuf {
+    app_dir().join("cli-proxy.pid")
+}
+
+fn proxy_log_path() -> PathBuf {
+    app_dir().join("cli-proxy.log")
+}
+
+fn read_proxy_pid() -> Option<u32> {
+    fs::read_to_string(proxy_pid_path())
+        .ok()?
+        .trim()
+        .parse::<u32>()
+        .ok()
+        .filter(|pid| *pid > 1)
+}
+
+fn write_proxy_pid(pid: u32) {
+    if let Err(e) = fs::write(proxy_pid_path(), pid.to_string()) {
+        eprintln!("警告: 写 pid 文件失败: {e}");
+    }
+}
+
+fn remove_proxy_pid() {
+    let _ = fs::remove_file(proxy_pid_path());
+}
+
+#[cfg(unix)]
+fn pid_alive(pid: u32) -> bool {
+    // SAFETY: kill(pid, 0) 只查询进程是否存在，不真的发信号。
+    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+}
+
+#[cfg(windows)]
+fn pid_alive(pid: u32) -> bool {
+    let Ok(out) = Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+        .output()
+    else {
+        return false;
+    };
+    String::from_utf8_lossy(&out.stdout).contains(&pid.to_string())
+}
+
+/// PID 可能被系统复用：停进程前再确认一次 cmdline 是自己的守护进程，
+/// 免得 `disable` 误杀一个无关进程。
+#[cfg(unix)]
+fn pid_is_our_daemon(pid: u32) -> bool {
+    fs::read_to_string(format!("/proc/{pid}/cmdline"))
+        .map(|cmd| cmd.contains(PROXY_DAEMON_CMD))
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn pid_is_our_daemon(_pid: u32) -> bool {
+    // Windows 上退化为 pid_alive：pid 文件只有本 CLI 会写，且 disable 只在
+    // 明确执行时才会发终止信号。
+    true
+}
+
+fn running_proxy_pid() -> Option<u32> {
+    let pid = read_proxy_pid()?;
+    (pid_alive(pid) && pid_is_our_daemon(pid)).then_some(pid)
+}
+
+/// 把同一个可执行文件拉成独立于终端的后台进程；stdout/stderr 落到日志文件，
+/// 否则终端关闭后守护进程的打印会变成 SIGPIPE/EPIPE。
+fn spawn_proxy_daemon(app: &AppType, exe: &Path, log: &fs::File) -> Result<u32, String> {
+    let stdout = log
+        .try_clone()
+        .map_err(|e| format!("复制日志句柄失败: {e}"))?;
+    let stderr = log
+        .try_clone()
+        .map_err(|e| format!("复制日志句柄失败: {e}"))?;
+    let mut cmd = Command::new(exe);
+    cmd.args(["--app", app.as_str(), "proxy", PROXY_DAEMON_CMD])
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr));
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // 脱离控制终端：enable 返回后 shell 退出、SIGHUP 不会带走代理。
+        // SAFETY: pre_exec 的闭包只在 fork 出来的子进程、exec 之前运行，里面只
+        // 调用 async-signal-safe 的 setsid，不碰 Rust 的分配器/锁。
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        cmd.creation_flags(DETACHED_PROCESS);
+    }
+
+    cmd.spawn()
+        .map(|child| child.id())
+        .map_err(|e| format!("拉起后台代理失败: {e}"))
+}
+
+/// 守护进程等 Ctrl-C（手动跑内部命令时）或 SIGTERM（`proxy disable` 发的）。
+#[cfg(unix)]
+async fn wait_for_proxy_shutdown() {
+    use tokio::signal::unix::{signal, SignalKind};
+    let mut term = match signal(SignalKind::terminate()) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("警告: 注册 SIGTERM 处理失败，只能 Ctrl-C 退出: {e}");
+            let _ = tokio::signal::ctrl_c().await;
+            return;
+        }
+    };
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = term.recv() => {}
+    }
+}
+
+#[cfg(not(unix))]
+async fn wait_for_proxy_shutdown() {
+    let _ = tokio::signal::ctrl_c().await;
+}
+
+/// enable / disable：只做进程管理，不开数据库，避免和即将拉起的守护进程抢 SQLite。
+fn cmd_proxy_control(app: AppType, action: &str) {
+    if action == "enable" {
+        if app != AppType::Codex {
+            err("proxy enable 只适用于 codex；agy 不走代理，请用 agy launch");
+        }
+        if let Some(pid) = running_proxy_pid() {
+            println!("后台代理已在运行（pid {pid}），无需重复 enable");
+            return;
+        }
+        // 到这里 pid 文件要么不存在，要么是指向已退出/无关进程的陈旧文件。
+        remove_proxy_pid();
+
+        let log_path = proxy_log_path();
+        let log = match OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&log_path)
+        {
+            Ok(f) => f,
+            Err(e) => err(&format!("打开日志 {} 失败: {e}", log_path.display())),
+        };
+        let exe = match env::current_exe() {
+            Ok(p) => p,
+            Err(e) => err(&format!("取当前可执行文件路径失败: {e}")),
+        };
+        let pid = match spawn_proxy_daemon(&app, &exe, &log) {
+            Ok(pid) => pid,
+            Err(e) => err(&e),
+        };
+        write_proxy_pid(pid);
+
+        // 等代理真正 bind 成功再返回；失败时把日志尾巴打出来，别让用户只看到
+        // 「已启动」却连不上。日志里的「代理已起」由守护进程在 start() 成功后打印。
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            if let Ok(text) = fs::read_to_string(&log_path) {
+                if text.contains("代理已起:") {
+                    println!("后台代理已启动（pid {pid}）");
+                    println!("日志: {}", log_path.display());
+                    println!("停止: cc-switch-cli --app {} proxy disable", app.as_str());
+                    return;
+                }
+                if text.contains("启动代理失败") {
+                    let _ = fs::remove_file(proxy_pid_path());
+                    err(&format!("后台代理启动失败，详见 {}", log_path.display()));
+                }
+            }
+            if !pid_alive(pid) {
+                remove_proxy_pid();
+                err(&format!("后台代理进程已退出，详见 {}", log_path.display()));
+            }
+            if Instant::now() >= deadline {
+                remove_proxy_pid();
+                err(&format!(
+                    "等待后台代理就绪超时，详见 {}",
+                    log_path.display()
+                ));
+            }
+            thread::sleep(Duration::from_millis(150));
+        }
+    }
+
+    // disable：即使没在跑也当成功，方便脚本里直接调用。
+    let Some(pid) = read_proxy_pid() else {
+        println!("后台代理未在运行");
+        return;
+    };
+    if !pid_alive(pid) || !pid_is_our_daemon(pid) {
+        remove_proxy_pid();
+        println!("后台代理未在运行（已清理陈旧的 pid 文件）");
+        return;
+    }
+
+    #[cfg(unix)]
+    {
+        // SAFETY: pid 已确认是本 CLI 的守护进程；SIGTERM 触发它优雅停代理后退出。
+        unsafe {
+            libc::kill(pid as libc::pid_t, libc::SIGTERM);
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while pid_alive(pid) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(100));
+        }
+        if pid_alive(pid) {
+            unsafe {
+                libc::kill(pid as libc::pid_t, libc::SIGKILL);
+            }
+        }
+    }
+    #[cfg(windows)]
+    {
+        let status = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .status();
+        match status {
+            Ok(s) if s.success() => {}
+            Ok(s) => err(&format!("停止后台代理失败: taskkill 退出码 {s}")),
+            Err(e) => err(&format!("执行 taskkill 失败: {e}")),
+        }
+    }
+    remove_proxy_pid();
+    println!("后台代理已停止（pid {pid}）");
+}
+
 /// CLI 专属用量开关：默认 false（关）。文件不存在或解析失败时都按关处理，
 /// 避免一次写坏配置就把后台代理变成“偷偷记用量”。
 fn usage_recording_enabled() -> bool {
@@ -110,7 +352,7 @@ fn set_usage_recording(enabled: bool) {
         err(&format!("写 {} 失败: {e}", cli_config_path().display()));
     }
     println!(
-        "用量记录: {}（仅对本 CLI 代理生效，下次 proxy serve 起效）",
+        "用量记录: {}（仅对本 CLI 代理生效，下次 proxy enable 起效）",
         if enabled { "开" } else { "关" }
     );
 }
@@ -123,10 +365,53 @@ fn parse_bool(s: &str) -> bool {
     }
 }
 
+/// 终端显示列宽：CJK / 全角 / emoji 占 2 列，组合符号和控制字符不占列。
+/// 只用于把 `provider list` 的列对齐，不引入 unicode-width 依赖。
+fn char_width(c: char) -> usize {
+    let u = c as u32;
+    if u == 0 || u < 0x20 || (0x7f..0xa0).contains(&u) {
+        return 0;
+    }
+    if (0x0300..=0x036f).contains(&u)
+        || (0x1ab0..=0x1aff).contains(&u)
+        || (0x1dc0..=0x1dff).contains(&u)
+        || (0xfe00..=0xfe0f).contains(&u)
+        || (0xfe20..=0xfe2f).contains(&u)
+    {
+        return 0;
+    }
+    if (0x1100..=0x115f).contains(&u)
+        || (0x2e80..=0x303e).contains(&u)
+        || (0x3041..=0x33ff).contains(&u)
+        || (0x3400..=0x4dbf).contains(&u)
+        || (0x4e00..=0x9fff).contains(&u)
+        || (0xa000..=0xa4cf).contains(&u)
+        || (0xac00..=0xd7a3).contains(&u)
+        || (0xf900..=0xfaff).contains(&u)
+        || (0xfe10..=0xfe19).contains(&u)
+        || (0xfe30..=0xfe6f).contains(&u)
+        || (0xff00..=0xff60).contains(&u)
+        || (0xffe0..=0xffe6).contains(&u)
+        || (0x1f300..=0x1faff).contains(&u)
+        || (0x20000..=0x3fffd).contains(&u)
+    {
+        return 2;
+    }
+    1
+}
+
+fn display_width(s: &str) -> usize {
+    s.chars().map(char_width).sum()
+}
+
+fn pad_display(s: &str, width: usize) -> String {
+    format!("{s}{}", " ".repeat(width.saturating_sub(display_width(s))))
+}
+
 /// CLI 代理状态事件的 sink：没有前端可推，写到 stderr（低频事件）。
 ///
 /// 用量写入通知走单独的 [`QuietEventSink`]：它每条日志都会触发（200ms
-/// 防抖），打到 stderr 会淹没 `proxy serve` 的输出。
+/// 防抖），打到 stderr 会淹没 `proxy enable` 之后守护进程的日志。
 struct StderrEventSink;
 
 impl EventSink for StderrEventSink {
@@ -141,14 +426,14 @@ impl EventSink for StderrEventSink {
 /// - `usage_events::init`：不注入时 `notify_log_recorded` 直接 return，代理
 ///   记账、会话同步、归档、手动改用量 4 条路径的通知等于静默丢弃；
 /// - WebDAV/S3 自动同步 worker 的状态事件。
-/// CLI 的 `proxy serve` 是前台进程，事件打 stderr 会淹没有用输出，所以走
+/// CLI 的 `proxy enable` 拉起的是后台进程，事件打 stderr 会写满日志文件，所以走
 /// log（CLI 目前没装 logger，等于丢弃；将来接上 logger 即生效）。
 struct QuietEventSink;
 
 impl EventSink for QuietEventSink {
     fn emit(&self, event: &str, _payload: serde_json::Value) {
-        // 走 log 而不是 stderr：`proxy serve` 是前台进程，每条日志（200ms
-        // 防抖）打一行会淹没有用输出。CLI 目前没装 logger，因此这条 debug
+        // 走 log 而不是 stderr：后台进程每条日志（200ms 防抖）打一行会迅速
+        // 写满 cli-proxy.log。CLI 目前没装 logger，因此这条 debug
         // 事实上被丢弃；注入的意义是让通知链路不再依赖 GUI 的 setup，
         // 将来 CLI 接上 logger（或换成计数）就能立刻拿到。
         log::debug!("[usage-event] {event}");
@@ -302,6 +587,14 @@ fn main() {
         return;
     }
 
+    // enable / disable 只做进程管理，不开数据库：守护进程马上也要开同一个库。
+    if args[0] == "proxy" {
+        if let Some(action @ ("enable" | "disable")) = args.get(1).map(|s| s.as_str()) {
+            cmd_proxy_control(app, action);
+            return;
+        }
+    }
+
     let state = open_state();
     match args[0].as_str() {
         "provider" => cmd_provider(&state, app, &args[1..]),
@@ -346,9 +639,33 @@ fn cmd_provider(state: &AppState, app: AppType, args: &[String]) {
                 println!("（{} 暂无供应商）", app.as_str());
                 return;
             }
+            // 按显示宽度补齐再输出：原来用 \t 分隔，id 长短不一 + 中文名称时
+            // 名称列会错位。当前供应商单独占一列，避免 " *" 又把 id 列推歪。
+            let id_width = list
+                .keys()
+                .map(|id| display_width(id))
+                .max()
+                .unwrap_or(0)
+                .max(display_width("ID"));
+            println!(
+                "{}  {}  名称",
+                pad_display("当前", 4),
+                pad_display("ID", id_width)
+            );
+            println!(
+                "{}  {}  {}",
+                "-".repeat(4),
+                "-".repeat(id_width),
+                "-".repeat(4)
+            );
             for (id, p) in &list {
-                let mark = if *id == current { " *" } else { "" };
-                println!("{id}{mark}\t{}", p.name);
+                let mark = if *id == current { "*" } else { "" };
+                println!(
+                    "{}  {}  {}",
+                    pad_display(mark, 4),
+                    pad_display(id, id_width),
+                    p.name
+                );
             }
         }
         Some("current") => {
@@ -670,8 +987,15 @@ fn cmd_proxy(state: &AppState, app: AppType, args: &[String]) {
                         println!("代理配置（数据库当前值）:");
                         println!("  监听: {}:{}", cfg.listen_address, cfg.listen_port);
                         println!(
-                            "  应用: {}（本 CLI 只做 codex 代理前台 serve；agy 不走代理）",
+                            "  应用: {}（本 CLI 的 codex 代理由 proxy enable 后台运行；agy 不走代理）",
                             app.as_str()
+                        );
+                        println!(
+                            "  后台状态: {}",
+                            match running_proxy_pid() {
+                                Some(pid) => format!("运行中（pid {pid}）"),
+                                None => "未运行".to_string(),
+                            }
                         );
                         println!(
                             "  用量记录（CLI 专属）: {}",
@@ -699,53 +1023,78 @@ fn cmd_proxy(state: &AppState, app: AppType, args: &[String]) {
                 }
             ),
         },
-        Some("serve") => {
-            if app != AppType::Codex {
-                err("proxy serve 只适用于 codex；agy 不走代理，请用 agy launch");
-            }
-            let enabled = usage_recording_enabled();
-            cc_switch_core::set_cli_usage_recording(enabled);
-            // serve 是长驻进程：和 GUI 一样启动 WebDAV/S3 自动同步 worker
-            //（远端没配置时 worker 自己空转）。一次性命令不启，短进程没必要
-            // 拉起后台 runtime。
-            cc_switch_core::services::webdav_auto_sync::start_worker(
-                state.db.clone(),
-                Arc::new(QuietEventSink),
-            );
-            cc_switch_core::services::s3_auto_sync::start_worker(
-                state.db.clone(),
-                Arc::new(QuietEventSink),
-            );
-            println!(
-                "启动 codex 代理（前台，Ctrl-C 退出；用量记录: {}，仅对本进程生效）",
-                if enabled { "开" } else { "关" }
-            );
-            let rt = match tokio::runtime::Builder::new_multi_thread()
-                // 代理是 IO 密集型：默认按 CPU 核数起 worker（本机 6 核），
-                // 每个线程都会推高 glibc arena/栈占用。2 个足够，和 core 的
-                // background runtime 保持一致。
-                .worker_threads(2)
-                .enable_all()
-                .build()
-            {
-                Ok(rt) => rt,
-                Err(e) => err(&format!("建运行时失败: {e}")),
-            };
-            let info = match rt.block_on(state.proxy_service.start()) {
-                Ok(info) => info,
-                Err(e) => err(&format!("启动代理失败: {e}")),
-            };
-            println!(
-                "代理已起: {}:{}（客户端请把上游地址指到这里，或用 GUI 的路由接管）",
-                info.address, info.port
-            );
-            // 前台等待 Ctrl-C；收到后停代理再退出。
-            let _ = rt.block_on(async {
-                let _ = tokio::signal::ctrl_c().await;
-            });
-            let _ = rt.block_on(state.proxy_service.stop());
-            println!("代理已停");
-        }
-        _ => err("proxy 只支持 show / serve / usage [on|off]"),
+        Some(PROXY_DAEMON_CMD) => run_proxy_daemon(state, app),
+        _ => err("proxy 只支持 show / enable / disable / usage [on|off]"),
+    }
+}
+
+/// 后台代理本体：只由 `proxy enable` 通过内部命令拉起，日志重定向到 cli-proxy.log。
+/// 退出（SIGTERM / Ctrl-C）时主动停代理并清掉自己的 pid 文件。
+fn run_proxy_daemon(state: &AppState, app: AppType) {
+    if app != AppType::Codex {
+        err("后台代理只适用于 codex；agy 不走代理，请用 agy launch");
+    }
+    let pid = std::process::id();
+    write_proxy_pid(pid);
+
+    let enabled = usage_recording_enabled();
+    cc_switch_core::set_cli_usage_recording(enabled);
+    // 长驻进程：和 GUI 一样启动 WebDAV/S3 自动同步 worker（远端没配置时
+    // worker 自己空转）。一次性命令不启，短进程没必要拉起后台 runtime。
+    cc_switch_core::services::webdav_auto_sync::start_worker(
+        state.db.clone(),
+        Arc::new(QuietEventSink),
+    );
+    cc_switch_core::services::s3_auto_sync::start_worker(
+        state.db.clone(),
+        Arc::new(QuietEventSink),
+    );
+    println!(
+        "启动 codex 后台代理（pid {pid}；用量记录: {}，仅对本进程生效）",
+        if enabled { "开" } else { "关" }
+    );
+    let rt = match tokio::runtime::Builder::new_multi_thread()
+        // 代理是 IO 密集型：默认按 CPU 核数起 worker（本机 6 核），
+        // 每个线程都会推高 glibc arena/栈占用。2 个足够，和 core 的
+        // background runtime 保持一致。
+        .worker_threads(2)
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(e) => err(&format!("建运行时失败: {e}")),
+    };
+    let info = match rt.block_on(state.proxy_service.start()) {
+        Ok(info) => info,
+        Err(e) => err(&format!("启动代理失败: {e}")),
+    };
+    // enable 靠这行判定「已就绪」，别改掉前缀。
+    println!("代理已起: {}:{}", info.address, info.port);
+
+    rt.block_on(wait_for_proxy_shutdown());
+    let _ = rt.block_on(state.proxy_service.stop());
+    if read_proxy_pid() == Some(pid) {
+        remove_proxy_pid();
+    }
+    println!("代理已停");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_width_counts_cjk_as_two_columns() {
+        assert_eq!(display_width("abc"), 3);
+        assert_eq!(display_width("中文"), 4);
+        assert_eq!(display_width("a中b"), 4);
+        assert_eq!(display_width(""), 0);
+    }
+
+    #[test]
+    fn padding_aligns_mixed_width_ids() {
+        assert_eq!(pad_display("ab", 6), "ab    ");
+        assert_eq!(pad_display("中文", 6), "中文  ");
+        assert_eq!(display_width(&pad_display("中文", 6)), 6);
     }
 }

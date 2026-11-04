@@ -19,7 +19,7 @@ log = "0.4"
 # 仅 Linux + glibc 用它限制 malloc arena 数量（见 main.rs 的 tune_allocator）；
 # 其他平台不调用，依赖本身跨平台。
 libc = "0.2"
-tokio = { version = "1", features = ["rt-multi-thread", "signal", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "signal", "sync", "macros"] }
 
 [profile.release]
 # 与 GUI 主 crate 保持一致：体积优先，thin LTO + strip。

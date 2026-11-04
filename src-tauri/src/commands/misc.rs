@@ -25,6 +25,10 @@ use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+/// 本 fork 的发布仓库：updater 清单、便携版安装包、发布说明都以它为基准。
+/// 与 tauri.conf.json 的 plugins.updater.endpoints 保持一致。
+const REPO_URL: &str = "https://github.com/Lemon00/cc-switch";
+
 /// 打开外部链接
 /// 外部链接白名单：只允许 `http:` / `https:` / `mailto:`。
 /// 不带协议的裸域名（如 `example.com/docs`）按旧行为补 `https://`；
@@ -78,10 +82,7 @@ pub async fn copy_text_to_clipboard(text: String) -> Result<bool, String> {
 pub async fn check_for_updates(handle: AppHandle) -> Result<bool, String> {
     handle
         .opener()
-        .open_url(
-            "https://github.com/farion1231/cc-switch/releases/latest",
-            None::<String>,
-        )
+        .open_url(format!("{REPO_URL}/releases/latest"), None::<String>)
         .map_err(|e| format!("打开更新页面失败: {e}"))?;
 
     Ok(true)
@@ -100,7 +101,7 @@ fn portable_zip_url(version: &str, arm64: bool) -> Option<String> {
     }
     let suffix = if arm64 { "-arm64" } else { "" };
     Some(format!(
-        "https://github.com/farion1231/cc-switch/releases/download/v{version}/CC-Switch-v{version}-Windows{suffix}-Portable.zip"
+        "{REPO_URL}/releases/download/v{version}/CC-Switch-v{version}-Windows{suffix}-Portable.zip"
     ))
 }
 
@@ -112,7 +113,7 @@ pub async fn open_portable_update_download(
     version: String,
 ) -> Result<bool, String> {
     let url = portable_zip_url(&version, cfg!(target_arch = "aarch64"))
-        .unwrap_or_else(|| "https://github.com/farion1231/cc-switch/releases/latest".to_string());
+        .unwrap_or_else(|| format!("{REPO_URL}/releases/latest"));
     handle
         .opener()
         .open_url(url, None::<String>)
@@ -6957,12 +6958,16 @@ mod tests {
     #[test]
     fn portable_zip_url_matches_release_asset_names() {
         assert_eq!(
-            portable_zip_url("4.0.12", false).as_deref(),
-            Some("https://github.com/farion1231/cc-switch/releases/download/v4.0.12/CC-Switch-v4.0.12-Windows-Portable.zip")
+            portable_zip_url("4.0.12", false),
+            Some(format!(
+                "{REPO_URL}/releases/download/v4.0.12/CC-Switch-v4.0.12-Windows-Portable.zip"
+            ))
         );
         assert_eq!(
-            portable_zip_url("v4.1.0-beta.1", true).as_deref(),
-            Some("https://github.com/farion1231/cc-switch/releases/download/v4.1.0-beta.1/CC-Switch-v4.1.0-beta.1-Windows-arm64-Portable.zip")
+            portable_zip_url("v4.1.0-beta.1", true),
+            Some(format!(
+                "{REPO_URL}/releases/download/v4.1.0-beta.1/CC-Switch-v4.1.0-beta.1-Windows-arm64-Portable.zip"
+            ))
         );
         for bad in ["", "v", "latest", "4.0/../x", "4.0.0?x=1"] {
             assert!(portable_zip_url(bad, false).is_none(), "{bad}");

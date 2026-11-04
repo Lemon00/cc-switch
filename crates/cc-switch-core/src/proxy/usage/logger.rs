@@ -12,8 +12,8 @@ use rusqlite::OptionalExtension;
 
 /// CLI 专属用量记录开关，唯一的写入口（GUI 不调用，也没有 tauri 命令包装）。
 ///
-/// 默认 `true`：GUI 进程从不改动它，保持上游行为不变。CLI 在 `proxy serve`
-/// 启动前按 `<配置目录>/cli.json` 的 `usage_recording` 显式设置，缺省关。
+/// 默认 `true`：GUI 进程从不改动它，保持上游行为不变。CLI 在 `proxy enable`
+/// 拉起的后台进程启动前按 `<配置目录>/cli.json` 的 `usage_recording` 显式设置，缺省关。
 ///
 /// 语义（与实现一致）：关掉时 `log_request` / `log_error_with_context` 直接
 /// `return Ok(())`，成功和失败请求都**不写** `proxy_request_logs`；转发本身
