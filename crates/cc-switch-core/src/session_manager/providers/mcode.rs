@@ -6,11 +6,11 @@ use rusqlite::{Connection, OpenFlags};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
-pub(crate) fn database_path() -> PathBuf {
+pub fn database_path() -> PathBuf {
     crate::mcode_config::data_dir().join("v2/sqlite/runtime-state.sqlite")
 }
 
-pub(crate) fn open_database() -> rusqlite::Result<Connection> {
+pub fn open_database() -> rusqlite::Result<Connection> {
     Connection::open_with_flags(database_path(), OpenFlags::SQLITE_OPEN_READ_ONLY)
 }
 

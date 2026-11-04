@@ -10,7 +10,7 @@ use crate::store::AppState;
 use crate::usage_script;
 
 /// Execute usage script and format result (private helper method)
-pub(crate) async fn execute_and_format_usage_result(
+pub async fn execute_and_format_usage_result(
     script_code: &str,
     api_key: &str,
     base_url: &str,
@@ -228,7 +228,7 @@ pub async fn test_usage_script(
 }
 
 /// Validate UsageScript configuration (boundary checks)
-pub(crate) fn validate_usage_script(script: &UsageScript) -> Result<(), AppError> {
+pub fn validate_usage_script(script: &UsageScript) -> Result<(), AppError> {
     // Validate auto query interval (0-1440 minutes, max 24 hours)
     if let Some(interval) = script.auto_query_interval {
         if interval > 1440 {

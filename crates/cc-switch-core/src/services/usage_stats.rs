@@ -397,7 +397,7 @@ fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
     )
 }
 
-pub(crate) const SESSION_PROXY_DEDUP_WINDOW_SECONDS: i64 = 10 * 60;
+pub const SESSION_PROXY_DEDUP_WINDOW_SECONDS: i64 = 10 * 60;
 
 /// SQL 片段：把指定别名的 `data_source` 包成 COALESCE，NULL 视作 'proxy'。
 ///
@@ -507,7 +507,7 @@ fn session_proxy_model_match_sql(
     )
 }
 
-pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
+pub fn effective_usage_log_filter(log_alias: &str) -> String {
     let data_source = data_source_expr(log_alias);
     let proxy_data_source = data_source_expr("proxy_dedup");
     let app_type_match =
@@ -567,7 +567,7 @@ const DEDUP_SESSION_SOURCES_SQL: &str =
 ///
 /// 时间边界放宽 [`SESSION_PROXY_DEDUP_WINDOW_SECONDS`]，窗口外的代理行
 /// 不可能匹配窗口内的会话行；边界是整数，直接拼进 SQL。
-pub(crate) fn effective_usage_log_filter_for_range(
+pub fn effective_usage_log_filter_for_range(
     conn: &Connection,
     log_alias: &str,
     start_date: Option<i64>,
@@ -651,7 +651,7 @@ pub(crate) fn effective_usage_log_filter_for_range(
 /// 筛选条件、起点没变，且连接上没有任何写入（`total_changes` 没变，增删改都算）
 /// 时复用上次的总数；结束时间往后推时（「当天」这类活动窗口每次刷新都会变），
 /// 再确认新增的时间段里没有行。另设 [`LOG_COUNT_CACHE_TTL`] 兜底。
-pub(crate) struct LogCountCache {
+pub struct LogCountCache {
     key: String,
     end_date: Option<i64>,
     changes: u64,
@@ -717,7 +717,7 @@ fn cached_log_count(
 /// 值。反过来，v3.17.0 之前的代理不记录 Codex 缓存写入，legacy 语义且写入量为 0
 /// 的 Codex 代理行也放行任意 session 写入量。
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct DedupKey<'a> {
+pub struct DedupKey<'a> {
     pub app_type: &'a str,
     pub data_source: &'a str,
     pub model: &'a str,
@@ -732,7 +732,7 @@ pub(crate) struct DedupKey<'a> {
 ///
 /// 命中以下任一条件即跳过插入：① `request_id` 已存在；② 时间窗口内存在
 /// 与 `key` 匹配的 proxy 日志（指纹去重）。
-pub(crate) fn should_skip_session_insert(
+pub fn should_skip_session_insert(
     conn: &Connection,
     request_id: &str,
     key: &DedupKey,
@@ -782,7 +782,7 @@ static MATCHING_PROXY_USAGE_LOG_SQL: LazyLock<String> = LazyLock::new(|| {
     )
 });
 
-pub(crate) fn has_matching_proxy_usage_log(
+pub fn has_matching_proxy_usage_log(
     conn: &Connection,
     key: &DedupKey,
 ) -> Result<bool, AppError> {
@@ -824,7 +824,7 @@ pub(crate) fn has_matching_proxy_usage_log(
 /// 已知局限（有意取舍，方向保守只漏不双）：窗口不含 session 维度，任一
 /// grokbuild 代理行会给 ±窗口内的全部会话事件投下阴影——接管/官方两态在
 /// 十分钟内交替或并行使用时，官方侧轮次会被跳过（漏记而非双算）。
-pub(crate) fn has_recent_grokbuild_proxy_activity(
+pub fn has_recent_grokbuild_proxy_activity(
     conn: &Connection,
     created_at: i64,
 ) -> Result<bool, AppError> {
@@ -864,7 +864,7 @@ static SUSPECTED_CODEX_DUPLICATE_SQL: LazyLock<String> = LazyLock::new(|| {
     )
 });
 
-pub(crate) fn has_suspected_codex_session_duplicate(
+pub fn has_suspected_codex_session_duplicate(
     conn: &Connection,
     request_id: &str,
     key: &DedupKey,
@@ -2407,13 +2407,13 @@ struct PricingInfo {
 
 impl Database {
     /// Recalculate stored zero-cost usage rows once pricing becomes available.
-    pub(crate) fn backfill_missing_usage_costs(&self) -> Result<u64, AppError> {
+    pub fn backfill_missing_usage_costs(&self) -> Result<u64, AppError> {
         let conn = lock_conn!(self.conn);
         Self::backfill_missing_usage_costs_on_conn(&conn, None)
     }
 
     /// 仅回填指定 model_id 相关的零成本行；用于单条定价更新后的精准回填。
-    pub(crate) fn backfill_missing_usage_costs_for_model(
+    pub fn backfill_missing_usage_costs_for_model(
         &self,
         model_id: &str,
     ) -> Result<u64, AppError> {
@@ -2421,7 +2421,7 @@ impl Database {
         Self::backfill_missing_usage_costs_on_conn(&conn, Some(model_id))
     }
 
-    pub(crate) fn backfill_missing_usage_costs_on_conn(
+    pub fn backfill_missing_usage_costs_on_conn(
         conn: &Connection,
         only_model_id: Option<&str>,
     ) -> Result<u64, AppError> {
@@ -2642,7 +2642,7 @@ impl Database {
     }
 }
 
-pub(crate) fn find_model_pricing(conn: &Connection, model_id: &str) -> Option<ModelPricing> {
+pub fn find_model_pricing(conn: &Connection, model_id: &str) -> Option<ModelPricing> {
     find_model_pricing_row(conn, model_id)
         .ok()
         .flatten()
@@ -2651,7 +2651,7 @@ pub(crate) fn find_model_pricing(conn: &Connection, model_id: &str) -> Option<Mo
         })
 }
 
-pub(crate) fn find_model_pricing_row(
+pub fn find_model_pricing_row(
     conn: &Connection,
     model_id: &str,
 ) -> Result<Option<(String, String, String, String)>, AppError> {
@@ -2701,7 +2701,7 @@ fn log_pricing_scope_matches(log: &RequestLogDetail, target_candidates: &[String
     })
 }
 
-pub(crate) fn is_placeholder_pricing_model(model_id: &str) -> bool {
+pub fn is_placeholder_pricing_model(model_id: &str) -> bool {
     let normalized = model_id.trim().to_ascii_lowercase();
     normalized.is_empty() || matches!(normalized.as_str(), "unknown" | "null" | "none")
 }

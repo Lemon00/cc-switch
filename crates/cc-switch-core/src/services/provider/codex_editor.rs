@@ -258,7 +258,7 @@ fn inactive_fields(row_text: &str, display: &DocumentMut) -> Vec<InactiveField> 
 }
 
 /// 一次编辑器保存：存进行的内容，和要写进 live 的全局改动。
-pub(crate) struct CodexEditorPlan {
+pub struct CodexEditorPlan {
     pub row_settings: Value,
     pub edits: TomlEdits,
 }
@@ -293,7 +293,7 @@ impl LiveOwner {
 ///
 /// 只读 live、按值去掉那一家的，不走投影：投影会校验生效的 profile，而空行不写
 /// `model_provider`，profile 选了路由表就会被当成覆盖路由拒绝。
-pub(crate) fn live_exclusive(state: &AppState) -> Result<Vec<Entry>, AppError> {
+pub fn live_exclusive(state: &AppState) -> Result<Vec<Entry>, AppError> {
     let path = get_codex_config_path();
     let pre = read_current(&path)?;
     let doc = parse(&path, pre.as_deref())?;
@@ -322,7 +322,7 @@ fn exclusive_entries(doc: &DocumentMut) -> Vec<Entry> {
 
 /// 编辑器显示里的独有字段是从哪来的：显示的是某份配置投影到 live 上的样子，这份配置里没有
 /// 的独有字段就是从 live 带进来的。
-pub(crate) enum Origin {
+pub enum Origin {
     /// 投影成底的那份配置：编辑已有供应商时是它的行，新增时是预设草稿。
     Row(DocumentMut),
     /// 新增时不知道草稿（旧的调用方）：和 live 里用户自己的独有字段比值，打开之后 live 被
@@ -332,7 +332,7 @@ pub(crate) enum Origin {
 
 impl Origin {
     /// `settings` 是行或草稿的 `settings_config`。
-    pub(crate) fn row(settings: &Value) -> Result<Self, AppError> {
+    pub fn row(settings: &Value) -> Result<Self, AppError> {
         Ok(Self::Row(parse_text(config_text(settings), "origin")?))
     }
 }
@@ -344,7 +344,7 @@ impl Origin {
 /// 从 live 带进来的独有字段不归这个供应商：用户没动就不收进行、也不写（否则切走时会把
 /// 用户自己的设置删掉，打开编辑器之后客户端改的值也会被盖回去），用户删了就从 live 删。
 /// 哪些是从 live 带进来的见 [`Origin`]。
-pub(crate) fn plan_save(
+pub fn plan_save(
     stored_row: Option<&Value>,
     edited: &Value,
     base: &Value,
@@ -493,7 +493,7 @@ fn store_into_row(
 }
 
 /// 编辑器改动之外，同一次写入里要不要把关键字段也换进 live。
-pub(crate) enum KeyFields<'a> {
+pub enum KeyFields<'a> {
     /// 只写全局改动。
     None,
     /// 直连模式下编辑当前供应商：`prev` 是编辑前的行，`set_pointer` 为新增第一个供应商。
@@ -505,7 +505,7 @@ pub(crate) enum KeyFields<'a> {
 }
 
 /// 把编辑器保存的改动写进 live。没有要写的就什么都不做。
-pub(crate) fn write_live(
+pub fn write_live(
     db: &Database,
     manager: &Arc<CodexOAuthManager>,
     edits: &TomlEdits,

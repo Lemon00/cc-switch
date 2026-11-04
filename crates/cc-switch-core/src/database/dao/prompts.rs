@@ -76,7 +76,7 @@ impl Database {
     }
 
     // Backfill and activation must commit together with MiniMax Code's live file.
-    pub(crate) fn save_mcode_prompts(
+    pub fn save_mcode_prompts(
         &self,
         prompts: &IndexMap<String, Prompt>,
     ) -> Result<(), AppError> {

@@ -28,14 +28,14 @@ pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalo
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// Top-level `config.toml` key that controls Codex's built-in web-search tool.
-pub(crate) const CODEX_WEB_SEARCH_FIELD: &str = "web_search";
+pub const CODEX_WEB_SEARCH_FIELD: &str = "web_search";
 /// Value that disables the web-search tool. Some native `/responses` gateways
 /// reject a `web_search` tool with `responses_feature_not_supported` ("tool type
 /// 'web_search' is not supported by this gateway phase"), so for those we write
 /// this per the vendors' official Codex docs. Also doubles as cc-switch's
 /// ownership sentinel: we only ever remove a `web_search` key whose value equals
 /// this string, never a user's own setting.
-pub(crate) const CODEX_WEB_SEARCH_DISABLED: &str = "disabled";
+pub const CODEX_WEB_SEARCH_DISABLED: &str = "disabled";
 
 /// Native `/responses` gateways whose first-party models do NOT support the Codex
 /// `web_search` hosted tool. A BLACKLIST (default-on): everything not listed keeps
@@ -93,7 +93,7 @@ const CODEX_WEB_SEARCH_REJECT_MODEL_PREFIXES: &[&str] =
 /// Host component of a base URL (or a bare host), lowercased, without scheme,
 /// userinfo, port, path or query. Tolerates the loose forms users paste into
 /// the provider form (`example.com`, `https://user@Example.com:8443/v1`).
-pub(crate) fn codex_url_host(url_or_host: &str) -> String {
+pub fn codex_url_host(url_or_host: &str) -> String {
     let trimmed = url_or_host.trim();
     let rest = trimmed
         .split_once("://")
@@ -113,7 +113,7 @@ pub(crate) fn codex_url_host(url_or_host: &str) -> String {
 /// substring `contains`: a 4-char entry like `z.ai` would otherwise also match
 /// `api.xyz.ai` / `viz.ai` and silently push an unrelated provider onto a
 /// vendor-specific code path.
-pub(crate) fn codex_url_host_matches_any(url_or_host: &str, hosts: &[&str]) -> bool {
+pub fn codex_url_host_matches_any(url_or_host: &str, hosts: &[&str]) -> bool {
     let host = codex_url_host(url_or_host);
     if host.is_empty() {
         return false;
@@ -137,7 +137,7 @@ fn codex_top_level_model(config_text: &str) -> Option<String> {
 /// `web_search` hosted tool — by `base_url` host OR by the active model's brand
 /// (so an aggregator fronting a reject vendor's model is caught too). Driven by
 /// the live `config.toml`, so it applies to existing providers without a re-save.
-pub(crate) fn codex_native_gateway_rejects_web_search(config_text: &str) -> bool {
+pub fn codex_native_gateway_rejects_web_search(config_text: &str) -> bool {
     if let Some(base_url) = extract_codex_base_url(config_text) {
         if codex_url_host_matches_any(&base_url, CODEX_WEB_SEARCH_REJECT_HOSTS) {
             return true;
@@ -148,7 +148,7 @@ pub(crate) fn codex_native_gateway_rejects_web_search(config_text: &str) -> bool
 
 /// Whether `model`'s brand is on the reject list. Strips any aggregator
 /// "vendor/" prefix first, e.g. "MiniMaxAI/MiniMax-M3" or "qwen/qwen3-coder-plus".
-pub(crate) fn codex_model_rejects_web_search(model: &str) -> bool {
+pub fn codex_model_rejects_web_search(model: &str) -> bool {
     let model = model.trim().to_ascii_lowercase();
     let model = model.rsplit('/').next().unwrap_or(model.as_str());
     CODEX_WEB_SEARCH_REJECT_MODEL_PREFIXES
@@ -171,24 +171,24 @@ struct CodexManagedOAuthLiveAuthMarker {
     user_identity: Option<String>,
 }
 
-pub(crate) struct CodexManagedLiveRefresh {
-    pub(crate) refresh_token: String,
-    pub(crate) id_token: Option<String>,
-    pub(crate) last_refresh_ms: Option<i64>,
-    pub(crate) chatgpt_account_id: String,
+pub struct CodexManagedLiveRefresh {
+    pub refresh_token: String,
+    pub id_token: Option<String>,
+    pub last_refresh_ms: Option<i64>,
+    pub chatgpt_account_id: String,
 }
 
 /// 测试用：Codex live 的四个文件（auth、config、模型目录、托管账号标记）的字节，用来断言
 /// 「被拒的操作没有改动任何文件」。
 #[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CodexLiveStateSnapshot {
+pub struct CodexLiveStateSnapshot {
     files: Vec<(PathBuf, Option<Vec<u8>>)>,
 }
 
 #[cfg(test)]
 impl CodexLiveStateSnapshot {
-    pub(crate) fn capture() -> Result<Self, AppError> {
+    pub fn capture() -> Result<Self, AppError> {
         let paths = [
             get_codex_auth_path(),
             get_codex_config_path(),
@@ -280,12 +280,12 @@ pub fn get_codex_auth_path() -> PathBuf {
     get_codex_config_dir().join("auth.json")
 }
 
-pub(crate) fn get_codex_managed_oauth_live_auth_marker_path() -> PathBuf {
+pub fn get_codex_managed_oauth_live_auth_marker_path() -> PathBuf {
     crate::config::get_app_config_dir().join(CODEX_MANAGED_OAUTH_LIVE_AUTH_MARKER_FILENAME)
 }
 
 #[cfg(test)]
-pub(crate) fn codex_managed_oauth_live_auth_marker_exists() -> bool {
+pub fn codex_managed_oauth_live_auth_marker_exists() -> bool {
     get_codex_managed_oauth_live_auth_marker_path().exists()
 }
 
@@ -344,16 +344,16 @@ fn extract_codex_managed_oauth_account_id(auth: &Value) -> Option<String> {
 }
 
 /// 从原生 auth.json 的 id_token 提取跨刷新稳定的用户身份。
-pub(crate) fn extract_codex_auth_user_identity(auth: &Value) -> Option<String> {
+pub fn extract_codex_auth_user_identity(auth: &Value) -> Option<String> {
     let id_token = auth.pointer("/tokens/id_token")?.as_str()?;
     extract_codex_id_token_user_identity(id_token)
 }
 
-pub(crate) fn extract_codex_id_token_user_identity(id_token: &str) -> Option<String> {
+pub fn extract_codex_id_token_user_identity(id_token: &str) -> Option<String> {
     extract_codex_id_token_subject(id_token).map(|subject| format!("sub:{subject}"))
 }
 
-pub(crate) fn extract_codex_id_token_subject(id_token: &str) -> Option<String> {
+pub fn extract_codex_id_token_subject(id_token: &str) -> Option<String> {
     let mut segments = id_token.split('.');
     let header = segments.next()?;
     let payload = segments.next()?;
@@ -385,7 +385,7 @@ pub(crate) fn extract_codex_id_token_subject(id_token: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-pub(crate) fn test_codex_id_token(subject: &str) -> String {
+pub fn test_codex_id_token(subject: &str) -> String {
     let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"none"}"#);
     let payload = URL_SAFE_NO_PAD.encode(json!({ "sub": subject }).to_string());
     format!("{header}.{payload}.")
@@ -425,7 +425,7 @@ pub fn codex_managed_oauth_auth_value(
 
 /// 托管账号登录标记的内容（和 [`record_codex_managed_oauth_live_auth`] 写的一样），给切换
 /// 操作放进同一次提交用。`auth` 不是托管账号的登录形状时返回 `None`。
-pub(crate) fn codex_managed_oauth_marker_bytes(
+pub fn codex_managed_oauth_marker_bytes(
     auth: &Value,
     managed_account_id: &str,
 ) -> Result<Option<Vec<u8>>, AppError> {
@@ -512,7 +512,7 @@ fn migrate_legacy_codex_managed_oauth_live_auth_marker(
 /// Before removing a manager record, make any legacy live-auth ownership
 /// provable with the manager's persisted user identity. Failure is surfaced so
 /// callers keep the manager record and marker instead of orphaning auth.json.
-pub(crate) fn prepare_codex_live_auth_for_managed_account_removal(
+pub fn prepare_codex_live_auth_for_managed_account_removal(
     managed_account_id: &str,
     managed_id_token: Option<&str>,
 ) -> Result<(), AppError> {
@@ -575,7 +575,7 @@ pub fn codex_auth_matches_recorded_managed_oauth(
 /// Verify that a proxied Codex request still uses the exact live access token
 /// owned by the selected local account. Workspace IDs alone are not sufficient:
 /// different Team users can share one value.
-pub(crate) fn codex_live_auth_matches_managed_request(
+pub fn codex_live_auth_matches_managed_request(
     account_id: &str,
     request_access_token: &str,
 ) -> Result<bool, AppError> {
@@ -595,7 +595,7 @@ pub(crate) fn codex_live_auth_matches_managed_request(
     Ok(live_access_token == Some(request_access_token.trim()))
 }
 
-pub(crate) fn clear_codex_managed_oauth_live_auth_marker_for_account(
+pub fn clear_codex_managed_oauth_live_auth_marker_for_account(
     account_id: &str,
 ) -> Result<(), AppError> {
     let marker_path = get_codex_managed_oauth_live_auth_marker_path();
@@ -748,7 +748,7 @@ pub fn read_codex_live_auth_refresh_for_account(
 /// v1/v2 markers only identify a workspace, so the manager's persisted
 /// id_token must prove the live user's identity before the marker can become
 /// authoritative again.
-pub(crate) fn read_codex_live_auth_refresh_for_managed_account(
+pub fn read_codex_live_auth_refresh_for_managed_account(
     account_id: &str,
     managed_id_token: Option<&str>,
 ) -> Result<Option<CodexManagedLiveRefresh>, AppError> {
@@ -900,13 +900,13 @@ pub fn read_codex_config_text() -> Result<String, AppError> {
 /// `config.toml` 是不是用 `[features] multi_agent_v2` 强制了新版子 agent 工具：写成 `true`，
 /// 或写成带 `enabled = true` 的表（codex-rs `features` 的 `FeatureToml`）。Codex 先看它再看
 /// 模型目录，打开了它，目录里写的 [`CODEX_CLASSIC_SUBAGENTS`] 就不生效。解析不了时按没有。
-pub(crate) fn codex_config_forces_multi_agent_v2(text: &str) -> bool {
+pub fn codex_config_forces_multi_agent_v2(text: &str) -> bool {
     codex_config_feature_enabled(text, "multi_agent_v2")
 }
 
 /// `config.toml` 的 `[features] <key>` 是否开启：写成 `true`，或写成带 `enabled = true`
 /// 的表（codex-rs `features` 的 `FeatureToml`）。解析不了时按没开。
-pub(crate) fn codex_config_feature_enabled(text: &str, key: &str) -> bool {
+pub fn codex_config_feature_enabled(text: &str, key: &str) -> bool {
     let Ok(doc) = text.parse::<DocumentMut>() else {
         return false;
     };
@@ -943,7 +943,7 @@ fn active_codex_model_provider_id(doc: &DocumentMut) -> Option<String> {
         .map(str::to_string)
 }
 
-pub(crate) fn is_custom_codex_model_provider_id(id: &str) -> bool {
+pub fn is_custom_codex_model_provider_id(id: &str) -> bool {
     // Exact match, mirroring upstream: both the built-in provider lookup and
     // validate_reserved_model_provider_ids are case-sensitive, so `OpenAI`
     // etc. are legitimate custom ids whose tables must receive the token.
@@ -1120,7 +1120,7 @@ pub fn codex_auth_has_openai_account_material(auth: &Value) -> bool {
 /// Where Codex keeps CLI auth, per the top-level `cli_auth_credentials_store`
 /// key (`codex-rs/config/src/types.rs`, serde lowercase; unset = `file`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CodexAuthStoreMode {
+pub enum CodexAuthStoreMode {
     /// `auth.json` is the only store — the file decides login state.
     File,
     /// Keyring only; `auth.json` is never read and is deleted after a save.
@@ -1133,7 +1133,7 @@ pub(crate) enum CodexAuthStoreMode {
     Unknown,
 }
 
-pub(crate) fn codex_config_auth_store_mode(config_text: &str) -> CodexAuthStoreMode {
+pub fn codex_config_auth_store_mode(config_text: &str) -> CodexAuthStoreMode {
     if !config_text.contains("cli_auth_credentials_store") {
         return CodexAuthStoreMode::File;
     }
@@ -1813,7 +1813,7 @@ fn codex_bundled_models_command(candidate: &Path) -> Command {
 
 /// 没跑出 Codex 自带的模型列表。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum CodexBundledModelsError {
+pub enum CodexBundledModelsError {
     /// 每个候选都启动不了：本机找不到 Codex 命令行。
     NoCli,
     /// 找到了命令行，但没跑出能用的列表（退出码非零、输出不是 JSON、列表为空）。带最后
@@ -1832,7 +1832,7 @@ impl std::fmt::Display for CodexBundledModelsError {
 
 /// 本机 Codex 自带的完整模型列表（`codex debug models --bundled`）。和账号无关，版本和
 /// 那个二进制一致。不能用不带 `--bundled` 的版本：那会读到 CC Switch 自己写的目录。
-pub(crate) fn load_codex_bundled_models() -> Result<Vec<Value>, CodexBundledModelsError> {
+pub fn load_codex_bundled_models() -> Result<Vec<Value>, CodexBundledModelsError> {
     first_bundled_catalog(codex_cli_candidates(), |catalog| {
         catalog
             .get("models")
@@ -1902,7 +1902,7 @@ fn first_bundled_catalog<T>(
 /// 官方原生行：逐行补 Codex 解析器必需的字段（不覆盖已有值）、补旧的指令字段，再校验。
 /// 原生字段一律保留（不套 profile、`comp_hash` 和工具定义不动）。有一行不合格就整份作废
 /// （`None`），不只丢那一行：那样会悄悄少一个官方模型。
-pub(crate) fn normalize_codex_native_rows(rows: Vec<Value>) -> Option<Vec<Value>> {
+pub fn normalize_codex_native_rows(rows: Vec<Value>) -> Option<Vec<Value>> {
     if rows.is_empty() {
         return None;
     }
@@ -2205,7 +2205,7 @@ fn codex_card_auto_review_model(settings: &Value) -> Option<&str> {
 /// 不写时 Codex 用供应商默认的 `codex-auto-review`，目录里没有它（第三方的目录）就由主模型
 /// 自己审批。`model` 不在目录里时不写：Codex 照样会拿这个名字发请求，上游多半不认。
 /// 返回是否写了。
-pub(crate) fn apply_codex_auto_review_model(catalog: &mut Value, model: &str) -> bool {
+pub fn apply_codex_auto_review_model(catalog: &mut Value, model: &str) -> bool {
     let Some(entries) = catalog.get_mut("models").and_then(Value::as_array_mut) else {
         return false;
     };
@@ -2442,7 +2442,7 @@ fn codex_catalog_from_specs_for_row(
 
 /// 一个供应商的模型目录：没有配置模型时为 `None`，不生成、也不指向目录文件。
 /// `web_search` 由 [`codex_disables_web_search`] 另算（切走时要按上一家算，不必生成目录）。
-pub(crate) struct CodexCatalogPlan {
+pub struct CodexCatalogPlan {
     pub catalog: Option<Value>,
 }
 
@@ -2450,7 +2450,7 @@ pub(crate) struct CodexCatalogPlan {
 /// 提供这个托管工具，两者一律关；原生
 /// Responses 网关按拒收名单判定（MiMo、LongCat、MiniMax 等按域名或模型品牌，Qwen3-Coder
 /// 按模型）；其余保持 Codex 的默认。只在有模型目录时才看名单。
-pub(crate) fn codex_disables_web_search(
+pub fn codex_disables_web_search(
     settings: &Value,
     config_text: &str,
     profile: CodexCatalogToolProfile,
@@ -2467,7 +2467,7 @@ pub(crate) fn codex_disables_web_search(
 
 /// 在内存里算出模型目录，不写盘。`config_text` 是归一化后的配置（选路、路由表地址、
 /// 模型名、窗口），见 `CodexProjection::catalog_input_text`。
-pub(crate) fn plan_codex_model_catalog(
+pub fn plan_codex_model_catalog(
     settings: &Value,
     config_text: &str,
     profile: CodexCatalogToolProfile,
@@ -2479,7 +2479,7 @@ pub(crate) fn plan_codex_model_catalog(
 
 /// 只含一个模型的目录（GPT 模型照样镜像官方条目）：行里没配目录、又得盖掉别家留下的目录
 /// 指针时用（`-c` 删不掉键）。
-pub(crate) fn codex_single_model_catalog(
+pub fn codex_single_model_catalog(
     model: &str,
     config_text: &str,
     profile: CodexCatalogToolProfile,
@@ -2509,7 +2509,7 @@ fn codex_published_specs(settings: &Value, config_text: &str) -> Vec<CodexCatalo
 
 /// Stack 模型用：一家第三方供应商发布的模型名（按目录顺序）。`config_text` 是行里的
 /// `config`（只读顶层 `model`）。
-pub(crate) fn codex_published_models(settings: &Value, config_text: &str) -> Vec<String> {
+pub fn codex_published_models(settings: &Value, config_text: &str) -> Vec<String> {
     codex_published_specs(settings, config_text)
         .into_iter()
         .map(|spec| spec.model)
@@ -2517,7 +2517,7 @@ pub(crate) fn codex_published_models(settings: &Value, config_text: &str) -> Vec
 }
 
 /// 合并目录里的一家第三方供应商。
-pub(crate) struct CodexCatalogRow<'a> {
+pub struct CodexCatalogRow<'a> {
     pub settings: &'a Value,
     /// 这一家归一化后的配置（`CodexProjection::catalog_input_text`）：地址、模型名、窗口。
     pub config_text: &'a str,
@@ -2526,14 +2526,14 @@ pub(crate) struct CodexCatalogRow<'a> {
 }
 
 /// 合并目录里的一家 Stack 供应商。
-pub(crate) struct CodexStackCatalogMember<'a> {
+pub struct CodexStackCatalogMember<'a> {
     pub key: &'a str,
     pub provider_name: &'a str,
     pub row: CodexCatalogRow<'a>,
 }
 
 /// 合并目录里路由那家的行。
-pub(crate) enum CodexStackRoute<'a> {
+pub enum CodexStackRoute<'a> {
     /// 第三方路由：按它的行生成。
     ThirdParty(CodexCatalogRow<'a>),
     /// 官方路由：官方模型列表的原生行（已补齐、已校验），原样保留；`config_text` 是
@@ -2579,7 +2579,7 @@ fn join_stack_history(obj: &mut serde_json::Map<String, Value>) {
 /// `config.toml`（Codex 会拿它覆盖所有行），改由各家写进自己的行，见 [`sink_row_windows`]。
 ///
 /// `classic_subagents`：每一行都改用经典子 agent 工具，见 [`CODEX_CLASSIC_SUBAGENTS`]。
-pub(crate) fn plan_codex_stack_catalog(
+pub fn plan_codex_stack_catalog(
     route: CodexStackRoute<'_>,
     stack: &[CodexStackCatalogMember<'_>],
     classic_subagents: bool,
@@ -2680,7 +2680,7 @@ const CODEX_CLASSIC_SUBAGENTS: &str = "v1";
 
 /// 一家第三方供应商在合并目录里的行（`comp_hash` 保持模板的值，由调用方经
 /// [`join_stack_history`] 统一改写）。
-pub(crate) fn codex_stack_third_party_rows(
+pub fn codex_stack_third_party_rows(
     row: &CodexCatalogRow<'_>,
 ) -> Result<Vec<Value>, AppError> {
     let specs = codex_published_specs(row.settings, row.config_text);
@@ -2794,7 +2794,7 @@ pub fn read_codex_model_catalog_simplified_from_live() -> Result<Option<Value>, 
 }
 
 /// 安全地读取文件为字符串，并在超过字节上限时返回错误。
-pub(crate) fn read_limited_string(path: &Path, max_bytes: u64) -> Result<String, AppError> {
+pub fn read_limited_string(path: &Path, max_bytes: u64) -> Result<String, AppError> {
     let metadata = fs::metadata(path).map_err(|error| AppError::io(path, error))?;
     if metadata.len() > max_bytes {
         return Err(AppError::Config(format!(
@@ -2807,7 +2807,7 @@ pub(crate) fn read_limited_string(path: &Path, max_bytes: u64) -> Result<String,
 }
 
 /// Read the cc-switch Codex model catalog file with a size cap.
-pub(crate) fn read_codex_model_catalog_text(path: &Path) -> Result<String, AppError> {
+pub fn read_codex_model_catalog_text(path: &Path) -> Result<String, AppError> {
     read_limited_string(path, MAX_CODEX_CATALOG_BYTES)
 }
 
@@ -2815,7 +2815,7 @@ pub(crate) fn read_codex_model_catalog_text(path: &Path) -> Result<String, AppEr
 /// catalog file (returns `None` if `model_catalog_json` is absent or points at
 /// a file we don't own). Relative paths are resolved under `base_dir`;
 /// absolute paths must still be inside `base_dir`.
-pub(crate) fn resolve_cc_switch_catalog_path(
+pub fn resolve_cc_switch_catalog_path(
     config_text: &str,
     base_dir: &Path,
 ) -> Option<PathBuf> {

@@ -20,7 +20,7 @@ pub fn set_cli_usage_recording(enabled: bool) {
     CLI_USAGE_RECORDING.store(enabled, Ordering::Relaxed);
 }
 
-pub(crate) fn cli_usage_recording_enabled() -> bool {
+pub fn cli_usage_recording_enabled() -> bool {
     CLI_USAGE_RECORDING.load(Ordering::Relaxed)
 }
 use rust_decimal::Decimal;
@@ -29,7 +29,7 @@ use sha2::{Digest, Sha256};
 /// `proxy_request_logs.error_message` 的字符数上限。上游错误体（中转站整页
 /// HTML、长 JSON）原样入库时，高频报错能把库撑到数 GB（#6706）。按字符而非
 /// 字节截断，不会切坏 UTF-8；取值与 Pi 会话导入的 errorMessage 上限一致。
-pub(crate) const MAX_ERROR_MESSAGE_CHARS: usize = 4096;
+pub const MAX_ERROR_MESSAGE_CHARS: usize = 4096;
 
 /// 保留错误信息的前 `MAX_ERROR_MESSAGE_CHARS` 个字符：状态行、错误码和
 /// 错误描述都在开头，定位问题足够。

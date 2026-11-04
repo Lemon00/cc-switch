@@ -86,7 +86,7 @@ fn parse_usage(stdout: &[u8]) -> Option<Vec<QuotaTier>> {
 
 /// 一组额度桶（id、剩余比例、重置时间）→ 排好序的档；一档都认不出时返回 `None`。
 /// agy 的 `/usage` 和直接查 Google 额度接口（`agy_account::quota`）返回的是同一组桶。
-pub(crate) fn collect_tiers(
+pub fn collect_tiers(
     buckets: impl IntoIterator<Item = (Option<String>, Option<f64>, Option<String>)>,
 ) -> Option<Vec<QuotaTier>> {
     let mut tiers: Vec<QuotaTier> = buckets
@@ -112,7 +112,7 @@ pub(crate) fn collect_tiers(
 
 /// 由 `subscription::get_subscription_quota("agy")` 分发。没装 agy 时按「没有凭据」处理（卡片不显示）；
 /// 超时、没登录或输出看不懂都写成查询失败，错误里不带 agy 的原始输出。
-pub(crate) async fn get_agy_subscription_quota() -> Result<SubscriptionQuota, String> {
+pub async fn get_agy_subscription_quota() -> Result<SubscriptionQuota, String> {
     let Some(bin) = tokio::task::spawn_blocking(crate::agy_config::real_agy_bin)
         .await
         .map_err(|e| e.to_string())?

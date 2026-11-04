@@ -11,26 +11,26 @@
 //! - `models`: API 数据模型
 //! - `transform`: 格式转换
 
-mod adapter;
-mod auth;
-mod claude;
-mod claude_reasoning;
-mod codex;
-pub(crate) mod codex_chat_common;
+pub mod adapter;
+pub mod auth;
+pub mod claude;
+pub mod claude_reasoning;
+pub mod codex;
+pub mod codex_chat_common;
 pub mod codex_chat_history;
-mod codex_chat_tool_history;
-pub(crate) mod codex_compaction;
+pub mod codex_chat_tool_history;
+pub mod codex_compaction;
 pub mod codex_oauth_auth;
-pub(crate) mod codex_responses_sse;
+pub mod codex_responses_sse;
 pub mod copilot_auth;
 pub mod copilot_model_map;
-mod gemini;
-pub(crate) mod gemini_schema;
+pub mod gemini;
+pub mod gemini_schema;
 pub mod gemini_shadow;
-pub(crate) mod inline_think;
+pub mod inline_think;
 pub mod models;
-pub(crate) mod reasoning_bridge;
-pub(crate) mod responses_late_arguments;
+pub mod reasoning_bridge;
+pub mod responses_late_arguments;
 pub mod streaming;
 pub mod streaming_codex_anthropic;
 pub mod streaming_codex_chat;

@@ -1059,7 +1059,7 @@ fn settings_store() -> &'static RwLock<AppSettings> {
     SETTINGS_STORE.get_or_init(|| RwLock::new(AppSettings::load_from_file()))
 }
 
-pub(crate) fn resolve_override_path(raw: &str) -> PathBuf {
+pub fn resolve_override_path(raw: &str) -> PathBuf {
     let join_home = |home: PathBuf, suffix: &str| {
         suffix
             .split(['/', '\\'])

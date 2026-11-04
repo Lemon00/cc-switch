@@ -78,7 +78,7 @@ const XAI_SUPPORTED_TOOL_TYPES: &[&str] = &[
 /// body in place. Returns whether anything changed. Deterministic and
 /// idempotent: running it twice on the same body changes nothing the second
 /// time.
-pub(crate) fn sanitize_xai_responses_request(body: &mut Value) -> bool {
+pub fn sanitize_xai_responses_request(body: &mut Value) -> bool {
     if !body.is_object() {
         return false;
     }
@@ -669,7 +669,7 @@ fn normalize_xai_function_tool_parameter_schemas(body: &mut Value) -> bool {
 /// `forwarder` stays a thin `if provider_needs_responses_namespace_flatten`
 /// call so `git rebase upstream/main` conflicts here or at that single site,
 /// not across inlined sanitizers. Logging stays here for the same reason.
-pub(crate) fn apply_xai_native_responses_request_compat(
+pub fn apply_xai_native_responses_request_compat(
     body: &mut Value,
     provider_id: &str,
     upstream_model: Option<&str>,
@@ -720,7 +720,7 @@ const MESSAGE_CONTENT_PART_TYPES: &[&str] = &["input_text", "input_image", "inpu
 /// Items with a `call_id` are left alone even if their call is not in `input`,
 /// because a `previous_response_id` continuation legitimately pairs them with
 /// a call from the stored response.
-pub(crate) fn rewrite_xai_call_id_less_tool_outputs(body: &mut Value) -> bool {
+pub fn rewrite_xai_call_id_less_tool_outputs(body: &mut Value) -> bool {
     let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) else {
         return false;
     };
@@ -783,7 +783,7 @@ fn orphan_tool_output_content(output: Option<&Value>) -> Vec<Value> {
 /// [`sanitize_xai_responses_request`]: it is a structural rewrite, not a field
 /// deletion. Routed Grok sessions currently put plaintext task bodies in
 /// `encrypted_content` parts; flatten those to `input_text`.
-pub(crate) fn rewrite_xai_agent_message_input_items(body: &mut Value) -> bool {
+pub fn rewrite_xai_agent_message_input_items(body: &mut Value) -> bool {
     rewrite_agent_message_value(body)
 }
 
@@ -818,7 +818,7 @@ fn rewrite_agent_message_value(value: &mut Value) -> bool {
 /// Returns `Some((from, to))` when the field changed. Missing or empty
 /// `model` is filled with `upstream_model`. An empty upstream model is a
 /// no-op so we never invent a name.
-pub(crate) fn rewrite_xai_unknown_request_model(
+pub fn rewrite_xai_unknown_request_model(
     body: &mut Value,
     upstream_model: &str,
     allowed_models: &HashSet<String>,
@@ -847,7 +847,7 @@ pub(crate) fn rewrite_xai_unknown_request_model(
 /// Collect catalog model identifiers from a Codex provider's settings.
 /// Grok catalogs store the live id on `slug`; other providers may use
 /// `model` or `id`. All three are accepted so a catalog hit is not missed.
-pub(crate) fn collect_xai_catalog_model_ids(settings: &Value) -> HashSet<String> {
+pub fn collect_xai_catalog_model_ids(settings: &Value) -> HashSet<String> {
     let mut ids = HashSet::new();
     let Some(models) = settings
         .get("modelCatalog")
@@ -959,7 +959,7 @@ fn input_text_part(text: &str) -> Value {
 /// they are not complete JSON. Parse/rewrite failures pass the original bytes
 /// through so Codex still surfaces the error — never replace arguments with
 /// `{}` or otherwise swallow the failure.
-pub(crate) fn normalize_xai_function_call_integer_arguments(value: &mut Value) -> bool {
+pub fn normalize_xai_function_call_integer_arguments(value: &mut Value) -> bool {
     normalize_xai_function_call_integer_arguments_value(value)
 }
 
@@ -1093,7 +1093,7 @@ fn whole_float_to_json_int(number: &Number) -> Option<Number> {
 /// Wrap a native Responses SSE byte stream: restore flattened namespace names
 /// and rewrite completed function-call argument JSON. Delta fragments that are
 /// not complete JSON pass through unchanged.
-pub(crate) fn create_xai_native_responses_sse_stream<E>(
+pub fn create_xai_native_responses_sse_stream<E>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
     restore_map: HashMap<String, NamespacedName>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send

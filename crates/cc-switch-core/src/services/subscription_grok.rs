@@ -567,7 +567,7 @@ fn tier_name_for_reset(resets_at: Option<i64>, now_secs: i64) -> &'static str {
 /// - `"xai_oauth"` + "re-login via cc-switch"（cc-switch 自管 xAI OAuth 路径，
 ///   见 `commands::xai_oauth::get_xai_oauth_quota`；两者是同一个 OAuth client，
 ///   token 对 grok.com 账单端点等效）
-pub(crate) async fn query_grok_quota(
+pub async fn query_grok_quota(
     access_token: &str,
     tool_label: &str,
     relogin_hint: &str,
@@ -699,7 +699,7 @@ pub(crate) async fn query_grok_quota(
 }
 
 /// grokbuild 的订阅额度入口（由 `subscription::get_subscription_quota` 分发）
-pub(crate) async fn get_grok_subscription_quota() -> Result<SubscriptionQuota, String> {
+pub async fn get_grok_subscription_quota() -> Result<SubscriptionQuota, String> {
     let (token, status, message) = read_grok_credentials();
 
     match status {

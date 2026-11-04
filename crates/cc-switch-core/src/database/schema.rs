@@ -15,13 +15,13 @@ struct LegacySkillMigrationRow {
 
 impl Database {
     /// 创建所有数据库表
-    pub(crate) fn create_tables(&self) -> Result<(), AppError> {
+    pub fn create_tables(&self) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         Self::create_tables_on_conn(&conn)
     }
 
     /// 在指定连接上创建表（供迁移和测试使用）
-    pub(crate) fn create_tables_on_conn(conn: &Connection) -> Result<(), AppError> {
+    pub fn create_tables_on_conn(conn: &Connection) -> Result<(), AppError> {
         // 1. Providers 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS providers (
@@ -448,13 +448,13 @@ impl Database {
     }
 
     /// 应用 Schema 迁移
-    pub(crate) fn apply_schema_migrations(&self) -> Result<(), AppError> {
+    pub fn apply_schema_migrations(&self) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         Self::apply_schema_migrations_on_conn(&conn)
     }
 
     /// 在指定连接上应用 Schema 迁移
-    pub(crate) fn apply_schema_migrations_on_conn(conn: &Connection) -> Result<(), AppError> {
+    pub fn apply_schema_migrations_on_conn(conn: &Connection) -> Result<(), AppError> {
         conn.execute("SAVEPOINT schema_migration;", [])
             .map_err(|e| AppError::Database(format!("开启迁移 savepoint 失败: {e}")))?;
 
@@ -3781,7 +3781,7 @@ impl Database {
         Self::ensure_model_pricing_seeded_on_conn(&conn)
     }
 
-    pub(crate) fn ensure_model_pricing_seeded_on_conn(conn: &Connection) -> Result<(), AppError> {
+    pub fn ensure_model_pricing_seeded_on_conn(conn: &Connection) -> Result<(), AppError> {
         // 每次启动都执行 INSERT OR IGNORE，增量追加新模型；仅修复仍等于旧内置值的定价。
         Self::seed_model_pricing(conn)?;
         Self::repair_current_model_pricing(conn)
@@ -3789,12 +3789,12 @@ impl Database {
 
     // --- 辅助方法 ---
 
-    pub(crate) fn get_user_version(conn: &Connection) -> Result<i32, AppError> {
+    pub fn get_user_version(conn: &Connection) -> Result<i32, AppError> {
         conn.query_row("PRAGMA user_version;", [], |row| row.get(0))
             .map_err(|e| AppError::Database(format!("读取 user_version 失败: {e}")))
     }
 
-    pub(crate) fn set_user_version(conn: &Connection, version: i32) -> Result<(), AppError> {
+    pub fn set_user_version(conn: &Connection, version: i32) -> Result<(), AppError> {
         if version < 0 {
             return Err(AppError::Database("user_version 不能为负数".to_string()));
         }
@@ -3864,7 +3864,7 @@ impl Database {
         Ok(())
     }
 
-    pub(crate) fn table_exists(conn: &Connection, table: &str) -> Result<bool, AppError> {
+    pub fn table_exists(conn: &Connection, table: &str) -> Result<bool, AppError> {
         Self::validate_identifier(table, "表名")?;
 
         let mut stmt = conn
@@ -3884,7 +3884,7 @@ impl Database {
         Ok(false)
     }
 
-    pub(crate) fn has_column(
+    pub fn has_column(
         conn: &Connection,
         table: &str,
         column: &str,

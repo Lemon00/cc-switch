@@ -16,7 +16,7 @@ const PROVIDER_ID: &str = "opencode";
 ///
 /// Respects `XDG_DATA_HOME` on all platforms; falls back to
 /// `~/.local/share/opencode/`.
-pub(crate) fn get_opencode_base_dir() -> PathBuf {
+pub fn get_opencode_base_dir() -> PathBuf {
     if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
         if !xdg.is_empty() {
             return PathBuf::from(xdg).join("opencode");
@@ -28,7 +28,7 @@ pub(crate) fn get_opencode_base_dir() -> PathBuf {
 }
 
 /// Return the OpenCode JSON storage directory (legacy flat-file layout).
-pub(crate) fn get_opencode_data_dir() -> PathBuf {
+pub fn get_opencode_data_dir() -> PathBuf {
     get_opencode_base_dir().join("storage")
 }
 
@@ -130,7 +130,7 @@ fn scan_sessions_json() -> Vec<SessionMeta> {
 /// Uses `rfind(":ses_")` to split the path from the session ID because the
 /// db path itself may contain colons (e.g. `C:\Users\...` on Windows).
 /// This relies on the OpenCode convention that session IDs start with `ses_`.
-pub(crate) fn parse_sqlite_source(source: &str) -> Option<(PathBuf, String)> {
+pub fn parse_sqlite_source(source: &str) -> Option<(PathBuf, String)> {
     let rest = source.strip_prefix("sqlite:")?;
     let sep = rest.rfind(":ses_")?;
     let db_path = PathBuf::from(&rest[..sep]);

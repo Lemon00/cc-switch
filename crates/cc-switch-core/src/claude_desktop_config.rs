@@ -710,7 +710,7 @@ pub fn proxy_model_routes(provider: &Provider) -> Result<Vec<ResolvedModelRoute>
 }
 
 /// 聚合成员只能发布用户配置过的模型，不能把路由引导用的默认角色当成上游目录。
-pub(crate) fn configured_proxy_model_routes(
+pub fn configured_proxy_model_routes(
     provider: &Provider,
 ) -> Result<Vec<ResolvedModelRoute>, AppError> {
     let routes = provider

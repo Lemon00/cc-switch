@@ -30,7 +30,7 @@ fn is_single_supported(coding: &str) -> bool {
 /// 解压失败原因。把「输出超预算」与「数据损坏」区分开：前者是安全拒绝信号，
 /// 响应侧调用方应据此拒绝响应（502），而不是当成普通解压失败静默回退。
 #[derive(Debug)]
-pub(crate) enum DecompressError {
+pub enum DecompressError {
     /// 底层解码失败（数据损坏 / 格式不符）。
     Io(std::io::Error),
     /// 解压输出超过 `limit` 字节即中止；此时真实输出大小未知，只会大于 limit。
@@ -130,7 +130,7 @@ fn decompress_single(
 /// RFC 9110 §8.4：codings 按**应用顺序**列出，故解压须**反向**（最后应用的先解）。
 /// 返回 `Ok(None)` 表示存在不受支持的编码、原样透传——此时调用方必须保留
 /// content-encoding 头，否则下游（诊断 / 客户端）会把压缩字节误当明文。
-pub(crate) fn decompress_body_with_limit(
+pub fn decompress_body_with_limit(
     content_encoding: &str,
     body: &[u8],
     max_output_bytes: usize,
@@ -160,7 +160,7 @@ pub(crate) fn decompress_body_with_limit(
 
 /// 无输出上限的 [`decompress_body_with_limit`] 版本，供请求侧等已有自身
 /// 体积约束的调用方使用。
-pub(crate) fn decompress_body(
+pub fn decompress_body(
     content_encoding: &str,
     body: &[u8],
 ) -> Result<Option<Vec<u8>>, std::io::Error> {
@@ -170,7 +170,7 @@ pub(crate) fn decompress_body(
 /// 该 content-encoding（含堆叠，如 `gzip, zstd`）是否全部可被解压。
 ///
 /// 请求侧用它做闸门：无法解压的压缩体不能透传给 JSON 解析，需直接拒绝。
-pub(crate) fn is_supported_content_encoding(content_encoding: &str) -> bool {
+pub fn is_supported_content_encoding(content_encoding: &str) -> bool {
     let codings = split_codings(content_encoding);
     !codings.is_empty() && codings.iter().all(|c| is_single_supported(c))
 }
@@ -179,7 +179,7 @@ pub(crate) fn is_supported_content_encoding(content_encoding: &str) -> bool {
 ///
 /// HTTP 允许重复 content-encoding 头，语义等同逗号拼接，故用 `get_all` 合并；
 /// 返回值可能含多个逗号分隔的 coding，交由 [`decompress_body`] 反向解码。
-pub(crate) fn get_content_encoding(headers: &HeaderMap) -> Option<String> {
+pub fn get_content_encoding(headers: &HeaderMap) -> Option<String> {
     let combined = headers
         .get_all("content-encoding")
         .iter()

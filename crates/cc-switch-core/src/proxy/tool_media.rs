@@ -9,16 +9,16 @@
 use crate::proxy::json_canonical::canonical_json_string;
 use serde_json::{json, Map, Value};
 
-pub(crate) const WHOLE_DATA_URL_MIN_BYTES: usize = 8 * 1024;
-pub(crate) const TOOL_RESULT_MEDIA_MOVED_MARKER: &str =
+pub const WHOLE_DATA_URL_MIN_BYTES: usize = 8 * 1024;
+pub const TOOL_RESULT_MEDIA_MOVED_MARKER: &str =
     "[cc-switch: tool result media moved to the following user message]";
-pub(crate) const TOOL_RESULT_MEDIA_ATTACHED_MARKER: &str =
+pub const TOOL_RESULT_MEDIA_ATTACHED_MARKER: &str =
     "[cc-switch: tool result media attached as native media]";
 const BASE64ISH_MIN_BYTES: usize = 16 * 1024;
 const MAX_MEDIA_TRAVERSAL_DEPTH: usize = 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ToolMediaScope {
+pub enum ToolMediaScope {
     /// Used by the existing image-capability sanitizer and its retry path.
     ImagesOnly,
     /// Used by Gemini Native `generateContent`, whose existing bridge only
@@ -37,9 +37,9 @@ enum ToolMediaKind {
     Audio,
 }
 
-pub(crate) struct ChatToolOutputMediaPlan {
-    pub(crate) tool_content: String,
-    pub(crate) media_parts: Vec<Value>,
+pub struct ChatToolOutputMediaPlan {
+    pub tool_content: String,
+    pub media_parts: Vec<Value>,
 }
 
 impl ToolMediaScope {
@@ -62,13 +62,13 @@ impl ToolMediaScope {
 /// Callers that re-attach the extracted media inside the same message must use
 /// [`plan_chat_tool_output_media_with_marker`] so the placeholder matches where
 /// the media actually lands.
-pub(crate) fn plan_chat_tool_output_media(output: Value) -> Option<ChatToolOutputMediaPlan> {
+pub fn plan_chat_tool_output_media(output: Value) -> Option<ChatToolOutputMediaPlan> {
     plan_chat_tool_output_media_with_marker(output, TOOL_RESULT_MEDIA_MOVED_MARKER)
 }
 
 /// Same extraction as [`plan_chat_tool_output_media`], with a caller-chosen
 /// placeholder text for the stripped media blocks.
-pub(crate) fn plan_chat_tool_output_media_with_marker(
+pub fn plan_chat_tool_output_media_with_marker(
     mut output: Value,
     replacement_marker: &str,
 ) -> Option<ChatToolOutputMediaPlan> {
@@ -101,7 +101,7 @@ pub(crate) fn plan_chat_tool_output_media_with_marker(
     })
 }
 
-pub(crate) fn queue_chat_tool_output_media(
+pub fn queue_chat_tool_output_media(
     pending_media: &mut Vec<Value>,
     call_id: &str,
     media_parts: Vec<Value>,
@@ -117,7 +117,7 @@ pub(crate) fn queue_chat_tool_output_media(
     pending_media.extend(media_parts);
 }
 
-pub(crate) fn flush_pending_chat_tool_media(
+pub fn flush_pending_chat_tool_media(
     messages: &mut Vec<Value>,
     pending_media: &mut Vec<Value>,
 ) {
@@ -133,7 +133,7 @@ pub(crate) fn flush_pending_chat_tool_media(
 
 /// Convert one recognized tool media block to a Chat user content part. This
 /// is the single shape-recognition entry point used by extraction.
-pub(crate) fn chat_media_part_from_tool_part(part: &Value, scope: ToolMediaScope) -> Option<Value> {
+pub fn chat_media_part_from_tool_part(part: &Value, scope: ToolMediaScope) -> Option<Value> {
     let kind = tool_media_kind(part)?;
     if !scope.allows(kind) {
         return None;
@@ -160,7 +160,7 @@ pub(crate) fn chat_media_part_from_tool_part(part: &Value, scope: ToolMediaScope
 
 /// Map a Responses `input_file` block to the Chat file payload. Kept here so
 /// top-level content and tool-output extraction share the exact same rules.
-pub(crate) fn chat_file_from_input_file(part: &Value) -> Option<Value> {
+pub fn chat_file_from_input_file(part: &Value) -> Option<Value> {
     let mut file = Map::new();
     let has_supported_file_ref = part.get("file_id").is_some() || part.get("file_data").is_some();
     if !has_supported_file_ref {
@@ -180,7 +180,7 @@ pub(crate) fn chat_file_from_input_file(part: &Value) -> Option<Value> {
 /// Only whole-string matches are accepted. Embedded data URLs in HTML/CSS/SVG
 /// source are deliberately left alone. Small values remain text as well, which
 /// preserves workflows that intentionally inspect tiny inline icons.
-pub(crate) fn whole_string_image_data_url(value: &str) -> Option<Value> {
+pub fn whole_string_image_data_url(value: &str) -> Option<Value> {
     let trimmed = value.trim();
     if trimmed.len() < WHOLE_DATA_URL_MIN_BYTES || !is_image_base64_data_url(trimmed) {
         return None;
@@ -196,7 +196,7 @@ pub(crate) fn whole_string_image_data_url(value: &str) -> Option<Value> {
 
 /// Read-only media detection using the same shape classifier and recursive
 /// boundaries as [`strip_media_from_tool_value`].
-pub(crate) fn tool_output_contains_media(value: &Value, scope: ToolMediaScope) -> bool {
+pub fn tool_output_contains_media(value: &Value, scope: ToolMediaScope) -> bool {
     tool_output_contains_media_at_depth(value, scope, 0)
 }
 
@@ -207,7 +207,7 @@ pub(crate) fn tool_output_contains_media(value: &Value, scope: ToolMediaScope) -
 /// an originally plain string stays a plain string. Parseable JSON strings are
 /// recursively transformed and canonicalized back into a string only when a
 /// replacement actually occurred.
-pub(crate) fn strip_media_from_tool_value(
+pub fn strip_media_from_tool_value(
     value: &mut Value,
     media_parts: &mut Vec<Value>,
     scope: ToolMediaScope,
@@ -229,7 +229,7 @@ pub(crate) fn strip_media_from_tool_value(
 /// outputs. Parseable JSON strings are clamped while still represented as a
 /// JSON tree, before they are canonicalized back into their original string
 /// container.
-pub(crate) fn strip_and_clamp_media_from_tool_value(
+pub fn strip_and_clamp_media_from_tool_value(
     value: &mut Value,
     media_parts: &mut Vec<Value>,
     scope: ToolMediaScope,
@@ -253,7 +253,7 @@ pub(crate) fn strip_and_clamp_media_from_tool_value(
 
 /// Remove residual data/base64 payloads only after a tool output has already
 /// been positively identified as media-bearing. Ordinary long text is kept.
-pub(crate) fn clamp_base64ish_strings(value: &mut Value) {
+pub fn clamp_base64ish_strings(value: &mut Value) {
     match value {
         Value::String(text) => {
             let trimmed = text.trim();

@@ -28,7 +28,7 @@ fn generation(path: &Path) -> Option<u64> {
 }
 
 /// Decompress complete independent frames; a partially appended final frame waits for the next scan.
-pub(crate) fn read_session(path: &Path) -> Result<Vec<u8>, String> {
+pub fn read_session(path: &Path) -> Result<Vec<u8>, String> {
     let metadata = fs::metadata(path).map_err(|error| error.to_string())?;
     if metadata.len() > MAX_BYTES {
         return Err("DeepSeek Harness session is too large".into());

@@ -12,7 +12,7 @@ use crate::error::AppError;
 use crate::services::s3::{self, S3Credentials};
 use crate::settings::{update_s3_sync_status, S3SyncSettings, WebDavSyncStatus};
 
-pub(crate) use super::sync_protocol::run_with_sync_lock;
+pub use super::sync_protocol::run_with_sync_lock;
 use super::sync_protocol::{
     apply_snapshot, build_local_snapshot, localized, persist_sync_success_best_effort, sha256_hex,
     validate_artifact_size_limit, validate_manifest_compat, verify_artifact, ArtifactMeta,
@@ -20,8 +20,8 @@ use super::sync_protocol::{
     PROTOCOL_VERSION, REMOTE_DB_SQL, REMOTE_MANIFEST, REMOTE_SKILLS_ZIP,
 };
 
-#[cfg(test)]
-pub(crate) fn sync_mutex() -> &'static tokio::sync::Mutex<()> {
+#[cfg(any(test, feature = "test-support"))]
+pub fn sync_mutex() -> &'static tokio::sync::Mutex<()> {
     super::sync_protocol::sync_mutex()
 }
 

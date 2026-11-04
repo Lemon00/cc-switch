@@ -93,7 +93,7 @@ fn non_empty(text: &str) -> Option<String> {
 }
 
 /// 非流式：把开头的 think 块拆成 (思考, 正文)。开头不是 think 块或块未闭合时返回 None。
-pub(crate) fn split_leading_think_block(text: &str) -> Option<(String, String)> {
+pub fn split_leading_think_block(text: &str) -> Option<(String, String)> {
     let body = strip_leading_think_open_tag(text)?;
     let (close_start, close_tag) = find_think_close_tag(body)?;
     let answer = body[close_start + close_tag.len()..].trim_start_matches(THINK_SEPARATORS);
@@ -110,7 +110,7 @@ pub(crate) fn split_leading_think_block(text: &str) -> Option<(String, String)> 
 /// 思考内容不能整段缓冲到闭合标签才下发：外层的静默超时量的是转换后的流，
 /// 长思考期间没有输出会被判成上游卡死。
 #[derive(Debug, Default)]
-pub(crate) struct InlineThinkSplitter {
+pub struct InlineThinkSplitter {
     mode: InlineThinkMode,
     /// Detecting: 流首前缀缓冲；Reasoning: 扣住的短尾。
     buffer: String,
@@ -121,7 +121,7 @@ pub(crate) struct InlineThinkSplitter {
 
 impl InlineThinkSplitter {
     /// 喂入一个 content 增量，返回 (thinking 增量, 正文增量)。
-    pub(crate) fn push(&mut self, delta: &str) -> (Option<String>, Option<String>) {
+    pub fn push(&mut self, delta: &str) -> (Option<String>, Option<String>) {
         match self.mode {
             InlineThinkMode::Text => (None, self.push_text(delta)),
             InlineThinkMode::Detecting => {
@@ -195,7 +195,7 @@ impl InlineThinkSplitter {
     /// 边界（工具调用 / finish_reason / [DONE] / 截断 EOF / 错误）冲刷残留，幂等：
     /// 未闭合的 think 块按思考内容原样下发（保住已收到的载荷），
     /// Detecting 缓冲按正文下发。
-    pub(crate) fn flush(&mut self) -> (Option<String>, Option<String>) {
+    pub fn flush(&mut self) -> (Option<String>, Option<String>) {
         let buffered = std::mem::take(&mut self.buffer);
         let was_reasoning = self.mode == InlineThinkMode::Reasoning;
         self.mode = InlineThinkMode::Text;
@@ -209,7 +209,7 @@ impl InlineThinkSplitter {
     }
 
     /// 是否还扣着未下发的非空白内容。
-    pub(crate) fn has_pending_content(&self) -> bool {
+    pub fn has_pending_content(&self) -> bool {
         !self.buffer.trim().is_empty()
     }
 }

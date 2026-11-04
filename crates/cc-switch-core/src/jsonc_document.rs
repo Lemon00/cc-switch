@@ -10,7 +10,7 @@ use json_five::rt::parser::{
 use json_five::tokenize::{tokenize_rt_str, TokType};
 use serde_json::Value;
 
-pub(crate) struct JsoncDocument {
+pub struct JsoncDocument {
     original_source: String,
     original_value: Value,
     semantic: Value,
@@ -18,7 +18,7 @@ pub(crate) struct JsoncDocument {
 }
 
 impl JsoncDocument {
-    pub(crate) fn parse(source: &str) -> Result<Self, AppError> {
+    pub fn parse(source: &str) -> Result<Self, AppError> {
         let semantic: Value = json5::from_str(source)
             .map_err(|e| AppError::Config(format!("Failed to parse JSONC config: {e}")))?;
         if !semantic.is_object() {
@@ -35,15 +35,15 @@ impl JsoncDocument {
         })
     }
 
-    pub(crate) fn value(&self) -> &Value {
+    pub fn value(&self) -> &Value {
         &self.semantic
     }
 
-    pub(crate) fn original_source(&self) -> &str {
+    pub fn original_source(&self) -> &str {
         &self.original_source
     }
 
-    pub(crate) fn root_key_count(&self, name: &str) -> Result<usize, AppError> {
+    pub fn root_key_count(&self, name: &str) -> Result<usize, AppError> {
         let RtJSONValue::JSONObject {
             key_value_pairs, ..
         } = &self.text.value
@@ -61,7 +61,7 @@ impl JsoncDocument {
         Ok(count)
     }
 
-    pub(crate) fn apply(&mut self, desired: &Value) -> Result<bool, AppError> {
+    pub fn apply(&mut self, desired: &Value) -> Result<bool, AppError> {
         if !desired.is_object() {
             return Err(AppError::Config(
                 "JSONC config root must be a JSON object".into(),
@@ -83,7 +83,7 @@ impl JsoncDocument {
         Ok(changed)
     }
 
-    pub(crate) fn validated_source(&self) -> Result<String, AppError> {
+    pub fn validated_source(&self) -> Result<String, AppError> {
         let source = self.text.to_string();
         parse_round_trip(&source).map_err(|e| {
             AppError::Config(format!(
@@ -108,7 +108,7 @@ impl JsoncDocument {
     }
 
     #[cfg(test)]
-    pub(crate) fn corrupt_output_for_test(&mut self, parseable: bool) {
+    pub fn corrupt_output_for_test(&mut self, parseable: bool) {
         self.text.value = if parseable {
             RtJSONValue::Null
         } else {

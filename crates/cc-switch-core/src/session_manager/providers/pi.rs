@@ -16,18 +16,18 @@ use super::utils::{
 use crate::session_manager::terminal::shell_escape;
 
 const PROVIDER_ID: &str = "pi";
-pub(crate) const MAX_TREE_ENTRIES: usize = 500_000;
+pub const MAX_TREE_ENTRIES: usize = 500_000;
 const MAX_TREE_ID_BYTES: usize = 256;
-pub(crate) const MAX_SESSION_BYTES: u64 = 128 * 1024 * 1024;
+pub const MAX_SESSION_BYTES: u64 = 128 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SessionLayout {
+pub enum SessionLayout {
     Flat,
     ProjectDirectories,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum SessionRootResolution {
+pub enum SessionRootResolution {
     Available {
         root: PathBuf,
         layout: SessionLayout,
@@ -54,7 +54,7 @@ pub enum PiSessionDiscovery {
 }
 
 /// Pi 和它的分支 Oh My Pi 的会话格式只差这几处，会话树、活动分支和转录块共用这里的实现。
-pub(crate) struct Dialect {
+pub struct Dialect {
     pub provider_id: &'static str,
     /// 报错和日志里的应用名
     pub label: &'static str,
@@ -107,7 +107,7 @@ pub fn session_roots() -> Vec<PathBuf> {
     session_roots_for(&PI)
 }
 
-pub(crate) fn session_roots_for(d: &Dialect) -> Vec<PathBuf> {
+pub fn session_roots_for(d: &Dialect) -> Vec<PathBuf> {
     match (d.resolve_root)() {
         SessionRootResolution::Available { root, .. } => vec![root],
         SessionRootResolution::RequiresProjectContext { .. }
@@ -119,12 +119,12 @@ pub(crate) fn session_roots_for(d: &Dialect) -> Vec<PathBuf> {
 /// Oversized files remain candidates so the usage importer can report them
 /// instead of silently treating an incomplete import as success. Nested
 /// subagent and fork sessions are included.
-pub(crate) fn session_files() -> Result<Vec<PathBuf>, String> {
+pub fn session_files() -> Result<Vec<PathBuf>, String> {
     session_files_for(&PI)
 }
 
 /// Same discovery rules as [`session_files`], for a Pi-family dialect.
-pub(crate) fn session_files_for(d: &Dialect) -> Result<Vec<PathBuf>, String> {
+pub fn session_files_for(d: &Dialect) -> Result<Vec<PathBuf>, String> {
     session_files_from_resolution(d, (d.resolve_root)())
 }
 
@@ -254,7 +254,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     scan_sessions_for(&PI)
 }
 
-pub(crate) fn scan_sessions_for(d: &Dialect) -> Vec<SessionMeta> {
+pub fn scan_sessions_for(d: &Dialect) -> Vec<SessionMeta> {
     match (d.resolve_root)() {
         SessionRootResolution::Available { root, layout, .. } => {
             scan_sessions_in_root(d, &root, layout)
@@ -298,7 +298,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     load_messages_for(&PI, path)
 }
 
-pub(crate) fn load_messages_for(d: &Dialect, path: &Path) -> Result<Vec<SessionMessage>, String> {
+pub fn load_messages_for(d: &Dialect, path: &Path) -> Result<Vec<SessionMessage>, String> {
     let (root, layout) = available_root(d)?;
     load_messages_with_layout(d, &root, path, layout)
 }
@@ -318,7 +318,7 @@ pub fn delete_session(root: &Path, path: &Path, session_id: &str) -> Result<bool
     delete_session_for(&PI, root, path, session_id)
 }
 
-pub(crate) fn delete_session_for(
+pub fn delete_session_for(
     d: &Dialect,
     root: &Path,
     path: &Path,
@@ -780,7 +780,7 @@ fn validate_file_size(d: &Dialect, path: &Path) -> Result<(), String> {
     }
 }
 
-pub(crate) fn is_valid_tree_id(id: &str) -> bool {
+pub fn is_valid_tree_id(id: &str) -> bool {
     let bytes = id.as_bytes();
     !bytes.is_empty()
         && bytes.len() <= MAX_TREE_ID_BYTES

@@ -222,7 +222,7 @@ fn expected_en(expected: &str) -> &'static str {
 }
 
 /// 字节偏移 → (行, 列)，都从 1 开始。
-pub(crate) fn line_column(text: &str, offset: usize) -> (usize, usize) {
+pub fn line_column(text: &str, offset: usize) -> (usize, usize) {
     let offset = offset.min(text.len());
     let before = &text[..offset];
     let line = before.matches('\n').count() + 1;
@@ -232,7 +232,7 @@ pub(crate) fn line_column(text: &str, offset: usize) -> (usize, usize) {
     (line, column)
 }
 
-pub(crate) fn decode_utf8<'a>(path: &Path, bytes: &'a [u8]) -> Result<&'a str, LiveWriteError> {
+pub fn decode_utf8<'a>(path: &Path, bytes: &'a [u8]) -> Result<&'a str, LiveWriteError> {
     std::str::from_utf8(bytes).map_err(|err| {
         let (line, column) = line_column(
             // valid_up_to 之前的部分一定是合法 UTF-8。

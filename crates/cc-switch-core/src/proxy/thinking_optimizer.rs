@@ -73,7 +73,7 @@ pub fn optimize(body: &mut Value, config: &OptimizerConfig) {
     }
 }
 
-pub(crate) fn uses_adaptive_thinking(model: &str) -> bool {
+pub fn uses_adaptive_thinking(model: &str) -> bool {
     let normalized = normalize_model_name(model);
     [
         "fable-5",
@@ -93,7 +93,7 @@ pub(crate) fn uses_adaptive_thinking(model: &str) -> bool {
 /// Models where omitting `thinking` still leaves adaptive thinking enabled
 /// (Claude thinking docs, per-model table: the 5.x Fable / Mythos / Opus /
 /// Sonnet generations and Mythos Preview; Opus 4.x and Sonnet 4.x are off).
-pub(crate) fn adaptive_thinking_is_default(model: &str) -> bool {
+pub fn adaptive_thinking_is_default(model: &str) -> bool {
     let normalized = normalize_model_name(model);
     [
         "fable-5",
@@ -107,7 +107,7 @@ pub(crate) fn adaptive_thinking_is_default(model: &str) -> bool {
 }
 
 /// Models that reject `thinking: {"type":"disabled"}`.
-pub(crate) fn thinking_cannot_be_disabled(model: &str) -> bool {
+pub fn thinking_cannot_be_disabled(model: &str) -> bool {
     let normalized = normalize_model_name(model);
     ["fable-5", "mythos-5"]
         .iter()

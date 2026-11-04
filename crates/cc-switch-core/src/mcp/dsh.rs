@@ -3,11 +3,11 @@ use crate::error::AppError;
 use crate::store::AppState;
 use serde_json::{json, Value};
 
-pub(crate) fn sync(id: &str, spec: Option<&Value>) -> Result<(), AppError> {
+pub fn sync(id: &str, spec: Option<&Value>) -> Result<(), AppError> {
     sync_and_commit(id, spec, || Ok(()))
 }
 
-pub(crate) fn sync_and_commit<T>(
+pub fn sync_and_commit<T>(
     id: &str,
     spec: Option<&Value>,
     commit: impl FnOnce() -> Result<T, AppError>,
@@ -15,7 +15,7 @@ pub(crate) fn sync_and_commit<T>(
     crate::dsh_config::sync_mcp_and_commit(id, spec, commit)
 }
 
-pub(crate) fn import(state: &AppState) -> Result<usize, AppError> {
+pub fn import(state: &AppState) -> Result<usize, AppError> {
     let mut existing = state.db.get_all_mcp_servers()?;
     let mut count = 0;
     for entry in crate::dsh_config::mcp_entries()? {

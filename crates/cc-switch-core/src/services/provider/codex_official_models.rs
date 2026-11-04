@@ -49,20 +49,20 @@ use crate::services::subscription::{
     parse_codex_credentials_json, CodexKeychainLogin, CredentialStatus,
 };
 
-pub(crate) const CACHE_FILENAME: &str = "codex-official-models.json";
+pub const CACHE_FILENAME: &str = "codex-official-models.json";
 /// 离 `fetched_at` 不到这么久算新的。目录只在 Codex 启动时读，刷新得再勤也要重启才看得到。
 const FRESH_FOR: Duration = Duration::from_secs(6 * 60 * 60);
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 /// 后台检查的间隔（只读缓存文件；过期了才联网）。
-pub(crate) const CHECK_EVERY: Duration = Duration::from_secs(15 * 60);
+pub const CHECK_EVERY: Duration = Duration::from_secs(15 * 60);
 /// 取版本时看 Codex 最近创建的这么多个线程：够覆盖最近用过的各个客户端，又不让早已
 /// 升级掉的版本混进来。
 const RECENT_THREADS: u32 = 20;
 
 /// 取官方列表用的登录。
 #[derive(Clone)]
-pub(crate) struct OfficialLogin {
+pub struct OfficialLogin {
     /// `<工作区 ID>|<用户身份>`。`tokens.account_id` 是 ChatGPT 工作区 ID，同一工作区的
     /// 不同用户共用它，单靠它分不出人；用户身份取 id_token 的 `sub`，跨 token 刷新不变。
     pub identity: String,
@@ -98,7 +98,7 @@ impl OfficialLogin {
 }
 
 /// 一次拉取的结果。
-pub(crate) enum Fetch {
+pub enum Fetch {
     Models {
         models: Vec<Value>,
         etag: Option<String>,
@@ -109,10 +109,10 @@ pub(crate) enum Fetch {
 }
 
 /// 拉一次官方列表：登录、Codex 版本、上次的 etag。
-pub(crate) type FetchFn = dyn Fn(&OfficialLogin, &str, Option<&str>) -> Fetch + Send + Sync;
+pub type FetchFn = dyn Fn(&OfficialLogin, &str, Option<&str>) -> Fetch + Send + Sync;
 
 /// 外部依赖：本机 Codex 版本、官方接口、Codex 自带的列表、钥匙串、时钟。测试里换成假的。
-pub(crate) struct Env {
+pub struct Env {
     pub codex_version: Box<dyn Fn() -> Option<String> + Send + Sync>,
     pub fetch: Box<FetchFn>,
     pub bundled: Box<dyn Fn() -> Result<Vec<Value>, BundledSkip> + Send + Sync>,
@@ -164,14 +164,14 @@ fn env() -> Arc<Env> {
 }
 
 #[cfg(test)]
-pub(crate) fn set_test_env(env: Env) {
+pub fn set_test_env(env: Env) {
     *env_slot()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::new(env));
 }
 
 #[cfg(test)]
-pub(crate) fn reset_test_env() {
+pub fn reset_test_env() {
     *env_slot()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
@@ -296,7 +296,7 @@ fn thread_versions(db_path: &Path) -> Vec<String> {
 }
 
 /// 系统钥匙串里 Codex 的登录（`cli_auth_credentials_store` 为 keyring / auto 时）。
-pub(crate) fn keychain_login() -> CodexKeychainLogin {
+pub fn keychain_login() -> CodexKeychainLogin {
     (env().keychain)()
 }
 
@@ -427,7 +427,7 @@ fn is_fresh(entry: &Entry, now: u64) -> bool {
 
 /// 目录里官方行的来源。
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum NativeRows {
+pub enum NativeRows {
     /// 官方列表。`identity` 是取它用的登录：拿写锁后要和实际的目标登录核对。
     Fetched { identity: String, rows: Vec<Value> },
     /// Codex 自带的列表：官方列表暂未取到。
@@ -548,7 +548,7 @@ fn last_source_slot() -> &'static Mutex<Option<NativeSource>> {
     SLOT.get_or_init(|| Mutex::new(None))
 }
 
-pub(crate) fn last_source() -> Option<NativeSource> {
+pub fn last_source() -> Option<NativeSource> {
     *last_source_slot()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -565,7 +565,7 @@ fn fell_back_from_official() -> bool {
 /// 切换时（拿着切换锁、在写锁之前）按目标登录取官方行。能用而新的条目直接用；能用而
 /// 过期的先照用、后台刷新；没有能用的就联网拉一次（10 秒），拉不到退回自带列表。
 /// `login` 取不到时带着原因，和自带列表的失败原因一起记进 [`last_source`]。
-pub(crate) fn rows_for_switch(login: &Result<OfficialLogin, OfficialSkip>) -> NativeRows {
+pub fn rows_for_switch(login: &Result<OfficialLogin, OfficialSkip>) -> NativeRows {
     let env = env();
     let official = match login {
         Ok(login) => official_rows(&env, login),
@@ -680,7 +680,7 @@ fn bundled_rows(env: &Env) -> Result<NativeRows, BundledSkip> {
 ///
 /// 上次写目录时官方列表没用上，这次又取到了，列表没变也记下落后：比如当时 Codex 的登录
 /// 过期，之后它自己刷新了登录，缓存里的旧列表照样是 304，不这样客户端会一直停在自带列表上。
-pub(crate) fn refresh(login: &OfficialLogin, version: &str) -> Result<bool, String> {
+pub fn refresh(login: &OfficialLogin, version: &str) -> Result<bool, String> {
     let env = env();
     let now = (env.now)();
     let current = usable_entry(&login.identity, version);
@@ -725,7 +725,7 @@ pub(crate) fn refresh(login: &OfficialLogin, version: &str) -> Result<bool, Stri
 }
 
 /// 后台检查要不要刷新：没有能用的条目，或者条目过期了。只读文件，不联网。
-pub(crate) fn needs_refresh(login: &OfficialLogin) -> Option<String> {
+pub fn needs_refresh(login: &OfficialLogin) -> Option<String> {
     let env = env();
     let version = (env.codex_version)()?;
     match usable_entry(&login.identity, &version) {
@@ -738,7 +738,7 @@ pub(crate) fn needs_refresh(login: &OfficialLogin) -> Option<String> {
 /// 登录现在有能用的条目，就记下客户端落后，让检查按它重写。不联网。不补的话要等条目过了
 /// 新鲜期、刷新拿到 304 才重写（见 [`refresh`]），最多晚 6 小时：比如写目录那一刻钥匙串没读
 /// 出来，过一会儿又读得出了。
-pub(crate) fn catch_up_after_fallback(login: &OfficialLogin) {
+pub fn catch_up_after_fallback(login: &OfficialLogin) {
     if !fell_back_from_official() {
         return;
     }
@@ -771,19 +771,19 @@ fn state_slot() -> &'static OnceLock<crate::store::AppState> {
 /// 接上会强制重写，用的就是新缓存。
 static CLIENT_BEHIND: AtomicBool = AtomicBool::new(false);
 
-pub(crate) fn mark_client_behind() {
+pub fn mark_client_behind() {
     CLIENT_BEHIND.store(true, Ordering::SeqCst);
 }
 
 /// 取走「客户端落后于缓存」的标记。取走后重写失败，用 [`mark_client_behind`] 放回去，
 /// 下一个检查点再试；重写期间又刷新出新列表时标记重新立起，不会丢。
-pub(crate) fn take_client_behind() -> bool {
+pub fn take_client_behind() -> bool {
     CLIENT_BEHIND.swap(false, Ordering::SeqCst)
 }
 
 /// 列表变了：按新列表重算契约，变了就重写目录（用户重启 Codex 后看到新模型）。后台检查
 /// 还没开始时（CC Switch 正在启动）先不写，标记留给第一次检查。
-pub(crate) fn after_refresh() {
+pub fn after_refresh() {
     let Some(state) = state_slot().get().cloned() else {
         return;
     };
@@ -794,7 +794,7 @@ pub(crate) fn after_refresh() {
 
 /// CC Switch 启动时开始后台检查：先查一次，之后每 15 分钟一次。不是「每 6 小时」的
 /// 定时器：从进程启动开始计时的话，每次只运行几小时的用户永远等不到刷新。
-pub(crate) fn start_background_checks(state: crate::store::AppState) {
+pub fn start_background_checks(state: crate::store::AppState) {
     let _ = state_slot().set(state.clone());
     tokio::task::spawn(async move {
         loop {
@@ -805,13 +805,13 @@ pub(crate) fn start_background_checks(state: crate::store::AppState) {
 }
 
 #[cfg(test)]
-pub(crate) mod testing {
+pub mod testing {
     use super::*;
 
     /// 调用记录：拉取时用的身份、版本、带的 etag。
-    pub(crate) type Calls = Arc<Mutex<Vec<(String, String, Option<String>)>>>;
+    pub type Calls = Arc<Mutex<Vec<(String, String, Option<String>)>>>;
 
-    pub(crate) struct Fake {
+    pub struct Fake {
         pub version: Option<String>,
         pub responses: Arc<Mutex<Vec<Fetch>>>,
         pub bundled: Option<Vec<Value>>,
@@ -869,7 +869,7 @@ pub(crate) mod testing {
     }
 
     /// 一份新近刷新过的 ChatGPT 登录。
-    pub(crate) fn login(account: &str, sub: &str) -> Value {
+    pub fn login(account: &str, sub: &str) -> Value {
         serde_json::json!({
             "auth_mode": "chatgpt",
             "OPENAI_API_KEY": null,
@@ -884,7 +884,7 @@ pub(crate) mod testing {
     }
 
     /// 合格的官方行（只有新的指令字段，和 0.158 的缓存一样）。
-    pub(crate) fn native_models(slugs: &[(&str, i64)]) -> Vec<Value> {
+    pub fn native_models(slugs: &[(&str, i64)]) -> Vec<Value> {
         slugs
             .iter()
             .map(|(slug, priority)| {
@@ -901,11 +901,11 @@ pub(crate) mod testing {
             .collect()
     }
 
-    pub(crate) fn cache_fetched_at(identity: &str) -> Option<u64> {
+    pub fn cache_fetched_at(identity: &str) -> Option<u64> {
         read_cache().get(identity).map(|entry| entry.fetched_at)
     }
 
-    pub(crate) fn seed_cache(identity: &str, fetched_at: u64, version: &str, models: Vec<Value>) {
+    pub fn seed_cache(identity: &str, fetched_at: u64, version: &str, models: Vec<Value>) {
         store_entry(
             identity,
             Entry {

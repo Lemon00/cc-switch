@@ -35,7 +35,7 @@ use crate::provider::Provider;
 use super::codex_direct::{self, PROXY_KEPT_CLIENT_KEYS};
 
 /// 卡上的 Key 经这个环境变量交给 Codex（路由表的 `env_key`）。
-pub(crate) const API_KEY_ENV: &str = "CC_SWITCH_CODEX_API_KEY";
+pub const API_KEY_ENV: &str = "CC_SWITCH_CODEX_API_KEY";
 
 /// 上一家留下了推理强度、这张卡又没有模型目录时写的值。Codex 不设置时对目录外的模型
 /// 不发 `reasoning.effort`（0.164 实测），`-c` 写不出「不发」，退而用各家都认的 medium，
@@ -46,7 +46,7 @@ const CODEX_DEFAULT_VERBOSITY: &str = "medium";
 
 /// 一次终端启动要加的东西。`overrides` 为空就是直接跑 `codex`。
 #[derive(Debug, Default)]
-pub(crate) struct CodexTerminalLaunch {
+pub struct CodexTerminalLaunch {
     /// `-c` 的值，每项是 `键路径=TOML 值`。
     pub overrides: Vec<String>,
     /// 只给这个进程的环境变量。
@@ -55,7 +55,7 @@ pub(crate) struct CodexTerminalLaunch {
     pub catalog: Option<Vec<u8>>,
 }
 
-pub(crate) fn terminal_launch(
+pub fn terminal_launch(
     db: &Database,
     provider: &Provider,
 ) -> Result<CodexTerminalLaunch, AppError> {
@@ -101,7 +101,7 @@ pub(crate) fn terminal_launch(
 const CODEX_HOME_ENV: &str = "CODEX_HOME";
 
 /// 指向临时模型目录的 `-c` 值。
-pub(crate) fn catalog_override(path: &str) -> String {
+pub fn catalog_override(path: &str) -> String {
     format!("model_catalog_json={}", toml_string(path))
 }
 

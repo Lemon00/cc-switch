@@ -196,7 +196,10 @@ fn get_model_pricing_blocking(
     db.ensure_model_pricing_seeded()?;
     crate::services::model_pricing::sync_local_model_pricing(db)?;
 
-    let conn = crate::database::lock_conn!(db.conn);
+    let conn = db
+        .conn
+        .lock()
+        .map_err(|e| AppError::Database(format!("Mutex lock failed: {e}")))?;
 
     // 检查表是否存在
     let table_exists: bool = conn

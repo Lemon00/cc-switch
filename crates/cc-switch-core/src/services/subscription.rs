@@ -83,7 +83,7 @@ pub struct SubscriptionQuota {
 }
 
 impl SubscriptionQuota {
-    pub(crate) fn not_found(tool: &str) -> Self {
+    pub fn not_found(tool: &str) -> Self {
         Self {
             tool: tool.to_string(),
             credential_status: CredentialStatus::NotFound,
@@ -98,7 +98,7 @@ impl SubscriptionQuota {
         }
     }
 
-    pub(crate) fn error(tool: &str, status: CredentialStatus, message: String) -> Self {
+    pub fn error(tool: &str, status: CredentialStatus, message: String) -> Self {
         Self {
             tool: tool.to_string(),
             credential_status: status,
@@ -636,7 +636,7 @@ struct CodexTokens {
 }
 
 /// (access_token, account_id, status, message)
-pub(crate) type CodexCredentials = (
+pub type CodexCredentials = (
     Option<String>,
     Option<String>,
     CredentialStatus,
@@ -746,7 +746,7 @@ fn read_codex_credentials_from_file() -> CodexCredentials {
 /// 系统钥匙串里 Codex 的登录（`cli_auth_credentials_store` 为 keyring / auto 时 Codex 存在
 /// 这里）。
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum CodexKeychainLogin {
+pub enum CodexKeychainLogin {
     // 只有 macOS 读得到钥匙串，其他平台的正式构建里只会出现 Unknown。
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Found(serde_json::Value),
@@ -758,7 +758,7 @@ pub(crate) enum CodexKeychainLogin {
     Unknown,
 }
 
-pub(crate) fn read_codex_keychain_login() -> CodexKeychainLogin {
+pub fn read_codex_keychain_login() -> CodexKeychainLogin {
     #[cfg(target_os = "macos")]
     {
         match read_codex_keychain_secret() {
@@ -778,7 +778,7 @@ pub(crate) fn read_codex_keychain_login() -> CodexKeychainLogin {
 }
 
 /// 解析 Codex 凭据 JSON（Keychain 和文件共用）
-pub(crate) fn parse_codex_credentials_json(content: &str) -> CodexCredentials {
+pub fn parse_codex_credentials_json(content: &str) -> CodexCredentials {
     let auth: CodexAuthJson = match serde_json::from_str(content) {
         Ok(a) => a,
         Err(e) => {
@@ -1000,7 +1000,7 @@ async fn query_codex_reset_credits(
 /// 参数化 `tool_label` 和 `expired_message` 让该函数可被两个调用点共用：
 /// - `"codex"` + "Please re-login with Codex CLI."（CLI 凭据路径）
 /// - `"codex_oauth"` + "Please re-login via cc-switch."（cc-switch 自管 OAuth 路径）
-pub(crate) async fn query_codex_quota(
+pub async fn query_codex_quota(
     access_token: &str,
     account_id: Option<&str>,
     tool_label: &str,
@@ -1017,7 +1017,7 @@ pub(crate) async fn query_codex_quota(
     Ok(quota)
 }
 
-pub(crate) async fn query_codex_usage(
+pub async fn query_codex_usage(
     access_token: &str,
     account_id: Option<&str>,
     tool_label: &str,

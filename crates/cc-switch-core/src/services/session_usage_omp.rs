@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 /// session line.
 const TITLE_SLOT_PROBE_BYTES: u64 = 4096;
 
-pub(crate) const OMP: Flavor = Flavor {
+pub const OMP: Flavor = Flavor {
     app_type: "omp",
     data_source: "omp_session",
     provider_placeholder: "_omp_session",

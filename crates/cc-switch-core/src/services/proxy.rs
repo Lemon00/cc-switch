@@ -43,7 +43,7 @@ impl SavedProxyConfig {
 
 /// 客户端连接代理用的地址。`host` 是设置里的客户端地址，没设时是监听地址，后者可能是
 /// `0.0.0.0` / `::`（监听所有网卡），客户端连不上这个地址，改用本机回环；IPv6 加方括号。
-pub(crate) fn proxy_origin(host: &str, listen_port: u16) -> String {
+pub fn proxy_origin(host: &str, listen_port: u16) -> String {
     let host = match host {
         "0.0.0.0" => "127.0.0.1",
         "::" => "::1",
@@ -73,7 +73,7 @@ impl ProxyService {
         });
     }
 
-    pub(crate) async fn lock_switch_for_app(
+    pub async fn lock_switch_for_app(
         &self,
         app_type: &str,
     ) -> tokio::sync::OwnedMutexGuard<()> {
@@ -203,7 +203,7 @@ impl ProxyService {
     }
 
     /// 把代理的上游指向 `provider`（状态面板里的「使用中」）。
-    pub(crate) async fn set_active_target(&self, app_type: &AppType, provider: &Provider) {
+    pub async fn set_active_target(&self, app_type: &AppType, provider: &Provider) {
         if let Some(server) = self.server.read().await.as_ref() {
             server
                 .set_active_target(app_type.as_str(), &provider.id, &provider.name)
@@ -211,7 +211,7 @@ impl ProxyService {
         }
     }
 
-    pub(crate) async fn emit(&self, event: &str, payload: Value) {
+    pub async fn emit(&self, event: &str, payload: Value) {
         self.hooks.read().await.sink.emit(event, payload);
     }
 
@@ -244,7 +244,7 @@ impl ProxyService {
     }
 
     /// 构造写入 Live 的代理地址（处理 0.0.0.0 / IPv6 等特殊情况）
-    pub(crate) async fn build_proxy_urls(&self) -> Result<(String, String), String> {
+    pub async fn build_proxy_urls(&self) -> Result<(String, String), String> {
         let config = self
             .db
             .get_proxy_config()
@@ -270,7 +270,7 @@ impl ProxyService {
 
     /// 客户端文件里有没有接管占位符 `PROXY_MANAGED`（旧版接管的遗留物，或新版接上代理
     /// 时写的契约）。Codex 的官方路由不带占位符，按指向本地代理的地址认。
-    pub(crate) fn live_has_proxy_placeholder(&self, app_type: &AppType) -> bool {
+    pub fn live_has_proxy_placeholder(&self, app_type: &AppType) -> bool {
         match app_type {
             AppType::Claude => match self.read_claude_live() {
                 Ok(config) => Self::is_claude_live_taken_over(&config),
@@ -304,7 +304,7 @@ impl ProxyService {
 
     /// 一份配置（客户端文件或供应商行）里有没有接管占位符：行里带着它的是旧版接管期间
     /// 被导入的残留，不能照写回 live，否则客户端会一直指着已经不在的本地代理。
-    pub(crate) fn config_has_proxy_placeholder(app_type: &AppType, config: &Value) -> bool {
+    pub fn config_has_proxy_placeholder(app_type: &AppType, config: &Value) -> bool {
         match app_type {
             AppType::Claude => Self::is_claude_live_taken_over(config),
             AppType::Codex => Self::is_codex_live_taken_over(config),

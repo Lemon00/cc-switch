@@ -15,13 +15,13 @@ use std::sync::OnceLock;
 /// Our own header case map: maps lowercase header name → original wire-casing bytes.
 ///
 /// This is a backup mechanism independent of hyper's internal `HeaderCaseMap` (which is
-/// `pub(crate)` and cannot be directly inspected or constructed from outside hyper).
+/// `pub` and cannot be directly inspected or constructed from outside hyper).
 ///
 /// Populated in `server.rs` by peeking at raw TCP bytes before hyper parses them.
 /// Used in `send_request` to manually write headers with original casing when hyper's
 /// own mechanism fails.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct OriginalHeaderCases {
+pub struct OriginalHeaderCases {
     /// Ordered list of (lowercase_name, original_wire_bytes) pairs.
     /// Multiple entries with the same name are allowed (for repeated headers).
     pub cases: Vec<(String, Vec<u8>)>,
@@ -74,7 +74,7 @@ fn global_hyper_client() -> &'static HyperClient {
 
 /// 响应体读取上限（128 MiB）。正常非流式补全响应只有几十到几百 KiB；超过则视为
 /// 上游异常或恶意 payload，直接拒绝，避免代理进程被超大响应体/压缩炸弹耗尽内存。
-pub(crate) const MAX_RESPONSE_BODY_BYTES: usize = 128 * 1024 * 1024;
+pub const MAX_RESPONSE_BODY_BYTES: usize = 128 * 1024 * 1024;
 
 /// Unified response wrapper that can hold either a hyper or reqwest response.
 ///

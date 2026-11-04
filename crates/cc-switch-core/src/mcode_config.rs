@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-pub(crate) fn data_dir() -> PathBuf {
+pub fn data_dir() -> PathBuf {
     explicit_data_dir(
         std::env::var("MINIMAX_DATA_DIR").ok().as_deref(),
         std::env::var("MAVIS_DATA_DIR").ok().as_deref(),
@@ -27,7 +27,7 @@ fn explicit_data_dir(minimax: Option<&str>, mavis: Option<&str>) -> Option<PathB
 }
 
 // Callers hold their feature lock across the native write and database commit.
-pub(crate) fn write_and_commit<T>(
+pub fn write_and_commit<T>(
     path: &Path,
     write: impl FnOnce() -> Result<(), AppError>,
     commit: impl FnOnce() -> Result<T, AppError>,
@@ -56,7 +56,7 @@ pub(crate) fn write_and_commit<T>(
     }
 }
 
-pub(crate) fn config_path() -> PathBuf {
+pub fn config_path() -> PathBuf {
     data_dir().join("config.yaml")
 }
 
@@ -83,7 +83,7 @@ fn read(path: &Path) -> Result<serde_yaml::Value, AppError> {
     Ok(value)
 }
 
-pub(crate) fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
+pub fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
     let document = read(&config_path())?;
     match document.get("custom_provider") {
         None | Some(serde_yaml::Value::Null) => Ok(IndexMap::new()),
@@ -104,7 +104,7 @@ pub(crate) fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
 }
 
 /// Any `custom_provider` node under this key, including MCode's own account providers.
-pub(crate) fn provider_key_exists(id: &str) -> Result<bool, AppError> {
+pub fn provider_key_exists(id: &str) -> Result<bool, AppError> {
     let document = read(&config_path())?;
     Ok(document
         .get("custom_provider")
@@ -112,7 +112,7 @@ pub(crate) fn provider_key_exists(id: &str) -> Result<bool, AppError> {
         .is_some_and(|providers| providers.contains_key(serde_yaml::Value::from(id))))
 }
 
-pub(crate) fn validate_provider(id: &str, config: &Value) -> Result<(), AppError> {
+pub fn validate_provider(id: &str, config: &Value) -> Result<(), AppError> {
     if id.is_empty()
         || id
             .chars()
@@ -269,16 +269,16 @@ fn write_entry(
     atomic_write_private(&path, yaml.as_bytes())
 }
 
-pub(crate) fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
+pub fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
     validate_provider(id, &config)?;
     update(&config_path(), id, Some(config))
 }
 /// Like `set_provider`, but never replaces an existing node.
-pub(crate) fn add_provider(id: &str, config: Value) -> Result<(), AppError> {
+pub fn add_provider(id: &str, config: Value) -> Result<(), AppError> {
     validate_provider(id, &config)?;
     write_entry(&config_path(), id, Some(config), true)
 }
-pub(crate) fn remove_provider(id: &str) -> Result<(), AppError> {
+pub fn remove_provider(id: &str) -> Result<(), AppError> {
     if !config_path().exists() {
         return Ok(());
     }

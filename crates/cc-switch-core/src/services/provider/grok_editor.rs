@@ -134,14 +134,14 @@ fn inactive_fields(
 }
 
 /// 一次编辑器保存：存进行的内容，和要写进 live 的全局改动。
-pub(crate) struct GrokEditorPlan {
+pub struct GrokEditorPlan {
     pub row_settings: Value,
     pub edits: TomlEdits,
 }
 
 /// 把编辑器里的配置拆开：`models.default` 和模型表换进行（行里其余内容原样保留），其余
 /// 部分和 `base` 比，得出用户改过的全局设置。官方卡没有模型表，行原样保留。
-pub(crate) fn plan_save(
+pub fn plan_save(
     stored_row: Option<&Value>,
     edited: &Value,
     base: &Value,
@@ -202,7 +202,7 @@ fn store_into_row(
 /// 把编辑器保存的改动写进 live。`key_fields` 有值时（直连模式下编辑当前供应商）模型表在
 /// 同一次写入里换成它的；`prev` 是编辑前的行，没有写入记录时用来推断旧表。`set_pointer`
 /// 为新增第一个供应商，指针随操作落定。
-pub(crate) fn write_live(
+pub fn write_live(
     db: &Database,
     edits: &TomlEdits,
     key_fields: Option<(Option<&Provider>, &Provider)>,

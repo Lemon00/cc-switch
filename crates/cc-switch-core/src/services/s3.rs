@@ -18,7 +18,7 @@ const DEFAULT_TIMEOUT_SECS: u64 = 30;
 // ─── Credentials ─────────────────────────────────────────────
 
 /// S3-compatible storage credentials.
-pub(crate) struct S3Credentials {
+pub struct S3Credentials {
     pub access_key_id: String,
     pub secret_access_key: String,
     pub region: String,
@@ -330,7 +330,7 @@ fn ensure_content_length_within_limit(
 // ─── Transport functions ─────────────────────────────────────
 
 /// Test S3 connectivity by sending HEAD to the bucket root.
-pub(crate) async fn test_connection(creds: &S3Credentials) -> Result<(), AppError> {
+pub async fn test_connection(creds: &S3Credentials) -> Result<(), AppError> {
     let url_str = build_bucket_url(creds);
     let url = Url::parse(&url_str).map_err(|e| {
         AppError::localized(
@@ -367,7 +367,7 @@ pub(crate) async fn test_connection(creds: &S3Credentials) -> Result<(), AppErro
 }
 
 /// Upload bytes to an S3 object.
-pub(crate) async fn put_object(
+pub async fn put_object(
     creds: &S3Credentials,
     key: &str,
     bytes: Vec<u8>,
@@ -413,7 +413,7 @@ pub(crate) async fn put_object(
 /// Download an S3 object. Returns `None` if the object does not exist (404).
 ///
 /// On success returns `(body_bytes, optional_etag)`.
-pub(crate) async fn get_object(
+pub async fn get_object(
     creds: &S3Credentials,
     key: &str,
     max_bytes: usize,
@@ -485,7 +485,7 @@ pub(crate) async fn get_object(
 }
 
 /// Retrieve the ETag of an S3 object via HEAD. Returns `None` on 404.
-pub(crate) async fn head_object(
+pub async fn head_object(
     creds: &S3Credentials,
     key: &str,
 ) -> Result<Option<String>, AppError> {

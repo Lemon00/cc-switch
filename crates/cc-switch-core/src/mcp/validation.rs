@@ -56,7 +56,7 @@ pub fn validate_server_spec(spec: &Value) -> Result<(), AppError> {
 /// 此时不能一律当 stdio：那样 url 型服务器会被投影成没有 `url` 的 stdio 条目
 /// （Codex 报 `url is not supported for stdio` 整份 config.toml 加载失败，
 /// Hermes 只剩 `enabled: true` 的空壳）。显式写了 stdio 却只有 `url` 的规范同理。
-pub(crate) fn spec_transport_type(spec: &Value) -> &str {
+pub fn spec_transport_type(spec: &Value) -> &str {
     let has = |key: &str| {
         spec.get(key)
             .and_then(|v| v.as_str())

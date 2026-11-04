@@ -68,7 +68,7 @@ pub enum ConflictPolicy {
 impl ConflictPolicy {
     /// 三方比较：`conflict` 给出冲突改动的显示名（live 里现在的值既不是打开编辑器时的，
     /// 也不是要写的）。有冲突时按策略整体拒绝、跳过冲突的改动或照写；返回要写的改动。
-    pub(crate) fn resolve<'c, C>(
+    pub fn resolve<'c, C>(
         self,
         path: &Path,
         changes: &'c [C],
@@ -217,7 +217,7 @@ fn inactive_fields(row: &Value, display: &Value) -> Vec<InactiveField> {
 
 /// 编辑器里对 JSON 全局设置的一处改动。
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct JsonChange {
+pub struct JsonChange {
     pub path: KeyPath,
     /// 打开编辑器时的值；`None` 表示当时没有这个键。
     pub before: Option<Value>,
@@ -227,12 +227,12 @@ pub(crate) struct JsonChange {
 
 impl JsonChange {
     /// live 里这个位置现在是 `now`：既不是打开编辑器时的值，也不是要写的值。
-    pub(crate) fn conflicts_with(&self, now: Option<&Value>) -> Option<String> {
+    pub fn conflicts_with(&self, now: Option<&Value>) -> Option<String> {
         (now != self.before.as_ref() && now != self.after.as_ref()).then(|| self.path.to_string())
     }
 
     /// 把要写的改动收成一个补丁。
-    pub(crate) fn patch(changes: &[&Self]) -> JsonPatch {
+    pub fn patch(changes: &[&Self]) -> JsonPatch {
         let mut patch = JsonPatch::default();
         for change in changes {
             match &change.after {
@@ -246,7 +246,7 @@ impl JsonChange {
 
 /// 一次编辑器保存：存进行的内容，和要写进 live 的全局改动。
 #[derive(Debug, Clone)]
-pub(crate) struct EditorPlan {
+pub struct EditorPlan {
     pub row_settings: Value,
     changes: Vec<JsonChange>,
 }
@@ -257,7 +257,7 @@ pub(crate) struct EditorPlan {
 /// 显示里有、行里没有的独有字段是从 live 带进来的（用户自己写的，或者上一家留下、值被
 /// 改过的），不归这个供应商：用户没动就不收进行，否则切走时会把用户自己的设置删掉；用户
 /// 删了就从 live 删。新增对话框的 `base` 是还没套预设的 live，预设带的独有字段不在里面。
-pub(crate) fn plan_save(
+pub fn plan_save(
     stored_row: Option<&Value>,
     edited: &Value,
     base: &Value,
@@ -378,7 +378,7 @@ impl LivePatch for EditorPatch<'_> {
 }
 
 /// 要不要在同一次写入里把关键字段也换进 live。
-pub(crate) struct KeyFieldWrite<'a> {
+pub struct KeyFieldWrite<'a> {
     /// live 现在对应的那一版行（编辑前的行；新增第一个供应商时为 `None`）。
     pub prev: Option<&'a Provider>,
     pub target: &'a Provider,
@@ -387,7 +387,7 @@ pub(crate) struct KeyFieldWrite<'a> {
 }
 
 /// 把编辑器保存的改动写进 live。没有要写的就什么都不做。
-pub(crate) fn write_live(
+pub fn write_live(
     db: &Database,
     plan: &EditorPlan,
     on_conflict: ConflictPolicy,

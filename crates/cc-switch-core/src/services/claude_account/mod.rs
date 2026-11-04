@@ -762,4 +762,4 @@ fn auth_status(config_dir: &Path) -> Option<identity::AuthStatus> {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

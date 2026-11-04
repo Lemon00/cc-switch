@@ -32,7 +32,7 @@ use uuid::Uuid;
 
 use super::copilot_auth::{GitHubAccount, GitHubDeviceCodeResponse};
 
-mod browser;
+pub mod browser;
 
 /// OpenAI OAuth 客户端 ID（OpenCode 使用，与官方 Codex CLI 相同）
 const CODEX_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -71,8 +71,8 @@ const CODEX_USER_AGENT: &str = "cc-switch-codex-oauth";
 // Shared by model discovery and generation: ChatGPT gates models by this
 // client identity. GPT-6.1 Sol enters the ChatGPT-account catalog at 0.159.0.
 // Bump together when a new model raises its minimal_client_version or catalog gate.
-pub(crate) const CODEX_OAUTH_ORIGINATOR: &str = "codex_cli_rs";
-pub(crate) const CODEX_OAUTH_CLIENT_VERSION: &str = "0.159.0";
+pub const CODEX_OAUTH_ORIGINATOR: &str = "codex_cli_rs";
+pub const CODEX_OAUTH_CLIENT_VERSION: &str = "0.159.0";
 
 /// Codex OAuth 错误
 #[derive(Debug, thiserror::Error)]
@@ -217,13 +217,13 @@ enum RefreshTokenAdoptionOutcome {
 }
 
 /// Keep a deleted account distinct from an existing account with no managed live token.
-pub(crate) enum CodexLiveAuthSwitchGuard {
+pub enum CodexLiveAuthSwitchGuard {
     ExistingAccount(Option<String>),
     MissingAccount,
 }
 
 impl CodexLiveAuthSwitchGuard {
-    pub(crate) fn ensure_unchanged(&self, account_id: &str) -> Result<(), crate::error::AppError> {
+    pub fn ensure_unchanged(&self, account_id: &str) -> Result<(), crate::error::AppError> {
         if let Self::ExistingAccount(Some(token)) = self {
             crate::codex_config::ensure_codex_live_auth_unchanged_for_managed_account(
                 account_id, token,
@@ -360,7 +360,7 @@ struct CodexOAuthStore {
 
 /// 写入托管 Codex `auth.json` 所需的完整可刷新 token 束。
 #[derive(Debug, Clone)]
-pub(crate) struct ManagedTokenBundle {
+pub struct ManagedTokenBundle {
     pub chatgpt_account_id: String,
     pub access_token: String,
     pub id_token: Option<String>,
@@ -1076,7 +1076,7 @@ impl CodexOAuthManager {
     /// 与仅返回 access_token 不同：写入 Codex CLI 的 auth.json 必须携带
     /// refresh_token，否则 CLI 在 access_token 过期后无法自刷新（详见托管直连
     /// 场景 “裸跑 codex”）。
-    pub(crate) async fn get_valid_token_bundle_for_account(
+    pub async fn get_valid_token_bundle_for_account(
         &self,
         account_id: &str,
     ) -> Result<ManagedTokenBundle, CodexOAuthError> {
@@ -1202,7 +1202,7 @@ impl CodexOAuthManager {
     /// Callers compare it immediately before their live write/delete; the external Codex
     /// CLI does not participate in cc-switch's switch lock and may refresh in
     /// the adopt-to-write window.
-    pub(crate) async fn prepare_live_auth_for_account_switch_away(
+    pub async fn prepare_live_auth_for_account_switch_away(
         &self,
         account_id: &str,
     ) -> Result<CodexLiveAuthSwitchGuard, CodexOAuthError> {
@@ -1581,7 +1581,7 @@ impl CodexOAuthManager {
     }
 
     #[cfg(test)]
-    pub(crate) async fn add_test_account_with_access_token(
+    pub async fn add_test_account_with_access_token(
         &self,
         account_id: &str,
         access_token: &str,
@@ -1597,7 +1597,7 @@ impl CodexOAuthManager {
     }
 
     #[cfg(test)]
-    pub(crate) async fn add_test_account_with_user_identity(
+    pub async fn add_test_account_with_user_identity(
         &self,
         account_id: &str,
         access_token: &str,
@@ -1609,7 +1609,7 @@ impl CodexOAuthManager {
     }
 
     #[cfg(test)]
-    pub(crate) async fn add_test_account_with_workspace_and_access_token(
+    pub async fn add_test_account_with_workspace_and_access_token(
         &self,
         account_id: &str,
         chatgpt_account_id: &str,
@@ -1650,7 +1650,7 @@ impl CodexOAuthManager {
     }
 
     #[cfg(test)]
-    pub(crate) async fn test_cache_access_token(&self, account_id: &str, token: &str) {
+    pub async fn test_cache_access_token(&self, account_id: &str, token: &str) {
         assert!(self.accounts.read().await.contains_key(account_id));
         let now = chrono::Utc::now().timestamp_millis();
         self.access_tokens.write().await.insert(
@@ -1664,7 +1664,7 @@ impl CodexOAuthManager {
     }
 
     #[cfg(test)]
-    pub(crate) async fn test_refresh_token_for_account(&self, account_id: &str) -> Option<String> {
+    pub async fn test_refresh_token_for_account(&self, account_id: &str) -> Option<String> {
         self.accounts
             .read()
             .await
@@ -1673,7 +1673,7 @@ impl CodexOAuthManager {
     }
 
     #[cfg(test)]
-    pub(crate) async fn test_set_token_updated_at_ms(
+    pub async fn test_set_token_updated_at_ms(
         &self,
         account_id: &str,
         token_updated_at_ms: i64,
@@ -1939,7 +1939,7 @@ impl CodexOAuthManager {
     }
 
     /// Validate a target binding without refreshing tokens or changing credentials.
-    pub(crate) async fn ensure_account_exists(
+    pub async fn ensure_account_exists(
         &self,
         account_id: &str,
     ) -> Result<(), CodexOAuthError> {

@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub(crate) fn session_roots() -> Vec<PathBuf> {
+pub fn session_roots() -> Vec<PathBuf> {
     vec![crate::kimi_config::data_dir().join("sessions")]
 }
 

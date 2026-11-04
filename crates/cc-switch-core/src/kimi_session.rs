@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 #[derive(Debug, Default)]
-pub(crate) struct RequestInfo {
+pub struct RequestInfo {
     pub model: Option<String>,
     pub latency_ms: i64,
     pub first_token_ms: Option<i64>,
@@ -27,14 +27,14 @@ struct Step {
 /// from loop requests, then join the completed step to its committed message by messageId.
 /// Keep only metadata; never retain prompts, tool arguments, or response content here.
 #[derive(Default)]
-pub(crate) struct RequestIndex {
+pub struct RequestIndex {
     /// The agent whose wire is being read; `None` means the main agent.
     agent: Option<String>,
     step: Option<Step>,
     messages: HashMap<String, RequestInfo>,
 }
 
-pub(crate) fn timestamp_ms(value: &Value) -> Option<i64> {
+pub fn timestamp_ms(value: &Value) -> Option<i64> {
     let time = value
         .as_f64()
         .filter(|time| time.is_finite() && *time > 0.0)?;

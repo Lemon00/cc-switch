@@ -3,7 +3,7 @@
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-pub(crate) fn canonicalize_value(value: Value) -> Value {
+pub fn canonicalize_value(value: Value) -> Value {
     match value {
         Value::Array(values) => Value::Array(values.into_iter().map(canonicalize_value).collect()),
         Value::Object(map) => {
@@ -20,7 +20,7 @@ pub(crate) fn canonicalize_value(value: Value) -> Value {
     }
 }
 
-pub(crate) fn canonical_json_string(value: &Value) -> String {
+pub fn canonical_json_string(value: &Value) -> String {
     match value {
         Value::Null => "null".to_string(),
         Value::Bool(value) => value.to_string(),
@@ -48,7 +48,7 @@ pub(crate) fn canonical_json_string(value: &Value) -> String {
     }
 }
 
-pub(crate) fn canonicalize_json_string_if_parseable(value: &str) -> String {
+pub fn canonicalize_json_string_if_parseable(value: &str) -> String {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return value.to_string();
@@ -67,7 +67,7 @@ pub(crate) fn canonicalize_json_string_if_parseable(value: &str) -> String {
 /// upstreams such as Minimax reject `arguments: ""` with a 400
 /// `invalid function arguments json string` error, whereas lenient ones
 /// (OpenAI, Kimi) silently treat it as an empty object.
-pub(crate) fn canonicalize_tool_arguments_str(value: &str) -> String {
+pub fn canonicalize_tool_arguments_str(value: &str) -> String {
     if value.trim().is_empty() {
         return "{}".to_string();
     }
@@ -79,7 +79,7 @@ pub(crate) fn canonicalize_tool_arguments_str(value: &str) -> String {
 /// Mirrors the inline `match` that several transform paths used to duplicate:
 /// a string is canonicalized (with empty coerced to `"{}"`), a structured
 /// value is serialized canonically, and a missing field defaults to `"{}"`.
-pub(crate) fn canonicalize_tool_arguments(value: Option<&Value>) -> String {
+pub fn canonicalize_tool_arguments(value: Option<&Value>) -> String {
     match value {
         Some(Value::String(s)) => canonicalize_tool_arguments_str(s),
         Some(v) => canonical_json_string(v),
@@ -87,14 +87,14 @@ pub(crate) fn canonicalize_tool_arguments(value: Option<&Value>) -> String {
     }
 }
 
-pub(crate) fn short_value_hash(value: Option<&Value>) -> String {
+pub fn short_value_hash(value: Option<&Value>) -> String {
     let Some(value) = value else {
         return "absent".to_string();
     };
     short_sha256_hex(canonical_json_string(value).as_bytes())
 }
 
-pub(crate) fn short_sha256_hex(bytes: &[u8]) -> String {
+pub fn short_sha256_hex(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     digest
         .iter()

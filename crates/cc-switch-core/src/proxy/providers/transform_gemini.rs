@@ -27,19 +27,19 @@ pub type AnthropicToolSchemaHints = HashMap<String, AnthropicToolSchemaHint>;
 /// often do). The prefix is how downstream request-path code recognizes that
 /// the id is not a real Gemini id and must be stripped before forwarding back
 /// to Gemini as `functionResponse.id`.
-pub(crate) const SYNTHESIZED_ID_PREFIX: &str = "gemini_synth_";
+pub const SYNTHESIZED_ID_PREFIX: &str = "gemini_synth_";
 
 /// Generate a unique tool-call id that is safe to expose to Anthropic clients
 /// but must not be sent upstream to Gemini. Uses UUID v4 simple encoding
 /// (32 lowercase hex chars) so that any number of parallel calls in the same
 /// response remain distinguishable.
-pub(crate) fn synthesize_tool_call_id() -> String {
+pub fn synthesize_tool_call_id() -> String {
     format!("{SYNTHESIZED_ID_PREFIX}{}", uuid::Uuid::new_v4().simple())
 }
 
 /// Returns true if `id` was produced by [`synthesize_tool_call_id`] and
 /// therefore must be stripped when building Gemini request bodies.
-pub(crate) fn is_synthesized_tool_call_id(id: &str) -> bool {
+pub fn is_synthesized_tool_call_id(id: &str) -> bool {
     id.starts_with(SYNTHESIZED_ID_PREFIX)
 }
 
@@ -1462,7 +1462,7 @@ fn map_tool_choice(tool_choice: Option<&Value>) -> Result<Option<Value>, ProxyEr
 /// Convert a Gemini `usageMetadata` object into an Anthropic-style `usage`
 /// object. Used by both the streaming SSE converter and the non-streaming
 /// transform path so the two emit identical shapes.
-pub(crate) fn build_anthropic_usage(usage: Option<&Value>) -> Value {
+pub fn build_anthropic_usage(usage: Option<&Value>) -> Value {
     let Some(usage) = usage else {
         return json!({
             "input_tokens": 0,

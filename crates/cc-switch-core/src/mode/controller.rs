@@ -681,7 +681,7 @@ fn require_proxy_app(app: &AppType) -> Result<(), String> {
 /// 补不完（比如本机设置文件写不进去、改不了指针）就拒绝这次操作：这时读到的还是补完前的
 /// 指针和模式，照着做下去（比如只存了一行、以为它不是当前供应商），等那次操作补完就和刚
 /// 做的对不上了。
-pub(crate) async fn lock_settled(
+pub async fn lock_settled(
     state: &AppState,
     app: &AppType,
 ) -> Result<OwnedMutexGuard<()>, AppError> {
@@ -703,7 +703,7 @@ pub(crate) async fn lock_settled(
 }
 
 /// 同步代码里用的 [`lock_settled`]。没有路由模式的应用没有模式可以被并发改掉，不拿锁。
-pub(crate) fn lock_settled_blocking(
+pub fn lock_settled_blocking(
     state: &AppState,
     app: &AppType,
 ) -> Result<Option<OwnedMutexGuard<()>>, AppError> {
@@ -1221,7 +1221,7 @@ pub struct StackWriteError {
 }
 
 impl StackWriteError {
-    pub(crate) fn unchanged(message: impl Into<String>) -> Self {
+    pub fn unchanged(message: impl Into<String>) -> Self {
         Self {
             partial: false,
             message: message.into(),

@@ -512,7 +512,7 @@ fn replay_caches() -> &'static Mutex<CodexReplayCaches> {
     CODEX_REPLAY_CACHES.get_or_init(|| Mutex::new(CodexReplayCaches::default()))
 }
 
-pub(crate) fn clear_codex_replay_caches() {
+pub fn clear_codex_replay_caches() {
     // 清空即丢弃持锁 panic 时可能写了一半的内容，所以顺带解除中毒。
     let mut caches = replay_caches()
         .lock()
@@ -574,7 +574,7 @@ fn sqlite_column_exists(
     .map_err(|error| AppError::Database(format!("查询列 {table}.{column} 失败: {error}")))
 }
 
-pub(crate) fn reset_codex_usage_on_conn(
+pub fn reset_codex_usage_on_conn(
     conn: &rusqlite::Connection,
     codex_dir: &Path,
 ) -> Result<(), AppError> {
@@ -629,7 +629,7 @@ pub(crate) fn reset_codex_usage_on_conn(
 }
 
 impl Database {
-    pub(crate) fn reset_codex_usage(&self) -> Result<(), AppError> {
+    pub fn reset_codex_usage(&self) -> Result<(), AppError> {
         let codex_dir = get_codex_config_dir();
         let conn = lock_conn!(self.conn);
         conn.execute("SAVEPOINT reset_codex_usage", [])

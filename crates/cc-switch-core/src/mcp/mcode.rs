@@ -29,7 +29,7 @@ pub fn sync(id: &str, spec: Option<&Value>) -> Result<(), AppError> {
     sync_file(&crate::mcode_config::data_dir().join("mcp.json"), id, spec)
 }
 
-pub(crate) fn sync_and_commit<T>(
+pub fn sync_and_commit<T>(
     id: &str,
     spec: Option<&Value>,
     commit: impl FnOnce() -> Result<T, AppError>,

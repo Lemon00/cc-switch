@@ -291,7 +291,7 @@ pub struct ForwardResult {
     pub outbound_model: Option<String>,
     /// 活跃连接 RAII guard：随响应一起流转到 response_processor / handle_claude_transform，
     /// 最终被 move 进流式 body future（或非流式响应作用域），覆盖整个响应生命周期。
-    pub(crate) connection_guard: Option<ActiveConnectionGuard>,
+    pub connection_guard: Option<ActiveConnectionGuard>,
 }
 
 pub struct ForwardError {
@@ -309,12 +309,12 @@ pub struct ForwardError {
 /// 在 `create_logged_passthrough_stream` 内还会继续 yield 字节流，导致 UI 的
 /// `active_connections` 计数过早归零。RAII guard 让"减量"由 Rust 类型系统驱动，
 /// 不需要每条出口路径都手动调用。
-pub(crate) struct ActiveConnectionGuard {
+pub struct ActiveConnectionGuard {
     status: Arc<RwLock<ProxyStatus>>,
 }
 
 impl ActiveConnectionGuard {
-    pub(crate) async fn acquire(status: Arc<RwLock<ProxyStatus>>) -> Self {
+    pub async fn acquire(status: Arc<RwLock<ProxyStatus>>) -> Self {
         {
             let mut s = status.write().await;
             s.active_connections = s.active_connections.saturating_add(1);
@@ -656,6 +656,10 @@ impl RequestForwarder {
                 let pname = provider.name.clone();
                 let at = app_type_str.to_string();
                 tokio::spawn(async move {
+                    if let Some(notify) = hooks.failover_notify.clone() {
+                        notify(&at, &pid, &pname);
+                        return;
+                    }
                     let state = hooks
                         .failover_state
                         .as_ref()

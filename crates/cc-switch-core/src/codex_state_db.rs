@@ -16,7 +16,7 @@ use crate::config::{get_home_dir, is_wsl_path};
 /// Filename of Codex's per-thread state database. Codex bumps the version
 /// number across releases; update this single source of truth when a new state
 /// DB version ships.
-pub(crate) const CODEX_STATE_DB_FILENAME: &str = "state_5.sqlite";
+pub const CODEX_STATE_DB_FILENAME: &str = "state_5.sqlite";
 
 /// Env var that overrides the Codex SQLite state directory.
 const CODEX_SQLITE_HOME_ENV: &str = "CODEX_SQLITE_HOME";
@@ -26,7 +26,7 @@ const CODEX_SQLITE_HOME_ENV: &str = "CODEX_SQLITE_HOME";
 ///
 /// `config_dir` is the Codex config dir (`~/.codex`); `config_text` is the raw
 /// `config.toml` contents, used to detect a `sqlite_home` override.
-pub(crate) fn codex_state_db_paths(config_dir: &Path, config_text: &str) -> Vec<PathBuf> {
+pub fn codex_state_db_paths(config_dir: &Path, config_text: &str) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     push_unique_path(&mut paths, config_dir.join(CODEX_STATE_DB_FILENAME));
     // Codex lets SQLite state move away from CODEX_HOME; config takes precedence.
@@ -45,7 +45,7 @@ pub(crate) fn codex_state_db_paths(config_dir: &Path, config_text: &str) -> Vec<
 /// waits out the busy timeout and then fails with "database is locked". Such
 /// DBs are skipped (migration counts zero rows, titles fall back to the
 /// session index) instead of blocking each startup and session scan.
-pub(crate) fn codex_state_db_is_lockable(path: &Path) -> bool {
+pub fn codex_state_db_is_lockable(path: &Path) -> bool {
     if !is_wsl_path(path) {
         return true;
     }

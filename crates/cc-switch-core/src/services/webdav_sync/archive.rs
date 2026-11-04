@@ -21,14 +21,14 @@ use crate::services::sync_protocol::{
 /// 否则技能装得上、同步却恢复不了。字节上限 `MAX_SYNC_ARTIFACT_BYTES` 仍然兜底。
 const MAX_EXTRACT_ENTRIES: usize = 30_000;
 
-pub(crate) struct SkillsBackup {
+pub struct SkillsBackup {
     temporary_dir: Option<TempDir>,
     backup_dir: PathBuf,
     ssot_path: PathBuf,
     existed: bool,
 }
 
-pub(crate) fn zip_skills_ssot(dest_path: &Path) -> Result<(), AppError> {
+pub fn zip_skills_ssot(dest_path: &Path) -> Result<(), AppError> {
     let source = SkillService::get_ssot_dir().map_err(|e| {
         localized(
             "webdav.sync.skills_ssot_dir_failed",
@@ -69,7 +69,7 @@ pub(crate) fn zip_skills_ssot(dest_path: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
-pub(crate) fn restore_skills_zip(raw: &[u8]) -> Result<(), AppError> {
+pub fn restore_skills_zip(raw: &[u8]) -> Result<(), AppError> {
     let tmp = tempdir().map_err(|e| {
         io_context_localized(
             "webdav.sync.skills_extract_tmpdir_failed",
@@ -271,7 +271,7 @@ fn cleanup_skills_transaction(path: &Path, operations: &impl SkillsFs) {
     }
 }
 
-pub(crate) fn backup_current_skills() -> Result<SkillsBackup, AppError> {
+pub fn backup_current_skills() -> Result<SkillsBackup, AppError> {
     let ssot = SkillService::get_ssot_dir().map_err(|e| {
         localized(
             "webdav.sync.skills_ssot_dir_failed",
@@ -302,7 +302,7 @@ pub(crate) fn backup_current_skills() -> Result<SkillsBackup, AppError> {
     })
 }
 
-pub(crate) fn restore_skills_from_backup(backup: &SkillsBackup) -> Result<(), AppError> {
+pub fn restore_skills_from_backup(backup: &SkillsBackup) -> Result<(), AppError> {
     replace_skills_dir(
         backup.existed.then_some(backup.backup_dir.as_path()),
         &backup.ssot_path,
@@ -311,7 +311,7 @@ pub(crate) fn restore_skills_from_backup(backup: &SkillsBackup) -> Result<(), Ap
 }
 
 impl SkillsBackup {
-    pub(crate) fn rollback_after_import_error(self, db_error: AppError) -> AppError {
+    pub fn rollback_after_import_error(self, db_error: AppError) -> AppError {
         self.rollback_after_import_error_with(db_error, restore_skills_from_backup)
     }
 

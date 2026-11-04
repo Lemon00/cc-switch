@@ -192,7 +192,7 @@ fn completed_arguments(completed: &Value, item_id: &str) -> Option<String> {
 }
 
 /// 包一层原生 Responses SSE 流，补齐迟到的函数调用参数。
-pub(crate) fn create_late_arguments_repair_stream<E>(
+pub fn create_late_arguments_repair_stream<E>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send
 where

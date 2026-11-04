@@ -63,39 +63,39 @@ const PI_LEGACY_SEMANTIC_DEDUP_SQL: &str = "SELECT EXISTS(
 /// that name none. Mixing them up would fold one agent's usage into another's,
 /// so each app module declares exactly one flavor from its own constants.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Flavor {
+pub struct Flavor {
     /// Dashboard app filter, also `proxy_request_logs.app_type`.
-    pub(crate) app_type: &'static str,
+    pub app_type: &'static str,
     /// `proxy_request_logs.data_source` and `session_usage_dedup.data_source`.
-    pub(crate) data_source: &'static str,
+    pub data_source: &'static str,
     /// Placeholder `provider_id` for rows the entry does not attribute.
-    pub(crate) provider_placeholder: &'static str,
+    pub provider_placeholder: &'static str,
     /// Reserved `session_log_sync` row that stores this app's child cutoff,
     /// for apps whose parent sessions project nested session usage (Pi's
     /// pi-subagents). `None`: nested session files are the only record of
     /// their usage, so they always count.
-    pub(crate) cutoff_key: Option<&'static str>,
+    pub cutoff_key: Option<&'static str>,
     /// Prefix on the synthesized `request_id` and `semantic_id` hashes.
-    pub(crate) id_prefix: &'static str,
+    pub id_prefix: &'static str,
     /// Hash domain separator. Pi's value is frozen: the dedup ledger outlives
     /// pruned detail rows, so changing it would re-import history.
-    pub(crate) hash_tag: &'static str,
+    pub hash_tag: &'static str,
     /// Log and error label: the app name, as the user knows it.
-    pub(crate) label: &'static str,
+    pub label: &'static str,
     /// Whether Oh My Pi's `model_usage` entries carry usage. They record calls
     /// made outside the conversation: auto-thinking judges, job widgets.
-    pub(crate) model_usage_carrier: bool,
+    pub model_usage_carrier: bool,
     /// Whether a fixed-width `{"type":"title"}` slot may precede the session
     /// header. Only Oh My Pi writes one.
-    pub(crate) title_slot: bool,
+    pub title_slot: bool,
     /// Whether `subagent` tool results of Pi's official example extension
     /// carry child usage in `details.results`. That extension runs children
     /// with `--no-session`, so the parent's tool result is their only record.
-    pub(crate) subagent_tool_results: bool,
-    pub(crate) session_files: fn() -> Result<Vec<PathBuf>, String>,
+    pub subagent_tool_results: bool,
+    pub session_files: fn() -> Result<Vec<PathBuf>, String>,
 }
 
-pub(crate) const PI: Flavor = Flavor {
+pub const PI: Flavor = Flavor {
     app_type: "pi",
     data_source: "pi_session",
     provider_placeholder: "_pi_session",
@@ -242,7 +242,7 @@ pub fn sync_pi_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     sync_flavor(db, &PI)
 }
 
-pub(crate) fn sync_flavor(
+pub fn sync_flavor(
     db: &Database,
     flavor: &'static Flavor,
 ) -> Result<SessionSyncResult, AppError> {
@@ -251,7 +251,7 @@ pub(crate) fn sync_flavor(
     Ok(sync_pi_files(db, flavor, &files))
 }
 
-pub(crate) fn sync_pi_files(
+pub fn sync_pi_files(
     db: &Database,
     flavor: &'static Flavor,
     files: &[PathBuf],

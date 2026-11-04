@@ -29,13 +29,13 @@ fn read(path: &Path) -> Result<Value, AppError> {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum AgyChange<'a> {
+pub enum AgyChange<'a> {
     Upsert(&'a Value),
     Disable,
     Remove,
 }
 impl<'a> AgyChange<'a> {
-    pub(crate) fn from_enabled(spec: Option<&'a Value>) -> Self {
+    pub fn from_enabled(spec: Option<&'a Value>) -> Self {
         spec.map_or(Self::Disable, Self::Upsert)
     }
 }
@@ -51,7 +51,7 @@ pub fn sync(id: &str, spec: Option<&Value>) -> Result<(), AppError> {
     )
 }
 
-pub(crate) fn sync_and_commit<T>(
+pub fn sync_and_commit<T>(
     id: &str,
     change: AgyChange<'_>,
     commit: impl FnOnce() -> Result<T, AppError>,

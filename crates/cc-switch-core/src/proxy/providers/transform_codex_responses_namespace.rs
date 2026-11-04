@@ -36,7 +36,7 @@ use crate::proxy::error::ProxyError;
 /// Reverse map entry: a flattened tool name resolves back to its original
 /// namespace and bare child name.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct NamespacedName {
+pub struct NamespacedName {
     pub namespace: String,
     pub name: String,
 }
@@ -44,7 +44,7 @@ pub(crate) struct NamespacedName {
 /// Build the flat-name → `{namespace, name}` restore map from a Codex Responses
 /// request body. Used by the response handler to invert the request-side
 /// flatten; derives names exactly as [`flatten_request_namespaces`] does.
-pub(crate) fn namespace_restore_map(request_body: &Value) -> HashMap<String, NamespacedName> {
+pub fn namespace_restore_map(request_body: &Value) -> HashMap<String, NamespacedName> {
     let mut map = HashMap::new();
     let Some(tools) = request_body.get("tools").and_then(Value::as_array) else {
         return map;
@@ -89,7 +89,7 @@ pub(crate) fn namespace_restore_map(request_body: &Value) -> HashMap<String, Nam
 /// when two distinct namespace children (or a child and a top-level tool)
 /// collapse to the same flat name — the upstream could not disambiguate them,
 /// so failing loudly beats silently dropping a tool (matches sub2api).
-pub(crate) fn flatten_request_namespaces(body: &mut Value) -> Result<bool, ProxyError> {
+pub fn flatten_request_namespaces(body: &mut Value) -> Result<bool, ProxyError> {
     let Some(tools) = body.get("tools").and_then(Value::as_array) else {
         return Ok(false);
     };
@@ -221,7 +221,7 @@ pub(crate) fn flatten_request_namespaces(body: &mut Value) -> Result<bool, Proxy
 /// Restore flattened `function_call` names in a full (non-streaming) Responses
 /// payload back to their `{name, namespace}` identity. Returns whether anything
 /// changed.
-pub(crate) fn restore_response_namespaces(
+pub fn restore_response_namespaces(
     value: &mut Value,
     map: &HashMap<String, NamespacedName>,
 ) -> bool {
@@ -233,7 +233,7 @@ pub(crate) fn restore_response_namespaces(
 
 /// Restore a single parsed SSE event (e.g. `response.output_item.added` /
 /// `.done` carrying a `function_call`). Returns whether anything changed.
-pub(crate) fn restore_sse_event_namespaces(
+pub fn restore_sse_event_namespaces(
     event: &mut Value,
     map: &HashMap<String, NamespacedName>,
 ) -> bool {

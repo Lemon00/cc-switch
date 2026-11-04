@@ -15,17 +15,17 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-pub(crate) const MAX_FILE_BYTES: u64 = 1024 * 1024;
+pub const MAX_FILE_BYTES: u64 = 1024 * 1024;
 static MODELS_LOCK: Mutex<()> = Mutex::new(());
 static MCP_LOCK: Mutex<()> = Mutex::new(());
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 static TEST_AGENT_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 // ============================================================================
 // Path resolution
 // ============================================================================
 
-pub(crate) fn get_omp_agent_dir() -> Result<PathBuf, AppError> {
+pub fn get_omp_agent_dir() -> Result<PathBuf, AppError> {
     #[cfg(test)]
     if let Some(path) = TEST_AGENT_DIR
         .lock()
@@ -42,7 +42,7 @@ pub(crate) fn get_omp_agent_dir() -> Result<PathBuf, AppError> {
     get_omp_native_agent_dir()
 }
 
-pub(crate) fn get_omp_active_profile() -> Result<Option<String>, AppError> {
+pub fn get_omp_active_profile() -> Result<Option<String>, AppError> {
     let selected = std::env::var_os("OMP_PROFILE").or_else(|| std::env::var_os("PI_PROFILE"));
     normalize_profile(
         selected
@@ -114,7 +114,7 @@ fn native_agent_dir(
     Ok(root.join("agent"))
 }
 
-pub(crate) fn get_omp_native_agent_dir() -> Result<PathBuf, AppError> {
+pub fn get_omp_native_agent_dir() -> Result<PathBuf, AppError> {
     let profile = get_omp_active_profile()?;
     let config_dir = std::env::var("PI_CONFIG_DIR").ok();
     let agent_dir = std::env::var_os("PI_CODING_AGENT_DIR").map(PathBuf::from);
@@ -130,7 +130,7 @@ pub(crate) fn get_omp_native_agent_dir() -> Result<PathBuf, AppError> {
     )
 }
 
-pub(crate) fn get_omp_data_dir() -> Result<PathBuf, AppError> {
+pub fn get_omp_data_dir() -> Result<PathBuf, AppError> {
     let agent = get_omp_agent_dir()?;
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
@@ -179,7 +179,7 @@ fn data_dir(
 }
 
 /// Existing `models.yml` → `models.yaml` wins; greenfield defaults to `models.yml`.
-pub(crate) fn get_omp_models_path() -> Result<PathBuf, AppError> {
+pub fn get_omp_models_path() -> Result<PathBuf, AppError> {
     let agent = get_omp_agent_dir()?;
     for name in ["models.yml", "models.yaml"] {
         let path = agent.join(name);
@@ -191,7 +191,7 @@ pub(crate) fn get_omp_models_path() -> Result<PathBuf, AppError> {
 }
 
 /// Existing `config.yml` → `config.yaml` wins; greenfield defaults to `config.yml`.
-pub(crate) fn get_omp_settings_path() -> Result<PathBuf, AppError> {
+pub fn get_omp_settings_path() -> Result<PathBuf, AppError> {
     let agent = get_omp_agent_dir()?;
     for name in ["config.yml", "config.yaml"] {
         let path = agent.join(name);
@@ -203,7 +203,7 @@ pub(crate) fn get_omp_settings_path() -> Result<PathBuf, AppError> {
 }
 
 /// User-level MCP config path (`~/.omp/agent/mcp.json`).
-pub(crate) fn get_omp_mcp_path() -> Result<PathBuf, AppError> {
+pub fn get_omp_mcp_path() -> Result<PathBuf, AppError> {
     Ok(get_omp_agent_dir()?.join("mcp.json"))
 }
 
@@ -211,7 +211,7 @@ pub(crate) fn get_omp_mcp_path() -> Result<PathBuf, AppError> {
 // Byte-level I/O
 // ============================================================================
 
-pub(crate) fn read_bytes(path: &Path) -> Result<Option<Vec<u8>>, AppError> {
+pub fn read_bytes(path: &Path) -> Result<Option<Vec<u8>>, AppError> {
     let file = match fs::File::open(path) {
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -229,7 +229,7 @@ pub(crate) fn read_bytes(path: &Path) -> Result<Option<Vec<u8>>, AppError> {
 
 /// Exact bytes are the revision: compare again immediately before the atomic private write.
 /// Hold the feature's mutex through this call, including the database commit and rollback.
-pub(crate) fn write_and_commit<T>(
+pub fn write_and_commit<T>(
     path: &Path,
     before: Option<&[u8]>,
     after: &[u8],
@@ -289,7 +289,7 @@ fn providers(document: &serde_yaml::Value) -> Result<IndexMap<String, Value>, Ap
 // Providers (models.yml)
 // ============================================================================
 
-pub(crate) fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
+pub fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
     let _guard = MODELS_LOCK.lock()?;
     providers(&parse(&read_text(&get_omp_models_path()?)?.1)?)
 }
@@ -435,7 +435,7 @@ const DISCOVERY_TYPES: &[&str] = &[
 ];
 
 /// Validate the one node CC Switch writes. Other providers in the file are never judged.
-pub(crate) fn validate_provider(id: &str, node: &Value) -> Result<(), AppError> {
+pub fn validate_provider(id: &str, node: &Value) -> Result<(), AppError> {
     if id.trim().is_empty() {
         return Err(invalid_provider());
     }
@@ -751,7 +751,7 @@ fn reject_yaml_tokens(line: &str) -> Result<(), AppError> {
 /// `&`, `*` and `!` are only YAML indicators where a node starts: inside a plain scalar
 /// (`name: Search & Fetch`, which serde_yaml and Bun both write unquoted) they are
 /// ordinary text.
-pub(crate) fn has_yaml_reference_tokens(line: &str) -> bool {
+pub fn has_yaml_reference_tokens(line: &str) -> bool {
     let mut quote = None;
     let mut escaped = false;
     // A node may start here: line start, after `:`, a flow opener or `,`, and after a
@@ -807,7 +807,7 @@ pub(crate) fn has_yaml_reference_tokens(line: &str) -> bool {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum Change {
+pub enum Change {
     Insert,
     ReplaceIfPresent,
     Remove,
@@ -815,7 +815,7 @@ pub(crate) enum Change {
 
 /// Apply one provider change to models.yml and commit the database in the same critical
 /// section. `commit` receives the provider's previous native value.
-pub(crate) fn change_and_commit<T>(
+pub fn change_and_commit<T>(
     id: &str,
     config: Option<&Value>,
     change: Change,
@@ -842,7 +842,7 @@ pub(crate) fn change_and_commit<T>(
     write_and_commit(&path, before.as_deref(), after.as_bytes(), || commit(old))
 }
 
-pub(crate) fn provider_base_url(config: &Value) -> Result<String, AppError> {
+pub fn provider_base_url(config: &Value) -> Result<String, AppError> {
     fn nonempty(value: Option<&Value>) -> Option<&str> {
         value.and_then(Value::as_str).filter(|s| !s.is_empty())
     }
@@ -869,7 +869,7 @@ pub(crate) fn provider_base_url(config: &Value) -> Result<String, AppError> {
 /// the process environment it reads `.env` in the agent dir, the config root and home, in that
 /// order. Values starting with `!` are shell commands, which CC Switch never runs, so they give
 /// an empty key instead of being sent as the credential.
-pub(crate) fn resolve_usage_api_key(value: &str) -> String {
+pub fn resolve_usage_api_key(value: &str) -> String {
     let dotenv_files: Vec<PathBuf> = [get_omp_agent_dir(), get_omp_config_root()]
         .into_iter()
         .flatten()
@@ -944,7 +944,7 @@ fn dotenv_value(path: &Path, name: &str) -> Option<String> {
 // ============================================================================
 
 /// The provider part of `modelRoles.default` (`<provider>/<model>`). CC Switch never writes it.
-pub(crate) fn read_default_provider_id() -> Result<Option<String>, AppError> {
+pub fn read_default_provider_id() -> Result<Option<String>, AppError> {
     let document = parse(&read_text(&get_omp_settings_path()?)?.1)?;
     Ok(document
         .get("modelRoles")
@@ -965,7 +965,7 @@ pub(crate) fn read_default_provider_id() -> Result<Option<String>, AppError> {
 
 /// Mutate the native MCP document. Other root keys are kept; an external write between the
 /// read and the write is refused.
-pub(crate) fn update_omp_mcp_document(
+pub fn update_omp_mcp_document(
     update: impl FnOnce(&mut Value) -> Result<bool, AppError>,
 ) -> Result<(), AppError> {
     let _guard = MCP_LOCK.lock()?;
@@ -988,17 +988,17 @@ pub(crate) fn update_omp_mcp_document(
     Ok(())
 }
 
-#[cfg(test)]
-pub(crate) mod test_support {
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support {
     use std::path::{Path, PathBuf};
 
-    pub(crate) struct TestAgentDir {
+    pub struct TestAgentDir {
         _dir: Option<tempfile::TempDir>,
         previous: Option<PathBuf>,
     }
 
     impl TestAgentDir {
-        pub(crate) fn new() -> Self {
+        pub fn new() -> Self {
             let dir = tempfile::tempdir().expect("create Oh My Pi test directory");
             let agent_dir = dir.path().join("agent");
             std::fs::create_dir_all(&agent_dir).expect("create Oh My Pi agent directory");
@@ -1006,7 +1006,7 @@ pub(crate) mod test_support {
         }
 
         #[allow(dead_code)] // used only by tests; compiled-in outside cfg(test) via shared test_support
-        pub(crate) fn at(agent_dir: &Path) -> Self {
+        pub fn at(agent_dir: &Path) -> Self {
             Self::set(agent_dir.to_path_buf(), None)
         }
 

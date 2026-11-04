@@ -18,7 +18,7 @@ use crate::store::AppState;
 
 use super::normalize_claude_models_in_value;
 
-pub(crate) fn provider_exists_in_live_config(
+pub fn provider_exists_in_live_config(
     app_type: &AppType,
     provider_id: &str,
 ) -> Result<bool, AppError> {
@@ -316,7 +316,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
     }
 }
 
-pub(crate) fn provider_uses_common_config(
+pub fn provider_uses_common_config(
     app_type: &AppType,
     provider: &Provider,
     snippet: Option<&str>,
@@ -333,7 +333,7 @@ pub(crate) fn provider_uses_common_config(
     }
 }
 
-pub(crate) fn remove_common_config_from_settings(
+pub fn remove_common_config_from_settings(
     app_type: &AppType,
     settings: &Value,
     snippet: &str,
@@ -398,7 +398,7 @@ pub(crate) fn remove_common_config_from_settings(
 
 /// 把 `provider` 写进 live（live 当前对应的就是它：同步、退出代理写回）。切换式应用只
 /// 替换关键字段；通用配置片段冻结在库里只给旧版读，这里不再合并。
-pub(crate) fn write_live_for_state(
+pub fn write_live_for_state(
     state: &AppState,
     app_type: &AppType,
     provider: &Provider,
@@ -459,7 +459,7 @@ pub(crate) fn write_live_for_state(
 ///
 /// 不再持有外层锁：manager 内部按账号加锁刷新，网络阻塞不会波及其他账号操作或
 /// token 读取。
-pub(crate) fn get_codex_managed_oauth_live_auth_value(
+pub fn get_codex_managed_oauth_live_auth_value(
     manager: Arc<CodexOAuthManager>,
     account_id: String,
 ) -> Result<Value, AppError> {
@@ -504,7 +504,7 @@ pub(crate) fn get_codex_managed_oauth_live_auth_value(
 /// Before replacing an outgoing managed account's live auth, adopt any Codex
 /// CLI-rotated refresh generation and return the exact disk refresh token for
 /// a compare-before-write check.
-pub(crate) fn prepare_codex_managed_oauth_live_auth_switch_away(
+pub fn prepare_codex_managed_oauth_live_auth_switch_away(
     manager: Arc<CodexOAuthManager>,
     account_id: String,
 ) -> Result<CodexLiveAuthSwitchGuard, AppError> {
@@ -521,7 +521,7 @@ pub(crate) fn prepare_codex_managed_oauth_live_auth_switch_away(
     .map_err(AppError::Message)
 }
 
-pub(crate) fn codex_managed_oauth_live_auth(
+pub fn codex_managed_oauth_live_auth(
     chatgpt_account_id: &str,
     access_token: &str,
     id_token: Option<&str>,
@@ -541,7 +541,7 @@ pub(crate) fn codex_managed_oauth_live_auth(
 }
 
 /// Write live configuration snapshot for a provider
-pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
+pub fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
     match app_type {
         AppType::Claude => {
             return Err(AppError::localized(
@@ -769,7 +769,7 @@ fn sync_all_providers_to_live(state: &AppState, app_type: &AppType) -> Result<()
 }
 
 /// 把累加式应用的全部供应商同步到 live，再重投影它的 MCP。
-pub(crate) fn sync_additive_app_to_live(
+pub fn sync_additive_app_to_live(
     state: &AppState,
     app_type: &AppType,
 ) -> Result<(), AppError> {
@@ -784,7 +784,7 @@ pub(crate) fn sync_additive_app_to_live(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LiveSyncOutcome {
+pub enum LiveSyncOutcome {
     /// 按直连投影写了 live。
     WroteLive,
     /// 应用在代理模式：live 是代理契约，没有按直连写。
@@ -801,7 +801,7 @@ pub(crate) enum LiveSyncOutcome {
 /// 独有字段；`None` 表示 live 对应的就是 `provider` 自己。调用方持有这个应用的代理切换锁
 /// （`controller::lock_settled_blocking`），并且在拿锁之后才读谁是当前供应商：不拿锁的
 /// 话，读完模式到写完 live 之间进入代理，直连的关键字段会盖掉刚写的代理契约。
-pub(crate) fn sync_live_for_provider_respecting_mode(
+pub fn sync_live_for_provider_respecting_mode(
     state: &AppState,
     app_type: &AppType,
     provider: &Provider,
@@ -827,7 +827,7 @@ pub(crate) fn sync_live_for_provider_respecting_mode(
 
 /// 把正在用的那家（代理模式下是代理路由）同步到 live；没有正在用的那家时返回 `None`。
 /// 返回时已经放开切换锁。
-pub(crate) fn sync_current_provider_for_app_respecting_mode(
+pub fn sync_current_provider_for_app_respecting_mode(
     state: &AppState,
     app_type: &AppType,
 ) -> Result<Option<LiveSyncOutcome>, AppError> {
@@ -851,7 +851,7 @@ pub(crate) fn sync_current_provider_for_app_respecting_mode(
 
 /// Populate newly encountered DSH profiles with managed providers and enabled MCP servers.
 /// The native writer records completion locally so later native deletions remain intentional.
-pub(crate) fn initialize_dsh_profiles(state: &AppState) -> Result<(), AppError> {
+pub fn initialize_dsh_profiles(state: &AppState) -> Result<(), AppError> {
     let providers = state
         .db
         .get_all_providers("dsh")?
@@ -1265,7 +1265,7 @@ pub fn should_import_default_config_on_startup(
 ///
 /// This is specific to OpenCode's additive mode - removing a provider
 /// from the opencode.json file.
-pub(crate) fn remove_opencode_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+pub fn remove_opencode_provider_from_live(provider_id: &str) -> Result<(), AppError> {
     use crate::opencode_config;
 
     // Check if OpenCode config directory exists

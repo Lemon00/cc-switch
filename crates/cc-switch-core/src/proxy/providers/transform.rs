@@ -24,7 +24,7 @@ const ANTHROPIC_BILLING_HEADER_PREFIX: &str = "x-anthropic-billing-header:";
 /// `instructions`, the rotating `cch=` value changes the prompt prefix on every
 /// request and prevents prefix cache reuse (#2350). Later occurrences are kept
 /// to avoid deleting user-authored prompt text.
-pub(crate) fn strip_leading_anthropic_billing_header(text: &str) -> &str {
+pub fn strip_leading_anthropic_billing_header(text: &str) -> &str {
     if !text.starts_with(ANTHROPIC_BILLING_HEADER_PREFIX) {
         return text;
     }
@@ -174,7 +174,7 @@ fn resolve_requested_reasoning_effort(body: &Value, model: &str) -> Option<&'sta
 
 /// Effort implied by `thinking` alone (no `output_config.effort`): `adaptive` →
 /// `xhigh`, `enabled` → bucketed by `budget_tokens`, `disabled` / absent → `None`.
-pub(crate) fn effort_from_thinking(body: &Value) -> Option<&'static str> {
+pub fn effort_from_thinking(body: &Value) -> Option<&'static str> {
     let thinking = body.get("thinking")?;
     match thinking.get("type").and_then(|t| t.as_str()) {
         Some("adaptive") => Some("xhigh"),
@@ -364,7 +364,7 @@ pub fn anthropic_to_openai_with_reasoning_content(
 ///
 /// 由 Claude→openai_chat（claude.rs）与 Codex Responses→Chat（transform_codex_chat.rs）
 /// 两条转换路径共用，确保两个客户端方向行为一致。
-pub(crate) fn inject_openai_stream_include_usage(result: &mut Value) {
+pub fn inject_openai_stream_include_usage(result: &mut Value) {
     let is_stream = result
         .get("stream")
         .and_then(|v| v.as_bool())
@@ -624,7 +624,7 @@ fn is_chat_completion_envelope(body: &Value) -> bool {
 
 /// 把包在 `data` 里的 Chat Completions 响应解开；顶层的非 null 字段优先于 `data`
 /// 里的同名字段。不是这种形状时原样返回。
-pub(crate) fn unwrap_chat_completion_envelope(body: Value) -> Value {
+pub fn unwrap_chat_completion_envelope(body: Value) -> Value {
     if !is_chat_completion_envelope(&body) {
         return body;
     }
@@ -644,7 +644,7 @@ pub(crate) fn unwrap_chat_completion_envelope(body: Value) -> Value {
 }
 
 /// 只读场景（用量解析）用的同款解包：仅包层响应才复制一份。
-pub(crate) fn chat_completion_body(body: &Value) -> Cow<'_, Value> {
+pub fn chat_completion_body(body: &Value) -> Cow<'_, Value> {
     if is_chat_completion_envelope(body) {
         Cow::Owned(unwrap_chat_completion_envelope(body.clone()))
     } else {

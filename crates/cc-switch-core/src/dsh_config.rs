@@ -13,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub(crate) fn data_dir() -> PathBuf {
+pub fn data_dir() -> PathBuf {
     std::env::var_os("DSH_HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
@@ -25,11 +25,11 @@ const TARGET_PROFILES: [&str; 4] = ["web", "desktop", "headless", "acp"];
 /// Providers and MCP are shown from the first of these that exists.
 const DISPLAY_PROFILES: [&str; 2] = ["web", "desktop"];
 
-pub(crate) fn profile_dir(name: &str) -> PathBuf {
+pub fn profile_dir(name: &str) -> PathBuf {
     data_dir().join("profiles").join(name)
 }
 
-pub(crate) fn profile_path(name: &str) -> PathBuf {
+pub fn profile_path(name: &str) -> PathBuf {
     profile_dir(name).join("cordis.patch.yml")
 }
 
@@ -40,7 +40,7 @@ pub(crate) fn profile_path(name: &str) -> PathBuf {
 /// junction, 8.3 short name or case-only alias). Listing both spellings made
 /// [`edit_files_and_commit`] take the same `<file>.lock` twice, so every provider and MCP write
 /// failed with a bogus concurrency conflict (#9100). One file is listed once.
-pub(crate) fn target_paths() -> Vec<PathBuf> {
+pub fn target_paths() -> Vec<PathBuf> {
     let mut seen: Vec<PathBuf> = Vec::new();
     TARGET_PROFILES
         .iter()
@@ -77,7 +77,7 @@ fn path_identity(path: &Path) -> PathBuf {
 
 /// The authoritative profile providers and MCP are read from first: `web`, else `desktop`, else
 /// the first target. Writes go to every target, so [`read_paths`] also lists the rest.
-pub(crate) fn config_path() -> PathBuf {
+pub fn config_path() -> PathBuf {
     DISPLAY_PROFILES
         .iter()
         .map(|name| profile_path(name))
@@ -92,7 +92,7 @@ pub(crate) fn config_path() -> PathBuf {
 /// exists in one of them (added natively in DSH, or written before another profile was
 /// initialized) must still be listed: hiding it while [`provider_key_exists`] reports it as taken
 /// leaves the user with no way to see or resolve the collision.
-pub(crate) fn read_paths() -> Vec<PathBuf> {
+pub fn read_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
     let authoritative = config_path();
     for path in std::iter::once(authoritative.clone()).chain(target_paths()) {
@@ -116,11 +116,11 @@ fn profile_name(path: &Path) -> String {
 }
 
 /// `$DSH_HOME/cordis.patch.yml`, applied after every profile.
-pub(crate) fn home_patch_path() -> PathBuf {
+pub fn home_patch_path() -> PathBuf {
     data_dir().join("cordis.patch.yml")
 }
 
-pub(crate) fn credentials_path() -> PathBuf {
+pub fn credentials_path() -> PathBuf {
     data_dir().join(".credentials.yaml")
 }
 
@@ -132,7 +132,7 @@ fn read_text(path: &Path) -> Result<String, AppError> {
     }
 }
 
-pub(crate) fn entries(text: &str) -> Result<Vec<Yaml>, AppError> {
+pub fn entries(text: &str) -> Result<Vec<Yaml>, AppError> {
     let value: Yaml = serde_yaml::from_str(text)
         .map_err(|_| AppError::Config("Invalid DeepSeek Harness profile YAML".into()))?;
     match value {
@@ -504,11 +504,11 @@ fn credential_document_from(text: &str) -> Result<Yaml, AppError> {
 }
 
 /// Key of the DeepSeek account login written by DSH's `deepseek-account-platform` provider.
-pub(crate) const ACCOUNT_RECORD: &str = "deepseek-account-platform/default";
+pub const ACCOUNT_RECORD: &str = "deepseek-account-platform/default";
 const ACCOUNT_DEVICE_RECORD: &str = "deepseek-account-platform/device";
 
 /// The shared DeepSeek account grant (`{version: 1, token, issuer}`), if signed in.
-pub(crate) fn account_grant() -> Result<Option<(String, String)>, AppError> {
+pub fn account_grant() -> Result<Option<(String, String)>, AppError> {
     let document = credential_document(&credentials_path())?;
     let record = &document["records"][ACCOUNT_RECORD];
     if record.is_null() {
@@ -531,7 +531,7 @@ pub(crate) fn account_grant() -> Result<Option<(String, String)>, AppError> {
 
 /// DSH's per-install device id (`deepseek-account-platform/device`), created on first login
 /// exactly like DSH does so CC Switch and DSH report the same device to Platform.
-pub(crate) fn account_device_id() -> Result<String, AppError> {
+pub fn account_device_id() -> Result<String, AppError> {
     let path = credentials_path();
     let _lock = FileLock::acquire(&path)?;
     let mut document = credential_document(&path)?;
@@ -551,7 +551,7 @@ pub(crate) fn account_device_id() -> Result<String, AppError> {
 }
 
 /// Store a DeepSeek account login for both DSH Web and Desktop (DSH reloads the file).
-pub(crate) fn store_account_grant(token: &str, issuer: &str) -> Result<(), AppError> {
+pub fn store_account_grant(token: &str, issuer: &str) -> Result<(), AppError> {
     let path = credentials_path();
     let _lock = FileLock::acquire(&path)?;
     let mut document = credential_document(&path)?;
@@ -580,7 +580,7 @@ fn write_credentials(path: &Path, document: &Yaml) -> Result<(), AppError> {
 
 /// Sign out locally for Web and Desktop alike, under DSH's credentials lock. Returns the
 /// removed grant so the caller can revoke it remotely, as DSH does.
-pub(crate) fn remove_account_grant() -> Result<Option<(String, String)>, AppError> {
+pub fn remove_account_grant() -> Result<Option<(String, String)>, AppError> {
     let path = credentials_path();
     let _lock = FileLock::acquire(&path)?;
     let grant = account_grant()?;
@@ -597,7 +597,7 @@ pub(crate) fn remove_account_grant() -> Result<Option<(String, String)>, AppErro
 
 /// Providers as shown in CC Switch: every initialized profile ([`read_paths`]), authoritative
 /// profile first, first occurrence of a key winning.
-pub(crate) fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
+pub fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
     let credentials = credentials_path();
     let authoritative = config_path();
     let mut merged: IndexMap<String, Value> = IndexMap::new();
@@ -706,7 +706,7 @@ fn get_providers_from(
     Ok(result)
 }
 
-pub(crate) fn validate_provider(id: &str, config: &Value) -> Result<(), AppError> {
+pub fn validate_provider(id: &str, config: &Value) -> Result<(), AppError> {
     if id.is_empty()
         || id == "deepseek-official"
         || id.starts_with('-')
@@ -806,7 +806,7 @@ fn update_provider(
 
 /// Add, edit or remove one provider in every target profile together with its credential, as
 /// one change ([`edit_files_and_commit`]).
-pub(crate) fn save_and_commit<T>(
+pub fn save_and_commit<T>(
     id: &str,
     config: Option<Value>,
     create: bool,
@@ -878,7 +878,7 @@ fn save_paths_and_commit<T>(
 /// Seed a newly encountered profile once. Keep the receipt beside the native profiles, rather
 /// than in the cloud-synced database: deleting every managed node in DSH must not cause a later
 /// startup to restore it. Profiles, credentials and the receipt are committed together.
-pub(crate) fn initialize_profiles(
+pub fn initialize_profiles(
     providers: &IndexMap<String, Value>,
     servers: &IndexMap<String, Value>,
 ) -> Result<(), AppError> {
@@ -1250,14 +1250,14 @@ fn native_provider(
     Ok((credentials_next, native))
 }
 
-pub(crate) fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
+pub fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
     save_and_commit(id, Some(config), false, || Ok(()))
 }
-pub(crate) fn remove_provider(id: &str) -> Result<(), AppError> {
+pub fn remove_provider(id: &str) -> Result<(), AppError> {
     save_and_commit(id, None, false, || Ok(()))
 }
 /// A key is taken when any target profile already has it (CC Switch never overwrites a node).
-pub(crate) fn provider_key_exists(id: &str) -> Result<bool, AppError> {
+pub fn provider_key_exists(id: &str) -> Result<bool, AppError> {
     for path in target_paths() {
         let entry = provider_entry(&read_text(&path)?)?;
         if entry["config"]["providers"]
@@ -1273,7 +1273,7 @@ pub(crate) fn provider_key_exists(id: &str) -> Result<bool, AppError> {
 /// MCP servers as shown in CC Switch, read from the display profile ([`config_path`]).
 /// MCP servers as shown in CC Switch: every initialized profile, authoritative profile first,
 /// one entry per server name.
-pub(crate) fn mcp_entries() -> Result<Vec<Yaml>, AppError> {
+pub fn mcp_entries() -> Result<Vec<Yaml>, AppError> {
     let authoritative = config_path();
     let mut merged: Vec<Yaml> = Vec::new();
     let mut names: Vec<String> = Vec::new();
@@ -1326,7 +1326,7 @@ fn plugin_entries(patches: &[Yaml]) -> impl Iterator<Item = (usize, Option<usize
 }
 
 /// Write one MCP server into every target profile as one change ([`edit_files_and_commit`]).
-pub(crate) fn sync_mcp_and_commit<T>(
+pub fn sync_mcp_and_commit<T>(
     id: &str,
     spec: Option<&Value>,
     commit: impl FnOnce() -> Result<T, AppError>,

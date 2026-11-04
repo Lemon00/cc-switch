@@ -28,7 +28,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::OnceLock;
 use std::time::SystemTime;
 
-pub(crate) use crate::services::session_common::{
+pub use crate::services::session_common::{
     estimated_first_token_ms, estimated_latency_ms, metadata_modified_nanos,
     parse_timestamp_millis, update_sync_state, update_sync_state_on_conn, EstimatedTiming,
 };
@@ -46,7 +46,7 @@ pub fn session_sync_mutex() -> &'static tokio::sync::Mutex<()> {
 static LAST_SYNC_COMPLETED_AT_MS: AtomicI64 = AtomicI64::new(0);
 
 /// 记下一次扫描完成的时间；只会往后走（并发调用时不会被较早的时间覆盖）。
-pub(crate) fn record_sync_completed(at_ms: i64) {
+pub fn record_sync_completed(at_ms: i64) {
     LAST_SYNC_COMPLETED_AT_MS.fetch_max(at_ms, Ordering::Relaxed);
 }
 
@@ -63,7 +63,7 @@ pub fn last_sync_completed_at() -> Option<i64> {
 /// 取锁）。`last_synced_at` 对 Pi 路径是编码后的 revision，其余路径是
 /// 真实同步时间戳。
 #[derive(Debug, Clone, Default)]
-pub(crate) struct SyncCursor {
+pub struct SyncCursor {
     pub last_modified: i64,
     pub last_line_offset: i64,
     pub last_byte_offset: Option<i64>,
@@ -81,7 +81,7 @@ pub(crate) struct SyncCursor {
 /// 30 天前的明细汇总后删除，request_id 去重只查明细表，对已剪条目失明——
 /// 空表回退意味着全量重导，被剪的旧条目会在下次 rollup 时再次累加进汇总，
 /// 永久放大统计。
-pub(crate) fn load_sync_cursors(db: &Database) -> Result<HashMap<String, SyncCursor>, AppError> {
+pub fn load_sync_cursors(db: &Database) -> Result<HashMap<String, SyncCursor>, AppError> {
     let conn = lock_conn!(db.conn);
     let mut stmt = conn
         .prepare(
@@ -179,7 +179,7 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
     result
 }
 
-pub(crate) fn notify_sync_result(result: &SessionSyncResult) {
+pub fn notify_sync_result(result: &SessionSyncResult) {
     if result.imported > 0 {
         crate::usage_events::notify_log_recorded();
     }
@@ -962,7 +962,7 @@ fn update_claude_sync_state_on_conn(
 /// 生产路径已改为 [`load_sync_cursors`] 批量预取；保留此单行查询给测试
 /// 断言游标状态用。
 #[cfg(test)]
-pub(crate) fn get_sync_state(db: &Database, file_path: &str) -> Result<(i64, i64), AppError> {
+pub fn get_sync_state(db: &Database, file_path: &str) -> Result<(i64, i64), AppError> {
     let conn = lock_conn!(db.conn);
     let result = conn.query_row(
         "SELECT last_modified, last_line_offset FROM session_log_sync WHERE file_path = ?1",
@@ -987,7 +987,7 @@ pub(crate) fn get_sync_state(db: &Database, file_path: &str) -> Result<(i64, i64
 /// 写入字节游标（Grok 等按行流式扫描）。`last_line_offset` 置 0，表示
 /// 行号/事件计数游标已退役；存量 Grok 行的事件计数只在 `last_byte_offset`
 /// 仍为 NULL 时用一次，转换成字节位置后不再读取。
-pub(crate) fn update_byte_sync_state(
+pub fn update_byte_sync_state(
     db: &Database,
     file_path: &str,
     last_modified: i64,

@@ -16,7 +16,7 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde_json::{json, Value};
 
-pub(crate) const OPENAI_REASONING_ITEM_PREFIX: &str = "ccswitch-openai-reasoning-v1:";
+pub const OPENAI_REASONING_ITEM_PREFIX: &str = "ccswitch-openai-reasoning-v1:";
 
 /// The only fields safe to send back as a `reasoning` input item:
 /// `encrypted_content` is the stateless-replay payload, `id`/`summary` are
@@ -33,7 +33,7 @@ fn sanitize_reasoning_item(item: &Value) -> Value {
     Value::Object(sanitized)
 }
 
-pub(crate) fn reasoning_summary_text(item: &Value) -> String {
+pub fn reasoning_summary_text(item: &Value) -> String {
     item.get("summary")
         .and_then(Value::as_array)
         .into_iter()
@@ -50,7 +50,7 @@ pub(crate) fn reasoning_summary_text(item: &Value) -> String {
         .join("")
 }
 
-pub(crate) fn encode_openai_reasoning_item(item: &Value) -> Option<String> {
+pub fn encode_openai_reasoning_item(item: &Value) -> Option<String> {
     if item.get("type").and_then(Value::as_str) != Some("reasoning") {
         return None;
     }
@@ -61,7 +61,7 @@ pub(crate) fn encode_openai_reasoning_item(item: &Value) -> Option<String> {
     ))
 }
 
-pub(crate) fn decode_openai_reasoning_item(encoded: &str) -> Option<Value> {
+pub fn decode_openai_reasoning_item(encoded: &str) -> Option<Value> {
     let payload = encoded.strip_prefix(OPENAI_REASONING_ITEM_PREFIX)?;
     let bytes = URL_SAFE_NO_PAD.decode(payload).ok()?;
     let item: Value = serde_json::from_slice(&bytes).ok()?;
@@ -69,7 +69,7 @@ pub(crate) fn decode_openai_reasoning_item(encoded: &str) -> Option<Value> {
         .then(|| sanitize_reasoning_item(&item))
 }
 
-pub(crate) fn anthropic_block_from_openai_reasoning_item(item: &Value) -> Option<Value> {
+pub fn anthropic_block_from_openai_reasoning_item(item: &Value) -> Option<Value> {
     if item.get("type").and_then(Value::as_str) != Some("reasoning") {
         return None;
     }
@@ -101,7 +101,7 @@ pub(crate) fn anthropic_block_from_openai_reasoning_item(item: &Value) -> Option
     })
 }
 
-pub(crate) fn openai_reasoning_item_from_anthropic_block(block: &Value) -> Option<Value> {
+pub fn openai_reasoning_item_from_anthropic_block(block: &Value) -> Option<Value> {
     match block.get("type").and_then(Value::as_str) {
         Some("thinking") => block
             .get("signature")

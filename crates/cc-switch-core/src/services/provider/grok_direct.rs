@@ -25,24 +25,24 @@ fn app() -> &'static str {
 }
 
 /// `~/.grok/config.toml`：模型表里有 Key，按 0600 写。
-pub(crate) fn config_file() -> LiveFile {
+pub fn config_file() -> LiveFile {
     LiveFile::private(get_grok_config_path())
 }
 
 /// 官方卡：不写模型表，Grok 回落到内置模型和自带的 xAI 登录。
-pub(crate) fn is_official(provider: &Provider) -> bool {
+pub fn is_official(provider: &Provider) -> bool {
     provider.category.as_deref() == Some("official")
 }
 
 /// 供应商要写的模型表。写之前校验，校验不过什么都不写。
-pub(crate) fn projection(provider: &Provider) -> Result<GrokProjection, AppError> {
+pub fn projection(provider: &Provider) -> Result<GrokProjection, AppError> {
     GrokProjection::of(&provider.settings_config, is_official(provider))
 }
 
 /// 上次写进 live 的表。有写入记录就按记录；这台设备上新版还没写过（刚从旧版升级）时，
 /// 按旧版的写法推断：旧版把 `live_owner` 的行整份写进 live，它的 `models.default` 指的就是
 /// CC Switch 的表。用户的其他表旧版也会原样写回，但证明不了是 CC Switch 的，不删。
-pub(crate) fn retired_tables(
+pub fn retired_tables(
     store: &DeviceStore,
     live_owner: Option<&Provider>,
 ) -> Result<Vec<String>, AppError> {
@@ -75,7 +75,7 @@ pub(crate) fn retired_tables(
 
 /// 切到 `target`：同一个操作里写 live、改指针、记下写的表。`live_owner` 是 live 现在
 /// 对应的供应商（直连指针那家），只在没有写入记录时用来推断旧版写的表。
-pub(crate) fn switch_to(
+pub fn switch_to(
     db: &Database,
     live_owner: Option<&Provider>,
     target: &Provider,
@@ -84,7 +84,7 @@ pub(crate) fn switch_to(
 }
 
 /// 把当前供应商重新投影到 live，不改指针。
-pub(crate) fn reapply(
+pub fn reapply(
     db: &Database,
     live_owner: Option<&Provider>,
     target: &Provider,
@@ -111,7 +111,7 @@ fn write(
 
 /// 把 `projection` 写进 `config.toml`，和 `target` 在同一个操作里提交，并记下写的表；
 /// `projection` 为空时只落定状态、不读也不写文件。
-pub(crate) fn run(
+pub fn run(
     db: &Database,
     op: &str,
     live_owner: Option<&Provider>,
@@ -122,7 +122,7 @@ pub(crate) fn run(
 }
 
 /// 同 [`run`]，另把编辑器保存的全局改动在同一次写入里写进去（先改动，后模型表）。
-pub(crate) fn run_with_edits(
+pub fn run_with_edits(
     db: &Database,
     op: &str,
     live_owner: Option<&Provider>,

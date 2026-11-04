@@ -26,7 +26,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
 
-pub(crate) const ANTHROPIC_THINKING_ENCRYPTED_PREFIX: &str = "ccswitch-anthropic-thinking-v1:";
+pub const ANTHROPIC_THINKING_ENCRYPTED_PREFIX: &str = "ccswitch-anthropic-thinking-v1:";
 const TOOL_SEARCH_PROXY_NAME: &str = "tool_search";
 
 /// Maps Codex's reasoning.effort to the token budget for Anthropic thinking.
@@ -34,7 +34,7 @@ const TOOL_SEARCH_PROXY_NAME: &str = "tool_search";
 /// Returning `None` indicates an unrecognized effort value—in that case extended
 /// thinking should not be enabled (to avoid accidentally swallowing
 /// temperature/top_p), keeping normal sampling.
-pub(crate) fn effort_to_thinking_budget(effort: &str) -> Option<u64> {
+pub fn effort_to_thinking_budget(effort: &str) -> Option<u64> {
     // ultra 是 Codex 扩展档位，钳到 max 同档——落进 None 会让"选最深思考"
     // 反而关掉 extended thinking。
     match effort.trim().to_ascii_lowercase().as_str() {
@@ -69,7 +69,7 @@ fn reasoning_explicitly_disabled(effort: Option<&str>) -> bool {
 /// Preserve an Anthropic signed thinking/redacted-thinking block inside the opaque
 /// Responses `reasoning.encrypted_content` field so Codex replays it on the next
 /// tool-result request. The prefix keeps unrelated providers' ciphertext isolated.
-pub(crate) fn encode_anthropic_thinking_block(block: &Value) -> Option<String> {
+pub fn encode_anthropic_thinking_block(block: &Value) -> Option<String> {
     match block.get("type").and_then(|value| value.as_str()) {
         Some("thinking")
             if block
@@ -90,7 +90,7 @@ pub(crate) fn encode_anthropic_thinking_block(block: &Value) -> Option<String> {
     ))
 }
 
-pub(crate) fn decode_anthropic_thinking_block(encrypted_content: &str) -> Option<Value> {
+pub fn decode_anthropic_thinking_block(encrypted_content: &str) -> Option<Value> {
     let encoded = encrypted_content.strip_prefix(ANTHROPIC_THINKING_ENCRYPTED_PREFIX)?;
     let bytes = URL_SAFE_NO_PAD.decode(encoded).ok()?;
     let block: Value = serde_json::from_slice(&bytes).ok()?;
@@ -99,7 +99,7 @@ pub(crate) fn decode_anthropic_thinking_block(encrypted_content: &str) -> Option
     encode_anthropic_thinking_block(&block).map(|_| block)
 }
 
-pub(crate) fn responses_reasoning_item_from_anthropic_block(
+pub fn responses_reasoning_item_from_anthropic_block(
     item_id: &str,
     block: &Value,
 ) -> Option<Value> {
@@ -119,7 +119,7 @@ pub(crate) fn responses_reasoning_item_from_anthropic_block(
 }
 
 /// Anthropic's stop_reason → Responses' (status, incomplete_details.reason)
-pub(crate) fn map_anthropic_stop_reason_to_status(
+pub fn map_anthropic_stop_reason_to_status(
     stop_reason: Option<&str>,
 ) -> (&'static str, Option<&'static str>) {
     match stop_reason {
@@ -147,7 +147,7 @@ pub(crate) fn map_anthropic_stop_reason_to_status(
 ///
 /// The internal billing parser subtracts both subsets before charging the normal
 /// input rate, then prices cache reads and writes separately.
-pub(crate) fn build_responses_usage_from_anthropic(usage: Option<&Value>) -> Value {
+pub fn build_responses_usage_from_anthropic(usage: Option<&Value>) -> Value {
     let u = match usage {
         Some(v) if v.is_object() => v,
         _ => {
@@ -1288,7 +1288,7 @@ pub fn anthropic_response_to_responses(body: Value) -> Result<Value, ProxyError>
     anthropic_response_to_responses_with_context(body, &CodexToolContext::default())
 }
 
-pub(crate) fn anthropic_response_to_responses_with_context(
+pub fn anthropic_response_to_responses_with_context(
     body: Value,
     tool_context: &CodexToolContext,
 ) -> Result<Value, ProxyError> {

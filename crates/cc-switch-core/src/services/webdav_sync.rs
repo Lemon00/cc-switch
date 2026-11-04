@@ -15,7 +15,7 @@ use crate::services::webdav::{
 };
 use crate::settings::{update_webdav_sync_status, WebDavSyncSettings, WebDavSyncStatus};
 
-pub(crate) use super::sync_protocol::run_with_sync_lock;
+pub use super::sync_protocol::run_with_sync_lock;
 use super::sync_protocol::{
     apply_snapshot, build_local_snapshot, effective_db_compat_version, localized,
     persist_sync_success_best_effort, sha256_hex, validate_artifact_size_limit,
@@ -24,12 +24,12 @@ use super::sync_protocol::{
     REMOTE_DB_SQL, REMOTE_MANIFEST, REMOTE_SKILLS_ZIP,
 };
 
-#[cfg(test)]
-pub(crate) fn sync_mutex() -> &'static tokio::sync::Mutex<()> {
+#[cfg(any(test, feature = "test-support"))]
+pub fn sync_mutex() -> &'static tokio::sync::Mutex<()> {
     super::sync_protocol::sync_mutex()
 }
 
-pub(crate) mod archive;
+pub mod archive;
 
 /// Content type for the manifest PUT. Some WebDAV servers (e.g. CSTCloud
 /// Data Capsule) reject multi-line bodies sent as `application/json` with a

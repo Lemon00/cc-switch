@@ -186,18 +186,18 @@ struct EnvChange {
 
 /// 一次编辑器保存要写进 live 的全局改动。
 #[derive(Debug, Clone)]
-pub(crate) struct GeminiEdits {
+pub struct GeminiEdits {
     env: Vec<EnvChange>,
     settings: Vec<JsonChange>,
     on_conflict: ConflictPolicy,
 }
 
 impl GeminiEdits {
-    pub(crate) fn touches_env(&self) -> bool {
+    pub fn touches_env(&self) -> bool {
         !self.env.is_empty()
     }
 
-    pub(crate) fn touches_settings(&self) -> bool {
+    pub fn touches_settings(&self) -> bool {
         !self.settings.is_empty()
     }
 }
@@ -263,7 +263,7 @@ fn diff_objects(
 }
 
 /// 写 `.env`：先按三方比较应用编辑器的改动，再换关键字段。
-pub(crate) struct EnvWrite<'a> {
+pub struct EnvWrite<'a> {
     pub edits: Option<&'a GeminiEdits>,
     pub key_fields: Option<DotenvPatch>,
 }
@@ -306,7 +306,7 @@ impl LivePatch for EnvWrite<'_> {
 
 /// 写 `settings.json`：先按三方比较应用编辑器的改动（改动整片替换一个对象时，里面的
 /// 关键字段保留 live 原来的值），再换关键字段。
-pub(crate) struct SettingsWrite<'a> {
+pub struct SettingsWrite<'a> {
     pub edits: Option<&'a GeminiEdits>,
     pub key_fields: Option<JsonPatch>,
 }
@@ -340,14 +340,14 @@ impl LivePatch for SettingsWrite<'_> {
 }
 
 /// 一次编辑器保存：存进行的内容，和要写进 live 的全局改动。
-pub(crate) struct GeminiEditorPlan {
+pub struct GeminiEditorPlan {
     pub row_settings: Value,
     pub edits: GeminiEdits,
 }
 
 /// 把编辑器里的配置拆开：关键字段换进行（行里其余内容原样保留），其余部分和 `base` 比，
 /// 得出用户改过的全局设置。
-pub(crate) fn plan_save(
+pub fn plan_save(
     stored_row: Option<&Value>,
     edited: &Value,
     base: &Value,
@@ -432,7 +432,7 @@ fn store_into_row(stored_row: Option<&Value>, edited: &Value) -> Value {
 
 /// 把编辑器保存的改动写进 live。`key_fields` 有值时（直连模式下编辑当前供应商）关键
 /// 字段在同一次写入里换成它的；`set_pointer` 为新增第一个供应商，指针随操作落定。
-pub(crate) fn write_live(
+pub fn write_live(
     db: &Database,
     edits: &GeminiEdits,
     key_fields: Option<&Provider>,

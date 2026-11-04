@@ -43,7 +43,7 @@ fn session_sources() -> Vec<(PathBuf, Option<PathBuf>)> {
     sources
 }
 
-pub(crate) fn records(path: &Path) -> Result<Vec<Value>, String> {
+pub fn records(path: &Path) -> Result<Vec<Value>, String> {
     let file =
         fs::File::open(path).map_err(|e| format!("Cannot read Antigravity transcript: {e}"))?;
     // The export can rewrite steps as they finish. The latest record for a step wins.
@@ -222,7 +222,7 @@ fn user_request(content: &str) -> &str {
         .unwrap_or(content)
 }
 
-pub(crate) fn timestamp(value: &Value) -> Option<i64> {
+pub fn timestamp(value: &Value) -> Option<i64> {
     parse_timestamp_to_ms(&value["created_at"])
 }
 

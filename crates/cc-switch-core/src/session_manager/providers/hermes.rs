@@ -624,7 +624,7 @@ pub fn delete_session_sqlite(session_id: &str, source: &str) -> Result<bool, Str
     Ok(deleted > 0)
 }
 
-pub(crate) fn parse_sqlite_source(source: &str) -> Option<(PathBuf, String)> {
+pub fn parse_sqlite_source(source: &str) -> Option<(PathBuf, String)> {
     let rest = source.strip_prefix("sqlite:")?;
     let hash_pos = rest.rfind('#')?;
     let db_path = PathBuf::from(&rest[..hash_pos]);

@@ -12,7 +12,7 @@ use rusqlite::{params, OptionalExtension};
 use serde_json::Value;
 use std::path::Path;
 
-mod native_models;
+pub mod native_models;
 
 pub fn sync_agy_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();

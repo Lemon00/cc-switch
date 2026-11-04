@@ -8,7 +8,7 @@ use crate::provider::Provider;
 ///
 /// Used to optimize performance by avoiding repeated provider type detection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GeminiAuthType {
+pub enum GeminiAuthType {
     /// PackyCode provider (uses API Key)
     Packycode,
     /// Google Official (uses OAuth)
@@ -33,7 +33,7 @@ const PACKYCODE_KEYWORDS: [&str; 3] = ["packycode", "packyapi", "packy"];
 /// - `GeminiAuthType::GoogleOfficial`: Google official, uses OAuth
 /// - `GeminiAuthType::Packycode`: PackyCode provider, uses API Key
 /// - `GeminiAuthType::Generic`: Other generic providers, uses API Key
-pub(crate) fn detect_gemini_auth_type(provider: &Provider) -> GeminiAuthType {
+pub fn detect_gemini_auth_type(provider: &Provider) -> GeminiAuthType {
     // Priority 1: Check partner_promotion_key (most reliable)
     if let Some(key) = provider
         .meta
@@ -93,6 +93,6 @@ fn contains_packycode_keyword(value: &str) -> bool {
 /// Google Official Gemini uses OAuth personal authentication, no API Key needed.
 ///
 /// This is a convenience wrapper around `detect_gemini_auth_type`.
-pub(crate) fn is_google_official_gemini(provider: &Provider) -> bool {
+pub fn is_google_official_gemini(provider: &Provider) -> bool {
     detect_gemini_auth_type(provider) == GeminiAuthType::GoogleOfficial
 }

@@ -15,12 +15,12 @@ use crate::live::patch::LiveWriteError;
 use super::claude_editor::{ConflictPolicy, InactiveField};
 
 /// 行（或编辑器内容）里的 TOML 文本。
-pub(crate) fn config_text(settings: &Value) -> &str {
+pub fn config_text(settings: &Value) -> &str {
     settings.get("config").and_then(Value::as_str).unwrap_or("")
 }
 
 /// 解析编辑器里的 TOML。`key`、`app` 用来报错，`what` 说明是哪一份。
-pub(crate) fn parse_text(
+pub fn parse_text(
     text: &str,
     key: &'static str,
     app: &str,
@@ -36,7 +36,7 @@ pub(crate) fn parse_text(
 }
 
 /// 行里保存着、但不随切换生效的全局设置（值和显示的不同才列出）。值是可以照抄的 TOML。
-pub(crate) fn inactive_fields(
+pub fn inactive_fields(
     row_entries: Vec<Entry>,
     display: &DocumentMut,
 ) -> Vec<InactiveField> {
@@ -55,13 +55,13 @@ pub(crate) fn inactive_fields(
 }
 
 /// 一个可以单独改动的位置和它的内容。
-pub(crate) struct Entry {
+pub struct Entry {
     pub path: Vec<String>,
     pub item: Item,
 }
 
 /// 比较用的规范文本：不看两侧的空白和注释。
-pub(crate) fn render(item: &Item) -> String {
+pub fn render(item: &Item) -> String {
     let mut doc = DocumentMut::new();
     let mut item = item.clone();
     match &mut item {
@@ -76,7 +76,7 @@ pub(crate) fn render(item: &Item) -> String {
     doc.to_string().trim().to_string()
 }
 
-pub(crate) fn item_at<'a>(doc: &'a DocumentMut, path: &[String]) -> Option<&'a Item> {
+pub fn item_at<'a>(doc: &'a DocumentMut, path: &[String]) -> Option<&'a Item> {
     let (last, parents) = path.split_last()?;
     let mut current: &dyn TableLike = doc.as_table();
     for segment in parents {
@@ -97,27 +97,27 @@ struct Change {
 
 /// 一次编辑器保存要写进 live 的全局改动。
 #[derive(Debug, Clone)]
-pub(crate) struct TomlEdits {
+pub struct TomlEdits {
     changes: Vec<Change>,
     on_conflict: ConflictPolicy,
 }
 
 impl TomlEdits {
     /// 从打开编辑器时和保存时的全局设置算出改动。
-    pub(crate) fn between(base: &[Entry], edited: &[Entry], on_conflict: ConflictPolicy) -> Self {
+    pub fn between(base: &[Entry], edited: &[Entry], on_conflict: ConflictPolicy) -> Self {
         Self {
             changes: changes(base, edited),
             on_conflict,
         }
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.changes.is_empty()
     }
 
     /// 改动的位置（`a.b`），按顺序。
     #[cfg(test)]
-    pub(crate) fn paths(&self) -> Vec<String> {
+    pub fn paths(&self) -> Vec<String> {
         self.changes
             .iter()
             .map(|change| change.path.join("."))
@@ -125,7 +125,7 @@ impl TomlEdits {
     }
 
     /// 按三方比较把改动应用到 live 文档上。
-    pub(crate) fn apply_to(
+    pub fn apply_to(
         &self,
         path: &Path,
         doc: &mut DocumentMut,
@@ -151,7 +151,7 @@ impl TomlDocPatch for TomlEdits {
     }
 }
 
-pub(crate) fn insert_at(doc: &mut DocumentMut, path: &[String], item: Item) {
+pub fn insert_at(doc: &mut DocumentMut, path: &[String], item: Item) {
     let Some((last, parents)) = path.split_last() else {
         return;
     };
@@ -189,7 +189,7 @@ pub(crate) fn insert_at(doc: &mut DocumentMut, path: &[String], item: Item) {
     }
 }
 
-pub(crate) fn remove_at(doc: &mut DocumentMut, path: &[String]) {
+pub fn remove_at(doc: &mut DocumentMut, path: &[String]) {
     let Some((last, parents)) = path.split_last() else {
         return;
     };

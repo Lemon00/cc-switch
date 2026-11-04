@@ -12,10 +12,10 @@ use std::{
 };
 
 static WRITE_LOCK: Mutex<()> = Mutex::new(());
-pub(crate) const OFFICIAL_PROVIDER_ID: &str = "managed:kimi-code";
+pub const OFFICIAL_PROVIDER_ID: &str = "managed:kimi-code";
 const OFFICIAL_PROVIDER_NAME: &str = "Kimi Official";
 
-pub(crate) fn is_official_provider(config: &Value) -> bool {
+pub fn is_official_provider(config: &Value) -> bool {
     config.pointer("/provider/type").and_then(Value::as_str) == Some("kimi")
         && config
             .pointer("/provider/oauth/key")
@@ -23,7 +23,7 @@ pub(crate) fn is_official_provider(config: &Value) -> bool {
             .is_some_and(|key| !key.trim().is_empty())
 }
 
-pub(crate) fn official_provider_name(id: &str, nickname: Option<&str>) -> String {
+pub fn official_provider_name(id: &str, nickname: Option<&str>) -> String {
     if let Some(nickname) = nickname.map(str::trim).filter(|name| !name.is_empty()) {
         format!("{OFFICIAL_PROVIDER_NAME} · {nickname}")
     } else if id == OFFICIAL_PROVIDER_ID {
@@ -45,7 +45,7 @@ pub(crate) fn official_provider_name(id: &str, nickname: Option<&str>) -> String
 
 /// Fill in native account identities without replacing custom display fields.
 /// Names CC Switch generated earlier follow the account's current nickname.
-pub(crate) fn normalize_provider_identity(provider: &mut Provider, nickname: Option<&str>) {
+pub fn normalize_provider_identity(provider: &mut Provider, nickname: Option<&str>) {
     if !is_official_provider(&provider.settings_config) {
         if provider.category.as_deref() == Some("official") {
             provider.category = None;
@@ -86,18 +86,18 @@ pub(crate) fn normalize_provider_identity(provider: &mut Provider, nickname: Opt
     }
 }
 
-pub(crate) fn data_dir() -> PathBuf {
+pub fn data_dir() -> PathBuf {
     std::env::var_os("KIMI_CODE_HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| get_home_dir().join(".kimi-code"))
 }
 
-pub(crate) fn config_path() -> PathBuf {
+pub fn config_path() -> PathBuf {
     data_dir().join("config.toml")
 }
 
-pub(crate) fn read(path: &Path) -> Result<Value, AppError> {
+pub fn read(path: &Path) -> Result<Value, AppError> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(json!({})),
@@ -117,7 +117,7 @@ pub(crate) fn read(path: &Path) -> Result<Value, AppError> {
     Ok(value)
 }
 
-pub(crate) fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
+pub fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
     let document = read(&config_path())?;
     Ok(document
         .get("providers")
@@ -138,14 +138,14 @@ pub(crate) fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
         .collect())
 }
 
-pub(crate) fn provider_key_exists(id: &str) -> Result<bool, AppError> {
+pub fn provider_key_exists(id: &str) -> Result<bool, AppError> {
     Ok(read(&config_path())?
         .get("providers")
         .and_then(|p| p.get(id))
         .is_some())
 }
 
-pub(crate) fn validate_provider(id: &str, config: &Value) -> Result<(), AppError> {
+pub fn validate_provider(id: &str, config: &Value) -> Result<(), AppError> {
     if id.trim().is_empty() || id.chars().any(char::is_control) {
         return Err(AppError::InvalidInput(
             "Enter a Kimi Code provider key".into(),
@@ -444,7 +444,7 @@ fn apply_provider_unchecked(
     Ok(document)
 }
 
-pub(crate) fn save_and_commit<T>(
+pub fn save_and_commit<T>(
     id: &str,
     config: Option<Value>,
     create: bool,
@@ -457,17 +457,17 @@ pub(crate) fn save_and_commit<T>(
     crate::mcode_config::write_and_commit(&path, || update(&path, id, config, create), commit)
 }
 
-pub(crate) fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
+pub fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
     save_and_commit(id, Some(config), false, || Ok(()))
 }
 
-pub(crate) fn remove_provider(id: &str) -> Result<(), AppError> {
+pub fn remove_provider(id: &str) -> Result<(), AppError> {
     save_and_commit(id, None, false, || Ok(()))
 }
 
 /// Resolve the selected native alias through models, not by splitting its name:
 /// aliases can be arbitrary and provider ids may contain punctuation.
-pub(crate) fn current_provider() -> Result<String, AppError> {
+pub fn current_provider() -> Result<String, AppError> {
     let document = read(&config_path())?;
     Ok(current_provider_in(&document).unwrap_or_default().into())
 }
@@ -511,7 +511,7 @@ fn select_provider_model(document: &mut Value, id: &str) -> Result<(), AppError>
     Ok(())
 }
 
-pub(crate) fn switch_and_commit<T>(
+pub fn switch_and_commit<T>(
     id: &str,
     archived_config: Value,
     commit: impl FnOnce(Value) -> Result<T, AppError>,
@@ -556,7 +556,7 @@ fn switch_at<T>(
 /// "Add" writes a saved provider into config.toml without selecting it, so its
 /// models show up in Kimi's /model list. A node already there belongs to Kimi
 /// and is kept as is (same rule as switching).
-pub(crate) fn add_and_commit<T>(
+pub fn add_and_commit<T>(
     id: &str,
     archived_config: Value,
     commit: impl FnOnce() -> Result<T, AppError>,
@@ -599,7 +599,7 @@ fn add_at<T>(
 
 /// Selecting the account is explicit: signing in alone preserves the current
 /// model, while "Use this account" selects one of its official model aliases.
-pub(crate) fn use_oauth_account(home: &Path, id: &str) -> Result<(), AppError> {
+pub fn use_oauth_account(home: &Path, id: &str) -> Result<(), AppError> {
     let _guard = WRITE_LOCK
         .lock()
         .map_err(|e| AppError::Message(e.to_string()))?;
@@ -623,7 +623,7 @@ pub(crate) fn use_oauth_account(home: &Path, id: &str) -> Result<(), AppError> {
 /// account cannot be removed. `commit` runs after the config is written (it
 /// deletes the credential and the saved profile); on failure the config is
 /// restored byte for byte.
-pub(crate) fn remove_oauth_account<T>(
+pub fn remove_oauth_account<T>(
     home: &Path,
     id: &str,
     commit: impl FnOnce() -> Result<T, AppError>,
@@ -670,7 +670,7 @@ fn repoint_services(before: &Value, after: &mut Value, id: &str) {
 /// Provision an official login under the same lock as provider edits. Keep user
 /// aliases, overrides, unrelated services, comments and the current model choice.
 /// If credentials cannot be saved, restore the exact original configuration.
-pub(crate) fn save_oauth_login(
+pub fn save_oauth_login(
     home: &Path,
     provider_id: &str,
     token_path: &Path,

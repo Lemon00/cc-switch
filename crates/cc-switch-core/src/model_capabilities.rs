@@ -8,7 +8,7 @@ use serde_json::Value;
 /// The Codex catalog treats unknown models as image-capable (fail open), while
 /// the media rectifier leaves their request bodies untouched.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ImageInputCapability {
+pub enum ImageInputCapability {
     Supported,
     Unsupported,
     Unknown,
@@ -16,7 +16,7 @@ pub(crate) enum ImageInputCapability {
 
 /// Resolve image-input capability from an explicit declaration first, then the
 /// confirmed text-only model registry when the caller enables registry lookup.
-pub(crate) fn resolve_image_input_capability(
+pub fn resolve_image_input_capability(
     model: &str,
     declared_support: Option<bool>,
     use_confirmed_registry: bool,
@@ -33,7 +33,7 @@ pub(crate) fn resolve_image_input_capability(
 
 /// Resolve a model's image-input capability from the provider settings shapes
 /// accepted by the proxy (`modelCatalog.models`, `modelCatalog`, or `models`).
-pub(crate) fn image_input_capability_from_settings(
+pub fn image_input_capability_from_settings(
     settings: &Value,
     model: &str,
     use_confirmed_registry: bool,
@@ -48,7 +48,7 @@ pub(crate) fn image_input_capability_from_settings(
 /// Whether provider settings prove that a model accepts text input only.
 /// A negative image flag alone is not enough because the model may still
 /// accept audio or files.
-pub(crate) fn is_text_only_model_from_settings(
+pub fn is_text_only_model_from_settings(
     settings: &Value,
     model: &str,
     use_confirmed_registry: bool,
@@ -59,7 +59,7 @@ pub(crate) fn is_text_only_model_from_settings(
 
 /// Convert a catalog row's explicit modality list into the shared capability
 /// representation, falling back to the text-only registry when omitted.
-pub(crate) fn image_input_capability_from_modalities(
+pub fn image_input_capability_from_modalities(
     model: &str,
     modalities: Option<&[String]>,
 ) -> ImageInputCapability {
@@ -77,7 +77,7 @@ pub(crate) fn image_input_capability_from_modalities(
 /// inherited automatically: it remains image-capable until its capability is
 /// confirmed, preventing a future `-vision`/`-vl` variant from being blocked by
 /// the Codex client before a request can reach the proxy.
-pub(crate) fn is_confirmed_text_only_model(model: &str) -> bool {
+pub fn is_confirmed_text_only_model(model: &str) -> bool {
     let normalized = normalize_model_id(model);
     let tail = normalized.rsplit('/').next().unwrap_or(normalized.as_str());
 

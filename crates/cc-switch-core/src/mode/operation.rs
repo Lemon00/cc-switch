@@ -294,7 +294,7 @@ pub fn recover(
 
 /// 这个应用有没有已经发布、还没落定的操作。写入失败后用来判断要不要撤回刚存的供应商行：
 /// 有的话下次操作或启动时会按它补完，行要留着。读不了状态文件按没有算。
-pub(crate) fn has_pending(app: &str) -> bool {
+pub fn has_pending(app: &str) -> bool {
     state::pending(&DeviceStore::for_device(), app)
         .ok()
         .flatten()
@@ -304,7 +304,7 @@ pub(crate) fn has_pending(app: &str) -> bool {
 /// 这个应用上一次操作留下的 pending 是否已经开始发布：`Some(true)` 表示下次操作或启动时
 /// 会前滚补完，`Some(false)` 表示会被丢弃，`None` 表示没有 pending。操作返回错误后用来
 /// 判断是「什么都没改」还是「已部分写入、待补完」。
-pub(crate) fn pending_published(store: &DeviceStore, app: &str) -> Result<Option<bool>, AppError> {
+pub fn pending_published(store: &DeviceStore, app: &str) -> Result<Option<bool>, AppError> {
     Ok(state::pending(store, app)?.map(|pending| pending.published))
 }
 
@@ -543,7 +543,7 @@ fn give_up_on_conflict(
 }
 
 /// 测试用的故障注入点：模拟进程在某一步崩溃（直接返回错误，不做任何清理）。
-pub(crate) mod failpoint {
+pub mod failpoint {
     #[cfg(test)]
     use std::cell::RefCell;
     use std::path::Path;

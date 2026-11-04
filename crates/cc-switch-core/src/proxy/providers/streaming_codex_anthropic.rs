@@ -626,7 +626,7 @@ fn json_document_candidate(input: &str) -> Option<&str> {
 /// Convert a complete non-streaming Anthropic message (or error envelope) into
 /// the same Responses SSE lifecycle emitted by the live stream converter. Some
 /// compatible gateways ignore `stream:true` and return JSON with HTTP 200.
-pub(crate) fn responses_sse_events_from_anthropic_message(
+pub fn responses_sse_events_from_anthropic_message(
     body: &Value,
     tool_context: CodexToolContext,
 ) -> Vec<Bytes> {
@@ -721,7 +721,7 @@ pub fn create_responses_sse_stream_from_anthropic<E: std::error::Error + Send + 
     create_responses_sse_stream_from_anthropic_with_context(stream, CodexToolContext::default())
 }
 
-pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
+pub fn create_responses_sse_stream_from_anthropic_with_context<
     E: std::error::Error + Send + 'static,
 >(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,

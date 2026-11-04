@@ -33,7 +33,7 @@ use crate::live::project::codex::live_catalog_is_ours;
 
 use super::codex_direct::read_config_text;
 
-pub(crate) const HISTORY_FILENAME: &str = "codex-catalog-history.json";
+pub const HISTORY_FILENAME: &str = "codex-catalog-history.json";
 const LOGIN_HISTORY_FILENAME: &str = "codex-login-history.json";
 /// 看不到进程时，用户上次确认（关掉提示）时的目录和文件登录。
 const ACK_FILENAME: &str = "codex-client-ack.json";
@@ -104,7 +104,7 @@ struct Acknowledged {
 }
 
 /// 外部依赖：进程表、时钟、重启命令。测试里换成假的。
-pub(crate) struct Env {
+pub struct Env {
     /// `ps -Ao pid=,etime=,command=` 的输出；读不到（或在 Windows 上）是 `None`。
     pub process_table: Box<dyn Fn() -> Option<String> + Send + Sync>,
     /// 没有进程表时，`daemon.pid` 记的守护进程还活着的话它的启动时刻（Unix 毫秒）。只有
@@ -145,14 +145,14 @@ fn env() -> Arc<Env> {
 }
 
 #[cfg(test)]
-pub(crate) fn set_test_env(env: Env) {
+pub fn set_test_env(env: Env) {
     *env_slot()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::new(env));
 }
 
 #[cfg(test)]
-pub(crate) fn reset_test_env() {
+pub fn reset_test_env() {
     *env_slot()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
@@ -322,7 +322,7 @@ fn current_fingerprint() -> String {
 
 /// 记下新启动的 Codex 会读到的目录和文件登录身份。客户端文件每写一次（直连、进出代理、Stack
 /// 增删、退出时写回）和启动接上之后各调一次。
-pub(crate) fn observe(store: &DeviceStore) {
+pub fn observe(store: &DeviceStore) {
     let now = (env().now_ms)();
     record(store, &current_fingerprint(), now);
     if let Some(login) = current_login_fingerprint() {
@@ -348,7 +348,7 @@ fn current_login_fingerprint() -> Option<String> {
 
 /// 可能缓存旧账号或目录的客户端。`check_catalog` 只影响目录，账号检查不受模式限制。
 /// 要读进程表，放到阻塞线程池里调；不查询进程的实际认证，也不自动重启。
-pub(crate) fn stale_clients(store: &DeviceStore, check_catalog: bool) -> Option<StaleClients> {
+pub fn stale_clients(store: &DeviceStore, check_catalog: bool) -> Option<StaleClients> {
     let env = env();
     let current = current_fingerprint();
     // 顺手记一次：兜住在 CC Switch 之外改了目录的情况。
@@ -426,7 +426,7 @@ fn acknowledged(store: &DeviceStore, catalog: &str, login: Option<&str>) -> Ackn
 
 /// 提示对应的是哪一份目录和登录（给前端）：用户关掉提示之后，这个值变了（目录或登录又改了）
 /// 才是新的提示，要重新显示。
-pub(crate) fn revision() -> String {
+pub fn revision() -> String {
     sha256_hex(
         format!(
             "{}\n{:?}",
@@ -438,7 +438,7 @@ pub(crate) fn revision() -> String {
 }
 
 /// 用户关掉「可能还在用旧的」提示：记下现在的目录和登录，同一份不再提示，再变才提示。
-pub(crate) fn acknowledge(store: &DeviceStore) {
+pub fn acknowledge(store: &DeviceStore) {
     let ack = Acknowledged {
         catalog: current_fingerprint(),
         login: current_login_fingerprint(),
@@ -610,7 +610,7 @@ fn after_codex_executable(command: &str) -> Option<&str> {
 
 /// 用户确认之后重启托管守护进程：Codex 自己的 `codex app-server daemon restart`，先等守护进程
 /// 里在跑的任务收尾（最多一个宽限期），再起新的。守护进程没在跑就什么都不做。
-pub(crate) fn restart_daemon() -> Result<RestartOutcome, String> {
+pub fn restart_daemon() -> Result<RestartOutcome, String> {
     let env = env();
     if probe(&env).daemon.is_none() {
         return Ok(RestartOutcome::NotRunning);

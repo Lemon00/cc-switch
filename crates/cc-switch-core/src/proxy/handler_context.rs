@@ -334,7 +334,7 @@ impl RequestContext {
 /// Accepts forms like `/v1beta/models/gemini-pro:generateContent`,
 /// `/v1/models/gemini-1.5-flash`, `gemini/v1beta/models/<model>:streamGenerateContent`.
 /// Returns `None` when no `models/<name>` segment is present.
-pub(crate) fn extract_gemini_model_from_path(endpoint: &str) -> Option<String> {
+pub fn extract_gemini_model_from_path(endpoint: &str) -> Option<String> {
     let segments: Vec<&str> = endpoint.split('/').collect();
     segments
         .iter()

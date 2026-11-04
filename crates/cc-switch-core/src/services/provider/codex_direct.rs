@@ -60,7 +60,7 @@ fn app() -> &'static str {
 
 /// 官方卡：`category == "official"`，或按 `is_codex_official_provider` 认出来的（早期
 /// 绑定托管账号时没存 category 的卡）。
-pub(crate) fn is_official(provider: &Provider) -> bool {
+pub fn is_official(provider: &Provider) -> bool {
     provider.category.as_deref() == Some("official")
         || crate::proxy::providers::is_codex_official_provider(provider)
 }
@@ -70,7 +70,7 @@ fn managed_account(provider: &Provider) -> Option<String> {
 }
 
 /// 本地代理给 Codex 的地址（带 `/v1`），不需要代理在运行：官方直连时写休眠表用。
-pub(crate) fn configured_proxy_base_url(db: &Database) -> String {
+pub fn configured_proxy_base_url(db: &Database) -> String {
     let (address, port) = db.get_proxy_client_endpoint_sync();
     let port = if port == 0 {
         crate::proxy::types::ProxyConfig::default().listen_port
@@ -84,7 +84,7 @@ pub(crate) fn configured_proxy_base_url(db: &Database) -> String {
 }
 
 /// `config_text` 是不是代理的官方路由（指向本地代理，但不带占位 Key）。
-pub(crate) fn routes_official_to_proxy(db: &Database, config_text: &str) -> bool {
+pub fn routes_official_to_proxy(db: &Database, config_text: &str) -> bool {
     let (address, port) = db.get_proxy_client_endpoint_sync();
     crate::codex_config::codex_config_routes_official_to_proxy(config_text, |url| {
         is_proxy_base_url(url, &address, port)
@@ -107,7 +107,7 @@ fn is_proxy_base_url(url: &str, address: &str, port: u16) -> bool {
 
 /// 写成什么样。
 #[derive(Clone, Copy)]
-pub(crate) enum Target<'a> {
+pub enum Target<'a> {
     /// 直连：这个供应商（`None`：没有直连供应商，只清掉关键字段）。
     Direct(Option<&'a Provider>),
     /// 代理契约：路由供应商；`base_url` 是本地代理给 Codex 的地址（带 `/v1`）；`stack` 是
@@ -122,7 +122,7 @@ pub(crate) enum Target<'a> {
 /// live 现在是谁写进去的：删它带进来的独有字段、认出要切走的托管账号、判断用户是不是
 /// 登出了，都看它。
 #[derive(Clone, Copy)]
-pub(crate) enum Owner<'a> {
+pub enum Owner<'a> {
     Provider(&'a Provider),
     /// 代理契约，`route` 是契约对应的路由供应商（找得到时）。
     Contract {
@@ -144,7 +144,7 @@ impl<'a> Owner<'a> {
 
 /// 拿写锁之前准备好的托管账号凭据和官方模型行。
 #[derive(Default)]
-pub(crate) struct Prepared {
+pub struct Prepared {
     /// 目标托管账号和它的登录。
     target_login: Option<(String, Value)>,
     /// 要切走的托管账号，和采纳 CLI 轮换后记下的盘上 refresh token。
@@ -171,7 +171,7 @@ fn target_account(target: &Target<'_>) -> Option<String> {
 
 /// 取目标托管账号的登录（必要时刷新 token），并在切走托管账号前采纳 Codex CLI 轮换过的
 /// refresh token。都可能联网，所以在拿写锁之前做。
-pub(crate) fn prepare(
+pub fn prepare(
     manager: &Arc<CodexOAuthManager>,
     owner: &Owner<'_>,
     target: &Target<'_>,
@@ -211,7 +211,7 @@ pub(crate) fn prepare(
 ///
 /// 读钥匙串（`security` 可能等用户点授权框）和取官方行（跑 Codex 子进程、联网最多
 /// 10 秒）放到阻塞线程池里做，不占异步运行时的工作线程。
-pub(crate) async fn prepare_official_rows(
+pub async fn prepare_official_rows(
     db: &Database,
     owner: &Owner<'_>,
     target: &Target<'_>,
@@ -241,7 +241,7 @@ pub(crate) async fn prepare_official_rows(
 }
 
 /// 放到阻塞线程池里做，不占异步运行时的工作线程。
-pub(crate) async fn off_runtime<T: Send + 'static>(
+pub async fn off_runtime<T: Send + 'static>(
     work: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, AppError> {
     tokio::task::spawn_blocking(work)
@@ -250,14 +250,14 @@ pub(crate) async fn off_runtime<T: Send + 'static>(
 }
 
 /// 官方做路由、发布了 Stack 模型：目录里要写全官方模型。
-pub(crate) fn needs_official_rows(route: &Provider, stack: &[Member]) -> bool {
+pub fn needs_official_rows(route: &Provider, stack: &[Member]) -> bool {
     !stack.is_empty() && is_official(route)
 }
 
 /// 按未加锁读到的内容预测这次操作之后 Codex 会用的登录（能取官方列表的才是 `Ok`，否则带
 /// 着取不到的原因）。钥匙串没预先读过（[`prepare_official_rows`] 之外的调用方）就在用到时
 /// 读，调用方要在阻塞线程里。
-pub(crate) fn predicted_official_login(
+pub fn predicted_official_login(
     db: &Database,
     owner: &Owner<'_>,
     target: &Target<'_>,
@@ -311,7 +311,7 @@ fn predicted_auth(
 /// 切到 `target` 之后盘上 `auth.json` 的内容（没有文件为 `None`），按未加锁读到的内容
 /// 预测、不写任何东西：编辑器显示用。官方卡行里存的登录是旧版留下的快照，Codex 轮换过
 /// token 就和盘上的对不上，显示它会误导。
-pub(crate) fn predicted_auth_file(
+pub fn predicted_auth_file(
     db: &Database,
     owner: &Owner<'_>,
     target: &Target<'_>,
@@ -356,7 +356,7 @@ fn login_after(
 }
 
 /// live 的 `config.toml`（读不出时为空）。
-pub(crate) fn read_config_text() -> String {
+pub fn read_config_text() -> String {
     read_current(&get_codex_config_path())
         .ok()
         .flatten()
@@ -436,7 +436,7 @@ pub(super) fn exclusive_of(
 }
 
 /// live 现在对应的那一家带进来的独有字段：切走时值还相同就删。
-pub(crate) fn outgoing_exclusive(owner: &Owner<'_>) -> Vec<(String, TomlValue)> {
+pub fn outgoing_exclusive(owner: &Owner<'_>) -> Vec<(String, TomlValue)> {
     match owner {
         Owner::Provider(provider) => match project(provider) {
             Ok(projection) => exclusive_of(provider, &projection),
@@ -553,7 +553,7 @@ fn row_auth(provider: &Provider) -> Value {
 }
 
 /// 在内存里算好的一次 Codex 写入。
-pub(crate) struct Planned {
+pub struct Planned {
     config: CodexConfigPatch,
     /// 第三方路由表的凭据来源：写入时按盘上有没有登录定 `requires_openai_auth`。
     stamp: Option<RouteAuth>,
@@ -571,13 +571,13 @@ pub(crate) struct Planned {
 
 impl Planned {
     /// `config.toml` 的补丁（编辑器显示用：在内存里对 live 做一次切换投影）。
-    pub(crate) fn config(&self) -> &CodexConfigPatch {
+    pub fn config(&self) -> &CodexConfigPatch {
         &self.config
     }
 }
 
 /// 算出写入内容；行有问题（比如会把官方登录发给第三方）就在这里报错，什么都不写。
-pub(crate) fn plan(
+pub fn plan(
     db: &Database,
     owner: &Owner<'_>,
     target: &Target<'_>,
@@ -775,7 +775,7 @@ pub(crate) fn plan(
 }
 
 /// 能不能加进 Stack：配置要能解析。之后才坏掉的成员在目录里跳过（见 [`stack_catalog`]）。
-pub(crate) fn check_stack_member(provider: &Provider) -> Result<(), AppError> {
+pub fn check_stack_member(provider: &Provider) -> Result<(), AppError> {
     project(provider).map(|_| ()).map_err(|error| {
         AppError::Message(format!(
             "「{name}」的配置有问题，不能加入聚合 (The configuration of \"{name}\" is invalid, so it cannot join the aggregation): {error}",
@@ -786,12 +786,12 @@ pub(crate) fn check_stack_member(provider: &Provider) -> Result<(), AppError> {
 
 /// 路由那家的行指定了自己管理的模型目录文件（`model_catalog_json`）：Codex 只读那个
 /// 文件，Stack 模型合并不进去。
-pub(crate) fn route_owns_catalog(route: &Provider) -> bool {
+pub fn route_owns_catalog(route: &Provider) -> bool {
     project(route).is_ok_and(|projection| row_catalog_pointer(&projection.top).is_some())
 }
 
 /// 去掉路由那家行里自己指定的模型目录指针之后的 `settings_config`；行里没有时为 `None`。
-pub(crate) fn settings_without_row_catalog(route: &Provider) -> Option<Value> {
+pub fn settings_without_row_catalog(route: &Provider) -> Option<Value> {
     let text = without_row_catalog(route.settings_config.get("config")?.as_str()?)?;
     let mut settings = route.settings_config.clone();
     settings
@@ -857,7 +857,7 @@ fn stack_subagent_nested(
 /// 聚合面板「子代理模型」下拉的选项：发布 Stack 模型的成员（按名单顺序）发布的每个模型，
 /// 带上它在合并目录里的推理强度档位。和 [`stack_catalog`] 用同一份行（只算本地，不取官方
 /// 列表），配置坏掉的成员同样跳过。
-pub(crate) fn stack_subagent_choices(
+pub fn stack_subagent_choices(
     members: &[Member],
 ) -> Vec<crate::mode::stack::StackSubagentModel> {
     let mut choices = Vec::new();
@@ -1108,7 +1108,7 @@ fn guarded(pre: Option<&[u8]>, then: WholeFile) -> Guarded {
 
 /// 执行一次 Codex 写入：拿写锁，决定 `auth.json` 的去向，和 `config.toml`、模型目录、
 /// 托管账号标记、登录暂存一起提交，最后落定 `pending`（指针、模式状态）。
-pub(crate) fn run(
+pub fn run(
     db: &Database,
     op: &str,
     planned: Planned,
@@ -1119,7 +1119,7 @@ pub(crate) fn run(
 }
 
 /// 同 [`run`]，另把编辑器里对全局设置的改动在同一次 `config.toml` 写入里应用。
-pub(crate) fn run_with_edits(
+pub fn run_with_edits(
     db: &Database,
     op: &str,
     planned: Planned,
@@ -1313,7 +1313,7 @@ pub(crate) fn run_with_edits(
 }
 
 /// 直连写入：`prepare` → `plan` → `run`。
-pub(crate) fn write_direct(
+pub fn write_direct(
     db: &Database,
     manager: &Arc<CodexOAuthManager>,
     op: &str,
@@ -1328,7 +1328,7 @@ pub(crate) fn write_direct(
 }
 
 /// 只校验，不写：切换前用它挡住会被拒绝的目标（行有问题时指针不能先动）。
-pub(crate) fn preflight(db: &Database, provider: &Provider) -> Result<(), AppError> {
+pub fn preflight(db: &Database, provider: &Provider) -> Result<(), AppError> {
     let target = Target::Direct(Some(provider));
     plan(db, &Owner::None, &target, &Prepared::default()).map(|_| ())
 }

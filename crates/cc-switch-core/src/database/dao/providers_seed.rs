@@ -11,12 +11,12 @@
 
 use crate::app_config::AppType;
 
-pub(crate) const CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID: &str = "claude-desktop-official";
-pub(crate) const CODEX_OFFICIAL_PROVIDER_ID: &str = "codex-official";
-pub(crate) const GROKBUILD_OFFICIAL_PROVIDER_ID: &str = "grokbuild-official";
+pub const CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID: &str = "claude-desktop-official";
+pub const CODEX_OFFICIAL_PROVIDER_ID: &str = "codex-official";
+pub const GROKBUILD_OFFICIAL_PROVIDER_ID: &str = "grokbuild-official";
 
 /// 单条官方供应商种子定义。
-pub(crate) struct OfficialProviderSeed {
+pub struct OfficialProviderSeed {
     pub id: &'static str,
     pub app_type: AppType,
     pub name: &'static str,
@@ -30,7 +30,7 @@ pub(crate) struct OfficialProviderSeed {
 /// Claude / Claude Desktop / Codex / Gemini 的官方预设。
 ///
 /// id 固定，便于幂等检查；name 直接用英文原名（与前端预设一致），不做 i18n。
-pub(crate) const OFFICIAL_SEEDS: &[OfficialProviderSeed] = &[
+pub const OFFICIAL_SEEDS: &[OfficialProviderSeed] = &[
     OfficialProviderSeed {
         id: "claude-official",
         app_type: AppType::Claude,
@@ -86,7 +86,7 @@ pub(crate) const OFFICIAL_SEEDS: &[OfficialProviderSeed] = &[
 /// 判断给定的 provider id 是否属于内置官方种子。
 ///
 /// 单一事实源：直接扫描 `OFFICIAL_SEEDS`，避免在多处重复维护 id 列表。
-pub(crate) fn is_official_seed_id(id: &str) -> bool {
+pub fn is_official_seed_id(id: &str) -> bool {
     OFFICIAL_SEEDS.iter().any(|seed| seed.id == id)
 }
 

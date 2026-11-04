@@ -9,8 +9,35 @@ use crate::error::AppError;
 use crate::events::EventSink;
 use crate::store::AppState;
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::RwLock;
+
+/// 前端回调路径共用的切换管理器（GUI 的 failover_notify 回调经此执行，
+/// 与 forwarder 自带的 per-forwarder 管理器分开——GUI 构建里 forwarder
+/// 只走回调，所以去重语义在 GUI 内仍是一致的）。
+static GLOBAL_MANAGER: OnceLock<FailoverSwitchManager> = OnceLock::new();
+
+/// 供前端（GUI failover_notify 回调）调用：用前端自己的 AppState 执行
+/// 一次故障转移切换。路由提交本身有 mode 锁串行化，即使并发调用，
+/// 第二次也会因 proxy_route 已是目标而返回 false，不会重复切换。
+pub async fn request_failover_switch(
+    state: &AppState,
+    sink: &dyn EventSink,
+    tray_refresh: Option<Arc<dyn Fn() + Send + Sync>>,
+    app_type: &str,
+    provider_id: &str,
+    provider_name: &str,
+) -> Result<bool, AppError> {
+    let manager = GLOBAL_MANAGER.get_or_init(FailoverSwitchManager::new);
+    let ctx = FailoverContext {
+        state,
+        sink: Some(sink),
+        tray_refresh,
+    };
+    manager
+        .try_switch(Some(&ctx), app_type, provider_id, provider_name)
+        .await
+}
 
 /// 故障转移切换时的前端上下文。CLI 只给 state（路由记录照常工作），
 /// sink 与 tray_refresh 为空时对应行为跳过。

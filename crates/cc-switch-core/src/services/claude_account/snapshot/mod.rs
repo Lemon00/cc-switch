@@ -22,12 +22,12 @@
 //! 不联网、不刷新令牌、不登出；令牌只在 Claude Code 的槽位格式里（钥匙串 / `.credentials.json`）
 //! 移动，CC Switch 自己的文件里只有指纹和过期时间。
 
-mod creds;
-mod files;
-mod recover;
-mod state;
+pub mod creds;
+pub mod files;
+pub mod recover;
+pub mod state;
 pub mod store;
-mod switch;
+pub mod switch;
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -200,4 +200,4 @@ pub enum Outcome {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

@@ -158,7 +158,7 @@ impl Database {
 
     /// Import SQL generated for sync, then restore local-only tables from the
     /// current live database before replacing it.
-    pub(crate) fn import_sql_string_for_sync(&self, sql_raw: &str) -> Result<String, AppError> {
+    pub fn import_sql_string_for_sync(&self, sql_raw: &str) -> Result<String, AppError> {
         self.import_sql_string_inner(sql_raw, SYNC_PRESERVE_TABLES)
     }
 
@@ -251,7 +251,7 @@ impl Database {
     }
 
     /// 创建内存快照以避免长时间持有数据库锁
-    pub(crate) fn snapshot_to_memory(&self) -> Result<Connection, AppError> {
+    pub fn snapshot_to_memory(&self) -> Result<Connection, AppError> {
         let conn = lock_conn!(self.conn);
         let mut snapshot =
             Connection::open_in_memory().map_err(|e| AppError::Database(e.to_string()))?;
@@ -412,7 +412,7 @@ impl Database {
     }
 
     /// Periodic backup: create a new backup if the latest one is older than the configured interval
-    pub(crate) fn periodic_backup_if_needed(&self) -> Result<(), AppError> {
+    pub fn periodic_backup_if_needed(&self) -> Result<(), AppError> {
         let interval_hours = crate::settings::effective_backup_interval_hours();
         if interval_hours > 0 {
             let backup_file_guard = lock_backup_file_operations()?;
@@ -475,7 +475,7 @@ impl Database {
     }
 
     /// 生成一致性快照备份，返回备份文件路径（不存在主库时返回 None）
-    pub(crate) fn backup_database_file(&self) -> Result<Option<PathBuf>, AppError> {
+    pub fn backup_database_file(&self) -> Result<Option<PathBuf>, AppError> {
         let backup_file_guard = lock_backup_file_operations()?;
         self.backup_database_file_locked(&backup_file_guard)
     }

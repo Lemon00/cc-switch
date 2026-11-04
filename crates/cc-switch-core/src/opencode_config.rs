@@ -153,7 +153,7 @@ impl OpenCodeDocument {
     }
 }
 
-pub(crate) fn read_opencode_config_from_path(path: &Path) -> Result<Value, AppError> {
+pub fn read_opencode_config_from_path(path: &Path) -> Result<Value, AppError> {
     Ok(OpenCodeDocument::load(path)?.document.value().clone())
 }
 

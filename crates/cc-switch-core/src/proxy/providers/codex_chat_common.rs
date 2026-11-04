@@ -2,7 +2,7 @@ use serde_json::{json, Map, Value};
 
 // 穷举上游可能的 reasoning 回传字段，优先级：reasoning_content > reasoning(字符串/对象) > reasoning_details。
 // 不依赖 provider meta 的 outputFormat 声明，因此对各家 Chat 兼容接口都能兜底提取。
-pub(crate) fn extract_reasoning_field_text(value: &Value) -> Option<String> {
+pub fn extract_reasoning_field_text(value: &Value) -> Option<String> {
     for key in ["reasoning_content", "reasoning"] {
         if let Some(text) = value.get(key).and_then(|v| v.as_str()) {
             if !text.is_empty() {
@@ -69,7 +69,7 @@ fn extract_reasoning_detail_part_text(value: &Value) -> Option<String> {
     None
 }
 
-pub(crate) fn extract_reasoning_summary_text(value: &Value) -> Option<String> {
+pub fn extract_reasoning_summary_text(value: &Value) -> Option<String> {
     for key in ["reasoning_content", "content", "text"] {
         if let Some(text) = value.get(key).and_then(|v| v.as_str()) {
             if !text.is_empty() {
@@ -99,7 +99,7 @@ pub(crate) fn extract_reasoning_summary_text(value: &Value) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
-pub(crate) fn append_reasoning_content(message: &mut Map<String, Value>, reasoning: &str) -> bool {
+pub fn append_reasoning_content(message: &mut Map<String, Value>, reasoning: &str) -> bool {
     let reasoning = reasoning.trim();
     if reasoning.is_empty() {
         return false;
@@ -120,7 +120,7 @@ pub(crate) fn append_reasoning_content(message: &mut Map<String, Value>, reasoni
     true
 }
 
-pub(crate) fn attach_reasoning_content_field(item: &mut Value, reasoning: &str) -> bool {
+pub fn attach_reasoning_content_field(item: &mut Value, reasoning: &str) -> bool {
     let reasoning = reasoning.trim();
     if reasoning.is_empty() {
         return false;
@@ -137,7 +137,7 @@ pub(crate) fn attach_reasoning_content_field(item: &mut Value, reasoning: &str) 
     false
 }
 
-pub(crate) fn attach_optional_reasoning_content_field(
+pub fn attach_optional_reasoning_content_field(
     item: &mut Value,
     reasoning: Option<&str>,
 ) -> bool {
@@ -150,7 +150,7 @@ pub(crate) fn attach_optional_reasoning_content_field(
 /// Gemini 的 OpenAI 兼容接口把 thought signature 放在 tool call 的
 /// `extra_content.google.thought_signature` 里，下一轮必须原样带回，否则工具调用回放报 400。
 /// 这里只做透传：从 `source` 复制非空的 `extra_content` 到 `target`。
-pub(crate) fn copy_tool_call_extra_content(target: &mut Value, source: &Value) -> bool {
+pub fn copy_tool_call_extra_content(target: &mut Value, source: &Value) -> bool {
     let Some(extra) = tool_call_extra_content(source) else {
         return false;
     };
@@ -161,19 +161,19 @@ pub(crate) fn copy_tool_call_extra_content(target: &mut Value, source: &Value) -
     true
 }
 
-pub(crate) fn tool_call_extra_content(source: &Value) -> Option<&Value> {
+pub fn tool_call_extra_content(source: &Value) -> Option<&Value> {
     source
         .get("extra_content")
         .filter(|value| value.as_object().is_some_and(|obj| !obj.is_empty()))
 }
 
 /// Gemini 文档给的跳过签名校验的占位值，只在真签名找不回来时兜底用（会影响模型表现）。
-pub(crate) const GEMINI_SKIP_THOUGHT_SIGNATURE: &str = "skip_thought_signature_validator";
+pub const GEMINI_SKIP_THOUGHT_SIGNATURE: &str = "skip_thought_signature_validator";
 
 /// 签名靠 CodexChatHistoryStore 在内存里补回，CC Switch 在一轮工具调用中途重启就丢了。
 /// Gemini 只校验当前轮（最后一条 user 消息之后）每个 assistant 步骤里第一个工具调用的签名，
 /// 这里只给这些缺签名的调用填占位值；并行的后续调用照原样不带。只对 Gemini 3 及以后的模型生效。
-pub(crate) fn fill_gemini_thought_signature_fallback(chat_body: &mut Value) -> usize {
+pub fn fill_gemini_thought_signature_fallback(chat_body: &mut Value) -> usize {
     if !chat_body
         .get("model")
         .and_then(Value::as_str)
@@ -230,7 +230,7 @@ pub(crate) fn fill_gemini_thought_signature_fallback(chat_body: &mut Value) -> u
 }
 
 /// 模型名（可带 `google/` 之类的中转前缀）是 Gemini 3 及以后的版本：这些版本才强制校验工具调用签名。
-pub(crate) fn requires_gemini_thought_signature(model: &str) -> bool {
+pub fn requires_gemini_thought_signature(model: &str) -> bool {
     let name = model
         .rsplit('/')
         .next()
@@ -246,7 +246,7 @@ pub(crate) fn requires_gemini_thought_signature(model: &str) -> bool {
         .is_some_and(|major| major >= 3)
 }
 
-pub(crate) fn response_function_call_item(
+pub fn response_function_call_item(
     item_id: &str,
     status: &str,
     call_id: &str,
@@ -266,7 +266,7 @@ pub(crate) fn response_function_call_item(
     item
 }
 
-pub(crate) fn response_function_call_item_with_namespace(
+pub fn response_function_call_item_with_namespace(
     item_id: &str,
     status: &str,
     call_id: &str,
@@ -285,7 +285,7 @@ pub(crate) fn response_function_call_item_with_namespace(
     item
 }
 
-pub(crate) fn response_item_call_id(item: &Value) -> Option<String> {
+pub fn response_item_call_id(item: &Value) -> Option<String> {
     item.get("call_id")
         .or_else(|| item.get("id"))
         .and_then(|value| value.as_str())
@@ -294,7 +294,7 @@ pub(crate) fn response_item_call_id(item: &Value) -> Option<String> {
         .map(ToString::to_string)
 }
 
-pub(crate) fn is_empty_value(value: &Value) -> bool {
+pub fn is_empty_value(value: &Value) -> bool {
     match value {
         Value::Null => true,
         Value::String(value) => value.trim().is_empty(),

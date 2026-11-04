@@ -22,12 +22,12 @@ use super::reasoning_bridge::{
     anthropic_block_from_openai_reasoning_item, openai_reasoning_item_from_anthropic_block,
 };
 
-pub(crate) const TOOL_RESULT_ERROR_MARKER: &str = "[cc-switch:tool-result-error]";
+pub const TOOL_RESULT_ERROR_MARKER: &str = "[cc-switch:tool-result-error]";
 
 /// OpenAI Responses API 拒绝 `max_output_tokens` 小于 16。Anthropic 侧的合法
 /// 小预算探测请求（如 Claude Desktop 的模型可用性探测发 `max_tokens=1`）
 /// 会被严格网关整体拒绝，转换时把低于下限的预算抬到最小值而不是让请求失败。
-pub(crate) const RESPONSES_MIN_MAX_OUTPUT_TOKENS: u64 = 16;
+pub const RESPONSES_MIN_MAX_OUTPUT_TOKENS: u64 = 16;
 
 fn has_http_url_scheme(value: &str) -> bool {
     value
@@ -267,7 +267,7 @@ fn responses_image_from_chat_media(part: &Value) -> Option<Value> {
     Some(image)
 }
 
-pub(crate) fn sanitize_anthropic_tool_use_input(name: &str, input: Value) -> Value {
+pub fn sanitize_anthropic_tool_use_input(name: &str, input: Value) -> Value {
     if name != "Read" {
         return input;
     }
@@ -283,7 +283,7 @@ pub(crate) fn sanitize_anthropic_tool_use_input(name: &str, input: Value) -> Val
     }
 }
 
-pub(crate) fn sanitize_anthropic_tool_use_input_json(name: &str, raw: &str) -> String {
+pub fn sanitize_anthropic_tool_use_input_json(name: &str, raw: &str) -> String {
     if name != "Read" || raw.is_empty() {
         return raw.to_string();
     }
@@ -344,7 +344,7 @@ fn validate_anthropic_web_search_direct_mode(tool: &Value) -> Result<(), ProxyEr
     }
 }
 
-pub(crate) fn anthropic_web_search_tool_name(body: &Value) -> Option<&str> {
+pub fn anthropic_web_search_tool_name(body: &Value) -> Option<&str> {
     let tools = body.get("tools").and_then(Value::as_array)?;
     let forced_name = body
         .get("tool_choice")
@@ -431,7 +431,7 @@ fn anthropic_web_search_to_responses(
     Ok((response_tool, max_uses))
 }
 
-pub(crate) fn anthropic_web_search_max_uses(body: &Value) -> Option<u64> {
+pub fn anthropic_web_search_max_uses(body: &Value) -> Option<u64> {
     let tools = body.get("tools").and_then(Value::as_array)?;
     let forced_name = body
         .get("tool_choice")
@@ -457,7 +457,7 @@ pub(crate) fn anthropic_web_search_max_uses(body: &Value) -> Option<u64> {
         .min()
 }
 
-pub(crate) fn web_search_action_input(item: &Value) -> Value {
+pub fn web_search_action_input(item: &Value) -> Value {
     let Some(action) = item.get("action").and_then(Value::as_object) else {
         return json!({});
     };
@@ -1329,7 +1329,7 @@ fn contains_markdown_link_to_url(text: &str, raw_url: &str, rendered_url: &str) 
     )
 }
 
-pub(crate) fn text_with_url_citations(text: &str, annotations: &[Value]) -> String {
+pub fn text_with_url_citations(text: &str, annotations: &[Value]) -> String {
     struct Citation {
         start: Option<usize>,
         end: Option<usize>,
@@ -1481,7 +1481,7 @@ pub(crate) fn text_with_url_citations(text: &str, annotations: &[Value]) -> Stri
     rendered
 }
 
-pub(crate) fn output_text_with_url_citations(block: &Value) -> Option<String> {
+pub fn output_text_with_url_citations(block: &Value) -> Option<String> {
     let text = block
         .get("text")
         .and_then(Value::as_str)
@@ -1530,7 +1530,7 @@ fn collect_web_search_results_from_content(content: &Value, results: &mut Vec<Va
     }
 }
 
-pub(crate) fn web_search_results_from_output_item(item: &Value) -> Vec<Value> {
+pub fn web_search_results_from_output_item(item: &Value) -> Vec<Value> {
     let mut results = Vec::new();
     if item.get("type").and_then(Value::as_str) == Some("message") {
         if let Some(content) = item.get("content") {
@@ -1550,7 +1550,7 @@ pub(crate) fn web_search_results_from_output_item(item: &Value) -> Vec<Value> {
     results
 }
 
-pub(crate) fn web_search_results_from_action(item: &Value) -> Vec<Value> {
+pub fn web_search_results_from_action(item: &Value) -> Vec<Value> {
     let mut results = Vec::new();
     let Some(sources) = item.pointer("/action/sources").and_then(Value::as_array) else {
         return results;
@@ -1593,7 +1593,7 @@ pub(crate) fn web_search_results_from_action(item: &Value) -> Vec<Value> {
     results
 }
 
-pub(crate) fn merge_web_search_result_metadata(target: &mut [Value], candidates: &[Value]) {
+pub fn merge_web_search_result_metadata(target: &mut [Value], candidates: &[Value]) {
     for candidate in candidates {
         let Some(url) = candidate
             .get("url")
@@ -1642,7 +1642,7 @@ pub(crate) fn merge_web_search_result_metadata(target: &mut [Value], candidates:
     }
 }
 
-pub(crate) fn web_search_tool_result_error(item: &Value) -> Option<Value> {
+pub fn web_search_tool_result_error(item: &Value) -> Option<Value> {
     let status = item.get("status").and_then(Value::as_str);
     let has_error = item.get("error").is_some_and(|error| !error.is_null());
     if status.is_none_or(|status| status == "completed") && !has_error {
@@ -1684,7 +1684,7 @@ pub(crate) fn web_search_tool_result_error(item: &Value) -> Option<Value> {
     }))
 }
 
-pub(crate) fn web_search_max_uses_exceeded_error() -> Value {
+pub fn web_search_max_uses_exceeded_error() -> Value {
     json!({
         "type": "web_search_tool_result_error",
         "error_code": "max_uses_exceeded"
@@ -2098,7 +2098,7 @@ fn map_tool_choice_to_responses(
 /// xAI Responses 的 `ModelToolChoice` 不接受 `{"type":"web_search"}`。
 /// 强制托管搜索时改成 `"required"`，并去掉其它工具，否则 required 可能落到本地函数上。
 /// 字符串选择和函数选择不动。没有存活的 web_search 工具时删掉这条 choice，避免空工具列表配 required。
-pub(crate) fn rewrite_xai_hosted_web_search_tool_choice(body: &mut Value) -> bool {
+pub fn rewrite_xai_hosted_web_search_tool_choice(body: &mut Value) -> bool {
     let is_hosted_choice = body
         .get("tool_choice")
         .and_then(Value::as_object)
@@ -2127,7 +2127,7 @@ pub(crate) fn rewrite_xai_hosted_web_search_tool_choice(body: &mut Value) -> boo
     true
 }
 
-pub(crate) fn map_responses_stop_reason(
+pub fn map_responses_stop_reason(
     status: Option<&str>,
     has_tool_use: bool,
     incomplete_reason: Option<&str>,
@@ -2200,7 +2200,7 @@ fn validate_responses_terminal_status(body: &Value) -> Result<(), ProxyError> {
 /// **Logging**:
 /// - Warns on empty objects {} or partial objects (only one field present)
 /// - Debug logs when using OpenAI field name fallbacks
-pub(crate) fn build_anthropic_usage_from_responses(usage: Option<&Value>) -> Value {
+pub fn build_anthropic_usage_from_responses(usage: Option<&Value>) -> Value {
     let u = match usage {
         Some(v) if !v.is_null() && v.is_object() => v,
         _ => {
@@ -2547,14 +2547,14 @@ pub fn responses_to_anthropic(body: Value) -> Result<Value, ProxyError> {
     responses_to_anthropic_with_web_search_name(body, None)
 }
 
-pub(crate) fn responses_to_anthropic_with_web_search_name(
+pub fn responses_to_anthropic_with_web_search_name(
     body: Value,
     hosted_web_search_name: Option<&str>,
 ) -> Result<Value, ProxyError> {
     responses_to_anthropic_with_web_search_options(body, hosted_web_search_name, None)
 }
 
-pub(crate) fn responses_to_anthropic_with_web_search_options(
+pub fn responses_to_anthropic_with_web_search_options(
     body: Value,
     hosted_web_search_name: Option<&str>,
     max_web_search_uses: Option<u64>,

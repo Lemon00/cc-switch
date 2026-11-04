@@ -2,30 +2,30 @@
 //!
 //! Handles provider CRUD operations, switching, and configuration management.
 
-pub(crate) mod agy_direct;
-pub(crate) mod claude_direct;
-mod claude_editor;
-pub(crate) mod claude_official;
-pub(crate) mod codex_client_catalog;
-pub(crate) mod codex_direct;
-mod codex_editor;
-mod codex_login;
-pub(crate) mod codex_official_models;
-pub(crate) mod codex_terminal;
-mod editor_toml;
-mod endpoints;
-mod gemini_auth;
-pub(crate) mod gemini_direct;
-mod gemini_editor;
-pub(crate) mod grok_direct;
-mod grok_editor;
-pub(crate) mod icon;
-mod live;
-mod omp;
+pub mod agy_direct;
+pub mod claude_direct;
+pub mod claude_editor;
+pub mod claude_official;
+pub mod codex_client_catalog;
+pub mod codex_direct;
+pub mod codex_editor;
+pub mod codex_login;
+pub mod codex_official_models;
+pub mod codex_terminal;
+pub mod editor_toml;
+pub mod endpoints;
+pub mod gemini_auth;
+pub mod gemini_direct;
+pub mod gemini_editor;
+pub mod grok_direct;
+pub mod grok_editor;
+pub mod icon;
+pub mod live;
+pub mod omp;
 #[cfg(test)]
-mod opencode_tests;
-mod pi;
-mod usage;
+pub mod opencode_tests;
+pub mod pi;
+pub mod usage;
 
 use indexmap::IndexMap;
 use regex::Regex;
@@ -54,11 +54,11 @@ pub fn import_omp_providers_from_live(state: &AppState) -> Result<usize, AppErro
     omp::import_from_live(state)
 }
 
-pub(crate) use claude_editor::{switch_drops as claude_switch_drops, SwitchDrops};
+pub use claude_editor::{switch_drops as claude_switch_drops, SwitchDrops};
 pub use claude_editor::{EditorSave, EditorView};
 
-// Internal re-exports (pub(crate))
-pub(crate) use live::{
+// Internal re-exports (pub)
+pub use live::{
     initialize_dsh_profiles, provider_exists_in_live_config, sync_additive_app_to_live,
     write_live_for_state, LiveSyncOutcome,
 };
@@ -5365,7 +5365,7 @@ wire_api = "responses"
 }
 
 impl ProviderService {
-    pub(crate) fn managed_codex_oauth_account_id(provider: &Provider) -> Option<String> {
+    pub fn managed_codex_oauth_account_id(provider: &Provider) -> Option<String> {
         provider
             .meta
             .as_ref()
@@ -6550,7 +6550,7 @@ impl ProviderService {
         Ok(true)
     }
 
-    pub(crate) fn update_pi_usage_script(
+    pub fn update_pi_usage_script(
         state: &AppState,
         app_type: AppType,
         id: &str,
@@ -7374,7 +7374,7 @@ impl ProviderService {
     /// `OPENROUTER_API_KEY` / `GOOGLE_API_KEY` 等回退）、各类 `*_AUTH_TOKEN` /
     /// 单数 `*_TOKEN`、AWS Bedrock / Vertex 凭据、通用 secret / password /
     /// 私钥命名，以及发往上游的自定义请求头、Cookie、Authorization。
-    pub(crate) fn is_sensitive_config_key(name: &str) -> bool {
+    pub fn is_sensitive_config_key(name: &str) -> bool {
         let upper = name.to_ascii_uppercase();
 
         // 单数 `_TOKEN` 命中 AWS_SESSION_TOKEN 等，但**不**误伤复数 `_TOKENS`
@@ -8396,7 +8396,7 @@ impl ProviderService {
 /// Normalize Claude model keys in a JSON value
 ///
 /// Reads old key (ANTHROPIC_SMALL_FAST_MODEL), writes new keys (DEFAULT_*), and deletes old key.
-pub(crate) fn normalize_claude_models_in_value(settings: &mut Value) -> bool {
+pub fn normalize_claude_models_in_value(settings: &mut Value) -> bool {
     let mut changed = false;
     let env = match settings.get_mut("env").and_then(|v| v.as_object_mut()) {
         Some(obj) => obj,

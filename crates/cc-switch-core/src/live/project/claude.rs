@@ -208,7 +208,7 @@ const PROXY_SONNET_ALIAS: &str = "claude-sonnet-5";
 const PROXY_OPUS_ALIAS: &str = "claude-opus-5";
 const PROXY_FABLE_ALIAS: &str = "claude-fable-5";
 // 写给 Claude Code 时沿用文档示例的大写形式；解析侧大小写不敏感。
-pub(crate) const ONE_M_MARKER_FOR_CLIENT: &str = "[1M]";
+pub const ONE_M_MARKER_FOR_CLIENT: &str = "[1M]";
 
 /// 代理契约里怎么写凭据。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -288,7 +288,7 @@ pub fn proxy_projection(
 
 /// Claude Code 的四个档位。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Tier {
+pub enum Tier {
     Opus,
     Fable,
     Sonnet,
@@ -442,7 +442,7 @@ fn route_roles(env: &Map<String, Value>) -> Vec<TierModel<'_>> {
 /// 不写的话，用户级 `settings.json` 里路由 / 聚合模式的菜单会漏进这个只连一家的终端。
 /// 只列这张卡显式配了的档位（直连时 Claude Code 不会把别名回落到 `ANTHROPIC_MODEL`）；
 /// 一个都没配时写一个空菜单，显示内置菜单。
-pub(crate) fn terminal_model_picker(env: &Map<String, Value>, provider_name: &str) -> Value {
+pub fn terminal_model_picker(env: &Map<String, Value>, provider_name: &str) -> Value {
     let rows: Vec<Value> = Tier::MENU_ORDER
         .into_iter()
         .filter_map(|tier| env_string(env, tier.model_key()).map(|up| tier_model(env, tier, up)))
@@ -500,7 +500,7 @@ const POINT_RELEASE_CLIENT_IDS: &[(&str, &str, &str)] = &[
     (PROXY_SONNET_ALIAS, "sonnet-5", "claude-sonnet-5-5"),
 ];
 
-pub(crate) fn point_release_client_id(family_alias: &str, upstream: &str) -> Option<&'static str> {
+pub fn point_release_client_id(family_alias: &str, upstream: &str) -> Option<&'static str> {
     let id = crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(upstream)
         .trim()
         .to_ascii_lowercase();
@@ -523,7 +523,7 @@ fn client_alias_for_upstream<'a>(default_alias: &'a str, upstream: &str) -> &'a 
 }
 
 /// 子代理模型原样写给客户端；上游是 5.5 时同样换成目录 id，否则 Claude Code 不认识它。
-pub(crate) fn client_model_for_subagent(upstream: &str) -> String {
+pub fn client_model_for_subagent(upstream: &str) -> String {
     let Some(alias) = [PROXY_OPUS_ALIAS, PROXY_SONNET_ALIAS]
         .into_iter()
         .find_map(|family| point_release_client_id(family, upstream))
@@ -575,14 +575,14 @@ fn stack_model_fields(model: StackRoleModel<'_>) -> Vec<(&'static str, String)> 
     fields
 }
 
-pub(crate) fn env_string<'a>(env: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
+pub fn env_string<'a>(env: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
     env.get(key)
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
 }
 
-pub(crate) fn has_one_m_marker(model: &str) -> bool {
+pub fn has_one_m_marker(model: &str) -> bool {
     model
         .trim_end()
         .to_ascii_lowercase()

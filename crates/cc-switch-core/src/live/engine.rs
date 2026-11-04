@@ -130,7 +130,7 @@ pub fn plan(file: &LiveFile, patch: &dyn LivePatch) -> Result<Planned, LiveWrite
     plan_from(file, patch, pre_bytes)
 }
 
-pub(crate) fn plan_from(
+pub fn plan_from(
     file: &LiveFile,
     patch: &dyn LivePatch,
     pre_bytes: Option<Vec<u8>>,

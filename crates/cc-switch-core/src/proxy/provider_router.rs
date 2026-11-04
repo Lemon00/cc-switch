@@ -15,7 +15,7 @@ use tokio::sync::RwLock;
 /// Codex Official requests carry the selected account's native Authorization
 /// header. Reusing that request against another account card would cross the
 /// account boundary, so these cards must never participate in provider retry.
-pub(crate) fn provider_supports_failover(app_type: &str, provider: &Provider) -> bool {
+pub fn provider_supports_failover(app_type: &str, provider: &Provider) -> bool {
     app_type != AppType::Codex.as_str()
         || !crate::proxy::providers::is_codex_official_provider(provider)
 }

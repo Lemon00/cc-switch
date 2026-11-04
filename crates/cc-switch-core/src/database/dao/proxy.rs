@@ -7,8 +7,8 @@ use crate::proxy::types::*;
 
 use super::super::{lock_conn, Database};
 
-pub(crate) const PRICING_SOURCE_RESPONSE: &str = "response";
-pub(crate) const PRICING_SOURCE_REQUEST: &str = "request";
+pub const PRICING_SOURCE_RESPONSE: &str = "response";
+pub const PRICING_SOURCE_REQUEST: &str = "request";
 
 fn validate_pricing_source(value: &str) -> Result<&str, AppError> {
     let trimmed = value.trim();

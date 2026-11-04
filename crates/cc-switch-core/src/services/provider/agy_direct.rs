@@ -8,7 +8,7 @@ use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
 
-pub(crate) fn is_official(provider: &Provider) -> bool {
+pub fn is_official(provider: &Provider) -> bool {
     // Provider names are user editable and must never silently select OAuth.
     provider.category.as_deref() == Some("official")
         || provider
@@ -74,14 +74,14 @@ fn live_settings(provider: &Provider) -> Result<Value, AppError> {
 }
 
 /// 在终端里启动这张卡要用的参数；Key 卡会先建好它的私有目录。
-pub(crate) fn terminal_launch(provider: &Provider) -> Result<agy_config::AgyLaunch, AppError> {
+pub fn terminal_launch(provider: &Provider) -> Result<agy_config::AgyLaunch, AppError> {
     let settings = live_settings(provider)?;
     agy_config::prepare_launch(&provider.id, &settings)
 }
 
 /// 会话页的恢复命令如果指向某张 Key 卡的私有目录，返回那张卡和会话 ID，好按「打开终端」
 /// 的方式补上 Key 再恢复。认不出（官方登录会话、卡已删除）时返回 `None`，照原命令执行。
-pub(crate) fn key_resume_target(
+pub fn key_resume_target(
     db: &Database,
     command: &str,
 ) -> Result<Option<(Provider, String)>, AppError> {
@@ -101,7 +101,7 @@ pub(crate) fn key_resume_target(
 /// 启动时调用：撤掉 #8268 测试版装的包装脚本、`env` 文件和 shell PATH 片段，以及它写进
 /// 真实 `settings.json` 的 `modelProvider`，让直接敲 `agy` 回到官方登录。模型不动。没有旧
 /// 现场时什么都不做。
-pub(crate) fn migrate_legacy_launcher(db: &Database) -> Result<(), AppError> {
+pub fn migrate_legacy_launcher(db: &Database) -> Result<(), AppError> {
     if agy_config::remove_legacy_launcher()? {
         agy_config::release_model_provider(db)?;
     }

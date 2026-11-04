@@ -17,7 +17,7 @@ use bytes::Bytes;
 use serde_json::{json, Value};
 
 /// Serialize one Responses SSE event with the standard `event:`/`data:` framing.
-pub(crate) fn sse_event(event: &str, data: Value) -> Bytes {
+pub fn sse_event(event: &str, data: Value) -> Bytes {
     Bytes::from(format!(
         "event: {event}\ndata: {}\n\n",
         serde_json::to_string(&data).unwrap_or_default()
@@ -30,7 +30,7 @@ pub(crate) fn sse_event(event: &str, data: Value) -> Bytes {
 
 /// `response.created`, wrapping a caller-built `response` object (usage/created_at differ
 /// per converter, so the caller supplies the whole object).
-pub(crate) fn response_created(response: &Value) -> Bytes {
+pub fn response_created(response: &Value) -> Bytes {
     sse_event(
         "response.created",
         json!({ "type": "response.created", "response": response }),
@@ -38,7 +38,7 @@ pub(crate) fn response_created(response: &Value) -> Bytes {
 }
 
 /// `response.in_progress`.
-pub(crate) fn response_in_progress(response: &Value) -> Bytes {
+pub fn response_in_progress(response: &Value) -> Bytes {
     sse_event(
         "response.in_progress",
         json!({ "type": "response.in_progress", "response": response }),
@@ -46,7 +46,7 @@ pub(crate) fn response_in_progress(response: &Value) -> Bytes {
 }
 
 /// `response.completed`.
-pub(crate) fn response_completed(response: &Value) -> Bytes {
+pub fn response_completed(response: &Value) -> Bytes {
     sse_event(
         "response.completed",
         json!({ "type": "response.completed", "response": response }),
@@ -55,7 +55,7 @@ pub(crate) fn response_completed(response: &Value) -> Bytes {
 
 /// `response.incomplete`. Codex treats it as a retryable stream error; the converters
 /// only use it for compaction turns, where a truncated summary must not be installed.
-pub(crate) fn response_incomplete(response: &Value) -> Bytes {
+pub fn response_incomplete(response: &Value) -> Bytes {
     sse_event(
         "response.incomplete",
         json!({ "type": "response.incomplete", "response": response }),
@@ -63,7 +63,7 @@ pub(crate) fn response_incomplete(response: &Value) -> Bytes {
 }
 
 /// `response.failed`.
-pub(crate) fn response_failed(response: &Value) -> Bytes {
+pub fn response_failed(response: &Value) -> Bytes {
     sse_event(
         "response.failed",
         json!({ "type": "response.failed", "response": response }),
@@ -76,7 +76,7 @@ pub(crate) fn response_failed(response: &Value) -> Bytes {
 
 /// `response.output_item.added` with a caller-built item (message / reasoning /
 /// function_call / custom_tool_call).
-pub(crate) fn output_item_added(output_index: u32, item: &Value) -> Bytes {
+pub fn output_item_added(output_index: u32, item: &Value) -> Bytes {
     sse_event(
         "response.output_item.added",
         json!({
@@ -88,7 +88,7 @@ pub(crate) fn output_item_added(output_index: u32, item: &Value) -> Bytes {
 }
 
 /// `response.output_item.done` with a caller-built item.
-pub(crate) fn output_item_done(output_index: u32, item: &Value) -> Bytes {
+pub fn output_item_done(output_index: u32, item: &Value) -> Bytes {
     sse_event(
         "response.output_item.done",
         json!({
@@ -104,7 +104,7 @@ pub(crate) fn output_item_done(output_index: u32, item: &Value) -> Bytes {
 // ---------------------------------------------------------------------------
 
 /// `response.output_item.added` for an in-progress assistant message.
-pub(crate) fn message_item_added(output_index: u32, item_id: &str) -> Bytes {
+pub fn message_item_added(output_index: u32, item_id: &str) -> Bytes {
     output_item_added(
         output_index,
         &json!({
@@ -118,7 +118,7 @@ pub(crate) fn message_item_added(output_index: u32, item_id: &str) -> Bytes {
 }
 
 /// `response.content_part.added` for the (empty) output_text part of a message.
-pub(crate) fn message_content_part_added(output_index: u32, item_id: &str) -> Bytes {
+pub fn message_content_part_added(output_index: u32, item_id: &str) -> Bytes {
     sse_event(
         "response.content_part.added",
         json!({
@@ -132,7 +132,7 @@ pub(crate) fn message_content_part_added(output_index: u32, item_id: &str) -> By
 }
 
 /// `response.output_text.delta`.
-pub(crate) fn output_text_delta(output_index: u32, item_id: &str, delta: &str) -> Bytes {
+pub fn output_text_delta(output_index: u32, item_id: &str, delta: &str) -> Bytes {
     sse_event(
         "response.output_text.delta",
         json!({
@@ -146,7 +146,7 @@ pub(crate) fn output_text_delta(output_index: u32, item_id: &str, delta: &str) -
 }
 
 /// The completed assistant-message item value.
-pub(crate) fn message_item(item_id: &str, text: &str) -> Value {
+pub fn message_item(item_id: &str, text: &str) -> Value {
     json!({
         "id": item_id,
         "type": "message",
@@ -158,7 +158,7 @@ pub(crate) fn message_item(item_id: &str, text: &str) -> Value {
 
 /// Close an assistant message: emits `output_text.done` → `content_part.done` →
 /// `output_item.done`, and returns the completed item so the caller can record it.
-pub(crate) fn message_close(output_index: u32, item_id: &str, text: &str) -> (Vec<Bytes>, Value) {
+pub fn message_close(output_index: u32, item_id: &str, text: &str) -> (Vec<Bytes>, Value) {
     let item = message_item(item_id, text);
     let events = vec![
         sse_event(
@@ -191,7 +191,7 @@ pub(crate) fn message_close(output_index: u32, item_id: &str, text: &str) -> (Ve
 // ---------------------------------------------------------------------------
 
 /// `response.output_item.added` for an in-progress reasoning item.
-pub(crate) fn reasoning_item_added(output_index: u32, item_id: &str) -> Bytes {
+pub fn reasoning_item_added(output_index: u32, item_id: &str) -> Bytes {
     output_item_added(
         output_index,
         &json!({
@@ -204,7 +204,7 @@ pub(crate) fn reasoning_item_added(output_index: u32, item_id: &str) -> Bytes {
 }
 
 /// `response.reasoning_summary_part.added` for the (empty) summary part.
-pub(crate) fn reasoning_summary_part_added(output_index: u32, item_id: &str) -> Bytes {
+pub fn reasoning_summary_part_added(output_index: u32, item_id: &str) -> Bytes {
     sse_event(
         "response.reasoning_summary_part.added",
         json!({
@@ -218,7 +218,7 @@ pub(crate) fn reasoning_summary_part_added(output_index: u32, item_id: &str) -> 
 }
 
 /// `response.reasoning_summary_text.delta`.
-pub(crate) fn reasoning_summary_text_delta(output_index: u32, item_id: &str, delta: &str) -> Bytes {
+pub fn reasoning_summary_text_delta(output_index: u32, item_id: &str, delta: &str) -> Bytes {
     sse_event(
         "response.reasoning_summary_text.delta",
         json!({
@@ -232,7 +232,7 @@ pub(crate) fn reasoning_summary_text_delta(output_index: u32, item_id: &str, del
 }
 
 /// The completed reasoning item value (note: no `status` field, matching both converters).
-pub(crate) fn reasoning_item(item_id: &str, text: &str) -> Value {
+pub fn reasoning_item(item_id: &str, text: &str) -> Value {
     json!({
         "id": item_id,
         "type": "reasoning",
@@ -242,7 +242,7 @@ pub(crate) fn reasoning_item(item_id: &str, text: &str) -> Value {
 
 /// Close a reasoning item: emits `reasoning_summary_text.done` →
 /// `reasoning_summary_part.done` → `output_item.done`, and returns the completed item.
-pub(crate) fn reasoning_close(output_index: u32, item_id: &str, text: &str) -> (Vec<Bytes>, Value) {
+pub fn reasoning_close(output_index: u32, item_id: &str, text: &str) -> (Vec<Bytes>, Value) {
     let item = reasoning_item(item_id, text);
     let events = reasoning_close_with_item(output_index, item_id, text, &item, true);
     (events, item)
@@ -251,7 +251,7 @@ pub(crate) fn reasoning_close(output_index: u32, item_id: &str, text: &str) -> (
 /// Close a reasoning item whose completed shape is supplied by the converter.
 /// Anthropic uses this to attach opaque signed/redacted thinking in
 /// `encrypted_content` while keeping the standard Responses event lifecycle.
-pub(crate) fn reasoning_close_with_item(
+pub fn reasoning_close_with_item(
     output_index: u32,
     item_id: &str,
     text: &str,
@@ -292,7 +292,7 @@ pub(crate) fn reasoning_close_with_item(
 // ---------------------------------------------------------------------------
 
 /// `response.function_call_arguments.delta`.
-pub(crate) fn function_call_arguments_delta(
+pub fn function_call_arguments_delta(
     output_index: u32,
     item_id: &str,
     delta: &str,
@@ -309,7 +309,7 @@ pub(crate) fn function_call_arguments_delta(
 }
 
 /// `response.function_call_arguments.done`.
-pub(crate) fn function_call_arguments_done(
+pub fn function_call_arguments_done(
     output_index: u32,
     item_id: &str,
     arguments: &str,
@@ -326,7 +326,7 @@ pub(crate) fn function_call_arguments_done(
 }
 
 /// `response.custom_tool_call_input.delta` (Chat freeform tools only).
-pub(crate) fn custom_tool_call_input_delta(output_index: u32, item_id: &str, delta: &str) -> Bytes {
+pub fn custom_tool_call_input_delta(output_index: u32, item_id: &str, delta: &str) -> Bytes {
     sse_event(
         "response.custom_tool_call_input.delta",
         json!({
@@ -339,7 +339,7 @@ pub(crate) fn custom_tool_call_input_delta(output_index: u32, item_id: &str, del
 }
 
 /// `response.custom_tool_call_input.done` (Chat freeform tools only).
-pub(crate) fn custom_tool_call_input_done(output_index: u32, item_id: &str, input: &str) -> Bytes {
+pub fn custom_tool_call_input_done(output_index: u32, item_id: &str, input: &str) -> Bytes {
     sse_event(
         "response.custom_tool_call_input.done",
         json!({

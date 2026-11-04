@@ -140,7 +140,7 @@ fn non_empty(value: Option<String>) -> Option<String> {
 }
 
 /// 配置里是否带有值得导入的真实内容（Key、端点或模型）。
-pub(crate) fn has_managed_content(settings: &Value) -> bool {
+pub fn has_managed_content(settings: &Value) -> bool {
     let projection = AgyProjection::of(settings);
     projection.api_key.is_some() || projection.base_url.is_some() || projection.model.is_some()
 }
@@ -161,7 +161,7 @@ fn key_profile_patch(projection: &AgyProjection) -> JsonPatch {
 
 /// 撤掉 #8268 测试版写进真实 `settings.json` 的 `modelProvider`，模型和其余键不动。
 /// 这是 CC Switch 对真实 `settings.json` 唯一的写入。
-pub(crate) fn release_model_provider(
+pub fn release_model_provider(
     db: &crate::database::Database,
 ) -> Result<crate::mode::operation::OperationReport, AppError> {
     use crate::live::engine::LiveFile;
@@ -189,7 +189,7 @@ pub(crate) fn release_model_provider(
 
 /// 在终端里启动这张卡要用的参数。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AgyLaunch {
+pub struct AgyLaunch {
     /// Key 模式的私有 `--gemini_dir`；官方登录卡为 `None`，直接跑原生 `agy`。
     pub gemini_dir: Option<PathBuf>,
     /// 官方登录卡的 `--model`（显示名，只对这次会话生效）；Key 卡的模型写在私有目录里，为 `None`。
@@ -199,7 +199,7 @@ pub(crate) struct AgyLaunch {
 }
 
 /// 准备在终端里启动某张卡：Key 卡会建好（或更新）它的私有目录。
-pub(crate) fn prepare_launch(provider_id: &str, settings: &Value) -> Result<AgyLaunch, AppError> {
+pub fn prepare_launch(provider_id: &str, settings: &Value) -> Result<AgyLaunch, AppError> {
     let projection = AgyProjection::of(settings);
     if !projection.is_key_mode() {
         return Ok(AgyLaunch {
@@ -263,13 +263,13 @@ fn link_shared_config(link: &Path, target: &Path) -> Result<(), AppError> {
 }
 
 #[cfg(unix)]
-pub(crate) fn create_dir_link(target: &Path, link: &Path) -> Result<(), AppError> {
+pub fn create_dir_link(target: &Path, link: &Path) -> Result<(), AppError> {
     std::os::unix::fs::symlink(target, link).map_err(|e| AppError::io(link, e))
 }
 
 /// Windows 建符号链接要开发者模式，失败时退回目录联接（junction），普通用户也能建。
 #[cfg(windows)]
-pub(crate) fn create_dir_link(target: &Path, link: &Path) -> Result<(), AppError> {
+pub fn create_dir_link(target: &Path, link: &Path) -> Result<(), AppError> {
     if std::os::windows::fs::symlink_dir(target, link).is_ok() {
         return Ok(());
     }
@@ -296,7 +296,7 @@ pub(crate) fn create_dir_link(target: &Path, link: &Path) -> Result<(), AppError
     }
 }
 
-pub(crate) fn remove_link(link: &Path) -> Result<(), AppError> {
+pub fn remove_link(link: &Path) -> Result<(), AppError> {
     // Windows 上目录符号链接和 junction 要按目录删；Unix 上符号链接按文件删。
     fs::remove_file(link)
         .or_else(|_| fs::remove_dir(link))
@@ -331,7 +331,7 @@ fn shell_word(value: &str) -> String {
 
 /// 在后台跑 agy（查额度、列模型）。Windows 正式版是 GUI 子系统，控制台程序作子进程时
 /// 不带 `CREATE_NO_WINDOW` 会另弹一个黑色控制台窗口。
-pub(crate) fn background_command(bin: &Path) -> tokio::process::Command {
+pub fn background_command(bin: &Path) -> tokio::process::Command {
     #[cfg_attr(not(windows), allow(unused_mut))]
     let mut command = tokio::process::Command::new(bin);
     #[cfg(windows)]
@@ -345,7 +345,7 @@ pub(crate) fn background_command(bin: &Path) -> tokio::process::Command {
 /// 定位真实的 `agy`：先 PATH，再常见安装目录，最后问一次登录 shell。
 /// 从 Dock / Finder 启动时 PATH 只有系统目录，所以后两步不可省。
 /// 旧版测试装的包装脚本永远不会被返回。
-pub(crate) fn real_agy_bin() -> Option<PathBuf> {
+pub fn real_agy_bin() -> Option<PathBuf> {
     let path_var = std::env::var_os("PATH").unwrap_or_default();
     // install.ps1 installs to %LOCALAPPDATA%\agy\bin, which a GUI process's PATH may lack.
     let system_dirs: Vec<PathBuf> = if cfg!(windows) {
@@ -447,7 +447,7 @@ fn login_shell_agy() -> Option<PathBuf> {
 /// 撤掉 #8268 测试版装的启动器：`bin/agy` 包装脚本、带 Key 的 `env` 文件和各 shell
 /// 启动文件里的 PATH 片段。只动带标记的内容。返回是否清掉过 `env`（说明当时可能写过
 /// `modelProvider`，调用方要按新规则重写一次 settings.json）。
-pub(crate) fn remove_legacy_launcher() -> Result<bool, AppError> {
+pub fn remove_legacy_launcher() -> Result<bool, AppError> {
     legacy::remove(&agy_dir(), &get_home_dir())
 }
 

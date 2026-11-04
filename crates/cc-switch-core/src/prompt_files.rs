@@ -8,7 +8,7 @@ use crate::gemini_config::get_gemini_dir;
 use crate::openclaw_config::get_openclaw_dir;
 use crate::opencode_config::get_opencode_dir;
 
-pub(crate) fn validate_prompt_content(app: &AppType, content: &str) -> Result<(), AppError> {
+pub fn validate_prompt_content(app: &AppType, content: &str) -> Result<(), AppError> {
     if matches!(app, AppType::Mcode) && content.len() > 32 * 1024 {
         return Err(AppError::InvalidInput(
             "MCode global instructions must not exceed 32 KiB".into(),

@@ -11,17 +11,17 @@ use super::pi::{transport_spec, unified_spec, TRANSPORT_FIELDS};
 static WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Copy)]
-pub(crate) enum OmpChange<'a> {
+pub enum OmpChange<'a> {
     Enable(&'a Value, &'a Value),
     Disable(&'a Value, &'a Value),
     Remove(Option<&'a Value>),
 }
 
 impl<'a> OmpChange<'a> {
-    pub(crate) fn from_enabled(spec: &'a Value, enabled: bool) -> Self {
+    pub fn from_enabled(spec: &'a Value, enabled: bool) -> Self {
         Self::from_previous(spec, spec, enabled)
     }
-    pub(crate) fn from_previous(spec: &'a Value, previous: &'a Value, enabled: bool) -> Self {
+    pub fn from_previous(spec: &'a Value, previous: &'a Value, enabled: bool) -> Self {
         if enabled {
             Self::Enable(spec, previous)
         } else {
@@ -45,7 +45,7 @@ fn sync(id: &str, change: OmpChange<'_>) -> Result<(), AppError> {
     sync_locked(id, change)
 }
 
-pub(crate) fn sync_and_commit<T>(
+pub fn sync_and_commit<T>(
     id: &str,
     change: OmpChange<'_>,
     commit: impl FnOnce() -> Result<T, AppError>,
@@ -163,7 +163,7 @@ fn read_document() -> Result<Value, AppError> {
     Ok(result)
 }
 
-pub(crate) fn is_disabled_managed(id: &str, spec: &Value) -> Result<bool, AppError> {
+pub fn is_disabled_managed(id: &str, spec: &Value) -> Result<bool, AppError> {
     let document = read_document()?;
     Ok(document["mcpServers"].get(id).is_some_and(|entry| {
         entry.get("enabled") == Some(&json!(false)) && transport_spec(entry) == transport_spec(spec)
@@ -172,7 +172,7 @@ pub(crate) fn is_disabled_managed(id: &str, spec: &Value) -> Result<bool, AppErr
         .is_some_and(|items| items.contains(&json!(id))))
 }
 
-pub(crate) fn remove_disabled_if_managed(id: &str, spec: &Value) -> Result<(), AppError> {
+pub fn remove_disabled_if_managed(id: &str, spec: &Value) -> Result<(), AppError> {
     let _guard = WRITE_LOCK
         .lock()
         .map_err(|e| AppError::Message(e.to_string()))?;
@@ -203,7 +203,7 @@ fn native_enabled(document: &Value, id: &str, spec: &Value) -> bool {
     !disabled || listed("enabledServers")
 }
 
-pub(crate) fn import(state: &AppState) -> Result<usize, AppError> {
+pub fn import(state: &AppState) -> Result<usize, AppError> {
     let document = read_document()?;
     let mut existing = state.db.get_all_mcp_servers()?;
     let mut count = 0;

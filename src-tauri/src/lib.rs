@@ -1,58 +1,59 @@
-mod agy_config;
+pub use cc_switch_core::agy_config;
 #[cfg(all(test, unix))]
 mod agy_smoke_tests;
-mod app_config;
+pub use cc_switch_core::app_config;
 mod app_store;
 mod auto_launch;
-mod claude_desktop_config;
-mod claude_mcp;
+pub use cc_switch_core::claude_desktop_config;
+pub use cc_switch_core::claude_mcp;
 mod claude_plugin;
-mod codex_config;
+pub use cc_switch_core::codex_config;
 mod codex_history_migration;
-mod codex_rollout_file;
-mod codex_state_db;
+pub use cc_switch_core::codex_rollout_file;
+pub use cc_switch_core::codex_state_db;
 mod commands;
-mod config;
-mod database;
+mod frontend_hooks;
+pub use cc_switch_core::config;
+pub use cc_switch_core::database;
 mod deeplink;
-mod dsh_config;
-mod error;
-mod gemini_config;
-mod gemini_mcp;
-mod grok_config;
-pub mod hermes_config;
+pub use cc_switch_core::dsh_config;
+pub use cc_switch_core::error;
+pub use cc_switch_core::gemini_config;
+pub use cc_switch_core::gemini_mcp;
+pub use cc_switch_core::grok_config;
+pub use cc_switch_core::hermes_config;
 mod init_status;
-mod jsonc_document;
-mod kimi_config;
-mod kimi_session;
+pub use cc_switch_core::jsonc_document;
+pub use cc_switch_core::kimi_config;
+pub use cc_switch_core::kimi_session;
 mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
-pub mod live;
-mod mcode_config;
-mod mcp;
-pub mod mode;
-mod model_capabilities;
-mod omp_config;
-mod openclaw_config;
-mod opencode_config;
+pub use cc_switch_core::live;
+pub use cc_switch_core::mcode_config;
+pub use cc_switch_core::mcp;
+pub use cc_switch_core::mode;
+pub use cc_switch_core::model_capabilities;
+pub use cc_switch_core::omp_config;
+pub use cc_switch_core::openclaw_config;
+pub use cc_switch_core::opencode_config;
 mod panic_hook;
-mod pi_config;
-mod prompt;
-mod prompt_files;
-mod provider;
-mod proxy;
+pub use cc_switch_core::pi_config;
+pub use cc_switch_core::prompt;
+pub use cc_switch_core::prompt_files;
+pub use cc_switch_core::provider;
+pub use cc_switch_core::proxy;
 mod services;
-mod session_manager;
-mod settings;
-mod store;
+pub use cc_switch_core::session_manager;
+pub use cc_switch_core::settings;
+pub use cc_switch_core::store;
 
 mod tray;
 #[cfg(target_os = "windows")]
 mod tray_compat;
 mod tray_panel;
-mod usage_events;
-mod usage_script;
+pub use cc_switch_core::usage_events;
+pub use cc_switch_core::usage_script;
 
 pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps};
 pub use codex_config::{
@@ -656,7 +657,9 @@ pub fn run() {
             // 注入 AppHandle 给 usage_events，让无 AppHandle 持有的写日志路径
             // 也能向前端推送 `usage-log-recorded`。
             // 放在日志系统初始化之后，确保 init 的日志能正常输出。
-            usage_events::init(app.handle().clone());
+            usage_events::init(std::sync::Arc::new(
+                frontend_hooks::TauriEventSink(app.handle().clone()),
+            ));
 
             // 初始化数据库
             let app_config_dir = crate::config::get_app_config_dir();
@@ -794,8 +797,11 @@ pub fn run() {
 
             let app_state = AppState::new(db);
 
-            // 设置 AppHandle 用于代理故障转移时的 UI 更新
-            app_state.proxy_service.set_app_handle(app.handle().clone());
+            // 给核心注入 GUI 钩子：事件转发、OAuth 读取、托盘刷新、
+            // 故障转移回调（Tauri State 不是 Arc，走回调不用 Weak）。
+            app_state
+                .proxy_service
+                .set_hooks(frontend_hooks::tauri_hooks(app.handle()));
 
             // 补完上次崩溃时写到一半的客户端文件（写前意图在 ~/.cc-switch/live-state.json），
             // 要在任何写客户端文件的启动步骤之前。
@@ -1303,11 +1309,11 @@ pub fn run() {
             tray_compat::install(app.handle());
             crate::services::webdav_auto_sync::start_worker(
                 app_state.db.clone(),
-                app.handle().clone(),
+                std::sync::Arc::new(frontend_hooks::TauriEventSink(app.handle().clone())),
             );
             crate::services::s3_auto_sync::start_worker(
                 app_state.db.clone(),
-                app.handle().clone(),
+                std::sync::Arc::new(frontend_hooks::TauriEventSink(app.handle().clone())),
             );
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);

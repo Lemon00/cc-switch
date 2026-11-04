@@ -26,14 +26,14 @@ use crate::codex_config::{
     extract_codex_auth_api_key, extract_codex_auth_user_identity,
 };
 
-pub(crate) const STASH_FILENAME: &str = "codex-login-stash.json";
+pub const STASH_FILENAME: &str = "codex-login-stash.json";
 
 /// 暂存文件的格式版本。1：按用户加 workspace 认人（4.0.7）；没有这个字段的是更早写的。
 const STASH_VERSION: u32 = 1;
 
 /// 这台设备上暂存的原生登录，按身份存。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub(crate) struct LoginStash {
+pub struct LoginStash {
     #[serde(default)]
     pub logins: BTreeMap<String, Value>,
     /// 最近一次暂存的是谁：切回没有自己登录的官方卡（行里 `auth` 为空）时还它。
@@ -161,7 +161,7 @@ fn oauth_identity(auth: &Value) -> Option<String> {
 /// 官方卡要 `auth.json` 里是谁：行里 OAuth 登录的身份，或 API Key 的摘要；行里没存登录
 /// （跟随 Codex 当前的登录）时为空。算进代理契约：两张官方卡要的账号不同，契约就不同，
 /// 代理模式下换路由才会像直连一样换登录。
-pub(crate) fn official_login_requirement(row_auth: &Value) -> Option<String> {
+pub fn official_login_requirement(row_auth: &Value) -> Option<String> {
     if is_api_key_credential(row_auth) {
         return extract_codex_auth_api_key(row_auth)
             .and_then(|key| crate::live::engine::digest(Some(key.as_bytes())))
@@ -197,7 +197,7 @@ fn access_token_expired(auth: &Value, now: i64) -> bool {
 
 /// 目标供应商对 `auth.json` 的要求。
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum AuthTarget<'a> {
+pub enum AuthTarget<'a> {
     /// 直连的第三方：保留登录开关关闭时删掉 `auth.json`。
     ThirdParty { preserve: bool },
     /// 代理的第三方路由：不动用户的原生登录（请求凭据由代理注入）。`restore_last`：进入或
@@ -212,7 +212,7 @@ pub(crate) enum AuthTarget<'a> {
     Managed { auth: &'a Value },
 }
 
-pub(crate) struct AuthInput<'a> {
+pub struct AuthInput<'a> {
     /// live 的 `auth.json`（文件不存在为 `None`，解析不了的按非对象处理）。
     pub live: Option<&'a Value>,
     /// live 里是某个托管账号的登录（切走时要清掉，不进暂存）。
@@ -229,7 +229,7 @@ pub(crate) struct AuthInput<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct AuthPlan {
+pub struct AuthPlan {
     /// `None` 不动；`Some(None)` 删掉；`Some(Some(v))` 整份写 `v`。
     pub auth: Option<Option<Value>>,
     /// 暂存有变化时的新内容。
@@ -239,7 +239,7 @@ pub(crate) struct AuthPlan {
     pub login_on_disk: bool,
 }
 
-pub(crate) fn plan(input: AuthInput<'_>) -> AuthPlan {
+pub fn plan(input: AuthInput<'_>) -> AuthPlan {
     let original = input.stash.clone();
     let mut stash = input.stash;
     let managed = input.live_is_managed;

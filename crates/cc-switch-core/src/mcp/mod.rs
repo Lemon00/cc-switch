@@ -13,15 +13,15 @@
 //! - `omp` - Omp MCP 同步和导入
 
 pub mod agy;
-mod claude;
-mod codex;
-pub(crate) mod dsh;
-mod gemini;
-mod grokbuild;
-mod hermes;
-pub(crate) mod omp;
-mod opencode;
-pub(crate) mod validation;
+pub mod claude;
+pub mod codex;
+pub mod dsh;
+pub mod gemini;
+pub mod grokbuild;
+pub mod hermes;
+pub mod omp;
+pub mod opencode;
+pub mod validation;
 
 // 重新导出公共 API
 pub use claude::{
@@ -44,6 +44,6 @@ pub use opencode::{
     import_from_opencode, remove_server_from_opencode, sync_single_server_to_opencode,
 };
 
-pub(crate) mod kimi;
-pub(crate) mod mcode;
-pub(crate) mod pi;
+pub mod kimi;
+pub mod mcode;
+pub mod pi;

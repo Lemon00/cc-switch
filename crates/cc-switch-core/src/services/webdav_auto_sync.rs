@@ -14,12 +14,12 @@ use crate::services::webdav_sync as webdav_sync_service;
 use crate::settings::{self, WebDavSyncSettings};
 
 const AUTO_SYNC_DEBOUNCE_MS: u64 = 1000;
-pub(crate) const MAX_AUTO_SYNC_WAIT_MS: u64 = 10_000;
+pub const MAX_AUTO_SYNC_WAIT_MS: u64 = 10_000;
 
 static DB_CHANGE_TX: OnceLock<Sender<String>> = OnceLock::new();
 static AUTO_SYNC_SUPPRESS_DEPTH: AtomicUsize = AtomicUsize::new(0);
 
-pub(crate) struct AutoSyncSuppressionGuard;
+pub struct AutoSyncSuppressionGuard;
 
 impl AutoSyncSuppressionGuard {
     pub fn new() -> Self {
@@ -37,7 +37,7 @@ impl Drop for AutoSyncSuppressionGuard {
     }
 }
 
-pub(crate) fn is_auto_sync_suppressed() -> bool {
+pub fn is_auto_sync_suppressed() -> bool {
     AUTO_SYNC_SUPPRESS_DEPTH.load(Ordering::SeqCst) > 0
 }
 
@@ -45,14 +45,14 @@ pub fn should_trigger_for_table(table: &str) -> bool {
     should_trigger_auto_sync_for_table(table)
 }
 
-pub(crate) fn enqueue_change_signal(tx: &Sender<String>, table: &str) -> bool {
+pub fn enqueue_change_signal(tx: &Sender<String>, table: &str) -> bool {
     match tx.try_send(table.to_string()) {
         Ok(()) => true,
         Err(TrySendError::Full(_)) | Err(TrySendError::Closed(_)) => false,
     }
 }
 
-pub(crate) fn auto_sync_wait_duration(started_at: Instant, now: Instant) -> Option<Duration> {
+pub fn auto_sync_wait_duration(started_at: Instant, now: Instant) -> Option<Duration> {
     let max_wait = Duration::from_millis(MAX_AUTO_SYNC_WAIT_MS);
     let debounce = Duration::from_millis(AUTO_SYNC_DEBOUNCE_MS);
     let elapsed = now.saturating_duration_since(started_at);

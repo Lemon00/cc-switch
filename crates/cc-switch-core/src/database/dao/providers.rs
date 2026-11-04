@@ -21,7 +21,7 @@ impl Database {
     /// Only this device's account IDs are passed in: provider rows sync across
     /// devices, and a row bound to another device's account must stay bound.
     /// Keep raw JSON so unrelated and future metadata survives the update.
-    pub(crate) fn unbind_codex_managed_accounts(
+    pub fn unbind_codex_managed_accounts(
         &self,
         account_ids: &[String],
     ) -> Result<Vec<String>, AppError> {

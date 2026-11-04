@@ -18,7 +18,7 @@ use crate::provider::Provider;
 use serde_json::{json, Value};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum EffortPlan {
+pub enum EffortPlan {
     /// 保持转换层的结果（认得的模型，或托管账号）。
     Unchanged,
     /// 不发档位。
@@ -32,7 +32,7 @@ const OVERRIDE_MODES: [&str; 2] = ["off", "passthrough"];
 
 /// 决定这次请求发哪一档。`body` 是模型映射后的 Anthropic 请求体，`base_url` 是
 /// 供应商的上游地址。
-pub(crate) fn plan(body: &Value, provider: &Provider, base_url: &str) -> EffortPlan {
+pub fn plan(body: &Value, provider: &Provider, base_url: &str) -> EffortPlan {
     let (plan, reason) = decide(body, provider, base_url);
     if plan != EffortPlan::Unchanged {
         log::debug!(
@@ -176,7 +176,7 @@ fn conservative(effort: &'static str) -> &'static str {
 
 /// 把 [`plan`] 的结果写进转换后的请求体：Chat 写顶层 `reasoning_effort`，
 /// Responses 写 `reasoning.effort`。
-pub(crate) fn apply(result: &mut Value, api_format: &str, plan: EffortPlan) {
+pub fn apply(result: &mut Value, api_format: &str, plan: EffortPlan) {
     let Some(obj) = result.as_object_mut() else {
         return;
     };

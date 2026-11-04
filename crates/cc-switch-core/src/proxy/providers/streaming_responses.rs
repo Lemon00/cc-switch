@@ -2374,7 +2374,7 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
     create_anthropic_sse_stream_from_responses_with_web_search_options(stream, None, None)
 }
 
-pub(crate) fn create_anthropic_sse_stream_from_responses_with_web_search_options<
+pub fn create_anthropic_sse_stream_from_responses_with_web_search_options<
     E: std::error::Error + Send + 'static,
 >(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,

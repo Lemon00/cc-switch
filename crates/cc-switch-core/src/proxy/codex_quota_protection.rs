@@ -290,7 +290,7 @@ fn now_unix() -> i64 {
 }
 
 /// Rejects the request when the account's latest usage reaches a threshold.
-pub(crate) async fn admit(token: &str, request_headers: &HeaderMap) -> Result<(), ProxyError> {
+pub async fn admit(token: &str, request_headers: &HeaderMap) -> Result<(), ProxyError> {
     let config = crate::settings::get_settings().codex_quota_protection;
     let account_id = request_headers
         .get("chatgpt-account-id")
@@ -303,7 +303,7 @@ pub(crate) async fn admit(token: &str, request_headers: &HeaderMap) -> Result<()
 }
 
 /// Records the usage headers of an official response (success or error).
-pub(crate) fn observe_response(token: &str, request_headers: &HeaderMap, response: &HeaderMap) {
+pub fn observe_response(token: &str, request_headers: &HeaderMap, response: &HeaderMap) {
     if !crate::settings::get_settings()
         .codex_quota_protection
         .enabled

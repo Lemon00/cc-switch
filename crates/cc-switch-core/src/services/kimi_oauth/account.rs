@@ -449,7 +449,7 @@ pub(super) async fn quota(
 
 /// Fail early when a Kimi official card points at a login this machine does
 /// not have (e.g. a profile synced from another device).
-pub(crate) fn ensure_signed_in(home: &Path, oauth: &Value) -> Result<(), String> {
+pub fn ensure_signed_in(home: &Path, oauth: &Value) -> Result<(), String> {
     match read_credential(&credential_path(home, oauth)?)? {
         Credential::Valid(_) => Ok(()),
         Credential::Missing | Credential::Revoked => Err("not signed in".into()),
@@ -458,7 +458,7 @@ pub(crate) fn ensure_signed_in(home: &Path, oauth: &Value) -> Result<(), String>
 
 /// Delete a separate-slot credential under Kimi's lock. The native default
 /// slot (`kimi-code`, `kimi-code-env-*`) belongs to Kimi and is never deleted.
-pub(crate) fn remove_separate_credential_blocking(
+pub fn remove_separate_credential_blocking(
     home: &Path,
     oauth: &Value,
 ) -> Result<(), String> {

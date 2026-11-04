@@ -1088,7 +1088,7 @@ where
 // ============================================================================
 
 /// Convert a `serde_yaml::Value` to a `serde_json::Value`.
-pub(crate) fn yaml_to_json(yaml: &serde_yaml::Value) -> Result<serde_json::Value, AppError> {
+pub fn yaml_to_json(yaml: &serde_yaml::Value) -> Result<serde_json::Value, AppError> {
     // Serialize YAML value to string, then parse as JSON value.
     // This handles all type mappings correctly.
     let yaml_str = serde_yaml::to_string(yaml)
@@ -1098,7 +1098,7 @@ pub(crate) fn yaml_to_json(yaml: &serde_yaml::Value) -> Result<serde_json::Value
 }
 
 /// Convert a `serde_json::Value` to a `serde_yaml::Value`.
-pub(crate) fn json_to_yaml(json: &serde_json::Value) -> Result<serde_yaml::Value, AppError> {
+pub fn json_to_yaml(json: &serde_json::Value) -> Result<serde_yaml::Value, AppError> {
     let json_str = serde_json::to_string(json)
         .map_err(|e| AppError::Config(format!("Failed to serialize JSON value: {e}")))?;
     serde_yaml::from_str(&json_str)

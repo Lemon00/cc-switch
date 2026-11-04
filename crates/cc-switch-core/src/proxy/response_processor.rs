@@ -47,7 +47,7 @@ const HOP_BY_HOP_RESPONSE_HEADERS: &[&str] = &[
 ];
 
 /// 移除响应侧 hop-by-hop 头，以及 `Connection` 中点名的扩展头。
-pub(crate) fn strip_hop_by_hop_response_headers(headers: &mut HeaderMap) {
+pub fn strip_hop_by_hop_response_headers(headers: &mut HeaderMap) {
     let connection_listed_headers: Vec<HeaderName> = headers
         .get_all(axum::http::header::CONNECTION)
         .iter()
@@ -68,7 +68,7 @@ pub(crate) fn strip_hop_by_hop_response_headers(headers: &mut HeaderMap) {
 }
 
 /// 移除在重建响应体后会失真的实体头。
-pub(crate) fn strip_entity_headers_for_rebuilt_body(headers: &mut HeaderMap) {
+pub fn strip_entity_headers_for_rebuilt_body(headers: &mut HeaderMap) {
     headers.remove(axum::http::header::CONTENT_ENCODING);
     headers.remove(axum::http::header::CONTENT_LENGTH);
     headers.remove(axum::http::header::TRANSFER_ENCODING);
@@ -79,7 +79,7 @@ pub(crate) fn strip_entity_headers_for_rebuilt_body(headers: &mut HeaderMap) {
 /// `body_timeout`: 整包超时。当非零时用 `tokio::time::timeout` 包住 `.bytes()` 调用，
 /// 防止上游发完响应头后卡住 body 导致请求永远挂住。
 /// 传入 `Duration::ZERO` 表示不启用超时（故障转移关闭时）。
-pub(crate) async fn read_decoded_body(
+pub async fn read_decoded_body(
     response: ProxyResponse,
     tag: &str,
     body_timeout: Duration,
@@ -493,7 +493,7 @@ impl Drop for SseUsageFinishGuard {
 // ============================================================================
 
 /// 创建使用量收集器
-pub(crate) fn create_usage_collector(
+pub fn create_usage_collector(
     ctx: &RequestContext,
     state: &ProxyState,
     status_code: u16,
@@ -639,7 +639,7 @@ fn spawn_log_usage(
     });
 }
 
-pub(crate) fn usage_logging_enabled(state: &ProxyState) -> bool {
+pub fn usage_logging_enabled(state: &ProxyState) -> bool {
     state
         .config
         .try_read()

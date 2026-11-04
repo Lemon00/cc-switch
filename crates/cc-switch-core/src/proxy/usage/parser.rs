@@ -41,7 +41,7 @@ fn openai_cache_write_tokens(usage: &Value) -> u32 {
 }
 
 /// Claude usage 中按 1 小时 TTL 写入的缓存 token（`cache_creation_input_tokens` 的子集）
-pub(crate) fn claude_cache_creation_1h_tokens(usage: &Value) -> u32 {
+pub fn claude_cache_creation_1h_tokens(usage: &Value) -> u32 {
     usage
         .pointer("/cache_creation/ephemeral_1h_input_tokens")
         .and_then(Value::as_u64)

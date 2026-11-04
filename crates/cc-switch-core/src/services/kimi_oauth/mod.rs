@@ -1,8 +1,8 @@
 //! Official Kimi Code device login. Credentials stay in Kimi's native file
 //! store. Kimi rotates refresh tokens during model requests; CC Switch only
 //! refreshes (for quota) under the same cross-process lock, see [`lock`].
-mod account;
-mod lock;
+pub mod account;
+pub mod lock;
 
 use std::{
     fs,
@@ -1089,7 +1089,7 @@ async fn remove_at(
 }
 
 /// Nicknames of Kimi official accounts, keyed by provider id, for card names.
-pub(crate) fn account_nicknames() -> std::collections::HashMap<String, String> {
+pub fn account_nicknames() -> std::collections::HashMap<String, String> {
     account::Store::load(&account::store_path())
         .accounts
         .into_iter()
@@ -1099,7 +1099,7 @@ pub(crate) fn account_nicknames() -> std::collections::HashMap<String, String> {
 
 /// Switching to an official account card needs its login on this machine; a
 /// profile synced from another device would otherwise point Kimi at nothing.
-pub(crate) fn ensure_profile_signed_in(settings: &Value) -> Result<(), crate::error::AppError> {
+pub fn ensure_profile_signed_in(settings: &Value) -> Result<(), crate::error::AppError> {
     if !kimi_config::is_official_provider(settings) {
         return Ok(());
     }
@@ -1116,7 +1116,7 @@ pub(crate) fn ensure_profile_signed_in(settings: &Value) -> Result<(), crate::er
 
 /// After deleting a profile whose node Kimi no longer has, also delete the
 /// credential of a CC Switch-owned slot so it does not linger on disk.
-pub(crate) fn forget_removed_profile(id: &str, settings: &Value) -> Result<(), String> {
+pub fn forget_removed_profile(id: &str, settings: &Value) -> Result<(), String> {
     if !kimi_config::is_official_provider(settings) {
         return Ok(());
     }

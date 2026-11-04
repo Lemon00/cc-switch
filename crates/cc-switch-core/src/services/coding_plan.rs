@@ -67,7 +67,7 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
 /// 按地址认出的套餐 id，取值与前端 `CodingPlanProviderEntry.id` 一致
 /// （写进 `usage_script.coding_plan_provider`，用量弹窗下拉按它回显）。
 /// 智谱团队版与个人版地址相同、无法自动区分，这里永远返回个人版。
-pub(crate) fn detect_provider_id(base_url: &str) -> Option<&'static str> {
+pub fn detect_provider_id(base_url: &str) -> Option<&'static str> {
     Some(match detect_provider(base_url)? {
         CodingPlanProvider::Kimi => "kimi",
         CodingPlanProvider::ZhipuCn | CodingPlanProvider::ZhipuEn => "zhipu",
@@ -136,13 +136,13 @@ fn make_error(msg: String) -> SubscriptionQuota {
 /// 套餐查询的结果。智谱个人版账户没有 Coding Plan（按量付费）时单独返回
 /// `ZhipuNoPlan`（内含原来的失败结果），用量查询入口据此改查账户余额
 /// （`commands::provider` 的 token_plan 分支）；不回落的调用方用 [`Self::into_quota`]。
-pub(crate) enum CodingPlanOutcome {
+pub enum CodingPlanOutcome {
     Quota(SubscriptionQuota),
     ZhipuNoPlan(SubscriptionQuota),
 }
 
 impl CodingPlanOutcome {
-    pub(crate) fn into_quota(self) -> SubscriptionQuota {
+    pub fn into_quota(self) -> SubscriptionQuota {
         match self {
             Self::Quota(quota) | Self::ZhipuNoPlan(quota) => quota,
         }
@@ -157,7 +157,7 @@ async fn query_kimi(api_key: &str) -> Result<SubscriptionQuota, String> {
 
 /// `base_url` is the Kimi Code API root (`https://api.kimi.ai/coding/v1` for
 /// global accounts); `token` is an API key or an official OAuth access token.
-pub(crate) async fn query_kimi_at(
+pub async fn query_kimi_at(
     base_url: &str,
     token: &str,
 ) -> Result<SubscriptionQuota, String> {
@@ -1844,7 +1844,7 @@ pub async fn get_coding_plan_quota(
 
 /// 同 [`get_coding_plan_quota`]，但把「智谱账户没有 Coding Plan」单独返回，
 /// 供用量查询入口改查余额。
-pub(crate) async fn query_coding_plan(
+pub async fn query_coding_plan(
     base_url: &str,
     api_key: &str,
     access_key_id: Option<&str>,

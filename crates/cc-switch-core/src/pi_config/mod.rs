@@ -17,12 +17,12 @@ use std::sync::{LazyLock, Mutex, MutexGuard};
 const MAX_PI_FILE_BYTES: u64 = 1024 * 1024;
 const MISSING_MODELS_REVISION: &str = "missing";
 static MODELS_FILE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 static TEST_AGENT_DIR: LazyLock<Mutex<Option<PathBuf>>> = LazyLock::new(|| Mutex::new(None));
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct PiNativeDefaults {
+pub struct PiNativeDefaults {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -31,7 +31,7 @@ pub(crate) struct PiNativeDefaults {
     pub session_dir: Option<String>,
 }
 
-pub(crate) fn get_pi_agent_dir() -> Result<PathBuf, AppError> {
+pub fn get_pi_agent_dir() -> Result<PathBuf, AppError> {
     #[cfg(test)]
     if let Some(path) = TEST_AGENT_DIR
         .lock()
@@ -72,15 +72,15 @@ fn resolve_pi_agent_dir(
     Ok(path)
 }
 
-pub(crate) fn get_pi_models_path() -> Result<PathBuf, AppError> {
+pub fn get_pi_models_path() -> Result<PathBuf, AppError> {
     Ok(get_pi_agent_dir()?.join("models.json"))
 }
 
-pub(crate) fn get_pi_settings_path() -> Result<PathBuf, AppError> {
+pub fn get_pi_settings_path() -> Result<PathBuf, AppError> {
     Ok(get_pi_agent_dir()?.join("settings.json"))
 }
 
-pub(crate) fn read_pi_native_defaults() -> Result<PiNativeDefaults, AppError> {
+pub fn read_pi_native_defaults() -> Result<PiNativeDefaults, AppError> {
     let path = get_pi_settings_path()?;
     if !path.exists() {
         return Ok(PiNativeDefaults::default());
@@ -99,26 +99,26 @@ pub(crate) fn read_pi_native_defaults() -> Result<PiNativeDefaults, AppError> {
     })
 }
 
-pub(crate) fn read_pi_native_providers() -> Result<IndexMap<String, Value>, AppError> {
+pub fn read_pi_native_providers() -> Result<IndexMap<String, Value>, AppError> {
     let _guard = lock_models_file()?;
     read_pi_native_providers_locked(&get_pi_models_path()?)
 }
 
-pub(crate) fn read_pi_native_provider(provider_key: &str) -> Result<Option<Value>, AppError> {
+pub fn read_pi_native_provider(provider_key: &str) -> Result<Option<Value>, AppError> {
     let _guard = lock_models_file()?;
     let path = get_pi_models_path()?;
     let document = read_models_document(&path)?;
     Ok(providers(&document, &path)?.get(provider_key).cloned())
 }
 
-pub(crate) fn pi_provider_exists(provider_key: &str) -> Result<bool, AppError> {
+pub fn pi_provider_exists(provider_key: &str) -> Result<bool, AppError> {
     let _guard = lock_models_file()?;
     let path = get_pi_models_path()?;
     let document = read_models_document(&path)?;
     Ok(providers(&document, &path)?.contains_key(provider_key))
 }
 
-pub(crate) fn insert_pi_provider(provider_key: &str, config: &Value) -> Result<bool, AppError> {
+pub fn insert_pi_provider(provider_key: &str, config: &Value) -> Result<bool, AppError> {
     validate_provider_node(provider_key, config)?;
     let _guard = lock_models_file()?;
     let path = get_pi_models_path()?;
@@ -140,7 +140,7 @@ pub(crate) fn insert_pi_provider(provider_key: &str, config: &Value) -> Result<b
     Ok(true)
 }
 
-pub(crate) fn replace_pi_provider(
+pub fn replace_pi_provider(
     provider_key: &str,
     expected: &Value,
     replacement: &Value,
@@ -167,7 +167,7 @@ pub(crate) fn replace_pi_provider(
     write_models_document(&path, &document, &expected_revision)
 }
 
-pub(crate) fn replace_pi_provider_if_present(
+pub fn replace_pi_provider_if_present(
     provider_key: &str,
     replacement: &Value,
 ) -> Result<Option<Value>, AppError> {
@@ -187,11 +187,11 @@ pub(crate) fn replace_pi_provider_if_present(
     Ok(Some(current))
 }
 
-pub(crate) fn remove_pi_provider(provider_key: &str) -> Result<Option<Value>, AppError> {
+pub fn remove_pi_provider(provider_key: &str) -> Result<Option<Value>, AppError> {
     remove_pi_provider_inner(provider_key, None)
 }
 
-pub(crate) fn remove_pi_provider_if_matches(
+pub fn remove_pi_provider_if_matches(
     provider_key: &str,
     expected: &Value,
 ) -> Result<bool, AppError> {
@@ -219,7 +219,7 @@ fn remove_pi_provider_inner(
     Ok(Some(current))
 }
 
-pub(crate) fn restore_pi_provider_if_missing(
+pub fn restore_pi_provider_if_missing(
     provider_key: &str,
     config: &Value,
 ) -> Result<(), AppError> {
@@ -245,7 +245,7 @@ pub(crate) fn restore_pi_provider_if_missing(
 /// Provider ownership is intentionally source-based: every explicit object in
 /// `models.json.providers` is manageable, including keys also built into Pi.
 /// Pi's `/login` credentials live in `auth.json` and are never read here.
-pub(crate) fn validate_provider_node(provider_key: &str, config: &Value) -> Result<(), AppError> {
+pub fn validate_provider_node(provider_key: &str, config: &Value) -> Result<(), AppError> {
     if provider_key.trim().is_empty() {
         return Err(AppError::InvalidInput(
             "Pi provider key cannot be empty".to_string(),
@@ -257,7 +257,7 @@ pub(crate) fn validate_provider_node(provider_key: &str, config: &Value) -> Resu
     Ok(())
 }
 
-pub(crate) fn provider_base_url(config: &Value) -> Result<String, AppError> {
+pub fn provider_base_url(config: &Value) -> Result<String, AppError> {
     let provider = config.as_object().ok_or_else(|| {
         AppError::InvalidInput("Pi provider configuration must be an object".to_string())
     })?;
@@ -283,7 +283,7 @@ pub(crate) fn provider_base_url(config: &Value) -> Result<String, AppError> {
 /// follow the same environment rules so a reference is never sent as the key
 /// itself. Commands are not run here, and a referenced variable that is unset or
 /// empty makes the whole value unresolved, as in Pi; both give an empty key.
-pub(crate) fn resolve_usage_api_key(value: &str) -> String {
+pub fn resolve_usage_api_key(value: &str) -> String {
     resolve_usage_api_key_with(value, |name| std::env::var(name).ok())
 }
 
@@ -538,23 +538,23 @@ fn nonempty_string(value: Option<&Value>) -> Option<&str> {
         .filter(|value| !value.is_empty())
 }
 
-#[cfg(test)]
-pub(crate) mod test_support {
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support {
     use std::path::{Path, PathBuf};
 
-    pub(crate) struct TestAgentDir {
+    pub struct TestAgentDir {
         _dir: Option<tempfile::TempDir>,
         previous: Option<PathBuf>,
     }
 
     impl TestAgentDir {
-        pub(crate) fn new() -> Self {
+        pub fn new() -> Self {
             let dir = tempfile::tempdir().expect("create Pi test directory");
             let agent_dir = dir.path().join("agent");
             Self::set(agent_dir, Some(dir))
         }
 
-        pub(crate) fn at(agent_dir: &Path) -> Self {
+        pub fn at(agent_dir: &Path) -> Self {
             Self::set(agent_dir.to_path_buf(), None)
         }
 

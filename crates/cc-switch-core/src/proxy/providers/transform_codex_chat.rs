@@ -53,7 +53,7 @@ const CHAT_TOOL_NAME_MAX_LEN: usize = 64;
 const CUSTOM_TOOL_INPUT_DESCRIPTION: &str = "Raw string input for the original custom tool. Preserve formatting exactly and follow the original tool definition embedded in the description.";
 const CUSTOM_TOOL_PRESERVED_METADATA_HEADING: &str = "Original tool definition:";
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum CodexToolKind {
+pub enum CodexToolKind {
     Function,
     Namespace,
     Custom,
@@ -61,14 +61,14 @@ pub(crate) enum CodexToolKind {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct CodexToolSpec {
-    pub(crate) kind: CodexToolKind,
-    pub(crate) name: String,
-    pub(crate) namespace: Option<String>,
+pub struct CodexToolSpec {
+    pub kind: CodexToolKind,
+    pub name: String,
+    pub namespace: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct CodexToolContext {
+pub struct CodexToolContext {
     chat_tools: Vec<Value>,
     seen_chat_names: HashSet<String>,
     chat_name_to_spec: HashMap<String, CodexToolSpec>,
@@ -78,24 +78,24 @@ pub(crate) struct CodexToolContext {
 }
 
 impl CodexToolContext {
-    pub(crate) fn chat_tools(&self) -> &[Value] {
+    pub fn chat_tools(&self) -> &[Value] {
         &self.chat_tools
     }
 
-    pub(crate) fn is_compaction_request(&self) -> bool {
+    pub fn is_compaction_request(&self) -> bool {
         self.compaction_request
     }
 
-    pub(crate) fn lookup_chat_name(&self, chat_name: &str) -> Option<&CodexToolSpec> {
+    pub fn lookup_chat_name(&self, chat_name: &str) -> Option<&CodexToolSpec> {
         self.chat_name_to_spec.get(chat_name)
     }
 
-    pub(crate) fn is_custom_tool_chat_name(&self, chat_name: &str) -> bool {
+    pub fn is_custom_tool_chat_name(&self, chat_name: &str) -> bool {
         self.lookup_chat_name(chat_name)
             .is_some_and(|spec| matches!(&spec.kind, CodexToolKind::Custom))
     }
 
-    pub(crate) fn chat_name_for_response_function(
+    pub fn chat_name_for_response_function(
         &self,
         name: &str,
         namespace: Option<&str>,
@@ -248,7 +248,7 @@ impl CodexToolContext {
     }
 }
 
-pub(crate) fn build_codex_tool_context_from_request(body: &Value) -> CodexToolContext {
+pub fn build_codex_tool_context_from_request(body: &Value) -> CodexToolContext {
     let mut context = CodexToolContext::default();
 
     if let Some(tools) = body.get("tools").and_then(|v| v.as_array()) {
@@ -497,7 +497,7 @@ fn reasoning_requested(body: &Value) -> Option<bool> {
     body.get("reasoning").map(|value| !value.is_null())
 }
 
-pub(crate) fn map_reasoning_effort<'a>(
+pub fn map_reasoning_effort<'a>(
     effort: &str,
     mode: Option<&str>,
     effort_levels: Option<&'a [String]>,
@@ -1716,7 +1716,7 @@ fn collect_input_declared_tools(value: &Value, context: &mut CodexToolContext) {
     }
 }
 
-pub(crate) fn flatten_namespace_tool_name(namespace: &str, name: &str) -> String {
+pub fn flatten_namespace_tool_name(namespace: &str, name: &str) -> String {
     let full_name = format!("{namespace}__{name}");
     if full_name.len() <= CHAT_TOOL_NAME_MAX_LEN {
         return full_name;
@@ -1937,7 +1937,7 @@ pub fn chat_completion_to_response(body: Value) -> Result<Value, ProxyError> {
 
 /// Convert a non-streaming Chat Completions response into a Responses response,
 /// restoring Codex-specific tool names using the original Responses request.
-pub(crate) fn chat_completion_to_response_with_context(
+pub fn chat_completion_to_response_with_context(
     body: Value,
     tool_context: &CodexToolContext,
 ) -> Result<Value, ProxyError> {
@@ -2245,7 +2245,7 @@ fn chat_legacy_function_call_to_response_item(
     ))
 }
 
-pub(crate) fn response_tool_call_item_id_from_chat_name(
+pub fn response_tool_call_item_id_from_chat_name(
     call_id: &str,
     chat_name: &str,
     tool_context: &CodexToolContext,
@@ -2257,7 +2257,7 @@ pub(crate) fn response_tool_call_item_id_from_chat_name(
     }
 }
 
-pub(crate) fn response_tool_call_item_from_chat_name(
+pub fn response_tool_call_item_from_chat_name(
     item_id: &str,
     status: &str,
     call_id: &str,
@@ -2337,7 +2337,7 @@ fn parse_tool_arguments_object(arguments: &str) -> Value {
         .unwrap_or_else(|| json!({ "query": arguments }))
 }
 
-pub(crate) fn custom_tool_input_from_chat_arguments(arguments: &str) -> String {
+pub fn custom_tool_input_from_chat_arguments(arguments: &str) -> String {
     if arguments.trim().is_empty() {
         return String::new();
     }
@@ -2351,7 +2351,7 @@ pub(crate) fn custom_tool_input_from_chat_arguments(arguments: &str) -> String {
     }
 }
 
-pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
+pub fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
     let Some(usage) = usage.filter(|value| value.is_object() && !value.is_null()) else {
         return json!({
             "input_tokens": 0,
@@ -2441,7 +2441,7 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
     result
 }
 
-pub(crate) fn response_id_from_chat_id(id: Option<&str>) -> String {
+pub fn response_id_from_chat_id(id: Option<&str>) -> String {
     let id = id.unwrap_or("ccswitch");
     if id.starts_with("resp_") {
         id.to_string()
@@ -2450,7 +2450,7 @@ pub(crate) fn response_id_from_chat_id(id: Option<&str>) -> String {
     }
 }
 
-pub(crate) fn response_status_from_finish_reason(finish_reason: Option<&str>) -> &'static str {
+pub fn response_status_from_finish_reason(finish_reason: Option<&str>) -> &'static str {
     match finish_reason {
         Some("length") => "incomplete",
         _ => "completed",

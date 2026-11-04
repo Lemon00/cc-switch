@@ -21,7 +21,7 @@ use std::{
 };
 
 static WRITE_LOCK: Mutex<()> = Mutex::new(());
-pub(crate) const TRANSPORT_FIELDS: [&str; 7] =
+pub const TRANSPORT_FIELDS: [&str; 7] =
     ["command", "args", "env", "cwd", "url", "headers", "type"];
 /// Pi 自己的条目字段：重建条目时从数据库里保存的连接定义（导入时原样存下）带回来
 const PI_FIELDS: [&str; 6] = [
@@ -35,7 +35,7 @@ const PI_FIELDS: [&str; 6] = [
 
 /// 对 Pi 条目的改动
 #[derive(Clone, Copy)]
-pub(crate) enum PiChange<'a> {
+pub enum PiChange<'a> {
     /// 写入连接字段并启用
     Enable(&'a Value),
     /// 取消勾选：只标 `enabled: false`，保留条目和 Pi 自己的设置，重新勾选时原样恢复
@@ -46,12 +46,12 @@ pub(crate) enum PiChange<'a> {
 
 impl<'a> PiChange<'a> {
     /// 勾选状态 → 改动：勾选写入，未勾选只禁用
-    pub(crate) fn from_enabled(spec: Option<&'a Value>) -> Self {
+    pub fn from_enabled(spec: Option<&'a Value>) -> Self {
         spec.map_or(Self::Disable, Self::Enable)
     }
 }
 
-pub(crate) fn config_path() -> Result<PathBuf, AppError> {
+pub fn config_path() -> Result<PathBuf, AppError> {
     Ok(crate::pi_config::get_pi_agent_dir()?.join("mcp.json"))
 }
 
@@ -170,7 +170,7 @@ pub fn sync(id: &str, spec: Option<&Value>) -> Result<(), AppError> {
 
 /// 删除服务器时清掉 Pi 里由 CC Switch 写入、后来被取消勾选的条目：
 /// 只删 `enabled: false` 且连接方式和这个服务器一致的同名条目，用户自己的同名条目不动
-pub(crate) fn remove_disabled_if_managed(id: &str, spec: &Value) -> Result<(), AppError> {
+pub fn remove_disabled_if_managed(id: &str, spec: &Value) -> Result<(), AppError> {
     let _guard = WRITE_LOCK
         .lock()
         .map_err(|e| AppError::Message(e.to_string()))?;
@@ -189,7 +189,7 @@ pub(crate) fn remove_disabled_if_managed(id: &str, spec: &Value) -> Result<(), A
 /// 先写 Pi 的 `mcp.json` 再提交数据库；数据库失败就把文件恢复原样。
 /// 启用时在同一把写锁里重新读数据库查重名：锁外读的快照挡不住两个并发请求分别勾上
 /// dev-tools 和 dev_tools（Pi 没装时没有文件可对照）
-pub(crate) fn sync_and_commit<T>(
+pub fn sync_and_commit<T>(
     db: &Database,
     id: &str,
     change: PiChange<'_>,
@@ -328,7 +328,7 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
     }
 }
 
-pub(crate) fn transport_spec(spec: &Value) -> Value {
+pub fn transport_spec(spec: &Value) -> Value {
     let mut spec = unified_spec(spec);
     if let Some(object) = spec.as_object_mut() {
         object.retain(|key, _| TRANSPORT_FIELDS.contains(&key.as_str()));
@@ -350,7 +350,7 @@ fn pi_fields(spec: &Value) -> Value {
 }
 
 /// Pi 的条目 → CC Switch 的统一格式：`streamable-http` 记作 `http`，省略的 `type` 按字段补上
-pub(crate) fn unified_spec(native: &Value) -> Value {
+pub fn unified_spec(native: &Value) -> Value {
     let mut spec = native.clone();
     if spec["type"] == "streamable-http"
         || (spec.is_object() && spec.get("type").is_none() && spec.get("url").is_some())

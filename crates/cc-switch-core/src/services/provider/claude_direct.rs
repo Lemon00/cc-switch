@@ -20,14 +20,14 @@ fn app() -> &'static str {
 }
 
 /// `settings.json`（旧安装可能是 `claude.json`）。里面有 Key，按 0600 写。
-pub(crate) fn settings_file() -> LiveFile {
+pub fn settings_file() -> LiveFile {
     LiveFile::private(get_claude_settings_path())
 }
 
 /// 从 `prev` 切到 `target`：同一个操作里写 live、再把当前供应商改成 `target`。
 ///
 /// `prev` 是 live 现在对应的供应商（直连指针指向的那家），用来删它带进来的独有字段。
-pub(crate) fn switch_to(
+pub fn switch_to(
     db: &Database,
     prev: Option<&Provider>,
     target: &Provider,
@@ -37,7 +37,7 @@ pub(crate) fn switch_to(
 
 /// 把当前供应商 `target` 重新投影到 live，不改指针。`prev` 是 live 现在对应的那一版
 /// 行（编辑前的行；没改过就是它自己）。
-pub(crate) fn reapply(
+pub fn reapply(
     db: &Database,
     prev: Option<&Provider>,
     target: &Provider,
@@ -76,7 +76,7 @@ fn write(
 
 /// 用 `patch` 改写 `settings.json`，和 `target` 在同一个操作里提交；`patch` 为空时只
 /// 落定状态、不读也不写文件。
-pub(crate) fn run(
+pub fn run(
     db: &Database,
     op: &str,
     patch: Option<&JsonPatch>,

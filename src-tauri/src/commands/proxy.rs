@@ -517,11 +517,21 @@ pub async fn reset_circuit_breaker(
                         .and_then(|providers| providers.get(&provider_id).map(|p| p.name.clone()))
                         .unwrap_or_else(|| provider_id.clone());
 
-                    // 创建故障转移切换管理器并执行切换
+                    // 创建故障转移切换管理器并执行切换（新签名要 FailoverContext：
+                    // state 取命令的 State，事件与托盘走与 forwarder 回调同一套钩子）。
                     let switch_manager =
                         crate::proxy::failover_switch::FailoverSwitchManager::new();
+                    let sink = crate::frontend_hooks::TauriEventSink(app_handle.clone());
+                    let tray_app = app_handle.clone();
+                    let ctx = crate::proxy::failover_switch::FailoverContext {
+                        state: &state,
+                        sink: Some(&sink),
+                        tray_refresh: Some(std::sync::Arc::new(move || {
+                            crate::tray::refresh_tray_menu(&tray_app);
+                        })),
+                    };
                     if let Err(e) = switch_manager
-                        .try_switch(Some(&app_handle), &app_type, &provider_id, &provider_name)
+                        .try_switch(Some(&ctx), &app_type, &provider_id, &provider_name)
                         .await
                     {
                         log::error!("[Recovery] 自动切换失败: {e}");

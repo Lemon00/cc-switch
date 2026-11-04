@@ -3,23 +3,23 @@
 //! 提供本地HTTP代理服务，支持多Provider故障转移和请求透传
 
 pub mod body_filter;
-mod browser_guard;
+pub mod browser_guard;
 pub mod cache_injector;
 pub mod circuit_breaker;
-pub(crate) mod codex_quota_protection;
-pub(crate) mod content_encoding;
+pub mod codex_quota_protection;
+pub mod content_encoding;
 pub mod copilot_optimizer;
 pub mod error;
 pub mod error_mapper;
-pub(crate) mod failover_switch;
-mod forwarder;
+pub mod failover_switch;
+pub mod forwarder;
 pub mod gemini_url;
 pub mod handler_config;
 pub mod handler_context;
-mod handlers;
+pub mod handlers;
 pub mod http_client;
 pub mod hyper_client;
-pub(crate) mod json_canonical;
+pub mod json_canonical;
 pub mod log_codes;
 pub mod media_sanitizer;
 pub mod model_mapper;
@@ -27,20 +27,20 @@ pub mod opaque_state_rectifier;
 pub mod provider_router;
 pub mod providers;
 pub mod response_processor;
-pub(crate) mod server;
+pub mod server;
 pub mod session;
-pub(crate) mod sse;
-pub(crate) mod switch_lock;
+pub mod sse;
+pub mod switch_lock;
 pub mod thinking_budget_rectifier;
 pub mod thinking_optimizer;
 pub mod thinking_rectifier;
-pub(crate) mod tool_media;
-pub(crate) mod types;
-mod upstream_guard;
+pub mod tool_media;
+pub mod types;
+pub mod upstream_guard;
 pub mod usage;
 
 #[cfg(test)]
-mod tests_issue_7271;
+pub mod tests_issue_7271;
 
 // 公开导出给外部使用（commands, services等模块需要）
 #[allow(unused_imports)]
@@ -59,4 +59,4 @@ pub use types::{ProxyConfig, ProxyServerInfo, ProxyStatus};
 // 内部模块间共享（供子模块使用）
 // 注意：这个导出用于模块内部，编译器可能警告未使用但实际被子模块使用
 #[allow(unused_imports)]
-pub(crate) use types::*;
+pub use types::*;

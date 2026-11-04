@@ -53,7 +53,7 @@ use std::{
 ///
 /// DSH 没有路由服务，用量只来自会话日志。Web 和 Desktop 共用 `$DSH_HOME/sessions`，
 /// 会话里也没记是哪一端建的，所以两端的用量合并记在 `dsh` 名下。
-pub(crate) const DSH_APP_TYPE: &str = "dsh";
+pub const DSH_APP_TYPE: &str = "dsh";
 
 /// `session_usage_dedup` / `proxy_request_logs.data_source` 里的来源标识。
 const DSH_DATA_SOURCE: &str = "dsh_session";
@@ -93,12 +93,12 @@ pub fn sync_dsh_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
 ///
 /// 与 DSH 自身、会话浏览器（`dsh_config::data_dir`）同一套规则，用户把 home
 /// 指到别处时统计跟着走。
-pub(crate) fn dsh_sessions_root() -> PathBuf {
+pub fn dsh_sessions_root() -> PathBuf {
     crate::dsh_config::data_dir().join("sessions")
 }
 
 /// [`sync_dsh_usage`] 的可注入根目录版本，测试用临时目录。
-pub(crate) fn sync_dsh_usage_from(
+pub fn sync_dsh_usage_from(
     db: &Database,
     root: &Path,
 ) -> Result<SessionSyncResult, AppError> {

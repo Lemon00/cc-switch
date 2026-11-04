@@ -32,14 +32,14 @@ fn skill_state_lock() -> &'static RwLock<()> {
     LOCK.get_or_init(|| RwLock::new(()))
 }
 
-pub(crate) fn skill_state_read_guard() -> RwLockReadGuard<'static, ()> {
+pub fn skill_state_read_guard() -> RwLockReadGuard<'static, ()> {
     skill_state_lock().read().unwrap_or_else(|poisoned| {
         log::warn!("Skills state read lock was poisoned; recovering the protected state");
         poisoned.into_inner()
     })
 }
 
-pub(crate) fn skill_state_write_guard() -> RwLockWriteGuard<'static, ()> {
+pub fn skill_state_write_guard() -> RwLockWriteGuard<'static, ()> {
     skill_state_lock().write().unwrap_or_else(|poisoned| {
         log::warn!("Skills state write lock was poisoned; recovering the protected state");
         poisoned.into_inner()
@@ -3569,7 +3569,7 @@ impl SkillService {
     /// 解析会消解点段——branch 写成 `../../../releases/download/v1/evil` 时，落点变成
     /// 该仓库的 **release asset**，即攻击者可上传的任意字节。归档内容一旦可控，
     /// 解压路径校验就成了唯一防线，所以这一层必须堵死。
-    pub(crate) fn validate_repo_ref(owner: &str, name: &str, branch: &str) -> Result<()> {
+    pub fn validate_repo_ref(owner: &str, name: &str, branch: &str) -> Result<()> {
         if !Self::is_valid_github_owner(owner) || !Self::is_valid_github_repo_name(name) {
             return Err(anyhow!(format_skill_error(
                 "INVALID_REPO_REF",

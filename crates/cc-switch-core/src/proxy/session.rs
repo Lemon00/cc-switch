@@ -241,7 +241,7 @@ fn generate_new_session_id() -> SessionIdResult {
 }
 
 #[cfg(test)]
-mod header_tests;
+pub mod header_tests;
 
 #[cfg(test)]
 mod tests {

@@ -22,13 +22,13 @@ use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Value};
 
-pub(crate) const CCSWITCH_COMPACTION_PREFIX: &str = "ccswitch-compaction-v1:";
+pub const CCSWITCH_COMPACTION_PREFIX: &str = "ccswitch-compaction-v1:";
 
 /// CC Switch 自己包装进 `encrypted_content` 的内容都以它开头，官方后端一律解不开。
 const CCSWITCH_ENVELOPE_PREFIX: &str = "ccswitch-";
 
 /// 与 codex-rs `prompts/templates/compact/prompt.md` 一致（Codex 本地压缩用的提示词）。
-pub(crate) const COMPACT_PROMPT: &str = "You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.
+pub const COMPACT_PROMPT: &str = "You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.
 
 Include:
 - Current progress and key decisions made
@@ -41,32 +41,32 @@ Be concise, structured, and focused on helping the next LLM seamlessly continue 
 
 /// 与 codex-rs `prompts/templates/compact/summary_prefix.md` 一致；Codex 本地压缩把摘要
 /// 写成 `{SUMMARY_PREFIX}\n{summary}` 的用户消息，这里保持同一形态。
-pub(crate) const SUMMARY_PREFIX: &str = "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:";
+pub const SUMMARY_PREFIX: &str = "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:";
 
 /// 历史里的压缩条目是别家的密文、当前模型读不了时，用这句话占位。
-pub(crate) const OPAQUE_COMPACTION_NOTE: &str =
+pub const OPAQUE_COMPACTION_NOTE: &str =
     "[earlier conversation was compacted; the summary is stored in a format this model cannot read]";
 
 /// Codex 在历史里回放的压缩条目类型（`compaction_summary` 是 `compaction` 的别名）。
-pub(crate) fn is_compaction_item(item: &Value) -> bool {
+pub fn is_compaction_item(item: &Value) -> bool {
     matches!(
         item.get("type").and_then(Value::as_str),
         Some("compaction" | "compaction_summary" | "context_compaction")
     )
 }
 
-pub(crate) fn is_compaction_trigger(item: &Value) -> bool {
+pub fn is_compaction_trigger(item: &Value) -> bool {
     item.get("type").and_then(Value::as_str) == Some("compaction_trigger")
 }
 
 /// 这个 Responses 请求是不是一次 V2 压缩。
-pub(crate) fn is_compaction_request(body: &Value) -> bool {
+pub fn is_compaction_request(body: &Value) -> bool {
     body.get("input")
         .and_then(Value::as_array)
         .is_some_and(|items| items.iter().any(is_compaction_trigger))
 }
 
-pub(crate) fn encode_compaction_summary(summary: &str) -> String {
+pub fn encode_compaction_summary(summary: &str) -> String {
     format!(
         "{CCSWITCH_COMPACTION_PREFIX}{}",
         URL_SAFE_NO_PAD.encode(summary.as_bytes())
@@ -74,7 +74,7 @@ pub(crate) fn encode_compaction_summary(summary: &str) -> String {
 }
 
 /// 解开 CC Switch 包装的摘要；别家密文或损坏的内容返回 None。
-pub(crate) fn decode_compaction_summary(encrypted_content: &str) -> Option<String> {
+pub fn decode_compaction_summary(encrypted_content: &str) -> Option<String> {
     let encoded = encrypted_content.strip_prefix(CCSWITCH_COMPACTION_PREFIX)?;
     let bytes = URL_SAFE_NO_PAD.decode(encoded).ok()?;
     String::from_utf8(bytes).ok()
@@ -99,7 +99,7 @@ fn own_compaction_summary(item: &Value) -> Option<String> {
 }
 
 /// 看不出来源的压缩条目：别家签发的密文，或没有载荷的标记。
-pub(crate) fn is_unrecognized_compaction_item(item: &Value) -> bool {
+pub fn is_unrecognized_compaction_item(item: &Value) -> bool {
     is_compaction_item(item) && own_compaction_summary(item).is_none()
 }
 
@@ -108,7 +108,7 @@ fn own_compaction_message(summary: &str) -> Value {
 }
 
 /// 压缩条目回放给第三方模型时的文字。没有载荷的 `context_compaction` 只是个标记，返回 None。
-pub(crate) fn compaction_item_replay_text(item: &Value) -> Option<String> {
+pub fn compaction_item_replay_text(item: &Value) -> Option<String> {
     let encrypted_content = compaction_encrypted_content(item)?;
     Some(match decode_compaction_summary(encrypted_content) {
         Some(summary) => format!("{SUMMARY_PREFIX}\n{summary}"),
@@ -116,7 +116,7 @@ pub(crate) fn compaction_item_replay_text(item: &Value) -> Option<String> {
     })
 }
 
-pub(crate) fn user_message_item(text: &str) -> Value {
+pub fn user_message_item(text: &str) -> Value {
     json!({
         "type": "message",
         "role": "user",
@@ -125,12 +125,12 @@ pub(crate) fn user_message_item(text: &str) -> Value {
 }
 
 /// 压缩请求里 `compaction_trigger` 所在位置换成的那条用户消息。
-pub(crate) fn compaction_prompt_item() -> Value {
+pub fn compaction_prompt_item() -> Value {
     user_message_item(COMPACT_PROMPT)
 }
 
 /// 压缩回合要交回 Codex 的唯一一个 compaction 条目。
-pub(crate) fn compaction_output_item(summary: &str) -> Value {
+pub fn compaction_output_item(summary: &str) -> Value {
     json!({
         "type": "compaction",
         "id": format!("cmp_{}", uuid::Uuid::new_v4().simple()),
@@ -139,7 +139,7 @@ pub(crate) fn compaction_output_item(summary: &str) -> Value {
 }
 
 /// 从本回合的输出条目里取摘要正文：所有 assistant message 的文字按顺序拼起来。
-pub(crate) fn summary_from_output_items<'a>(items: impl IntoIterator<Item = &'a Value>) -> String {
+pub fn summary_from_output_items<'a>(items: impl IntoIterator<Item = &'a Value>) -> String {
     let mut parts: Vec<&str> = Vec::new();
     for item in items {
         if item.get("type").and_then(Value::as_str) != Some("message") {
@@ -171,7 +171,7 @@ pub(crate) fn summary_from_output_items<'a>(items: impl IntoIterator<Item = &'a 
 /// 普通回合把内容过滤等非正常结束当作完成，至多少一段回答；压缩回合一旦算完成，Codex
 /// 就拿这段摘要覆盖整段历史，所以只认正常停下的几种写法，其余一律报未完成（Codex 会重试）。
 /// 没有结束原因时按完成处理，和普通回合一致（流提前断开由各自的流处理合成截断）。
-pub(crate) fn compaction_incomplete_reason(finish_reason: Option<&str>) -> Option<String> {
+pub fn compaction_incomplete_reason(finish_reason: Option<&str>) -> Option<String> {
     let reason = finish_reason.map(str::trim).filter(|r| !r.is_empty())?;
     match reason.to_ascii_lowercase().as_str() {
         "stop" | "end_turn" | "stop_sequence" => None,
@@ -190,7 +190,7 @@ pub(crate) fn compaction_incomplete_reason(finish_reason: Option<&str>) -> Optio
 ///
 /// 别的压缩条目看不出来源，可能正是这家自己签发、能正常解开的，原样发出；上游明确拒绝后
 /// 由 `opaque_state_rectifier` 换成文字重试。请求里没有前两类条目时一个字节都不动。
-pub(crate) fn prepare_native_third_party_request(body: &mut Value) -> bool {
+pub fn prepare_native_third_party_request(body: &mut Value) -> bool {
     let Some(items) = body.get("input").and_then(Value::as_array) else {
         return false;
     };
@@ -266,7 +266,7 @@ fn expected_item_id_prefix(item_type: &str) -> Option<&'static str> {
 
 /// id 前缀和条目类型对不上（转换器产出的、别家签发的）就去掉 id，返回是否去掉了。
 /// id 在输入里可省略，调用和结果靠 `call_id` 对应。
-pub(crate) fn strip_mismatched_item_id(item: &mut Value, item_type: &str) -> bool {
+pub fn strip_mismatched_item_id(item: &mut Value, item_type: &str) -> bool {
     let Some(prefix) = expected_item_id_prefix(item_type) else {
         return false;
     };
@@ -288,7 +288,7 @@ pub(crate) fn strip_mismatched_item_id(item: &mut Value, item_type: &str) -> boo
 ///
 /// 纯官方的线程里这些情况都不会出现，请求一个字节都不变（prompt cache 前缀不受影响）；
 /// 同一段混合历史每轮清理结果相同，缓存前缀也稳定。
-pub(crate) fn scrub_ccswitch_state_for_official(body: &mut Value) -> bool {
+pub fn scrub_ccswitch_state_for_official(body: &mut Value) -> bool {
     let stored = body.get("store").and_then(Value::as_bool) == Some(true);
     let Some(items) = body.get_mut("input").and_then(Value::as_array_mut) else {
         return false;
@@ -331,7 +331,7 @@ pub(crate) fn scrub_ccswitch_state_for_official(body: &mut Value) -> bool {
 /// 原生 Responses 第三方上游的压缩回合：上游只回了普通消息，在 `response.completed`
 /// 之前补上唯一一个 compaction 条目。上游截断（incomplete）时如实报 `response.incomplete`，
 /// Codex 会按可重试错误处理，而不是装上半截摘要。
-pub(crate) fn create_native_compaction_sse_stream<E>(
+pub fn create_native_compaction_sse_stream<E>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send
 where

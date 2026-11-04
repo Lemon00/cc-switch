@@ -60,6 +60,13 @@ pub struct FrontendHooks {
     /// is wrapped in an Arc. Weak on purpose: AppState owns ProxyService,
     /// which owns the server, which owns these hooks.
     pub failover_state: Option<Weak<AppState>>,
+    /// 故障转移通知（GUI 用）：设置后，forwarder 不再自己跑 try_switch，
+    /// 而是把 (app_type, provider_id, provider_name) 交给前端；前端用自己
+    /// 的 AppState（Tauri State 里拿，不经过 Arc）调
+    /// `failover_switch::request_failover_switch` 执行切换。
+    /// 起因：Tauri 的 StateManager 存的是 Pin<Box<dyn Any>>，不是 Arc，
+    /// GUI 根本拿不出 Weak<AppState>；CLI 不设，保持旧行为。
+    pub failover_notify: Option<Arc<dyn Fn(&str, &str, &str) + Send + Sync>>,
 }
 
 impl Default for FrontendHooks {
@@ -69,6 +76,7 @@ impl Default for FrontendHooks {
             oauth: Arc::new(EmptyOAuthStateProvider),
             tray_refresh: None,
             failover_state: None,
+            failover_notify: None,
         }
     }
 }

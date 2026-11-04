@@ -698,7 +698,7 @@ fn infer_codex_chat_reasoning_config(
 
 /// 按供应商名、上游地址、上游模型名推断 Chat 兼容上游的 reasoning 接口。
 /// Codex Responses → Chat 与 Claude 路由（经 Chat / Responses 转发）共用这份判定。
-pub(crate) fn infer_chat_reasoning_config(
+pub fn infer_chat_reasoning_config(
     name: &str,
     base_url: &str,
     model: &str,

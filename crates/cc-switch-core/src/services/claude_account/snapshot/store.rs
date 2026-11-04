@@ -167,7 +167,7 @@ fn read_file(path: &Path) -> Result<Option<Secret>, AppError> {
 }
 
 #[cfg(target_os = "macos")]
-mod keychain;
+pub mod keychain;
 
 #[cfg(test)]
 pub mod memory {

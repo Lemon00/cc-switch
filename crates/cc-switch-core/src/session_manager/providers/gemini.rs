@@ -64,7 +64,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
 
 /// 会话文件：旧版 `.json`，或新版 Gemini CLI 写的 `.jsonl`。旧文件被 resume 迁移后
 /// 会留下同名 `.json`，此时只认 `.jsonl`，避免同一会话列两次。
-pub(crate) fn is_session_file(path: &Path) -> bool {
+pub fn is_session_file(path: &Path) -> bool {
     match path.extension().and_then(|e| e.to_str()) {
         Some("jsonl") => true,
         Some("json") => !path.with_extension("jsonl").exists(),
@@ -78,7 +78,7 @@ pub(crate) fn is_session_file(path: &Path) -> bool {
 /// `loadConversationRecord` 回放：带 `sessionId` 的行是元数据；带 `id` 的行是消息，
 /// 同 id 后写覆盖先写（位置不变）；`{"$set": {...}}` 合并元数据，带 `messages` 时整体
 /// 替换消息；`{"$rewindTo": id}` 删掉该条及之后的消息，找不到 id 时清空。
-pub(crate) fn parse_session_document(data: &str) -> Option<Value> {
+pub fn parse_session_document(data: &str) -> Option<Value> {
     // 只有元数据一行的 `.jsonl` 也能整体解析成对象，补上空的 messages
     if let Ok(Value::Object(mut map)) = serde_json::from_str::<Value>(data) {
         map.entry("messages")
@@ -251,14 +251,14 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
 
 /// 多条 `thoughts[{subject, description}]` 合并后的思考：`summary` 为各 subject 以 ` · ` 连接，
 /// `text` 为 `**subject**\n\ndescription` 以空行连接。
-pub(crate) struct MergedThoughts {
+pub struct MergedThoughts {
     pub summary: String,
     pub text: String,
 }
 
 /// 合并 Gemini 的 `thoughts` 数组；不是对象数组、或没有任何非空 subject/description 时返回 `None`。
 /// 解析器生成预览与按引用取全文共用这一份格式。
-pub(crate) fn format_thoughts(value: &Value) -> Option<MergedThoughts> {
+pub fn format_thoughts(value: &Value) -> Option<MergedThoughts> {
     let items = value.as_array()?;
     let mut thoughts = Vec::new();
     for item in items {

@@ -33,7 +33,7 @@ pub fn get_home_dir() -> PathBuf {
 /// 检测路径是否为 WSL 网络路径（如 \\wsl$\Ubuntu\... 或 \\wsl.localhost\Ubuntu\...）
 /// 注意：仅检测直接 UNC 路径，映射磁盘符（如 Z: -> \\wsl$\...）无法检测
 #[cfg(windows)]
-pub(crate) fn is_wsl_path(path: &Path) -> bool {
+pub fn is_wsl_path(path: &Path) -> bool {
     use std::path::Prefix;
     if let Some(Component::Prefix(prefix)) = path.components().next() {
         match prefix.kind() {
@@ -49,14 +49,14 @@ pub(crate) fn is_wsl_path(path: &Path) -> bool {
 }
 
 #[cfg(not(windows))]
-pub(crate) fn is_wsl_path(_path: &Path) -> bool {
+pub fn is_wsl_path(_path: &Path) -> bool {
     false
 }
 
 /// 临时目录在 WSL 共享路径上时（WSL2 夜间测试），SQLite 拿不到文件锁，
 /// 在磁盘上建 SQLite 夹具的测试只能跳过。
-#[cfg(test)]
-pub(crate) fn sqlite_unsupported_in_temp_dir() -> bool {
+#[cfg(any(test, feature = "test-support"))]
+pub fn sqlite_unsupported_in_temp_dir() -> bool {
     let temp = std::env::temp_dir();
     let unsupported = is_wsl_path(&temp);
     if unsupported {
@@ -152,7 +152,7 @@ fn path_eq_lexical(left: &Path, right: &Path) -> bool {
 /// that go on to open the file must canonicalize the existing path and
 /// re-verify containment (see `resolve_cc_switch_catalog_path`).
 /// On Windows the comparison is case-insensitive.
-pub(crate) fn path_is_within(base: &Path, path: &Path) -> bool {
+pub fn path_is_within(base: &Path, path: &Path) -> bool {
     let base_key = comparable_path_key(base);
     let path_key = comparable_path_key(path);
 
@@ -212,7 +212,7 @@ fn derive_wsl_default_mcp_path(dir: &Path) -> Option<PathBuf> {
 /// Returns None for non-WSL paths and for WSL paths outside a home directory
 /// (e.g. `\\wsl$\<distro>\etc`), where no home can be derived safely.
 #[cfg(windows)]
-pub(crate) fn derive_wsl_home_dir(dir: &Path) -> Option<PathBuf> {
+pub fn derive_wsl_home_dir(dir: &Path) -> Option<PathBuf> {
     use std::path::Prefix;
 
     let normalized = normalize_path_lexically(dir);
@@ -310,17 +310,24 @@ pub fn get_claude_settings_path() -> PathBuf {
 }
 
 /// 应用配置目录覆盖（GUI 注入；CLI/测试不设则用默认 ~/.cc-switch）。
-static CONFIG_DIR_OVERRIDE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+/// RwLock 而非 OnceLock：GUI 在设置里改了路径后要能刷新，旧的 set-once
+/// 语义会让改路径失效。
+static CONFIG_DIR_OVERRIDE: std::sync::RwLock<Option<PathBuf>> =
+    std::sync::RwLock::new(None);
 
-/// 供前端注入配置目录覆盖；只能成功设置一次，重复设置会被忽略。
+/// 供前端注入配置目录覆盖；可重复设置，后一次覆盖前一次。
 pub fn set_app_config_dir_override(path: PathBuf) {
-    let _ = CONFIG_DIR_OVERRIDE.set(path);
+    if let Ok(mut guard) = CONFIG_DIR_OVERRIDE.write() {
+        *guard = Some(path);
+    }
 }
 
 /// 获取应用配置目录路径 (~/.cc-switch)
 pub fn get_app_config_dir() -> PathBuf {
-    if let Some(custom) = CONFIG_DIR_OVERRIDE.get() {
-        return custom.clone();
+    if let Ok(guard) = CONFIG_DIR_OVERRIDE.read() {
+        if let Some(custom) = guard.clone() {
+            return custom;
+        }
     }
 
     let default_dir = get_home_dir().join(".cc-switch");
@@ -433,7 +440,7 @@ pub fn write_json_file_with_contents<T: Serialize>(
     Ok(contents)
 }
 
-pub(crate) fn sorted_json_bytes<T: Serialize>(data: &T) -> Result<Vec<u8>, AppError> {
+pub fn sorted_json_bytes<T: Serialize>(data: &T) -> Result<Vec<u8>, AppError> {
     let value = serde_json::to_value(data).map_err(|e| AppError::JsonSerialize { source: e })?;
     let sorted_value = sort_json_keys(&value);
     let json = serde_json::to_string_pretty(&sorted_value)
@@ -508,7 +515,7 @@ impl StagedWrite {
 
 /// 写入临时文件：Unix 下 `unix_mode` 为 `None` 时沿用目标文件现有的权限位。
 /// `durable` 为真时写完先 fsync，崩溃恢复要靠这份临时文件前滚。
-pub(crate) fn stage_write(
+pub fn stage_write(
     path: &Path,
     data: &[u8],
     unix_mode: Option<u32>,
@@ -597,7 +604,7 @@ pub(crate) fn stage_write(
 ///
 /// 失败时临时文件留在原处：写入引擎的 pending 指着它，下次恢复要靠它前滚（目标文件被
 /// 占用、只读这类失败，过后多半能补完）。只做一次性原子写的调用方自己删。
-pub(crate) fn commit_staged(tmp: &Path, path: &Path) -> Result<(), AppError> {
+pub fn commit_staged(tmp: &Path, path: &Path) -> Result<(), AppError> {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;

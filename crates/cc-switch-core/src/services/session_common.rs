@@ -36,20 +36,20 @@ impl SessionSyncResult {
 const MIN_PLAUSIBLE_LATENCY_MS: i64 = 100;
 const MAX_PLAUSIBLE_LATENCY_MS: i64 = 60 * 60 * 1000;
 
-pub(crate) fn estimated_latency_ms(start_ms: i64, end_ms: i64) -> Option<i64> {
+pub fn estimated_latency_ms(start_ms: i64, end_ms: i64) -> Option<i64> {
     let latency = end_ms.checked_sub(start_ms)?;
     (MIN_PLAUSIBLE_LATENCY_MS..=MAX_PLAUSIBLE_LATENCY_MS)
         .contains(&latency)
         .then_some(latency)
 }
 
-pub(crate) fn parse_timestamp_millis(timestamp: &str) -> Option<i64> {
+pub fn parse_timestamp_millis(timestamp: &str) -> Option<i64> {
     chrono::DateTime::parse_from_rfc3339(timestamp)
         .ok()
         .map(|dt| dt.timestamp_millis())
 }
 
-pub(crate) fn estimated_first_token_ms(
+pub fn estimated_first_token_ms(
     start_ms: i64,
     first_output_ms: i64,
     latency_ms: i64,
@@ -58,7 +58,7 @@ pub(crate) fn estimated_first_token_ms(
     (first_token > 0 && first_token <= latency_ms).then_some(first_token)
 }
 
-pub(crate) fn metadata_modified_nanos(metadata: &fs::Metadata) -> i64 {
+pub fn metadata_modified_nanos(metadata: &fs::Metadata) -> i64 {
     metadata
         .modified()
         .ok()
@@ -67,7 +67,7 @@ pub(crate) fn metadata_modified_nanos(metadata: &fs::Metadata) -> i64 {
         .unwrap_or(0)
 }
 
-pub(crate) fn update_sync_state(
+pub fn update_sync_state(
     db: &Database,
     file_path: &str,
     last_modified: i64,
@@ -77,7 +77,7 @@ pub(crate) fn update_sync_state(
     update_sync_state_on_conn(&conn, file_path, last_modified, last_offset)
 }
 
-pub(crate) fn update_sync_state_on_conn(
+pub fn update_sync_state_on_conn(
     conn: &rusqlite::Connection,
     file_path: &str,
     last_modified: i64,
@@ -100,7 +100,7 @@ pub(crate) fn update_sync_state_on_conn(
 /// 按日志时间戳估出来的计时：耗时（含首字等待）和首字时间（推不出来为 None）。
 /// Claude 和 Codex 的会话日志导入共用。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct EstimatedTiming {
-    pub(crate) latency_ms: i64,
-    pub(crate) first_token_ms: Option<i64>,
+pub struct EstimatedTiming {
+    pub latency_ms: i64,
+    pub first_token_ms: Option<i64>,
 }
