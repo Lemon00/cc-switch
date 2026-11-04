@@ -322,6 +322,14 @@ pub fn set_app_config_dir_override(path: PathBuf) {
     }
 }
 
+/// 清除配置目录覆盖（用户在设置里删掉自定义路径时调用），回落到默认
+/// ~/.cc-switch。没有这个，删路径后核心会一直沿用旧覆盖。
+pub fn clear_app_config_dir_override() {
+    if let Ok(mut guard) = CONFIG_DIR_OVERRIDE.write() {
+        *guard = None;
+    }
+}
+
 /// 获取应用配置目录路径 (~/.cc-switch)
 pub fn get_app_config_dir() -> PathBuf {
     if let Ok(guard) = CONFIG_DIR_OVERRIDE.read() {

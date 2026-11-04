@@ -69,8 +69,9 @@ pub fn refresh_app_config_dir_override(app: &tauri::AppHandle) -> Option<PathBuf
     update_cached_override(value.clone());
     // 同步进核心：核心的 config::get_app_config_dir() 读这里，GUI 内
     // 其他地方读上面那个缓存，两边以 Store 为准保持一致。
-    if let Some(path) = &value {
-        cc_switch_core::config::set_app_config_dir_override(path.clone());
+    match &value {
+        Some(path) => cc_switch_core::config::set_app_config_dir_override(path.clone()),
+        None => cc_switch_core::config::clear_app_config_dir_override(),
     }
     value
 }
