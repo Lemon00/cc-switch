@@ -2551,6 +2551,8 @@ fn find_codex_pricing(conn: &rusqlite::Connection, model_id: &str) -> Option<Mod
 #[cfg(test)]
 mod tests {
     use super::*;
+    // `session_usage` 被 session-monitor feature 门控；只有门控内的测试用它。
+    #[cfg(feature = "session-monitor")]
     use crate::services::session_usage::get_sync_state;
     use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_LEGACY;
     use tempfile::tempdir;
@@ -3138,6 +3140,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "session-monitor")]
     fn test_unchanged_incomplete_tail_is_skipped_after_cursor_reload() -> Result<(), AppError> {
         use std::io::Write;
         for has_usage in [false, true] {
@@ -3260,6 +3263,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "session-monitor")]
     fn test_partial_live_record_is_retried_after_append() -> Result<(), AppError> {
         use std::io::Write;
         let db = Database::memory()?;
@@ -4632,6 +4636,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    #[cfg(feature = "session-monitor")]
     fn test_conflicting_explicit_parents_are_deferred() -> Result<(), AppError> {
         clear_codex_replay_caches();
         let db = Database::memory()?;
@@ -5215,6 +5220,7 @@ mod tests {
     /// 必须安全 deferred，绝对不能将累计总值直接当作增量入库。
     #[test]
     #[serial_test::serial]
+    #[cfg(feature = "session-monitor")]
     fn test_paginated_continuation_deferred_when_prev_segment_missing() -> Result<(), AppError> {
         clear_codex_replay_caches();
         let db = Database::memory()?;
@@ -5323,6 +5329,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    #[cfg(feature = "session-monitor")]
     fn test_missing_parent_is_deferred_and_recovered_without_child_change() -> Result<(), AppError>
     {
         clear_codex_replay_caches();
@@ -5357,6 +5364,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    #[cfg(feature = "session-monitor")]
     fn test_retryable_pending_skips_child_body_until_parent_append() -> Result<(), AppError> {
         clear_codex_replay_caches();
         let db = Database::memory()?;
@@ -5548,6 +5556,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    #[cfg(feature = "session-monitor")]
     fn test_parent_decompression_error_after_valid_prefix_does_not_cache_partial_timeline(
     ) -> Result<(), AppError> {
         clear_codex_replay_caches();
@@ -5658,6 +5667,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    #[cfg(feature = "session-monitor")]
     fn test_billable_file_without_meta_is_deferred_without_cursor() -> Result<(), AppError> {
         clear_codex_replay_caches();
         let db = Database::memory()?;
@@ -5685,6 +5695,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    #[cfg(feature = "session-monitor")]
     fn test_non_billable_file_without_meta_advances_cursor() -> Result<(), AppError> {
         clear_codex_replay_caches();
         let db = Database::memory()?;
@@ -5757,6 +5768,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "session-monitor")]
     fn test_archived_log_inherits_cursor_and_only_imports_appended_usage() -> Result<(), AppError> {
         let db = Database::memory()?;
         let temp = tempdir().unwrap();
@@ -5853,6 +5865,7 @@ mod tests {
     /// Codex 压缩冷 rollout、恢复对话时再解压回来：两次换路径都靠游标继承防重复，
     /// 中间把明细删掉（模拟 30 天裁剪），request_id 去重兜不住。
     #[test]
+    #[cfg(feature = "session-monitor")]
     fn test_compressed_rollout_round_trip_never_double_counts() -> Result<(), AppError> {
         let db = Database::memory()?;
         let temp = tempdir().unwrap();

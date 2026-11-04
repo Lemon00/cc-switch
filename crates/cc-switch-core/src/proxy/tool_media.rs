@@ -117,10 +117,7 @@ pub fn queue_chat_tool_output_media(
     pending_media.extend(media_parts);
 }
 
-pub fn flush_pending_chat_tool_media(
-    messages: &mut Vec<Value>,
-    pending_media: &mut Vec<Value>,
-) {
+pub fn flush_pending_chat_tool_media(messages: &mut Vec<Value>, pending_media: &mut Vec<Value>) {
     if pending_media.is_empty() {
         return;
     }

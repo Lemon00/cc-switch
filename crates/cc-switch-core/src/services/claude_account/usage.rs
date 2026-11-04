@@ -89,7 +89,8 @@ fn ran_recently(account: &str, claim: bool) -> bool {
 }
 
 fn run_usage(config_dir: Option<&Path>) -> Result<(), String> {
-    let mut cmd = crate::process_util::detected_tool_command("claude", &usage_args(), LOCATE_TIMEOUT)?;
+    let mut cmd =
+        crate::process_util::detected_tool_command("claude", &usage_args(), LOCATE_TIMEOUT)?;
     clear_account_env(&mut cmd);
     match config_dir {
         Some(dir) => cmd.env("CLAUDE_CONFIG_DIR", dir),

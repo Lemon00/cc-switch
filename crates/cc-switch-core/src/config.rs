@@ -312,8 +312,7 @@ pub fn get_claude_settings_path() -> PathBuf {
 /// 应用配置目录覆盖（GUI 注入；CLI/测试不设则用默认 ~/.cc-switch）。
 /// RwLock 而非 OnceLock：GUI 在设置里改了路径后要能刷新，旧的 set-once
 /// 语义会让改路径失效。
-static CONFIG_DIR_OVERRIDE: std::sync::RwLock<Option<PathBuf>> =
-    std::sync::RwLock::new(None);
+static CONFIG_DIR_OVERRIDE: std::sync::RwLock<Option<PathBuf>> = std::sync::RwLock::new(None);
 
 /// 供前端注入配置目录覆盖；可重复设置，后一次覆盖前一次。
 pub fn set_app_config_dir_override(path: PathBuf) {
@@ -328,6 +327,115 @@ pub fn clear_app_config_dir_override() {
     if let Ok(mut guard) = CONFIG_DIR_OVERRIDE.write() {
         *guard = None;
     }
+}
+
+// ---------------------------------------------------------------------------
+// 配置目录来源（GUI / CLI 共用一份）
+//
+// GUI 把用户选的目录写在 Tauri Store（`app_paths.json`）里，CLI 以前只认
+// `$HOME/.cc-switch`，于是同一台机器上两端会打开两份数据库、两份备份。
+// 这里把「Store 在哪、键叫什么、值怎么解析」下沉到核心，两个前端共用，
+// 保证默认目录与覆盖目录只有一个来源。
+// ---------------------------------------------------------------------------
+
+/// Tauri Store 文件名（`tauri_plugin_store` 的路径由 [`tauri_store_dir`] 决定）。
+pub const APP_PATHS_STORE_FILE: &str = "app_paths.json";
+
+/// Store 里保存配置目录覆盖的键名。
+pub const APP_CONFIG_DIR_STORE_KEY: &str = "app_config_dir_override";
+
+/// 显式覆盖配置目录的环境变量，优先级高于 Store；CLI/TUI/便携版用它。
+pub const APP_CONFIG_DIR_ENV: &str = "CC_SWITCH_CONFIG_DIR";
+
+/// 覆盖 Store 所在目录的环境变量（测试、便携版、非标准安装布局用）。
+pub const STORE_DIR_ENV: &str = "CC_SWITCH_STORE_DIR";
+
+/// 应用标识，必须与 `src-tauri/tauri.conf.json` 的 `identifier` 一致：
+/// Tauri v2 的 app config dir 就是 `<平台配置目录>/<identifier>`。
+pub const APP_IDENTIFIER: &str = "com.ccswitch.desktop";
+
+/// Tauri v2 的 app config dir：Linux 用 XDG config，macOS/Windows 用 data dir
+/// （`~/Library/Application Support` / `%APPDATA%`），末尾拼 bundle identifier。
+pub fn tauri_store_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os(STORE_DIR_ENV) {
+        let dir = PathBuf::from(dir);
+        if !dir.as_os_str().is_empty() {
+            return Some(dir);
+        }
+    }
+    let base = if cfg!(target_os = "linux") {
+        dirs::config_dir()
+    } else {
+        dirs::data_dir()
+    };
+    base.map(|base| base.join(APP_IDENTIFIER))
+}
+
+/// 解析 Store 里的原始字符串：去空白、支持 `~`、目录必须存在。
+/// 返回 None 表示「按未配置处理」，调用方不要当成错误路径继续用。
+pub fn parse_app_config_dir_override(raw: &str) -> Option<PathBuf> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let path = crate::settings::resolve_override_path(trimmed);
+    if !path.exists() {
+        log::warn!(
+            "配置目录覆盖指向的路径不存在，按未配置处理: {}",
+            path.display()
+        );
+        return None;
+    }
+    Some(path)
+}
+
+/// 读取 Store 里配置的目录覆盖（只读，不改变进程内生效目录）。
+pub fn read_app_config_dir_override_from_store() -> Option<PathBuf> {
+    let store_path = tauri_store_dir()?.join(APP_PATHS_STORE_FILE);
+    let text = std::fs::read_to_string(&store_path).ok()?;
+    let value: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        Err(e) => {
+            log::warn!("解析 {} 失败，忽略目录覆盖: {e}", store_path.display());
+            return None;
+        }
+    };
+    let raw = value.get(APP_CONFIG_DIR_STORE_KEY)?.as_str()?.to_string();
+    parse_app_config_dir_override(&raw)
+}
+
+/// 解析 `CC_SWITCH_CONFIG_DIR`。GUI 与 CLI 都必须先问这里再问 Store，
+/// 否则同一个环境变量只对其中一个进程生效，两端又会各开一份数据库。
+pub fn app_config_dir_override_from_env() -> Option<PathBuf> {
+    let raw = std::env::var(APP_CONFIG_DIR_ENV).ok()?;
+    if raw.trim().is_empty() {
+        return None;
+    }
+    let resolved = parse_app_config_dir_override(&raw);
+    if resolved.is_none() {
+        log::warn!("{APP_CONFIG_DIR_ENV}={raw} 不是可用的已存在目录，忽略；退回 Store / 默认目录");
+    }
+    resolved
+}
+
+/// 启动阶段决定配置目录覆盖：环境变量优先，其次 GUI 的 Store。
+///
+/// 只应在进程启动、打开数据库之前调用一次（GUI 在 Tauri setup 里、CLI 在
+/// `Database::init` 之前）。运行中改目录不在这里生效，免得数据库还连着旧
+/// 目录、新文件却写到新目录。
+pub fn apply_startup_app_config_dir_override() -> Option<PathBuf> {
+    let resolved =
+        app_config_dir_override_from_env().or_else(read_app_config_dir_override_from_store);
+
+    // 没有配置就保持现状（进程启动时本来就是 None），不主动清掉别人设好的值。
+    if let Some(dir) = &resolved {
+        log::info!("配置目录覆盖生效: {}", dir.display());
+        set_app_config_dir_override(dir.clone());
+        // 改了目录后旧 settings.json 还留在原目录；不搬一次，升级/切换目录的用户
+        // 会看到设置全部回默认（数据库在覆盖目录里有，settings.json 没有）。
+        crate::settings::AppSettings::migrate_legacy_settings_file_if_needed();
+    }
+    resolved
 }
 
 /// 获取应用配置目录路径 (~/.cc-switch)

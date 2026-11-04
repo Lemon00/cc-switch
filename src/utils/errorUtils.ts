@@ -95,7 +95,7 @@ export const translateMcpBackendError = (
   if (ompKey) return t(ompKey);
   const msg = String(message).trim();
 
-  // Pi 的 MCP 规则（src-tauri/src/mcp/pi.rs）
+  // Pi 的 MCP 规则（crates/cc-switch-core/src/mcp/pi.rs）
   if (msg.includes("Pi 不支持 SSE")) {
     return t("mcp.error.piSseUnsupported");
   }

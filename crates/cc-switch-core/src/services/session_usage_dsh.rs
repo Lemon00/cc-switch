@@ -98,10 +98,7 @@ pub fn dsh_sessions_root() -> PathBuf {
 }
 
 /// [`sync_dsh_usage`] 的可注入根目录版本，测试用临时目录。
-pub fn sync_dsh_usage_from(
-    db: &Database,
-    root: &Path,
-) -> Result<SessionSyncResult, AppError> {
+pub fn sync_dsh_usage_from(db: &Database, root: &Path) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();
     let cursors = load_sync_cursors(db)?;
     // 目录层级：sessions/<项目>/<会话>/session.v4.jsonl(.zstd)

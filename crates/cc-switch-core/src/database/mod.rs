@@ -237,9 +237,7 @@ impl Database {
         Ok(count > 0)
     }
 
-    pub fn ensure_incremental_auto_vacuum_on_conn(
-        conn: &Connection,
-    ) -> Result<bool, AppError> {
+    pub fn ensure_incremental_auto_vacuum_on_conn(conn: &Connection) -> Result<bool, AppError> {
         let mode = Self::get_auto_vacuum_mode(conn)?;
         if mode == 2 {
             return Ok(false);

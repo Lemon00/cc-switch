@@ -16,16 +16,19 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 doctest = false
 
 [features]
-default = []
+# GUI 需要会话聚合（仪表盘）；核心同名 feature 由这里转发，不再靠「核心默认开」
+# 兜底，否则 shim 里被门控模块的重导出会永远编得过、问题被藏起来。
+default = ["session-monitor"]
 test-hooks = []
+session-monitor = ["cc-switch-core/session-monitor"]
 
 [build-dependencies]
 tauri-build = { version = "2.4.0", features = [] }
 
 [dependencies]
-# 后端核心：数据库、供应商、代理、live、mode 等。GUI 保留默认 feature
-#（session-monitor 开，仪表盘行为与拆分前一致）；CLI 关掉它。
-cc-switch-core = { path = "../crates/cc-switch-core" }
+# 后端核心：数据库、供应商、代理、live、mode 等。默认 feature 由本 crate
+# 的 session-monitor 转发（见 [features]），核心不再默认开。
+cc-switch-core = { path = "../crates/cc-switch-core", default-features = false }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
@@ -44,8 +47,6 @@ toml = "0.8"
 toml_edit = "0.22"
 reqwest = { version = "0.12", features = ["rustls-tls", "json", "stream", "socks"] }
 arboard = "3.6"
-flate2 = "1"
-brotli = "7"
 zstd = "0.13"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "net", "process", "signal"] }
 futures = "0.3"
@@ -54,27 +55,13 @@ rmcp = { version = "0.8.5", features = ["client", "transport-async-rw", "transpo
 process-wrap = { version = "8.2", features = ["tokio1"] }
 async-stream = "0.3"
 bytes = "1.5"
-prost = "0.14"
 axum = "0.7"
-tower = "0.4"
-tower-http = { version = "0.5", features = ["cors"] }
-hyper = { version = "1.0", features = ["full"] }
-hyper-util = { version = "0.1", features = ["tokio", "http1", "client-legacy"] }
-hyper-rustls = { version = "0.27", features = ["http1", "tls12", "ring", "webpki-tokio"] }
 http = "1"
-http-body = "1"
-http-body-util = "0.1"
-httparse = "1"
-tokio-rustls = "0.26"
 rustls = "0.23"
-webpki-roots = "0.26"
-rustls-native-certs = "0.8"
 regex = "1.10"
-rquickjs = { version = "0.8", features = ["array-buffer", "classes"] }
 thiserror = "2.0"
 anyhow = "1.0"
 zip = "2.2"
-serde_yaml = "0.9"
 tempfile = "3"
 url = "2.5"
 auto-launch = "0.5"
@@ -84,12 +71,9 @@ base64 = "0.22"
 png = "0.18"
 rusqlite = { version = "0.31", features = ["bundled", "backup", "hooks"] }
 indexmap = { version = "2", features = ["serde"] }
-rust_decimal = "1.33"
 uuid = { version = "1.11", features = ["v4"] }
 sha2 = "0.10"
-hmac = "0.12"
 subtle = "2.6"
-json5 = "0.4"
 json-five = "0.3.1"
 sys-locale = "0.3"
 
@@ -118,9 +102,6 @@ windows-sys = { version = "0.61", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
-[target.'cfg(all(target_os = "windows", target_arch = "aarch64"))'.dependencies]
-rquickjs = { version = "0.8", features = ["bindgen"] }
-
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.5"
 objc2-app-kit = { version = "0.2", features = ["NSColor"] }
@@ -142,8 +123,11 @@ strip = "symbols"
 
 [dev-dependencies]
 # 只给 cargo test 开：让 GUI 测试能用核心的测试辅助；正常构建不启用。
-cc-switch-core = { path = "../crates/cc-switch-core", features = ["test-support"] }
+# default-features = false：feature 仍由本 crate 的 session-monitor 转发，
+# 与正常构建保持一致（`cargo test --no-default-features` 才真正关掉会话聚合）。
+cc-switch-core = { path = "../crates/cc-switch-core", default-features = false, features = ["test-support"] }
 serial_test = "3"
-tempfile = "3"
+# 只被 src-tauri/tests 的 yaml 断言用到，业务代码不再直接依赖（解析已搬到 core）。
+serde_yaml = "0.9"
 tauri = { version = "2.8.2", features = ["test"] }
 tokio = { version = "1", features = ["test-util"] }

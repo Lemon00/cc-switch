@@ -485,10 +485,7 @@ pub async fn get_object(
 }
 
 /// Retrieve the ETag of an S3 object via HEAD. Returns `None` on 404.
-pub async fn head_object(
-    creds: &S3Credentials,
-    key: &str,
-) -> Result<Option<String>, AppError> {
+pub async fn head_object(creds: &S3Credentials, key: &str) -> Result<Option<String>, AppError> {
     let url_str = build_object_url(creds, key);
     let url = Url::parse(&url_str).map_err(|e| {
         AppError::localized(

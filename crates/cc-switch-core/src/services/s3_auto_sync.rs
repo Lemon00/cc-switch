@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use serde_json::json;
 use crate::events::EventSink;
+use serde_json::json;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
@@ -147,7 +147,7 @@ pub fn start_worker(db: Arc<crate::database::Database>, sink: Arc<dyn EventSink>
     // GUI setup, which has no ambient tokio runtime (that panicked on startup).
     // The background runtime below is ambient-independent, like the old
     // tauri::async_runtime::spawn was.
-    crate::background::spawn_background(async move {
+    crate::background::spawn_background_worker("s3-auto-sync", async move {
         run_worker_loop(db, rx, sink).await;
     });
 }

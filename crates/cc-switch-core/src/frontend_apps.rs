@@ -7,11 +7,14 @@
 //! { "cli": ["codex", "agy"], "tui": ["codex"], "gui": ["*"] }
 //! ```
 //!
-//! Rules (all failures fall back silently, never brick startup):
-//! - Missing file, unreadable file, or invalid JSON -> built-in default.
-//! - Missing frontend key -> built-in default for that frontend.
-//! - `"*"` in a list means all apps.
-//! - Unknown names are ignored; if nothing valid remains -> built-in default.
+//! Rules (a bad file must never brick startup, but it must not be silent either):
+//! - Missing file or missing frontend key -> built-in default for that frontend.
+//! - Unreadable file or invalid JSON -> built-in default, with a warning.
+//! - `"*"` -> every app the frontend can actually run (`default_apps`), so a CLI
+//!   that only implements codex/agy does not silently accept `--app claude`.
+//! - Unknown names are dropped with a warning; an explicitly empty list (or one
+//!   where nothing parses) stays empty — the caller reports "no app allowed"
+//!   instead of silently re-opening the default set.
 //! - Built-in defaults: `cli` -> [codex, agy] (the A-scheme set); any other
 //!   frontend -> all apps.
 //!
@@ -56,28 +59,39 @@ pub fn whitelist_path() -> PathBuf {
 /// Load the app whitelist for a frontend, with the fallback rules documented
 /// at the top of this module. Never fails: any problem yields the default.
 pub fn load_whitelist(frontend: &str) -> Vec<AppType> {
-    let Ok(text) = fs::read_to_string(whitelist_path()) else {
+    let path = whitelist_path();
+    let Ok(text) = fs::read_to_string(&path) else {
         return default_apps(frontend);
     };
-    let Ok(map) = serde_json::from_str::<HashMap<String, Vec<String>>>(&text) else {
-        return default_apps(frontend);
+    let map = match serde_json::from_str::<HashMap<String, Vec<String>>>(&text) {
+        Ok(map) => map,
+        Err(e) => {
+            log::warn!("解析 {} 失败，按内置默认应用列表处理: {e}", path.display());
+            return default_apps(frontend);
+        }
     };
     let Some(names) = map.get(frontend) else {
         return default_apps(frontend);
     };
     if names.iter().any(|n| n == "*") {
-        return AppType::all().collect();
+        // `*` = 该前端「能跑的全部应用」，而不是全部 14 个：CLI 没有实现的
+        // 应用即使写进白名单也只会在命令分支里撞到未实现。
+        return default_apps(frontend);
     }
     let mut apps: Vec<AppType> = Vec::new();
     for name in names {
-        if let Some(app) = parse_app_name(name) {
-            if !apps.contains(&app) {
-                apps.push(app);
+        match parse_app_name(name) {
+            Some(app) => {
+                if !apps.contains(&app) {
+                    apps.push(app);
+                }
             }
+            None => log::warn!(
+                "{} 的 {frontend} 一项里有未知应用名 {name}，已忽略",
+                path.display()
+            ),
         }
     }
-    if apps.is_empty() {
-        return default_apps(frontend);
-    }
+    // 显式空列表 / 名称全部无效时保持为空：调用方据此报错，不再悄悄回退默认。
     apps
 }

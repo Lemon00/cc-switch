@@ -596,25 +596,11 @@ pub(crate) async fn remove_codex_oauth_account_with_switch_lock(
     app_state: &AppState,
     account_id: &str,
 ) -> Result<(), String> {
-    // Serialize Auth Center credential deletion with managed provider
-    // add/update/switch/hot-switch. Otherwise a switch that already preflighted
-    // a bundle could recreate auth.json after removal.
-    let _switch_guard = app_state
-        .proxy_service
-        .lock_switch_for_app(AppType::Codex.as_str())
-        .await;
-    app_state
-        .codex_oauth_manager
-        .remove_account(account_id)
-        .await
-        .map_err(|error| error.to_string())?;
-    app_state
-        .db
-        .unbind_codex_managed_accounts(&[account_id.to_string()])
-        .map_err(|error| {
-            format!("账号已删除，但 Codex 供应商解绑失败；请编辑供应商重新选择账号或切换供应商: {error}")
-        })?;
-    Ok(())
+    // 串行化与解绑逻辑在 core（core 测试也用同一份）。
+    crate::services::provider::codex_oauth_switch::remove_codex_oauth_account_with_switch_lock(
+        app_state, account_id,
+    )
+    .await
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -709,28 +695,7 @@ pub async fn auth_logout(
 pub(crate) async fn logout_codex_oauth_with_switch_lock(
     app_state: &AppState,
 ) -> Result<(), String> {
-    let _switch_guard = app_state
-        .proxy_service
-        .lock_switch_for_app(AppType::Codex.as_str())
-        .await;
-    // Only this device's accounts: rows synced from another device stay bound there.
-    let removed: Vec<String> = app_state
-        .codex_oauth_manager
-        .list_accounts()
+    // 实现已下沉到 core（core 测试也用同一份）。
+    crate::services::provider::codex_oauth_switch::logout_codex_oauth_with_switch_lock(app_state)
         .await
-        .into_iter()
-        .map(|account| account.id)
-        .collect();
-    app_state
-        .codex_oauth_manager
-        .clear_auth()
-        .await
-        .map_err(|error| error.to_string())?;
-    app_state
-        .db
-        .unbind_codex_managed_accounts(&removed)
-        .map_err(|error| {
-            format!("托管账号已登出，但 Codex 供应商解绑失败；请编辑供应商重新选择账号或切换供应商: {error}")
-        })?;
-    Ok(())
 }

@@ -1673,11 +1673,7 @@ impl CodexOAuthManager {
     }
 
     #[cfg(test)]
-    pub async fn test_set_token_updated_at_ms(
-        &self,
-        account_id: &str,
-        token_updated_at_ms: i64,
-    ) {
+    pub async fn test_set_token_updated_at_ms(&self, account_id: &str, token_updated_at_ms: i64) {
         self.accounts
             .write()
             .await
@@ -1939,10 +1935,7 @@ impl CodexOAuthManager {
     }
 
     /// Validate a target binding without refreshing tokens or changing credentials.
-    pub async fn ensure_account_exists(
-        &self,
-        account_id: &str,
-    ) -> Result<(), CodexOAuthError> {
+    pub async fn ensure_account_exists(&self, account_id: &str) -> Result<(), CodexOAuthError> {
         let _lifecycle = self.lifecycle_lock.read().await;
         if self.accounts.read().await.contains_key(account_id) {
             return Ok(());

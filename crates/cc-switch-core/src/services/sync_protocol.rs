@@ -18,9 +18,7 @@ use crate::error::AppError;
 use crate::services::skill::{skill_state_read_guard, skill_state_write_guard};
 
 // Re-export archive functions for use by transport layers.
-pub use super::webdav_sync::archive::{
-    backup_current_skills, restore_skills_zip, zip_skills_ssot,
-};
+pub use super::webdav_sync::archive::{backup_current_skills, restore_skills_zip, zip_skills_ssot};
 
 // ─── Protocol constants ──────────────────────────────────────
 
@@ -100,11 +98,7 @@ pub fn should_trigger_auto_sync_for_table(table: &str) -> bool {
 
 // ─── Error helpers ───────────────────────────────────────────
 
-pub fn localized(
-    key: &'static str,
-    zh: impl Into<String>,
-    en: impl Into<String>,
-) -> AppError {
+pub fn localized(key: &'static str, zh: impl Into<String>, en: impl Into<String>) -> AppError {
     AppError::localized(key, zh, en)
 }
 
@@ -167,9 +161,7 @@ impl RemoteLayout {
 
 // ─── Snapshot building ───────────────────────────────────────
 
-pub fn build_local_snapshot(
-    db: &crate::database::Database,
-) -> Result<LocalSnapshot, AppError> {
+pub fn build_local_snapshot(db: &crate::database::Database) -> Result<LocalSnapshot, AppError> {
     // Keep the DB's skill rows and the filesystem SSOT at one logical point in
     // time. Skill writers take the matching write guard around both mutations.
     let _skill_state_guard = skill_state_read_guard();
@@ -243,10 +235,7 @@ pub fn compute_snapshot_id(artifacts: &BTreeMap<String, ArtifactMeta>) -> String
     sha256_hex(parts.join("|").as_bytes())
 }
 
-pub fn effective_db_compat_version(
-    manifest: &SyncManifest,
-    layout: RemoteLayout,
-) -> Option<u32> {
+pub fn effective_db_compat_version(manifest: &SyncManifest, layout: RemoteLayout) -> Option<u32> {
     manifest
         .db_compat_version
         .or_else(|| (layout == RemoteLayout::Legacy).then_some(LEGACY_DB_COMPAT_VERSION))

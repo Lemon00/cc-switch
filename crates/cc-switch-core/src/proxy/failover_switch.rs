@@ -127,13 +127,10 @@ impl FailoverSwitchManager {
         };
 
         // 只换代理的路由，不写客户端文件。
-        let switched = crate::mode::controller::record_failover_route(
-            ctx.state,
-            &app_enum,
-            provider_id,
-        )
-        .await
-        .map_err(AppError::Message)?;
+        let switched =
+            crate::mode::controller::record_failover_route(ctx.state, &app_enum, provider_id)
+                .await
+                .map_err(AppError::Message)?;
 
         if !switched {
             return Ok(false);

@@ -769,10 +769,7 @@ fn sync_all_providers_to_live(state: &AppState, app_type: &AppType) -> Result<()
 }
 
 /// 把累加式应用的全部供应商同步到 live，再重投影它的 MCP。
-pub fn sync_additive_app_to_live(
-    state: &AppState,
-    app_type: &AppType,
-) -> Result<(), AppError> {
+pub fn sync_additive_app_to_live(state: &AppState, app_type: &AppType) -> Result<(), AppError> {
     sync_all_providers_to_live(state, app_type)?;
 
     // 本函数语义是"把这个应用同步到 live"，MCP 重投影也只针对该应用；

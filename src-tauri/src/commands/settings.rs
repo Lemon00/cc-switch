@@ -373,9 +373,12 @@ pub async fn check_app_update_available(app: AppHandle) -> Result<Option<String>
 }
 
 /// 获取 app_config_dir 覆盖配置 (从 Store)
+///
+/// 只回显 Store 里的值，不改变本进程生效目录：设置页可能刚保存了新目录但
+/// 选了「稍后重启」，这里若顺手切换，数据库就会和配置文件分叉。
 #[tauri::command]
 pub async fn get_app_config_dir_override(app: AppHandle) -> Result<Option<String>, String> {
-    Ok(crate::app_store::refresh_app_config_dir_override(&app)
+    Ok(crate::app_store::read_app_config_dir_override(&app)
         .map(|p| p.to_string_lossy().to_string()))
 }
 

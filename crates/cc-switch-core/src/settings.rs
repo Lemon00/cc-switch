@@ -772,13 +772,41 @@ impl AppSettings {
         self.quota_display.as_deref() == Some("used")
     }
 
+    /// 配置目录被覆盖后，把旧默认目录里的 `settings.json` 复制一份过去。
+    ///
+    /// 只在「覆盖目录里还没有 settings.json」时复制，且只复制不删除：用户可能还会
+    /// 切回默认目录，旧文件留着才不会丢设置。没有覆盖（默认目录就是目标）时是空操作。
+    pub fn migrate_legacy_settings_file_if_needed() {
+        let target_dir = crate::config::get_app_config_dir();
+        let default_dir = crate::config::get_home_dir().join(".cc-switch");
+        if target_dir == default_dir {
+            return;
+        }
+        let source = default_dir.join("settings.json");
+        let target = target_dir.join("settings.json");
+        if !source.exists() || target.exists() || !target_dir.exists() {
+            return;
+        }
+        match std::fs::copy(&source, &target) {
+            Ok(_) => log::info!(
+                "已把旧 settings.json 复制到覆盖目录: {} -> {}",
+                source.display(),
+                target.display()
+            ),
+            Err(e) => log::warn!(
+                "复制旧 settings.json 到覆盖目录失败（继续用默认设置）: {} -> {}: {e}",
+                source.display(),
+                target.display()
+            ),
+        }
+    }
+
     fn settings_path() -> Option<PathBuf> {
-        // settings.json 保留用于旧版本迁移和无数据库场景
-        Some(
-            crate::config::get_home_dir()
-                .join(".cc-switch")
-                .join("settings.json"),
-        )
+        // settings.json 保留用于旧版本迁移和无数据库场景。
+        // 必须跟数据库/备份/日志一样走 get_app_config_dir()：写死 ~/.cc-switch
+        // 时，用户改了配置目录后 settings.json 仍留在旧目录，设置页说的
+        // 「整个配置目录一起搬」就成了假话。
+        Some(crate::config::get_app_config_dir().join("settings.json"))
     }
 
     fn normalize_paths(&mut self) {

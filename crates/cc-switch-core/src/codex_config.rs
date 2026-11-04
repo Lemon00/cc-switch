@@ -2680,9 +2680,7 @@ const CODEX_CLASSIC_SUBAGENTS: &str = "v1";
 
 /// 一家第三方供应商在合并目录里的行（`comp_hash` 保持模板的值，由调用方经
 /// [`join_stack_history`] 统一改写）。
-pub fn codex_stack_third_party_rows(
-    row: &CodexCatalogRow<'_>,
-) -> Result<Vec<Value>, AppError> {
+pub fn codex_stack_third_party_rows(row: &CodexCatalogRow<'_>) -> Result<Vec<Value>, AppError> {
     let specs = codex_published_specs(row.settings, row.config_text);
     if specs.is_empty() {
         return Ok(Vec::new());
@@ -2815,10 +2813,7 @@ pub fn read_codex_model_catalog_text(path: &Path) -> Result<String, AppError> {
 /// catalog file (returns `None` if `model_catalog_json` is absent or points at
 /// a file we don't own). Relative paths are resolved under `base_dir`;
 /// absolute paths must still be inside `base_dir`.
-pub fn resolve_cc_switch_catalog_path(
-    config_text: &str,
-    base_dir: &Path,
-) -> Option<PathBuf> {
+pub fn resolve_cc_switch_catalog_path(config_text: &str, base_dir: &Path) -> Option<PathBuf> {
     if config_text.trim().is_empty() {
         return None;
     }

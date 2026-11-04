@@ -10,12 +10,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use rusqlite::OptionalExtension;
 
-/// CLI 专属用量记录开关（仅对 CLI 自己的代理进程生效，GUI 进程不受影响）。
-/// 默认 true，保持上游 GUI 行为不变；CLI 在启动代理前按 cli.json 把它设为 false。
+/// CLI 专属用量记录开关，唯一的写入口（GUI 不调用，也没有 tauri 命令包装）。
+///
+/// 默认 `true`：GUI 进程从不改动它，保持上游行为不变。CLI 在 `proxy serve`
+/// 启动前按 `<配置目录>/cli.json` 的 `usage_recording` 显式设置，缺省关。
+///
+/// 语义（与实现一致）：关掉时 `log_request` / `log_error_with_context` 直接
+/// `return Ok(())`，成功和失败请求都**不写** `proxy_request_logs`；转发本身
+/// 不受影响。不要写成「日志照常写库、只是不计入统计」——那是旧注释的错。
 static CLI_USAGE_RECORDING: AtomicBool = AtomicBool::new(true);
 
-/// CLI 专用的用量记录开关（GUI 不走这里，见 cli.json 的 usage_recording）。
-/// 代理自身的请求日志仍照常写库；关掉时只是不把 CLI 代理的请求计入用量统计。
+/// 设置 CLI 用量记录开关。父进程/其他前端通过
+/// `cc_switch_core::set_cli_usage_recording` 调用这唯一的入口。
 pub fn set_cli_usage_recording(enabled: bool) {
     CLI_USAGE_RECORDING.store(enabled, Ordering::Relaxed);
 }

@@ -857,9 +857,7 @@ fn stack_subagent_nested(
 /// 聚合面板「子代理模型」下拉的选项：发布 Stack 模型的成员（按名单顺序）发布的每个模型，
 /// 带上它在合并目录里的推理强度档位。和 [`stack_catalog`] 用同一份行（只算本地，不取官方
 /// 列表），配置坏掉的成员同样跳过。
-pub fn stack_subagent_choices(
-    members: &[Member],
-) -> Vec<crate::mode::stack::StackSubagentModel> {
+pub fn stack_subagent_choices(members: &[Member]) -> Vec<crate::mode::stack::StackSubagentModel> {
     let mut choices = Vec::new();
     for member in members {
         let Ok(projection) = project(&member.provider) else {

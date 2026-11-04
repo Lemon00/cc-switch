@@ -248,12 +248,14 @@ const normalizeCodexChatReasoningForSave = (
   return {
     supportsThinking,
     supportsEffort,
-    thinkingParam:
-      value?.thinkingParam !== undefined && value.thinkingParam !== ""
-        ? value.thinkingParam
-        : supportsThinking
-          ? "thinking"
-          : "none",
+    // 只透传 reasoning_effort 的上游：supportsThinking=false 必须显式写
+    // thinkingParam="none"，否则预设/导入卡里残留的 "thinking" 会让后端继续注入
+    // thinking 字段，界面上「支持思考模式」显示为关却关不掉（#8970）。
+    // supportsThinking=true 时保留显式值（含 "none"：后端 none 优先，是合法的
+    // effort-only 组合），只在缺省时补 "thinking"。
+    thinkingParam: !supportsThinking
+      ? "none"
+      : value?.thinkingParam || "thinking",
     effortParam: supportsEffort
       ? normalizeEnabledCodexChatEffortParam(value?.effortParam)
       : "none",

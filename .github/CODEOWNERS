@@ -12,3 +12,7 @@
 # explicitly so they stay locked even if the global rule above is relaxed later.
 /.github/         @farion1231
 /src-tauri/       @farion1231
+# 后端主体在拆分后位于 crates/（core + CLI），同样需要 owner 审查。
+/crates/          @farion1231
+/Cargo.toml       @farion1231
+/Cargo.lock       @farion1231

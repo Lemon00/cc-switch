@@ -137,10 +137,7 @@ pub fn attach_reasoning_content_field(item: &mut Value, reasoning: &str) -> bool
     false
 }
 
-pub fn attach_optional_reasoning_content_field(
-    item: &mut Value,
-    reasoning: Option<&str>,
-) -> bool {
+pub fn attach_optional_reasoning_content_field(item: &mut Value, reasoning: Option<&str>) -> bool {
     let Some(reasoning) = reasoning else {
         return false;
     };

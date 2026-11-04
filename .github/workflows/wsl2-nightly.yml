@@ -59,7 +59,12 @@ jobs:
       - name: Restore Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          workspaces: src-tauri -> target
+          # core / CLI 不在 workspace 里，各编各的 target：只登记 src-tauri 的话
+          # 这两个 crate 的依赖每次都要重编（缓存命中率 0）。
+          workspaces: |
+            src-tauri -> target
+            crates/cc-switch-core -> crates/cc-switch-core/target
+            crates/cc-switch-cli -> crates/cc-switch-cli/target
           shared-key: backend
           save-if: false
 
@@ -95,14 +100,25 @@ jobs:
         run: |
           $archive = Join-Path $env:RUNNER_TEMP "cc-switch-lib-tests.tar.zst"
           $extractDir = Join-Path $env:RUNNER_TEMP "cc-switch-lib-tests"
+          $coreArchive = Join-Path $env:RUNNER_TEMP "cc-switch-core-tests.tar.zst"
+          $coreExtractDir = Join-Path $env:RUNNER_TEMP "cc-switch-core-tests"
           # --extract-to requires an existing directory
           New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
+          New-Item -ItemType Directory -Force -Path $coreExtractDir | Out-Null
           cargo nextest archive --lib --manifest-path src-tauri/Cargo.toml --archive-file $archive
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          # 后端测试主体在拆分后属于 core，GUI 二进制只剩命令层用例；
+          # WSL2 契约测试（config / hermes）也只存在于 core。
+          cargo nextest archive --lib --manifest-path crates/cc-switch-core/Cargo.toml --archive-file $coreArchive
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
           "NEXTEST_ARCHIVE=$archive" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "NEXTEST_EXTRACT_DIR=$extractDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "NEXTEST_CORE_ARCHIVE=$coreArchive" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "NEXTEST_CORE_EXTRACT_DIR=$coreExtractDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       # Running from the archive never invokes the build. The binaries are
       # extracted to the native runner temp, not to TEMP on \\wsl.localhost.
@@ -112,7 +128,7 @@ jobs:
         run: |
           $env:TEMP = $env:CC_SWITCH_WSL_TEST_TEMP
           $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
-          cargo nextest run --archive-file $env:NEXTEST_ARCHIVE --extract-to $env:NEXTEST_EXTRACT_DIR --extract-overwrite --profile ci --no-tests fail --no-capture --run-ignored only -E 'test(=config::tests::atomic_write_replaces_existing_wsl_unc_file)'
+          cargo nextest run --archive-file $env:NEXTEST_CORE_ARCHIVE --extract-to $env:NEXTEST_CORE_EXTRACT_DIR --extract-overwrite --profile ci --no-tests fail --no-capture --run-ignored only -E 'test(=config::tests::atomic_write_replaces_existing_wsl_unc_file)'
 
       # The 9P share sometimes aborts a write mid-test (os error 995). Retry here
       # only, not in the ci profile; nextest still reports such tests as FLAKY.
@@ -121,4 +137,8 @@ jobs:
         run: |
           $env:TEMP = $env:CC_SWITCH_WSL_TEST_TEMP
           $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
+          cargo nextest run --archive-file $env:NEXTEST_CORE_ARCHIVE --extract-to $env:NEXTEST_CORE_EXTRACT_DIR --extract-overwrite --profile ci --test-threads 1 --retries 2 -E 'not test(/database::/)'
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
           cargo nextest run --archive-file $env:NEXTEST_ARCHIVE --extract-to $env:NEXTEST_EXTRACT_DIR --extract-overwrite --profile ci --test-threads 1 --retries 2 -E 'not test(/database::/)'

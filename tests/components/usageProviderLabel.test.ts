@@ -26,9 +26,13 @@ describe("getUsageProviderLabel", () => {
   });
 
   it("translates every placeholder name the backend can return", () => {
-    // 后端 provider_name_coalesce 里的占位名，新增应用时漏了前端对照表就会原样显示英文全名
+    // 后端 provider_name_coalesce 里的占位名，新增应用时漏了前端对照表就会原样显示英文全名。
+    // 该文件已随 decouple-core 搬到 crates/cc-switch-core，别再读 src-tauri 的旧路径。
     const rust = readFileSync(
-      resolve(__dirname, "../../src-tauri/src/services/usage_stats.rs"),
+      resolve(
+        __dirname,
+        "../../crates/cc-switch-core/src/services/usage_stats.rs",
+      ),
       "utf8",
     );
     const names = [...rust.matchAll(/THEN '([^']+ \(Session\))'/g)].map(

@@ -21,8 +21,7 @@ use std::{
 };
 
 static WRITE_LOCK: Mutex<()> = Mutex::new(());
-pub const TRANSPORT_FIELDS: [&str; 7] =
-    ["command", "args", "env", "cwd", "url", "headers", "type"];
+pub const TRANSPORT_FIELDS: [&str; 7] = ["command", "args", "env", "cwd", "url", "headers", "type"];
 /// Pi 自己的条目字段：重建条目时从数据库里保存的连接定义（导入时原样存下）带回来
 const PI_FIELDS: [&str; 6] = [
     "timeout",

@@ -25,6 +25,7 @@ pub use cc_switch_core::hermes_config;
 mod init_status;
 pub use cc_switch_core::jsonc_document;
 pub use cc_switch_core::kimi_config;
+#[cfg(feature = "session-monitor")]
 pub use cc_switch_core::kimi_session;
 mod lightweight;
 #[cfg(target_os = "linux")]
@@ -44,6 +45,7 @@ pub use cc_switch_core::prompt_files;
 pub use cc_switch_core::provider;
 pub use cc_switch_core::proxy;
 mod services;
+#[cfg(feature = "session-monitor")]
 pub use cc_switch_core::session_manager;
 pub use cc_switch_core::settings;
 pub use cc_switch_core::store;
@@ -85,18 +87,12 @@ pub use services::{
 };
 pub use settings::{update_settings, AppSettings};
 
-/// CLI 专属用量记录开关：只影响调用进程内的代理用量写库（见
-/// `proxy::usage::logger`），GUI 进程的默认值和行为不变。
-/// CLI 在 `proxy serve` 启动前按 cli.json 调用它；默认 true。
-pub fn set_cli_usage_recording(enabled: bool) {
-    crate::proxy::usage::logger::set_cli_usage_recording(enabled);
-}
 pub use store::AppState;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::{fmt, sync::Arc};
+use std::sync::Arc;
 use tauri::tray::TrayIconBuilder;
 use tauri::RunEvent;
 use tauri::{Emitter, Manager};
@@ -143,157 +139,15 @@ fn disable_windows_general_autofill<R: tauri::Runtime>(webview: &tauri::Webview<
     }
 }
 
-pub(crate) struct RedactedUrl<'a> {
-    url: &'a str,
-    known_secrets: &'a [String],
-}
-
-impl fmt::Display for RedactedUrl<'_> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&redact_url_for_log_with_secrets(
-            self.url,
-            self.known_secrets,
-        ))
-    }
-}
-
-/// 为日志提供惰性 URL 脱敏包装；只有日志实际输出时才解析和重建 URL。
-pub(crate) fn url_for_log(url: &str) -> RedactedUrl<'_> {
-    RedactedUrl {
-        url,
-        known_secrets: &[],
-    }
-}
-
-/// 为持有确切认证材料的调用方提供优先精确匹配、再启发式兜底的 URL 脱敏。
-pub(crate) fn url_for_log_with_secrets<'a>(
-    url: &'a str,
-    known_secrets: &'a [String],
-) -> RedactedUrl<'a> {
-    RedactedUrl { url, known_secrets }
-}
-
-/// 已知密钥参与子串脱敏的最短长度：过短的值(如 "api")当作子串会误伤无关文本，
-/// 所以只对足够长、几乎不可能是普通词的值做替换。
-const MIN_KNOWN_SECRET_LEN: usize = 8;
-
-/// 唯一的密钥脱敏原语：把字符串里出现的、我们确切握有的密钥值替换为 [REDACTED]。
-/// 不做任何“看起来像密钥”的形状猜测——只隐藏已知值，天然收敛、不误伤正常路径。
-pub(crate) fn redact_known_secrets(text: &str, known_secrets: &[String]) -> String {
-    redact_known_secrets_with_min_length(text, known_secrets, MIN_KNOWN_SECRET_LEN)
-}
-
-/// Exact-value redaction for user-visible error text. Unlike URL logging, a
-/// short known credential must still be hidden because the result reaches the
-/// UI rather than a diagnostic-only path.
-pub(crate) fn redact_known_secrets_strict(text: &str, known_secrets: &[String]) -> String {
-    redact_known_secrets_with_min_length(text, known_secrets, 1)
-}
-
-fn redact_known_secrets_with_min_length(
-    text: &str,
-    known_secrets: &[String],
-    minimum_chars: usize,
-) -> String {
-    let mut output = text.to_string();
-    for secret in known_secrets {
-        if secret.chars().count() >= minimum_chars {
-            output = output.replace(secret.as_str(), "[REDACTED]");
-        }
-    }
-    output
-}
-
-/// 无 scheme 的裸 authority 形态(如 `user:pass@host/path`)剥掉 userinfo：
-/// 仅当 `@` 出现在第一个 `/` 之前时才视为凭据。
-fn strip_bare_userinfo(input: &str) -> &str {
-    let authority_end = input.find('/').unwrap_or(input.len());
-    match input[..authority_end].rfind('@') {
-        Some(at) => &input[at + 1..],
-        None => input,
-    }
-}
-
-pub(crate) fn redact_url_for_log(url_str: &str) -> String {
-    redact_url_for_log_with_secrets(url_str, &[])
-}
-
-/// 为日志脱敏 URL：剥掉 userinfo(user:pass@) 与整个 query/fragment，保留
-/// scheme/host/port/path 供诊断(如 base_url 配错路径导致 404)，最后再抹掉已知密钥值。
-pub(crate) fn redact_url_for_log_with_secrets(url_str: &str, known_secrets: &[String]) -> String {
-    let scheme_relative = url_str.starts_with("//");
-    let parsed = if scheme_relative {
-        url::Url::parse(&format!("https:{url_str}"))
-    } else {
-        url::Url::parse(url_str)
-    };
-
-    let sanitized = match parsed {
-        Ok(mut url) if url.has_host() => {
-            let _ = url.set_username("");
-            let _ = url.set_password(None);
-            url.set_query(None);
-            url.set_fragment(None);
-            let rendered = url.as_str();
-            if scheme_relative {
-                rendered
-                    .strip_prefix("https:")
-                    .unwrap_or(rendered)
-                    .to_string()
-            } else {
-                rendered.to_string()
-            }
-        }
-        _ => {
-            // 解析失败(相对路径、含裸 userinfo 的非法 URL 等)：丢掉 query/fragment，
-            // 尽力剥掉 userinfo，其余原样保留。
-            let without_tail = url_str.split(['?', '#']).next().unwrap_or(url_str);
-            strip_bare_userinfo(without_tail).to_string()
-        }
-    };
-
-    redact_known_secrets(&sanitized, known_secrets)
-}
-
-/// 只保留 `scheme://host:port`，丢掉 path/query/userinfo。用于我们手里没有任何
-/// 已知密钥可脱敏 path 的场景——凭据可能整个内嵌在 base_url 的 path 里，此时
-/// 记录 path 无法保证不泄漏，只能退回到 origin。
-pub(crate) fn redact_url_origin_for_log(url_str: &str) -> String {
-    let scheme_relative = url_str.starts_with("//");
-    let parsed = if scheme_relative {
-        url::Url::parse(&format!("https:{url_str}"))
-    } else {
-        url::Url::parse(url_str)
-    };
-
-    match parsed {
-        Ok(url) if url.has_host() => {
-            let authority = &url[url::Position::BeforeHost..url::Position::AfterPort];
-            if scheme_relative {
-                format!("//{authority}")
-            } else {
-                format!("{}://{authority}", url.scheme())
-            }
-        }
-        _ => "[invalid target]".to_string(),
-    }
-}
-
-/// 给日志用的错误文本：去掉 TOML 解析诊断里引用的源码行（`1 | key = "..."` 和它上下的
-/// `|`、`^` 标注行）。那一行是用户配置原文，出错的可能正是密钥那一行；行列号和原因留着。
-pub(crate) fn error_for_log(error: &str) -> String {
-    error
-        .lines()
-        .filter(|line| {
-            !line
-                .trim_start()
-                .trim_start_matches(|c: char| c.is_ascii_digit())
-                .trim_start()
-                .starts_with('|')
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
+// 脱敏这一整套（RedactedUrl / url_for_log / redact_* / error_for_log）已在核心实现，
+// 这里只重导出，避免 shim 与 core 两份实现各自漂移。
+// 保留完整重导出面（GUI 现在只用到 url_for_log），故允许少量未使用项。
+#[allow(unused_imports)]
+pub(crate) use cc_switch_core::{
+    error_for_log, redact_known_secrets, redact_known_secrets_strict, redact_url_for_log,
+    redact_url_for_log_with_secrets, redact_url_origin_for_log, url_for_log,
+    url_for_log_with_secrets, RedactedUrl,
+};
 
 fn runtime_log_level_allows(level: log::Level, max_level: log::LevelFilter) -> bool {
     max_level.to_level().is_some_and(|maximum| level <= maximum)
@@ -587,8 +441,9 @@ pub fn run() {
         .setup(|app| {
             let _ = rustls::crypto::ring::default_provider().install_default();
 
-            // 预先刷新 Store 覆盖配置，确保后续路径读取正确（日志/数据库等）
-            app_store::refresh_app_config_dir_override(app.handle());
+            // 预先决定配置目录覆盖（env > Store > 默认），确保后续路径读取正确
+            // （日志/数据库等）。必须在 Database::init 之前。
+            let _ = app_store::refresh_app_config_dir_override(app.handle());
             panic_hook::init_app_config_dir(crate::config::get_app_config_dir());
 
             // 初始化日志（输出到 <app_config_dir>/logs/cc-switch.log）
@@ -1187,11 +1042,6 @@ pub fn run() {
                 }
             }
 
-            // 迁移旧的 app_config_dir 配置到 Store
-            if let Err(e) = app_store::migrate_app_config_dir_from_settings(app.handle()) {
-                log::warn!("迁移 app_config_dir 失败: {e}");
-            }
-
             // 启动阶段不再无条件保存,避免意外覆盖用户配置。
 
             // 注册 deep-link URL 处理器（使用正确的 DeepLinkExt API）
@@ -1465,58 +1315,62 @@ pub fn run() {
                     }
                 });
 
-                // Session log usage sync: 启动时同步一次，之后每 10 分钟兜底一次（防 CLI 清理旧会话
-                // 文件前漏导入）；用量页打开时由前端按所选间隔加扫
-                let db_for_session_sync = state.db.clone();
-                tauri::async_runtime::spawn(async move {
-                    const SESSION_SYNC_INTERVAL_SECS: u64 = 10 * 60;
+                // 会话聚合受 session-monitor 门控：关掉时（CLI 式构建）不启这个任务。
+                #[cfg(feature = "session-monitor")]
+                {
+                    // Session log usage sync: 启动时同步一次，之后每 10 分钟兜底一次（防 CLI 清理旧会话
+                    // 文件前漏导入）；用量页打开时由前端按所选间隔加扫
+                    let db_for_session_sync = state.db.clone();
+                    tauri::async_runtime::spawn(async move {
+                        const SESSION_SYNC_INTERVAL_SECS: u64 = 10 * 60;
 
-                    async fn run_session_sync(db: std::sync::Arc<crate::database::Database>, backfill: bool) {
-                        // 手动扫描模式下跳过定时扫描；backfill 轮（启动首轮）仍进入，
-                        // 费用回填只修补数据库既有行（含代理记账行），不读会话文件
-                        if !backfill && !crate::settings::get_settings().session_auto_sync_enabled {
-                            return;
-                        }
-                        let _guard = crate::services::session_usage::session_sync_mutex()
-                            .lock()
-                            .await;
-                        let task = tauri::async_runtime::spawn_blocking(move || {
-                            if backfill {
-                                if let Err(error) = db.backfill_missing_usage_costs() {
-                                    log::warn!("Usage cost startup backfill failed: {error}");
+                        async fn run_session_sync(db: std::sync::Arc<crate::database::Database>, backfill: bool) {
+                            // 手动扫描模式下跳过定时扫描；backfill 轮（启动首轮）仍进入，
+                            // 费用回填只修补数据库既有行（含代理记账行），不读会话文件
+                            if !backfill && !crate::settings::get_settings().session_auto_sync_enabled {
+                                return;
+                            }
+                            let _guard = crate::services::session_usage::session_sync_mutex()
+                                .lock()
+                                .await;
+                            let task = tauri::async_runtime::spawn_blocking(move || {
+                                if backfill {
+                                    if let Err(error) = db.backfill_missing_usage_costs() {
+                                        log::warn!("Usage cost startup backfill failed: {error}");
+                                    }
                                 }
+                                if !crate::settings::get_settings().session_auto_sync_enabled {
+                                    return crate::services::session_usage::SessionSyncResult::default();
+                                }
+                                crate::services::session_usage::sync_all_unlocked(&db)
+                            });
+                            match task.await {
+                                Ok(result) if !result.errors.is_empty() => {
+                                    log::warn!(
+                                        "Session usage sync completed with {} error(s)",
+                                        result.errors.len()
+                                    );
+                                }
+                                Ok(_) => {}
+                                Err(error) => log::warn!("Session usage blocking task failed: {error}"),
                             }
-                            if !crate::settings::get_settings().session_auto_sync_enabled {
-                                return crate::services::session_usage::SessionSyncResult::default();
-                            }
-                            crate::services::session_usage::sync_all_unlocked(&db)
-                        });
-                        match task.await {
-                            Ok(result) if !result.errors.is_empty() => {
-                                log::warn!(
-                                    "Session usage sync completed with {} error(s)",
-                                    result.errors.len()
-                                );
-                            }
-                            Ok(_) => {}
-                            Err(error) => log::warn!("Session usage blocking task failed: {error}"),
                         }
-                    }
 
-                    // 首次同步（含费用回填）
-                    run_session_sync(db_for_session_sync.clone(), true).await;
+                        // 首次同步（含费用回填）
+                        run_session_sync(db_for_session_sync.clone(), true).await;
 
-                    // 定期同步
-                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(
-                        SESSION_SYNC_INTERVAL_SECS,
-                    ));
-                    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-                    interval.tick().await; // skip immediate first tick
-                    loop {
-                        interval.tick().await;
-                        run_session_sync(db_for_session_sync.clone(), false).await;
-                    }
-                });
+                        // 定期同步
+                        let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+                            SESSION_SYNC_INTERVAL_SECS,
+                        ));
+                        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                        interval.tick().await; // skip immediate first tick
+                        loop {
+                            interval.tick().await;
+                            run_session_sync(db_for_session_sync.clone(), false).await;
+                        }
+                    });
+                }
             });
 
             // Linux: 禁用 WebKitGTK 硬件加速，防止 EGL 初始化失败导致白屏

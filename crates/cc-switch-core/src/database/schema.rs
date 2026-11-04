@@ -3884,11 +3884,7 @@ impl Database {
         Ok(false)
     }
 
-    pub fn has_column(
-        conn: &Connection,
-        table: &str,
-        column: &str,
-    ) -> Result<bool, AppError> {
+    pub fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool, AppError> {
         Self::validate_identifier(table, "表名")?;
         Self::validate_identifier(column, "列名")?;
 

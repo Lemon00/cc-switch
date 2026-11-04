@@ -3,8 +3,17 @@
 //! 默认只暴露 codex / agy 两个应用，不改官方源码的 AppType、不做 Cargo feature
 //! 编译剔除：其他应用的代码仍在库里，只是不在 CLI 里列出、不让切。
 //! 这是刻意选的便宜方案，见仓库根目录的 CLI 设计文档。
-//! P4 之后应用选择是配置化的：`~/.cc-switch/frontend-apps.json` 的 cli 一项
+//! P4 之后应用选择是配置化的：`<配置目录>/frontend-apps.json` 的 cli 一项
 //! 决定 --app 接受哪些应用，缺文件时默认就是 codex / agy。
+//!
+//! 配置目录与 GUI 同源：启动时先按 `CC_SWITCH_CONFIG_DIR` → GUI 的 Tauri
+//! Store（`app_paths.json`）→ 默认 `~/.cc-switch` 的顺序确定，见
+//! `cc_switch_core::config::apply_startup_app_config_dir_override`。CLI 不再
+//! 自己拼 `$HOME/.cc-switch`，否则同一台机器上两端会打开两份数据库。
+//!
+//! 代理钩子同样是注入的（`FrontendHooks::with_state`）：事件写 stderr、OAuth
+//! 用 AppState 的 Codex manager、故障转移用 `Weak<AppState>`。用
+//! `FrontendHooks::default()` 会让 failover/OAuth 静默失效。
 //!
 //! - codex：供应商切换走官方 ProviderService（live 写入引擎、字节保留），
 //!   代理走官方 ProxyService（前台 serve），推理参数走 #8970 解耦逻辑。
@@ -13,25 +22,31 @@
 //!   官方登录卡 → `agy --model=<显示名>`；第三方 Key 卡 →
 //!   `agy --gemini_dir=<私有目录>`，Key/地址只经子进程环境传入，不进命令文本。
 //! - 用量记录：仅对 CLI 自己的代理进程生效，默认关。开关存在
-//!   `~/.cc-switch/cli.json`（`{"usage_recording": false}`），
+//!   `<配置目录>/cli.json`（`{"usage_recording": false}`），
 //!   `proxy serve` 启动前按它调用 `set_cli_usage_recording`，
 //!   GUI 进程的默认值和行为不受影响。
 //! - 会话模块：本 CLI 不提供会话历史、回放、会话扫描、用量同步命令。
 
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{exit, Command};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
-use cc_switch_core::{frontend_apps, AppState, AppType, Database, ProviderService};
+use cc_switch_core::events::{EventSink, FrontendHooks, OAuthStateProvider};
+use cc_switch_core::proxy::providers::codex_oauth_auth::CodexOAuthManager;
+use cc_switch_core::proxy::providers::copilot_auth::CopilotAuthManager;
+use cc_switch_core::proxy::providers::xai_oauth_auth::XaiOAuthManager;
+use cc_switch_core::{config, frontend_apps, AppState, AppType, Database, ProviderService};
+use tokio::sync::RwLock;
 
-const VERSION: &str = "cc-switch-cli 0.1.0 (A方案, 基于官方 cc-switch v4.0.25, 白名单默认 codex/agy)";
+const VERSION: &str =
+    "cc-switch-cli 0.1.0 (A方案, 基于官方 cc-switch v4.0.25, 白名单默认 codex/agy)";
 
 fn help() -> &'static str {
     "用法: cc-switch-cli [--app codex|agy] <命令> [参数]\n\
      \n\
-     本 CLI 默认只支持 codex / agy；白名单见 ~/.cc-switch/frontend-apps.json 的 cli 一项，改配置可换应用。\n\
+     本 CLI 默认只支持 codex / agy；白名单见 <配置目录>/frontend-apps.json 的 cli 一项，改配置可换应用。\n\
      未改官方源码的 AppType，也未做编译剔除，其他应用只是不在 CLI 里出现。\n\
      \n\
      codex:\n\
@@ -63,9 +78,10 @@ fn err(msg: &str) -> ! {
     exit(1);
 }
 
+/// 配置目录与 GUI 同源：`open_state()` 里已按 GUI 的 Store / 环境变量
+/// 决定了覆盖目录，这里读核心的生效值，别再自己拼 `$HOME/.cc-switch`。
 fn app_dir() -> PathBuf {
-    let home = env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".cc-switch")
+    config::get_app_config_dir()
 }
 
 fn cli_config_path() -> PathBuf {
@@ -81,7 +97,9 @@ fn usage_recording_enabled() -> bool {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
         return false;
     };
-    v.get("usage_recording").and_then(|x| x.as_bool()).unwrap_or(false)
+    v.get("usage_recording")
+        .and_then(|x| x.as_bool())
+        .unwrap_or(false)
 }
 
 fn set_usage_recording(enabled: bool) {
@@ -105,24 +123,111 @@ fn parse_bool(s: &str) -> bool {
     }
 }
 
-fn open_state() -> AppState {
+/// CLI 代理状态事件的 sink：没有前端可推，写到 stderr（低频事件）。
+///
+/// 用量写入通知走单独的 [`QuietEventSink`]：它每条日志都会触发（200ms
+/// 防抖），打到 stderr 会淹没 `proxy serve` 的输出。
+struct StderrEventSink;
+
+impl EventSink for StderrEventSink {
+    fn emit(&self, event: &str, payload: serde_json::Value) {
+        eprintln!("[event] {event}: {payload}");
+    }
+}
+
+/// 静默事件接收端（debug 级别）。
+///
+/// 用于两条没有界面可刷新的通知链路：
+/// - `usage_events::init`：不注入时 `notify_log_recorded` 直接 return，代理
+///   记账、会话同步、归档、手动改用量 4 条路径的通知等于静默丢弃；
+/// - WebDAV/S3 自动同步 worker 的状态事件。
+/// CLI 的 `proxy serve` 是前台进程，事件打 stderr 会淹没有用输出，所以走
+/// log（CLI 目前没装 logger，等于丢弃；将来接上 logger 即生效）。
+struct QuietEventSink;
+
+impl EventSink for QuietEventSink {
+    fn emit(&self, event: &str, _payload: serde_json::Value) {
+        // 走 log 而不是 stderr：`proxy serve` 是前台进程，每条日志（200ms
+        // 防抖）打一行会淹没有用输出。CLI 目前没装 logger，因此这条 debug
+        // 事实上被丢弃；注入的意义是让通知链路不再依赖 GUI 的 setup，
+        // 将来 CLI 接上 logger（或换成计数）就能立刻拿到。
+        log::debug!("[usage-event] {event}");
+    }
+}
+
+/// CLI 的 OAuth 来源：Codex 用 AppState 自带的 manager（OAuth 路由的供应商
+/// 因此能正常拿凭据）；Copilot/xAI 没有登录流程，保持 None。
+///
+/// 存 `Weak`：hooks 挂在 `AppState::proxy_service` 上，这里持强引用会和
+/// `failover_state` 一样绕出 Arc 环，进程退出前内存都放不掉。
+struct CliOAuthStateProvider(Weak<AppState>);
+
+impl OAuthStateProvider for CliOAuthStateProvider {
+    fn codex_oauth(&self) -> Option<Arc<CodexOAuthManager>> {
+        self.0
+            .upgrade()
+            .map(|state| state.codex_oauth_manager.clone())
+    }
+
+    fn copilot_oauth(&self) -> Option<Arc<RwLock<CopilotAuthManager>>> {
+        None
+    }
+
+    fn xai_oauth(&self) -> Option<Arc<RwLock<XaiOAuthManager>>> {
+        None
+    }
+}
+
+/// 组装 CLI 的钩子：事件 + Codex OAuth + 故障转移（`Weak<AppState>`）。
+fn cli_hooks(state: &Arc<AppState>) -> FrontendHooks {
+    FrontendHooks::with_state(
+        Arc::new(StderrEventSink),
+        Arc::new(CliOAuthStateProvider(Arc::downgrade(state))),
+        state,
+    )
+}
+
+fn open_state() -> Arc<AppState> {
     let db = match Database::init() {
         Ok(db) => Arc::new(db),
         Err(e) => err(&format!("打开数据库失败: {e}")),
     };
-    AppState::new(db)
+    let state = Arc::new(AppState::new(db));
+    // 不注入钩子时 ProxyService 用 FrontendHooks::default()：故障转移永不执行、
+    // OAuth 路由直接报错、事件静默丢弃。CLI 要的是和 GUI 不同的最小实现，
+    // 不是空实现。
+    state.proxy_service.set_hooks(cli_hooks(&state));
+    // 用量写入通知是另一套 OnceLock sink（不在 ProxyService.hooks 里），
+    // 不单独注入就会整条链路静默。
+    cc_switch_core::usage_events::init(Arc::new(QuietEventSink));
+    state
 }
 
 fn parse_app(args: &[String]) -> (AppType, Vec<String>) {
-    // P4：应用选择配置化。白名单缺文件/解析失败时 load_whitelist 回退默认，
-    // 绝不会为空；默认应用取白名单第一项（默认配置下就是 codex）。
+    // P4：应用选择配置化。文件缺失/解析失败时 load_whitelist 仍回退默认，
+    // 但显式写空的列表不再被悄悄替换（见 frontend_apps::load_whitelist）。
     let whitelist = frontend_apps::load_whitelist("cli");
-    let mut app = whitelist.first().cloned().unwrap_or(AppType::Codex);
+    if whitelist.is_empty() {
+        err(&format!(
+            "CLI 应用白名单为空：{} 的 cli 一项里没有可识别的应用名",
+            frontend_apps::whitelist_path().display()
+        ));
+    }
+    // 默认应用取白名单第一项（默认配置下就是 codex）。
+    let mut app = whitelist[0].clone();
     let mut rest: Vec<String> = Vec::new();
     let mut i = 0;
     while i < args.len() {
+        if args[i] == "--" {
+            // `--` 之后是透传给子命令的参数（如 `agy launch <id> -- --app foo`），
+            // 不能再当 CLI 自己的选项扫描，否则用户的目标参数会被吃掉。
+            rest.extend(args[i..].iter().cloned());
+            break;
+        }
         if args[i] == "--app" {
-            let v = args.get(i + 1).unwrap_or_else(|| err("--app 后面要跟应用名"));
+            let v = args
+                .get(i + 1)
+                .unwrap_or_else(|| err("--app 后面要跟应用名"));
             let parsed = frontend_apps::parse_app_name(v)
                 .unwrap_or_else(|| err(&format!("不支持的应用名 {v}")));
             if !whitelist.contains(&parsed) {
@@ -132,8 +237,9 @@ fn parse_app(args: &[String]) -> (AppType, Vec<String>) {
                     .collect::<Vec<_>>()
                     .join(", ");
                 err(&format!(
-                    "应用 {} 不在 CLI 白名单里（~/.cc-switch/frontend-apps.json 的 cli 一项），当前允许：{allowed}",
-                    parsed.as_str()
+                    "应用 {} 不在 CLI 白名单里（{} 的 cli 一项），当前允许：{allowed}",
+                    parsed.as_str(),
+                    frontend_apps::whitelist_path().display()
                 ));
             }
             app = parsed;
@@ -146,7 +252,37 @@ fn parse_app(args: &[String]) -> (AppType, Vec<String>) {
     (app, rest)
 }
 
+/// 限制 glibc 的 malloc arena 数量。多线程下每个 arena 各自保留堆页，请求结束
+/// 后不归还，表现为常驻 RSS 不回落（实测 300 并发后匿名页 1.7MB → 7.8MB）。
+///
+/// `MALLOC_ARENA_MAX` 环境变量必须在进程启动前设置；在 main 里 `set_var` 已经
+/// 太晚（加载器和构造函数可能已用过 malloc），所以用 `mallopt`。
+/// 只对 Linux + glibc 有意义：musl 只有一个 arena，macOS/Windows 不用 glibc。
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn tune_allocator() {
+    // 尊重用户显式设置，方便排查内存时临时调大。
+    if env::var_os("MALLOC_ARENA_MAX").is_some() {
+        return;
+    }
+    // SAFETY: mallopt 是 glibc 的线程安全接口，M_ARENA_MAX 接受正整数。
+    unsafe {
+        libc::mallopt(libc::M_ARENA_MAX, 1);
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn tune_allocator() {}
+
 fn main() {
+    // 必须在任何线程/运行时创建之前调用。
+    tune_allocator();
+    // 实测 AMD 的 Azure 网关会拒绝 rustls 的 HTTP/2 请求（400 HTML），走 h1 正常。
+    // 只在本 CLI 进程设置；GUI 不设，继续协商 h2（见 core 的 proxy/http_client.rs）。
+    env::set_var("CC_SWITCH_PROXY_HTTP1", "1");
+    // 最先做：白名单、cli.json、数据库都按配置目录定位，而 GUI 里设的自定义
+    // 目录只写在 Tauri Store 里。这里不先应用，CLI 就会和 GUI 各开一份数据库。
+    let _ = config::apply_startup_app_config_dir_override();
+
     let raw: Vec<String> = env::args().skip(1).collect();
     let (app, args) = parse_app(&raw);
     if args.is_empty() || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
@@ -158,9 +294,11 @@ fn main() {
         return;
     }
     if args[0] == "config" && args.get(1).map(|s| s.as_str()) == Some("path") {
-        println!("{}", app_dir().display());
-        println!("{}", cli_config_path().display());
-        println!("{}", frontend_apps::whitelist_path().display());
+        // 三个路径同源（都走核心的 get_app_config_dir），自定义配置目录时不会再
+        // 出现「打印的是 A、实际读的是 B」。
+        println!("配置目录: {}", app_dir().display());
+        println!("CLI 开关: {}", cli_config_path().display());
+        println!("应用白名单: {}", frontend_apps::whitelist_path().display());
         return;
     }
 
@@ -180,9 +318,11 @@ fn main() {
                 if args.get(1).map(|s| s.as_str()) != Some("launch") {
                     err("agy 只支持 launch：用法 `cc-switch-cli --app agy launch <id> [--exec]`");
                 }
-                args.get(2).unwrap_or_else(|| err("用法: agy launch <id> [--exec]"))
+                args.get(2)
+                    .unwrap_or_else(|| err("用法: agy launch <id> [--exec]"))
             } else {
-                args.get(1).unwrap_or_else(|| err("用法: launch <id> [--exec]"))
+                args.get(1)
+                    .unwrap_or_else(|| err("用法: launch <id> [--exec]"))
             };
             if app != AppType::Agy {
                 err("launch 只适用于 agy；codex 请用 provider switch");
@@ -217,7 +357,10 @@ fn cmd_provider(state: &AppState, app: AppType, args: &[String]) {
                 Err(e) => err(&format!("取当前供应商失败: {e}")),
             };
             if cur.is_empty() {
-                println!("（{} 暂无当前供应商；agy 本来就没有全局当前概念，见 launch）", app.as_str());
+                println!(
+                    "（{} 暂无当前供应商；agy 本来就没有全局当前概念，见 launch）",
+                    app.as_str()
+                );
             } else {
                 println!("{cur}");
             }
@@ -226,14 +369,18 @@ fn cmd_provider(state: &AppState, app: AppType, args: &[String]) {
             if app != AppType::Codex {
                 err("agy 不支持 switch：卡片只作用于它打开的终端，请用 `agy launch <id>`");
             }
-            let id = args.get(1).unwrap_or_else(|| err("用法: provider switch <id>"));
+            let id = args
+                .get(1)
+                .unwrap_or_else(|| err("用法: provider switch <id>"));
             cmd_switch(state, app, id);
         }
         Some("reasoning") => {
             if app != AppType::Codex {
                 err("reasoning 只适用于 codex");
             }
-            let id = args.get(1).unwrap_or_else(|| err("用法: provider reasoning <id> [选项]"));
+            let id = args
+                .get(1)
+                .unwrap_or_else(|| err("用法: provider reasoning <id> [选项]"));
             cmd_reasoning(state, id, &args[2..]);
         }
         _ => err("provider 只支持 list / current / switch / reasoning"),
@@ -269,7 +416,10 @@ fn cmd_reasoning(state: &AppState, id: &str, opts: &[String]) {
         .cloned()
         .unwrap_or(serde_json::json!({}));
     if opts.is_empty() {
-        println!("{}", serde_json::to_string_pretty(&reasoning).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&reasoning).unwrap_or_default()
+        );
         return;
     }
     // 解析 --key value
@@ -288,8 +438,11 @@ fn cmd_reasoning(state: &AppState, id: &str, opts: &[String]) {
             "--supports-thinking" => set_supports_thinking = Some(parse_bool(&v)),
             "--supports-effort" => set_supports_effort = Some(parse_bool(&v)),
             "--thinking-param" => {
-                if !["thinking", "enable_thinking", "reasoning_split", "none"].contains(&v.as_str()) {
-                    err("thinking-param 只能是 thinking / enable_thinking / reasoning_split / none");
+                if !["thinking", "enable_thinking", "reasoning_split", "none"].contains(&v.as_str())
+                {
+                    err(
+                        "thinking-param 只能是 thinking / enable_thinking / reasoning_split / none",
+                    );
                 }
                 set_thinking_param = Some(v);
             }
@@ -316,9 +469,7 @@ fn cmd_reasoning(state: &AppState, id: &str, opts: &[String]) {
     } else if set_supports_thinking == Some(false) {
         // 思考模式关、又没显式给 param 时，默认 none（不注入），而不是 thinking。
         reasoning["thinkingParam"] = serde_json::Value::String("none".to_string());
-    } else if set_supports_thinking == Some(true)
-        && reasoning.get("thinkingParam").is_none()
-    {
+    } else if set_supports_thinking == Some(true) && reasoning.get("thinkingParam").is_none() {
         reasoning["thinkingParam"] = serde_json::Value::String("thinking".to_string());
     }
     if let Some(v) = set_effort_param {
@@ -328,24 +479,31 @@ fn cmd_reasoning(state: &AppState, id: &str, opts: &[String]) {
         reasoning["effortValueMode"] = serde_json::Value::String(v);
     }
     meta["codexChatReasoning"] = reasoning.clone();
-    // 备份数据库文件后再写（改 meta 只影响代理转换，不写 live 文件）。
-    let db_path = app_dir().join("cc-switch.db");
-    if db_path.exists() {
-        let bak = app_dir().join(format!(
-            "cc-switch.db.bak-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0)
-        ));
-        let _ = fs::copy(&db_path, &bak);
-        println!("已备份数据库到 {}", bak.display());
+    // 先反序列化再备份：转换失败时数据库还没动，留着原 meta 直接退出，
+    // 不会出现「备份了、然后写进去一个空 meta」。
+    let parsed_meta = match serde_json::from_value(meta) {
+        Ok(parsed) => parsed,
+        Err(e) => err(&format!(
+            "推理参数无法写回供应商 meta（原配置未修改、数据库未写入）: {e}"
+        )),
+    };
+    // 备份后再写（改 meta 只影响代理转换，不写 live 文件）。
+    // 用 core 的一致性快照备份（sqlite backup API，走 backups/ 目录、带清理），
+    // 不再自己 fs::copy 主库：那会漏掉 WAL 里未 checkpoint 的提交，
+    // 失败时也只是打一行警告就当成功。
+    match state.db.backup_database_file() {
+        Ok(Some(bak)) => println!("已备份数据库到 {}", bak.display()),
+        Ok(None) => {}
+        Err(e) => eprintln!("警告: 数据库备份失败（继续写入）: {e}"),
     }
-    provider.meta = serde_json::from_value(meta).ok();
+    provider.meta = Some(parsed_meta);
     if let Err(e) = state.db.save_provider("codex", &provider) {
         err(&format!("保存推理参数失败: {e}"));
     }
-    println!("{}", serde_json::to_string_pretty(&reasoning).unwrap_or_default());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&reasoning).unwrap_or_default()
+    );
     println!("注意：推理参数只影响代理转换（路由模式），不写 codex 的 live 文件。");
 }
 
@@ -434,7 +592,10 @@ fn cmd_agy_launch(state: &AppState, id: &str, args: &[String]) {
                 err(&format!("建私有目录失败: {e}"));
             }
         }
-        if let Err(e) = fs::write(&settings_path, serde_json::to_string_pretty(&existing).unwrap()) {
+        if let Err(e) = fs::write(
+            &settings_path,
+            serde_json::to_string_pretty(&existing).unwrap(),
+        ) {
             err(&format!("写私有 settings.json 失败: {e}"));
         }
         // <私有目录>/config 软链回 ~/.gemini/config；已是真实目录时不动它。
@@ -458,10 +619,7 @@ fn cmd_agy_launch(state: &AppState, id: &str, args: &[String]) {
                 let _ = std::os::unix::fs::symlink(&shared, &link);
             }
         }
-        let mut cmd = vec![
-            "agy".to_string(),
-            format!("--gemini_dir={}", dir.display()),
-        ];
+        let mut cmd = vec!["agy".to_string(), format!("--gemini_dir={}", dir.display())];
         cmd.extend(extra.clone());
         println!("启动命令（Key 不进命令文本，只经子进程环境传入）:");
         println!("  {}", cmd.join(" "));
@@ -511,8 +669,18 @@ fn cmd_proxy(state: &AppState, app: AppType, args: &[String]) {
                     Ok(cfg) => {
                         println!("代理配置（数据库当前值）:");
                         println!("  监听: {}:{}", cfg.listen_address, cfg.listen_port);
-                        println!("  应用: {}（本 CLI 只做 codex 代理前台 serve；agy 不走代理）", app.as_str());
-                        println!("  用量记录（CLI 专属）: {}", if usage_recording_enabled() { "开" } else { "关（默认）" });
+                        println!(
+                            "  应用: {}（本 CLI 只做 codex 代理前台 serve；agy 不走代理）",
+                            app.as_str()
+                        );
+                        println!(
+                            "  用量记录（CLI 专属）: {}",
+                            if usage_recording_enabled() {
+                                "开"
+                            } else {
+                                "关（默认）"
+                            }
+                        );
                     }
                     Err(e) => err(&format!("读代理配置失败: {e}")),
                 },
@@ -524,7 +692,11 @@ fn cmd_proxy(state: &AppState, app: AppType, args: &[String]) {
             Some("off") => set_usage_recording(false),
             _ => println!(
                 "用量记录（CLI 专属）: {}",
-                if usage_recording_enabled() { "开" } else { "关（默认）" }
+                if usage_recording_enabled() {
+                    "开"
+                } else {
+                    "关（默认）"
+                }
             ),
         },
         Some("serve") => {
@@ -533,11 +705,26 @@ fn cmd_proxy(state: &AppState, app: AppType, args: &[String]) {
             }
             let enabled = usage_recording_enabled();
             cc_switch_core::set_cli_usage_recording(enabled);
+            // serve 是长驻进程：和 GUI 一样启动 WebDAV/S3 自动同步 worker
+            //（远端没配置时 worker 自己空转）。一次性命令不启，短进程没必要
+            // 拉起后台 runtime。
+            cc_switch_core::services::webdav_auto_sync::start_worker(
+                state.db.clone(),
+                Arc::new(QuietEventSink),
+            );
+            cc_switch_core::services::s3_auto_sync::start_worker(
+                state.db.clone(),
+                Arc::new(QuietEventSink),
+            );
             println!(
                 "启动 codex 代理（前台，Ctrl-C 退出；用量记录: {}，仅对本进程生效）",
                 if enabled { "开" } else { "关" }
             );
             let rt = match tokio::runtime::Builder::new_multi_thread()
+                // 代理是 IO 密集型：默认按 CPU 核数起 worker（本机 6 核），
+                // 每个线程都会推高 glibc arena/栈占用。2 个足够，和 core 的
+                // background runtime 保持一致。
+                .worker_threads(2)
                 .enable_all()
                 .build()
             {
@@ -548,7 +735,10 @@ fn cmd_proxy(state: &AppState, app: AppType, args: &[String]) {
                 Ok(info) => info,
                 Err(e) => err(&format!("启动代理失败: {e}")),
             };
-            println!("代理已起: {}:{}（客户端请把上游地址指到这里，或用 GUI 的路由接管）", info.address, info.port);
+            println!(
+                "代理已起: {}:{}（客户端请把上游地址指到这里，或用 GUI 的路由接管）",
+                info.address, info.port
+            );
             // 前台等待 Ctrl-C；收到后停代理再退出。
             let _ = rt.block_on(async {
                 let _ = tokio::signal::ctrl_c().await;
@@ -559,7 +749,3 @@ fn cmd_proxy(state: &AppState, app: AppType, args: &[String]) {
         _ => err("proxy 只支持 show / serve / usage [on|off]"),
     }
 }
-
-// 让 Path 在未使用时不报警告的占位（保留给以后扩展用）。
-#[allow(dead_code)]
-fn _unused(_p: &Path) {}

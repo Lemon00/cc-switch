@@ -157,10 +157,7 @@ async fn query_kimi(api_key: &str) -> Result<SubscriptionQuota, String> {
 
 /// `base_url` is the Kimi Code API root (`https://api.kimi.ai/coding/v1` for
 /// global accounts); `token` is an API key or an official OAuth access token.
-pub async fn query_kimi_at(
-    base_url: &str,
-    token: &str,
-) -> Result<SubscriptionQuota, String> {
+pub async fn query_kimi_at(base_url: &str, token: &str) -> Result<SubscriptionQuota, String> {
     let client = crate::proxy::http_client::get();
     let api_key = token;
 

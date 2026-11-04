@@ -36,10 +36,7 @@ pub fn parse_text(
 }
 
 /// 行里保存着、但不随切换生效的全局设置（值和显示的不同才列出）。值是可以照抄的 TOML。
-pub fn inactive_fields(
-    row_entries: Vec<Entry>,
-    display: &DocumentMut,
-) -> Vec<InactiveField> {
+pub fn inactive_fields(row_entries: Vec<Entry>, display: &DocumentMut) -> Vec<InactiveField> {
     row_entries
         .into_iter()
         .filter(|entry| item_at(display, &entry.path).map(render) != Some(render(&entry.item)))
@@ -125,11 +122,7 @@ impl TomlEdits {
     }
 
     /// 按三方比较把改动应用到 live 文档上。
-    pub fn apply_to(
-        &self,
-        path: &Path,
-        doc: &mut DocumentMut,
-    ) -> Result<(), LiveWriteError> {
+    pub fn apply_to(&self, path: &Path, doc: &mut DocumentMut) -> Result<(), LiveWriteError> {
         let accepted = self.on_conflict.resolve(path, &self.changes, |change| {
             let current = item_at(doc, &change.path).map(render);
             let after = change.after.as_ref().map(render);

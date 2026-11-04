@@ -28,13 +28,29 @@ chrono = { version = "0.4", features = ["serde"] }
 dirs = "5.0"
 toml = "0.8"
 toml_edit = "0.22"
-reqwest = { version = "0.12", features = ["rustls-tls", "json", "stream", "socks"] }
+# 默认 features 里的 default-tls = native-tls（OpenSSL）。GUI 在自己的
+# Cargo.toml 里声明了 reqwest 默认 features，feature unification 后 GUI 仍保留
+# 系统 TLS；这里关掉默认只影响 CLI 构建（CLI 只经 core 用 reqwest），
+# 去掉 libssl/libcrypto 的加载与常驻页。http2/charset 原本也在默认集合里，
+# 显式补回避免行为变化。
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+    "json",
+    "stream",
+    "socks",
+    "http2",
+    "charset",
+    "macos-system-configuration",
+] }
 flate2 = "1"
 brotli = "7"
 zstd = "0.13"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "net", "process", "signal"] }
 futures = "0.3"
-rmcp = { version = "0.8.5", features = ["client", "transport-async-rw", "transport-sse-client-reqwest", "transport-streamable-http-client-reqwest"] }
+# rmcp 只在 GUI 的 services/mcp_connectivity.rs 里使用，core 源码零引用；
+# GUI 自己在 src-tauri/Cargo.toml 里声明了 rmcp，删掉这里不影响 GUI，
+# 只让 CLI 构建不再链接整套 MCP 客户端。
+
 process-wrap = { version = "8.2", features = ["tokio1"] }
 async-stream = "0.3"
 bytes = "1.5"
@@ -78,5 +94,20 @@ sys-locale = "0.3"
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 libc = "0.2"
 
+# Windows aarch64 下 rquickjs 没有预编译 bindings，必须开 bindgen 现场生成；
+# 这条之前挂在 GUI crate 上，core 独立编译（CLI）时就丢了。
+[target.'cfg(all(target_os = "windows", target_arch = "aarch64"))'.dependencies]
+rquickjs = { version = "0.8", features = ["bindgen"] }
+
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Globalization"] }
+# 必须覆盖 core 源码实际用到的子集：GUI 之前靠 tauri 依赖的 feature unification
+# 掩盖了缺失项，core 单独 check 或 CLI（不依赖 tauri）在 Windows 上会编译失败。
+#   Foundation      -> GetHandleInformation / CloseHandle / FILETIME / STILL_ACTIVE
+#   Globalization   -> GetACP / GetOEMCP / MultiByteToWideChar
+#   Storage FileSystem / System Threading -> 句柄继承、子进程管理
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Threading",
+] }

@@ -39,3 +39,17 @@ where
 {
     runtime().spawn(fut)
 }
+
+/// 常驻 worker（自动同步循环等）用它：`JoinHandle` 被丢弃时 panic 是完全
+/// 静默的，进程看起来正常、同步却再也不跑。这里把退出原因记进日志。
+pub fn spawn_background_worker<F>(name: &'static str, fut: F)
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    runtime().spawn(async move {
+        // 已经在本 runtime 内，用 tokio::spawn 才能拿到 JoinError。
+        if let Err(error) = tokio::spawn(fut).await {
+            log::error!("后台任务 {name} 退出: {error}");
+        }
+    });
+}

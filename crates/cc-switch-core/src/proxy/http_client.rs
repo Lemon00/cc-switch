@@ -281,7 +281,7 @@ pub fn is_proxy_enabled() -> bool {
 
 /// 两种客户端共用的参数
 fn base_builder() -> reqwest::ClientBuilder {
-    Client::builder()
+    let builder = Client::builder()
         .timeout(Duration::from_secs(600))
         .connect_timeout(Duration::from_secs(30))
         .pool_max_idle_per_host(10)
@@ -291,7 +291,16 @@ fn base_builder() -> reqwest::ClientBuilder {
         .no_gzip()
         .no_brotli()
         .no_deflate()
-        .no_zstd()
+        .no_zstd();
+
+    // 部分网关（实测 AMD 的 Azure Application Gateway）会拒绝 rustls 的 HTTP/2
+    // 请求并返回 400 HTML，而同一请求走 HTTP/1.1 正常。CLI 启动时设置
+    // CC_SWITCH_PROXY_HTTP1=1 规避；GUI 不设置，继续协商 h2，行为不变。
+    if std::env::var_os("CC_SWITCH_PROXY_HTTP1").is_some() {
+        builder.http1_only()
+    } else {
+        builder
+    }
 }
 
 /// 不跟随重定向的客户端，代理设置与全局客户端一致。带自定义凭据请求头（如 `x-dsh-auth-token`）

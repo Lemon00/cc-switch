@@ -11,8 +11,7 @@ const MANAGED_OAUTH_PROVIDER_TYPES: &[&str] = &["github_copilot", "codex_oauth",
 /// 官方账号卡（同前端 `isOfficialAccount`）：Codex 早期绑定托管账号的官方卡没有 category，按身份认。
 pub fn is_official_account(app: &AppType, provider: &Provider) -> bool {
     provider.category.as_deref() == Some("official")
-        || (*app == AppType::Codex
-            && crate::proxy::providers::is_codex_official_provider(provider))
+        || (*app == AppType::Codex && crate::proxy::providers::is_codex_official_provider(provider))
 }
 
 /// Codex / Grok Build 配置里当前供应商的 `wire_api`；TOML 读不懂时退回唯一的一条赋值。

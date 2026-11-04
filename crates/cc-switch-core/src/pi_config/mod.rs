@@ -219,10 +219,7 @@ fn remove_pi_provider_inner(
     Ok(Some(current))
 }
 
-pub fn restore_pi_provider_if_missing(
-    provider_key: &str,
-    config: &Value,
-) -> Result<(), AppError> {
+pub fn restore_pi_provider_if_missing(provider_key: &str, config: &Value) -> Result<(), AppError> {
     let _guard = lock_models_file()?;
     let path = get_pi_models_path()?;
     let (mut document, expected_revision) = read_models_document_with_revision(&path)?;

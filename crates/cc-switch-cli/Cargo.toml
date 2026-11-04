@@ -13,7 +13,13 @@ path = "src/main.rs"
 # CLI 不读客户端会话文件做聚合，代理自身的请求日志不受影响。
 cc-switch-core = { path = "../cc-switch-core", default-features = false }
 serde_json = { version = "1.0", features = ["preserve_order"] }
-tokio = { version = "1", features = ["rt-multi-thread", "signal"] }
+# core 用它打日志；CLI 目前没有装 logger（警告走 /dev/null），但依赖要在，
+# 否则 core 的 log::warn 与 CLI 自己的 log::debug 都编不过。
+log = "0.4"
+# 仅 Linux + glibc 用它限制 malloc arena 数量（见 main.rs 的 tune_allocator）；
+# 其他平台不调用，依赖本身跨平台。
+libc = "0.2"
+tokio = { version = "1", features = ["rt-multi-thread", "signal", "sync"] }
 
 [profile.release]
 # 与 GUI 主 crate 保持一致：体积优先，thin LTO + strip。

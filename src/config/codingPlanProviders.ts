@@ -1,7 +1,7 @@
 /**
  * Coding Plan 供应商的 base_url 路由表。
  *
- * 与后端 `src-tauri/src/services/coding_plan.rs::detect_provider` 保持一致：
+ * 与后端 `crates/cc-switch-core/src/services/coding_plan.rs::detect_provider` 保持一致：
  * 后端靠 `url.contains(...)` 做子串判断（MiniMax 例外，按 host 标签匹配），
  * 前端这里用 RegExp 做同效匹配。
  * 新增供应商时改这一处即可（UsageScriptModal 下拉 + useProviderActions

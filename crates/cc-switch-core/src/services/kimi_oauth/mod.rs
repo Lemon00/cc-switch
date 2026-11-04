@@ -270,15 +270,13 @@ fn new_account(
 /// picker as `Kimi 订阅 <nickname>`. Kimi only ships Chinese and English.
 fn subscription_label() -> String {
     // 原 tray_language()：设置里的语言，没设时按系统区域。
-    let language = crate::settings::get_settings()
-        .language
-        .unwrap_or_else(|| {
-            sys_locale::get_locale()
-                .as_deref()
-                .map(map_locale_to_language)
-                .unwrap_or("zh")
-                .to_string()
-        });
+    let language = crate::settings::get_settings().language.unwrap_or_else(|| {
+        sys_locale::get_locale()
+            .as_deref()
+            .map(map_locale_to_language)
+            .unwrap_or("zh")
+            .to_string()
+    });
     if language.starts_with("zh") {
         "Kimi 订阅".into()
     } else {

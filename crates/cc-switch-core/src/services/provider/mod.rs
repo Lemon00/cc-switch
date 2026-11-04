@@ -10,6 +10,7 @@ pub mod codex_client_catalog;
 pub mod codex_direct;
 pub mod codex_editor;
 pub mod codex_login;
+pub mod codex_oauth_switch;
 pub mod codex_official_models;
 pub mod codex_terminal;
 pub mod editor_toml;
@@ -3197,10 +3198,8 @@ wire_api = "responses"
             assert!(crate::codex_config::get_codex_auth_path().exists());
             assert!(crate::codex_config::codex_managed_oauth_live_auth_marker_exists());
 
-            crate::block_on(
-                state.codex_oauth_manager.remove_account("acct-managed"),
-            )
-            .expect("remove managed account");
+            crate::block_on(state.codex_oauth_manager.remove_account("acct-managed"))
+                .expect("remove managed account");
             assert!(
                 !crate::codex_config::get_codex_auth_path().exists(),
                 "removing the active account must delete its refreshable live auth"
@@ -3240,10 +3239,7 @@ wire_api = "responses"
                 .expect("logout all managed accounts");
             assert!(!crate::codex_config::get_codex_auth_path().exists());
             assert!(!crate::codex_config::codex_managed_oauth_live_auth_marker_exists());
-            assert!(
-                crate::block_on(state.codex_oauth_manager.list_accounts())
-                    .is_empty()
-            );
+            assert!(crate::block_on(state.codex_oauth_manager.list_accounts()).is_empty());
         });
     }
 
@@ -3254,7 +3250,10 @@ wire_api = "responses"
             for rebind in [true, false] {
                 with_test_home(|state, _| {
                     crate::settings::reload_settings().unwrap();
-                    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+                    let runtime = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .unwrap();
                     let token = crate::codex_config::test_codex_id_token("same-user");
                     runtime
                         .block_on(
@@ -3468,12 +3467,12 @@ wire_api = "responses"
                 ProviderService::switch(state, AppType::Codex, &current.id).unwrap();
                 if logout_all {
                     crate::block_on(
-                        crate::commands::logout_codex_oauth_with_switch_lock(state),
+                        crate::services::provider::codex_oauth_switch::logout_codex_oauth_with_switch_lock(state),
                     )
                     .unwrap();
                 } else {
                     crate::block_on(
-                        crate::commands::remove_codex_oauth_account_with_switch_lock(
+                        crate::services::provider::codex_oauth_switch::remove_codex_oauth_account_with_switch_lock(
                             state, "acct-old",
                         ),
                     )
@@ -3583,7 +3582,7 @@ wire_api = "responses"
                     )
                     .unwrap();
                 let error = crate::block_on(
-                    crate::commands::remove_codex_oauth_account_with_switch_lock(state, "acct-old"),
+                    crate::services::provider::codex_oauth_switch::remove_codex_oauth_account_with_switch_lock(state, "acct-old"),
                 )
                 .unwrap_err();
                 assert!(error.contains("账号已删除") && error.contains("解绑失败"));
@@ -3601,11 +3600,9 @@ wire_api = "responses"
                         Some("acct-old")
                     );
                 }
-                assert!(
-                    !crate::block_on(state.codex_oauth_manager.list_accounts())
-                        .iter()
-                        .any(|account| account.id == "acct-old")
-                );
+                assert!(!crate::block_on(state.codex_oauth_manager.list_accounts())
+                    .iter()
+                    .any(|account| account.id == "acct-old"));
                 if rebind {
                     let replacement = managed_codex_provider(&current.id, "acct-new");
                     ProviderService::update(state, AppType::Codex, None, replacement).unwrap();
@@ -3626,7 +3623,10 @@ wire_api = "responses"
             let _guard = test_guard();
             let _home = TempHome::new();
             crate::settings::reload_settings().unwrap();
-            let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
             let db = Arc::new(Database::memory().unwrap());
             let state = AppState::new(db.clone());
             let token = crate::codex_config::test_codex_id_token("same-user");
@@ -3804,7 +3804,7 @@ wire_api = "responses"
                 scope.spawn(|| {
                     started_tx.send(()).expect("signal removal start");
                     let result = crate::block_on(
-                        crate::commands::remove_codex_oauth_account_with_switch_lock(
+                        crate::services::provider::codex_oauth_switch::remove_codex_oauth_account_with_switch_lock(
                             state,
                             "acct-managed",
                         ),
@@ -3824,10 +3824,7 @@ wire_api = "responses"
                     .expect("removal should finish after lock release")
                     .expect("remove managed account");
             });
-            assert!(
-                crate::block_on(state.codex_oauth_manager.list_accounts())
-                    .is_empty()
-            );
+            assert!(crate::block_on(state.codex_oauth_manager.list_accounts()).is_empty());
         });
     }
 
@@ -3868,7 +3865,7 @@ wire_api = "responses"
                 scope.spawn(|| {
                     started_tx.send(()).expect("signal logout start");
                     let result = crate::block_on(
-                        crate::commands::logout_codex_oauth_with_switch_lock(state),
+                        crate::services::provider::codex_oauth_switch::logout_codex_oauth_with_switch_lock(state),
                     );
                     done_tx.send(result).expect("send logout result");
                 });
@@ -3886,10 +3883,7 @@ wire_api = "responses"
                     .expect("logout managed accounts");
             });
 
-            assert!(
-                crate::block_on(state.codex_oauth_manager.list_accounts())
-                    .is_empty()
-            );
+            assert!(crate::block_on(state.codex_oauth_manager.list_accounts()).is_empty());
             assert!(
                 !crate::codex_config::get_codex_auth_path().exists(),
                 "logout must clear the active managed live auth"
@@ -4983,7 +4977,10 @@ wire_api = "responses"
                         ..Default::default()
                     })
                     .unwrap();
-                    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+                    let runtime = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .unwrap();
                     runtime
                         .block_on(
                             state

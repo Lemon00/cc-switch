@@ -50,10 +50,9 @@ impl OAuthStateProvider for TauriOAuthStateProvider {
 pub fn tauri_hooks(app: &tauri::AppHandle) -> FrontendHooks {
     let sink: Arc<dyn EventSink> = Arc::new(TauriEventSink(app.clone()));
     let tray_app = app.clone();
-    let tray_refresh: Option<Arc<dyn Fn() + Send + Sync>> =
-        Some(Arc::new(move || {
-            crate::tray::refresh_tray_menu(&tray_app);
-        }));
+    let tray_refresh: Option<Arc<dyn Fn() + Send + Sync>> = Some(Arc::new(move || {
+        crate::tray::refresh_tray_menu(&tray_app);
+    }));
     let failover_notify = tauri_failover_notify(app.clone(), sink.clone(), tray_refresh.clone());
     FrontendHooks {
         sink,
@@ -81,7 +80,9 @@ fn tauri_failover_notify(
         let provider_name = provider_name.to_string();
         tauri::async_runtime::spawn(async move {
             let state = app.state::<AppState>();
-            let _ = request_failover_switch(
+            // 切换失败必须落日志：以前 `let _ =` 吞掉 DB/mode/路由错误，
+            // 用户只看到「没切过去」却查不到原因。
+            if let Err(error) = request_failover_switch(
                 &state,
                 sink.as_ref(),
                 tray_refresh,
@@ -89,7 +90,10 @@ fn tauri_failover_notify(
                 &provider_id,
                 &provider_name,
             )
-            .await;
+            .await
+            {
+                log::warn!("[Failover] {app_type} 自动切换到 {provider_name} 失败: {error}");
+            }
         });
     })
 }

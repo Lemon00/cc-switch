@@ -19,6 +19,9 @@ backend:
   - changed-files:
       - any-glob-to-any-file:
           - "src-tauri/**"
+          # 后端主体已搬到 crates/**：只匹配 src-tauri 会让 core/CLI 的 PR 没有 backend 标签。
+          - "crates/**"
+          - "Cargo.toml"
 
 i18n:
   - changed-files:
@@ -38,6 +41,9 @@ dependencies:
           - "pnpm-workspace.yaml"
           - "src-tauri/Cargo.toml"
           - "src-tauri/Cargo.lock"
+          - "crates/**/Cargo.toml"
+          - "Cargo.toml"
+          - "Cargo.lock"
 
 documentation:
   - changed-files:
@@ -51,10 +57,10 @@ mcp:
       - any-glob-to-any-file:
           - "src/components/mcp/**"
           - "src/lib/api/mcp.ts"
-          - "src-tauri/src/mcp/**"
-          - "src-tauri/src/claude_mcp.rs"
-          - "src-tauri/src/gemini_mcp.rs"
           - "src-tauri/src/commands/mcp.rs"
+          - "crates/cc-switch-core/src/mcp/**"
+          - "crates/cc-switch-core/src/claude_mcp.rs"
+          - "crates/cc-switch-core/src/gemini_mcp.rs"
 
 skills:
   - changed-files:
@@ -62,13 +68,13 @@ skills:
           - "src/components/skills/**"
           - "src/lib/api/skills.ts"
           - "src-tauri/src/commands/skill.rs"
-          - "src-tauri/src/services/skill.rs"
-          - "src-tauri/src/database/dao/skills.rs"
+          - "crates/cc-switch-core/src/services/skill.rs"
+          - "crates/cc-switch-core/src/database/dao/skills.rs"
 
 proxy:
   - changed-files:
       - any-glob-to-any-file:
           - "src/components/proxy/**"
           - "src/lib/api/proxy.ts"
-          - "src-tauri/src/proxy/**"
           - "src-tauri/src/commands/proxy.rs"
+          - "crates/cc-switch-core/src/proxy/**"

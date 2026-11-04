@@ -10,9 +10,9 @@ pub mod omo;
 pub mod provider;
 pub mod proxy;
 pub mod s3_auto_sync;
+pub mod session_common;
 #[cfg(feature = "session-monitor")]
 pub mod session_usage;
-pub mod session_common;
 pub mod session_usage_codex;
 pub mod skill;
 pub mod sql_helpers;
@@ -33,11 +33,10 @@ pub use usage_stats::{
     DailyStats, LogFilters, ModelStats, PaginatedLogs, ProviderLimitStatus, ProviderStats,
     RequestLogDetail, UsageSummary, UsageSummaryByApp,
 };
-pub mod sync_protocol;
-pub mod webdav_sync;
-pub mod s3_sync;
-pub mod model_fetch;
 pub mod coding_plan;
+pub mod model_fetch;
+pub mod s3;
+pub mod s3_sync;
 #[cfg(feature = "session-monitor")]
 pub mod session_usage_agy;
 #[cfg(feature = "session-monitor")]
@@ -56,5 +55,6 @@ pub mod session_usage_omp;
 pub mod session_usage_opencode;
 #[cfg(feature = "session-monitor")]
 pub mod session_usage_pi;
+pub mod sync_protocol;
 pub mod webdav;
-pub mod s3;
+pub mod webdav_sync;

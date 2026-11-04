@@ -292,11 +292,7 @@ pub fn reasoning_close_with_item(
 // ---------------------------------------------------------------------------
 
 /// `response.function_call_arguments.delta`.
-pub fn function_call_arguments_delta(
-    output_index: u32,
-    item_id: &str,
-    delta: &str,
-) -> Bytes {
+pub fn function_call_arguments_delta(output_index: u32, item_id: &str, delta: &str) -> Bytes {
     sse_event(
         "response.function_call_arguments.delta",
         json!({
@@ -309,11 +305,7 @@ pub fn function_call_arguments_delta(
 }
 
 /// `response.function_call_arguments.done`.
-pub fn function_call_arguments_done(
-    output_index: u32,
-    item_id: &str,
-    arguments: &str,
-) -> Bytes {
+pub fn function_call_arguments_done(output_index: u32, item_id: &str, arguments: &str) -> Bytes {
     sse_event(
         "response.function_call_arguments.done",
         json!({

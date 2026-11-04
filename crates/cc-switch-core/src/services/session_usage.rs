@@ -28,13 +28,11 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::OnceLock;
 use std::time::SystemTime;
 
+pub use crate::services::session_common::SessionSyncResult;
 pub use crate::services::session_common::{
     estimated_first_token_ms, estimated_latency_ms, metadata_modified_nanos,
     parse_timestamp_millis, update_sync_state, update_sync_state_on_conn, EstimatedTiming,
 };
-pub use crate::services::session_common::SessionSyncResult;
-
-
 
 pub fn session_sync_mutex() -> &'static tokio::sync::Mutex<()> {
     static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
@@ -217,7 +215,6 @@ struct ParsedAssistantUsage {
 /// 落在合理范围之外的返回 None，入库时写 0，表示没有计时。
 ///
 /// Shared by the Claude and Codex session parsers.
-
 
 /// 一行日志在对话链上的位置，只留估算请求耗时用得到的三样。
 struct ChainNode {
@@ -1025,7 +1022,6 @@ enum SessionRowOutcome {
     Updated,
     Skipped,
 }
-
 
 /// 已经在库里的那一行里，判断要不要补全用得到的几样。
 struct StoredSessionRow {

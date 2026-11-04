@@ -34,16 +34,28 @@ pub use cc_switch_core::services::s3;
 pub use cc_switch_core::services::s3_auto_sync;
 pub use cc_switch_core::services::s3_sync;
 pub use cc_switch_core::services::session_common;
+#[cfg(feature = "session-monitor")]
+// 核心同名模块受 session-monitor 门控，shim 也必须跟着门控，
+// 否则关掉 feature 时这里会重导出不存在的模块。
 pub use cc_switch_core::services::session_usage;
+#[cfg(feature = "session-monitor")]
 pub use cc_switch_core::services::session_usage_agy;
 pub use cc_switch_core::services::session_usage_codex;
+#[cfg(feature = "session-monitor")]
 pub use cc_switch_core::services::session_usage_dsh;
+#[cfg(feature = "session-monitor")]
 pub use cc_switch_core::services::session_usage_gemini;
+#[cfg(feature = "session-monitor")]
 pub use cc_switch_core::services::session_usage_grokbuild;
+#[cfg(feature = "session-monitor")]
 pub use cc_switch_core::services::session_usage_kimi;
+#[cfg(feature = "session-monitor")]
 pub use cc_switch_core::services::session_usage_mcode;
+#[cfg(feature = "session-monitor")]
 pub use cc_switch_core::services::session_usage_omp;
+#[cfg(feature = "session-monitor")]
 pub use cc_switch_core::services::session_usage_opencode;
+#[cfg(feature = "session-monitor")]
 pub use cc_switch_core::services::session_usage_pi;
 pub use cc_switch_core::services::skill;
 pub use cc_switch_core::services::sql_helpers;

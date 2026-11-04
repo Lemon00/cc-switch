@@ -298,8 +298,8 @@ pub async fn set_proxy_client_host(
 }
 
 pub(crate) async fn save_proxy_client_host(state: &AppState, host: &str) -> Result<(), String> {
-    crate::settings::set_proxy_client_host(host).map_err(|e| e.to_string())?;
-    resync_proxy_clients(state).await
+    // 实现已下沉到 core：core 的测试与 CLI 也走同一份。
+    crate::mode::controller::save_proxy_client_host(state, host).await
 }
 
 /// 按当前的代理地址重写接上路由的客户端（含 Claude Desktop 的路由模式）。
@@ -517,22 +517,24 @@ pub async fn reset_circuit_breaker(
                         .and_then(|providers| providers.get(&provider_id).map(|p| p.name.clone()))
                         .unwrap_or_else(|| provider_id.clone());
 
-                    // 创建故障转移切换管理器并执行切换（新签名要 FailoverContext：
-                    // state 取命令的 State，事件与托盘走与 forwarder 回调同一套钩子）。
-                    let switch_manager =
-                        crate::proxy::failover_switch::FailoverSwitchManager::new();
+                    // 走与 forwarder 回调同一个全局切换管理器（去重状态共享），
+                    // 不要每次 new 一个：那样 pending_switches 永远是空的，
+                    // 与自动故障转移的去重状态互不知情。
                     let sink = crate::frontend_hooks::TauriEventSink(app_handle.clone());
                     let tray_app = app_handle.clone();
-                    let ctx = crate::proxy::failover_switch::FailoverContext {
-                        state: &state,
-                        sink: Some(&sink),
-                        tray_refresh: Some(std::sync::Arc::new(move || {
+                    let tray_refresh: Option<std::sync::Arc<dyn Fn() + Send + Sync>> =
+                        Some(std::sync::Arc::new(move || {
                             crate::tray::refresh_tray_menu(&tray_app);
-                        })),
-                    };
-                    if let Err(e) = switch_manager
-                        .try_switch(Some(&ctx), &app_type, &provider_id, &provider_name)
-                        .await
+                        }));
+                    if let Err(e) = crate::proxy::failover_switch::request_failover_switch(
+                        &state,
+                        &sink,
+                        tray_refresh,
+                        &app_type,
+                        &provider_id,
+                        &provider_name,
+                    )
+                    .await
                     {
                         log::error!("[Recovery] 自动切换失败: {e}");
                     }

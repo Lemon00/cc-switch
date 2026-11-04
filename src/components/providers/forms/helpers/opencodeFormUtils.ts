@@ -70,7 +70,7 @@ export const OPENCLAW_DEFAULT_CONFIG = JSON.stringify(
 // ── Pure functions ───────────────────────────────────────────────────
 
 // Keys only a V1 declaration has, and keys only a native one has. Mirrors
-// provider_format in src-tauri/src/opencode_config.rs.
+// provider_format in crates/cc-switch-core/src/opencode_config.rs.
 const OPENCODE_LEGACY_ONLY_KEYS = ["npm", "options", "api"];
 const OPENCODE_NATIVE_ONLY_KEYS = [
   "package",

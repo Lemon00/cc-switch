@@ -458,10 +458,7 @@ pub fn ensure_signed_in(home: &Path, oauth: &Value) -> Result<(), String> {
 
 /// Delete a separate-slot credential under Kimi's lock. The native default
 /// slot (`kimi-code`, `kimi-code-env-*`) belongs to Kimi and is never deleted.
-pub fn remove_separate_credential_blocking(
-    home: &Path,
-    oauth: &Value,
-) -> Result<(), String> {
+pub fn remove_separate_credential_blocking(home: &Path, oauth: &Value) -> Result<(), String> {
     let path = credential_path(home, oauth)?;
     let name = slot_name(&path);
     if !name.starts_with("kimi-code-ccs-") {

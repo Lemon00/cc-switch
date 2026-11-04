@@ -65,7 +65,12 @@ pub struct ProxyServer {
 impl ProxyState {
     /// 测试用：用这个数据库、其余都是默认值的状态。
     pub fn for_test(db: Arc<Database>) -> Self {
-        ProxyServer::new(ProxyConfig::default(), db, crate::events::FrontendHooks::default()).state
+        ProxyServer::new(
+            ProxyConfig::default(),
+            db,
+            crate::events::FrontendHooks::default(),
+        )
+        .state
     }
 }
 

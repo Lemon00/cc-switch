@@ -1629,6 +1629,15 @@ fn codex_official_login_now(
         .map_err(err)
 }
 
+/// 保存代理对客户端暴露的地址，并立刻把已接上路由的客户端重写一遍。
+///
+/// 原本只在 GUI 的 `commands::proxy` 里，但逻辑全是核心能力（settings +
+/// resync_routes），core 自己的测试也在用；下沉到核心后 CLI/TUI 复用同一份。
+pub async fn save_proxy_client_host(state: &AppState, host: &str) -> Result<(), String> {
+    crate::settings::set_proxy_client_host(host).map_err(|e| e.to_string())?;
+    resync_routes(state).await
+}
+
 /// 代理换了地址之后，按新地址重写每个接上代理的应用。一个应用失败（比如配置文件解析
 /// 不了）不影响其余应用：旧地址已经没人监听，跳过的应用会一直连不上。失败的汇总报错。
 pub async fn resync_routes(state: &AppState) -> Result<(), String> {
@@ -3368,7 +3377,7 @@ mod mode_tests {
         let routed = fs::read_to_string(settings_path()).unwrap();
 
         fs::write(settings_path(), "not json").unwrap();
-        crate::commands::save_proxy_client_host(&state, " 172.25.144.1 ")
+        crate::mode::controller::save_proxy_client_host(&state, " 172.25.144.1 ")
             .await
             .expect_err("claude settings unreadable");
         assert_eq!(
@@ -3379,7 +3388,7 @@ mod mode_tests {
         assert!(!snapshot.contains("172.25.144.1"));
 
         fs::write(settings_path(), &routed).unwrap();
-        crate::commands::save_proxy_client_host(&state, "172.25.144.1")
+        crate::mode::controller::save_proxy_client_host(&state, "172.25.144.1")
             .await
             .expect("retry the same save");
         let settings = fs::read_to_string(settings_path()).unwrap();
@@ -3390,7 +3399,7 @@ mod mode_tests {
                 .starts_with("http://172.25.144.1:")
         );
 
-        crate::commands::save_proxy_client_host(&state, "")
+        crate::mode::controller::save_proxy_client_host(&state, "")
             .await
             .expect("clear the client host");
         assert_eq!(crate::settings::get_proxy_client_host(), None);
@@ -6765,8 +6774,8 @@ model_provider = "c"
         };
         let chain = |ctx: &crate::proxy::handler_context::RequestContext| {
             ctx.get_providers()
-                .into_iter()
-                .map(|provider| provider.id)
+                .iter()
+                .map(|provider| provider.id.clone())
                 .collect::<Vec<_>>()
         };
 

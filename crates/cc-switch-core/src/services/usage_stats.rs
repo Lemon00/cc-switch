@@ -782,10 +782,7 @@ static MATCHING_PROXY_USAGE_LOG_SQL: LazyLock<String> = LazyLock::new(|| {
     )
 });
 
-pub fn has_matching_proxy_usage_log(
-    conn: &Connection,
-    key: &DedupKey,
-) -> Result<bool, AppError> {
+pub fn has_matching_proxy_usage_log(conn: &Connection, key: &DedupKey) -> Result<bool, AppError> {
     let allow_missing_cache_creation =
         matches!(key.app_type, "codex" | "gemini" | "opencode") && key.cache_creation_tokens == 0;
     let allow_legacy_proxy_cache_creation = key.app_type == "codex";
@@ -2413,10 +2410,7 @@ impl Database {
     }
 
     /// 仅回填指定 model_id 相关的零成本行；用于单条定价更新后的精准回填。
-    pub fn backfill_missing_usage_costs_for_model(
-        &self,
-        model_id: &str,
-    ) -> Result<u64, AppError> {
+    pub fn backfill_missing_usage_costs_for_model(&self, model_id: &str) -> Result<u64, AppError> {
         let conn = lock_conn!(self.conn);
         Self::backfill_missing_usage_costs_on_conn(&conn, Some(model_id))
     }

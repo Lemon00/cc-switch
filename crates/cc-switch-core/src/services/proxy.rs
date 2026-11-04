@@ -73,10 +73,7 @@ impl ProxyService {
         });
     }
 
-    pub async fn lock_switch_for_app(
-        &self,
-        app_type: &str,
-    ) -> tokio::sync::OwnedMutexGuard<()> {
+    pub async fn lock_switch_for_app(&self, app_type: &str) -> tokio::sync::OwnedMutexGuard<()> {
         self.switch_locks.lock_for_app(app_type).await
     }
 
@@ -96,7 +93,10 @@ impl ProxyService {
 
     /// 托盘在后台线程比对、变了才重建，这里不等它。CLI 不注入钩子则跳过。
     async fn notify_tray(&self) {
-        if let Some(refresh) = self.hooks.read().await.tray_refresh.clone() {
+        // 先把回调 clone 出来再调用：`if let` 的临时读锁在 2021 edition 里会活
+        // 到块尾，`refresh()` 若（间接）再碰 hooks 的写锁就自锁。
+        let refresh = self.hooks.read().await.tray_refresh.clone();
+        if let Some(refresh) = refresh {
             refresh();
         }
     }

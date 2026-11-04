@@ -10,8 +10,8 @@ use std::process::{Command, Output, Stdio};
 use std::time::Duration;
 
 const VALID_TOOLS: [&str; 13] = [
-    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode",
-    "kimi", "dsh", "agy", "omp",
+    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "kimi",
+    "dsh", "agy", "omp",
 ];
 
 pub fn decode_command_output(bytes: &[u8]) -> String {
@@ -108,7 +108,11 @@ pub fn local_tool_version(tool: &str) -> Option<String> {
         if !minor.chars().all(|c| c.is_ascii_digit()) || minor.is_empty() {
             return None;
         }
-        Some(token.trim_end_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.').to_string())
+        Some(
+            token
+                .trim_end_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.')
+                .to_string(),
+        )
     })
 }
 

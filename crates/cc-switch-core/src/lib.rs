@@ -11,47 +11,47 @@ pub use crate::store::AppState;
 pub mod agy_config;
 pub mod app_config;
 pub mod background;
-pub mod frontend_apps;
+pub mod claude_desktop_config;
+pub mod claude_mcp;
 pub mod codex_config;
+pub mod codex_rollout_file;
+pub mod codex_state_db;
 pub mod config;
 pub mod database;
+pub mod dsh_config;
 pub mod error;
 pub mod events;
-pub mod live;
+pub mod frontend_apps;
+pub mod gemini_config;
+pub mod gemini_mcp;
+pub mod grok_config;
+pub mod hermes_config;
+pub mod jsonc_document;
 pub mod kimi_config;
 #[cfg(feature = "session-monitor")]
 pub mod kimi_session;
-pub mod claude_desktop_config;
-pub mod pi_config;
-pub mod grok_config;
-pub mod dsh_config;
+pub mod live;
 pub mod mcode_config;
-pub mod hermes_config;
-pub mod gemini_config;
-pub mod openclaw_config;
-pub mod opencode_config;
-pub mod omp_config;
-pub mod codex_state_db;
-pub mod usage_script;
-pub mod usage_events;
 pub mod mcp;
-pub mod codex_rollout_file;
-pub mod jsonc_document;
-pub mod claude_mcp;
-pub mod gemini_mcp;
 pub mod mode;
 pub mod model_capabilities;
+pub mod omp_config;
+pub mod openclaw_config;
+pub mod opencode_config;
+pub mod pi_config;
+pub mod process_util;
 pub mod prompt;
 pub mod prompt_files;
 pub mod provider;
-pub mod process_util;
 pub mod provider_routing;
 pub mod proxy;
 pub mod services;
-pub mod settings;
 #[cfg(feature = "session-monitor")]
 pub mod session_manager;
+pub mod settings;
 pub mod store;
+pub mod usage_events;
+pub mod usage_script;
 
 /// Run an async future from a synchronous context, without Tauri.
 ///
@@ -212,10 +212,7 @@ pub fn url_for_log(url: &str) -> RedactedUrl<'_> {
 }
 
 /// 为持有确切认证材料的调用方提供优先精确匹配、再启发式兜底的 URL 脱敏。
-pub fn url_for_log_with_secrets<'a>(
-    url: &'a str,
-    known_secrets: &'a [String],
-) -> RedactedUrl<'a> {
+pub fn url_for_log_with_secrets<'a>(url: &'a str, known_secrets: &'a [String]) -> RedactedUrl<'a> {
     RedactedUrl { url, known_secrets }
 }
 

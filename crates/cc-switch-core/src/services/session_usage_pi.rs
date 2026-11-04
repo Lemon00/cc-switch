@@ -242,10 +242,7 @@ pub fn sync_pi_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     sync_flavor(db, &PI)
 }
 
-pub fn sync_flavor(
-    db: &Database,
-    flavor: &'static Flavor,
-) -> Result<SessionSyncResult, AppError> {
+pub fn sync_flavor(db: &Database, flavor: &'static Flavor) -> Result<SessionSyncResult, AppError> {
     let files = (flavor.session_files)()
         .map_err(|error| AppError::Config(format!("无法发现 {} 会话: {error}", flavor.label)))?;
     Ok(sync_pi_files(db, flavor, &files))
