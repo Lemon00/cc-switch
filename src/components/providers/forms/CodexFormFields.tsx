@@ -752,9 +752,8 @@ export function CodexFormFields({
   // 直连布局才显示默认模型框。Grok Build 没有列表，官方卡不显示列表。
   const firstRowIsDefault = canEditCatalog && category !== "official";
   const canEditReasoning = Boolean(onCodexChatReasoningChange);
-  const supportsThinking =
-    codexChatReasoning.supportsThinking === true ||
-    codexChatReasoning.supportsEffort === true;
+  // #8970: 思考模式开关只反映显式 supportsThinking，不再由 supportsEffort 派生。
+  const supportsThinking = codexChatReasoning.supportsThinking === true;
   const supportsEffort = codexChatReasoning.supportsEffort === true;
 
   // 高级区在有任何可见配置时自动展开（仅折叠→展开，不会自动折叠）：自定义 UA /
@@ -852,7 +851,9 @@ export function CodexFormFields({
       onCodexChatReasoningChange({
         ...codexChatReasoning,
         supportsThinking: checked,
-        supportsEffort: checked ? codexChatReasoning.supportsEffort : false,
+        thinkingParam: checked
+          ? (codexChatReasoning.thinkingParam ?? "thinking")
+          : "none",
       });
     },
     [codexChatReasoning, onCodexChatReasoningChange],
@@ -863,7 +864,6 @@ export function CodexFormFields({
       if (!onCodexChatReasoningChange) return;
       onCodexChatReasoningChange({
         ...codexChatReasoning,
-        supportsThinking: checked ? true : codexChatReasoning.supportsThinking,
         supportsEffort: checked,
         effortParam: checked
           ? normalizeEnabledCodexChatEffortParam(codexChatReasoning.effortParam)

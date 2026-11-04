@@ -650,7 +650,13 @@ fn zen_catalog_effort_levels(provider: &Provider, body: &JsonValue) -> Option<Ve
 fn normalize_codex_chat_reasoning_config(
     mut config: CodexChatReasoningConfig,
 ) -> CodexChatReasoningConfig {
-    if config.supports_effort.unwrap_or(false) {
+    // #8970 后端防线：thinking_param 显式为 "none" 时，不由 effort 派生 supports_thinking。
+    let thinking_param_is_none = config
+        .thinking_param
+        .as_deref()
+        .map(|p| p.trim().eq_ignore_ascii_case("none"))
+        .unwrap_or(false);
+    if config.supports_effort.unwrap_or(false) && !thinking_param_is_none {
         if config.supports_thinking.is_none() {
             config.supports_thinking = Some(true);
         }

@@ -396,7 +396,15 @@ fn apply_reasoning_options(
     };
 
     let supports_effort = config.supports_effort.unwrap_or(false);
-    let supports_thinking = config.supports_thinking.unwrap_or(false) || supports_effort;
+    // #8970: thinking_param 显式为 "none" 是明确的“不注入”声明，
+    // 优先级高于 effort 派生的 supports_thinking。
+    let thinking_param_is_none = config
+        .thinking_param
+        .as_deref()
+        .map(|p| p.trim().eq_ignore_ascii_case("none"))
+        .unwrap_or(false);
+    let supports_thinking =
+        (config.supports_thinking.unwrap_or(false) || supports_effort) && !thinking_param_is_none;
     let Some(reasoning_enabled) = reasoning_requested(body) else {
         return;
     };
@@ -3763,6 +3771,33 @@ mod tests {
             responses_to_chat_completions_with_reasoning(input_high, Some(&config)).unwrap();
         assert_eq!(result_high["reasoning"]["effort"], "high");
         assert!(result_high.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn responses_request_to_chat_issue_8970_effort_only_never_injects_thinking() {
+        // #8970 回归：AMD DeepSeek 这类“仅支持 reasoning_effort”上游，
+        // 组合必须是 supportsEffort=true + supportsThinking=false +
+        // thinkingParam="none" + effortParam="reasoning_effort"。
+        let config = CodexChatReasoningConfig {
+            supports_thinking: Some(false),
+            supports_effort: Some(true),
+            thinking_param: Some("none".to_string()),
+            effort_param: Some("reasoning_effort".to_string()),
+            effort_value_mode: Some("passthrough".to_string()),
+            output_format: Some("auto".to_string()),
+            effort_levels: None,
+        };
+        let input = json!({
+            "model": "deepseek-v4.1-flash",
+            "input": "hello",
+            "reasoning": {"effort": "medium"}
+        });
+        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        assert_eq!(result["reasoning_effort"], "medium");
+        assert!(result.get("thinking").is_none());
+        assert!(result.get("enable_thinking").is_none());
+        assert!(result.get("reasoning_split").is_none());
+        assert!(result.get("reasoning").is_none());
     }
 
     #[test]

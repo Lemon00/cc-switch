@@ -228,7 +228,9 @@ const normalizeCodexChatReasoningForSave = (
   value?: CodexChatReasoning,
 ): CodexChatReasoning | undefined => {
   const supportsEffort = value?.supportsEffort === true;
-  const supportsThinking = value?.supportsThinking === true || supportsEffort;
+  // #8970: supportsThinking 只取显式值，不再由 supportsEffort 派生，
+  // 否则“只透传 reasoning_effort、不注入 thinking”在保存时会被改回 thinking。
+  const supportsThinking = value?.supportsThinking === true;
   const hasExplicitConfig = value && Object.keys(value).length > 0;
 
   if (!supportsThinking && !supportsEffort) {
@@ -246,9 +248,12 @@ const normalizeCodexChatReasoningForSave = (
   return {
     supportsThinking,
     supportsEffort,
-    thinkingParam: supportsThinking
-      ? (value?.thinkingParam ?? "thinking")
-      : "none",
+    thinkingParam:
+      value?.thinkingParam !== undefined && value.thinkingParam !== ""
+        ? value.thinkingParam
+        : supportsThinking
+          ? "thinking"
+          : "none",
     effortParam: supportsEffort
       ? normalizeEnabledCodexChatEffortParam(value?.effortParam)
       : "none",
