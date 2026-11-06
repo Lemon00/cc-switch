@@ -24,6 +24,7 @@ pub mod codex_oauth_auth;
 pub mod codex_responses_sse;
 pub mod copilot_auth;
 pub mod copilot_model_map;
+pub mod copilot_responses;
 pub mod gemini;
 pub mod gemini_schema;
 pub mod gemini_shadow;

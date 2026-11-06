@@ -1051,6 +1051,7 @@
     "toolActionDone": "{{count}} 个工具{{action}}完成",
     "toolActionPartial": "{{succeeded}} 个{{action}}成功，{{failed}} 个失败",
     "toolActionFailed": "安装/升级命令执行失败",
+    "toolActionBinCollision": "{{path}} 已经有一个同名文件，多半来自另一种安装方式，npm 不会覆盖它。请先确认它是什么，改名备份后再重试；不要用 npm 的 --force，它会直接覆盖这个文件。",
     "toolActionInProgress": "应用操作仍在进行中",
     "toolActionInProgressDetail": "{{tool}} 已有安装、升级或卸载任务正在后台处理，请等待完成，无需重复操作。",
     "toolNotRunnable": "已安装但无法运行（未探测到版本）",
@@ -4608,6 +4609,7 @@
     "connection": {
       "unchecked": "未检查",
       "connected": "连接成功",
+      "authRequired": "服务器可连接，但要求登录授权（如 OAuth）。CC Switch 检测时不带客户端自己的登录凭据：客户端里已登录即可正常使用；如果在请求头里配置了令牌，请确认它仍然有效",
       "disconnected": "连接失败",
       "checking": "正在检查连接",
       "disabled": "未启用"
