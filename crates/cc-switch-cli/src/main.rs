@@ -72,7 +72,8 @@ fn help() -> &'static str {
      \x20 cc-switch-cli --app codex proxy show\n\
      \x20 cc-switch-cli --app codex proxy enable    # 启动后台代理（守护进程，立即返回）\n\
      \x20 cc-switch-cli --app codex proxy disable   # 停止后台代理\n\
-     \x20 cc-switch-cli --app codex proxy usage [on|off]  # 默认 off，仅对本 CLI 代理生效\n\
+     \x20 cc-switch-cli --app codex proxy usage [on|off]  # 默认 off，仅对本 CLI 代理生效
+     \x20 cc-switch-cli --app codex proxy log [on|off]    # 默认 off，关闭时不写 cli-proxy.log\n\
      \n\
      agy（Antigravity CLI，不支持 switch，见上文）:\n\
      \x20 cc-switch-cli --app agy provider list\n\
@@ -166,20 +167,27 @@ fn running_proxy_pid() -> Option<u32> {
     (pid_alive(pid) && pid_is_our_daemon(pid)).then_some(pid)
 }
 
-/// 把同一个可执行文件拉成独立于终端的后台进程；stdout/stderr 落到日志文件，
-/// 否则终端关闭后守护进程的打印会变成 SIGPIPE/EPIPE。
-fn spawn_proxy_daemon(app: &AppType, exe: &Path, log: &fs::File) -> Result<u32, String> {
-    let stdout = log
-        .try_clone()
-        .map_err(|e| format!("复制日志句柄失败: {e}"))?;
-    let stderr = log
-        .try_clone()
-        .map_err(|e| format!("复制日志句柄失败: {e}"))?;
+/// 把同一个可执行文件拉成独立于终端的后台进程。开启 proxy_log 时 stdout/stderr
+/// 落到日志文件，否则直接丢弃（默认不写 cli-proxy.log），避免终端关闭后
+/// 守护进程的打印变成 SIGPIPE/EPIPE。
+fn spawn_proxy_daemon(app: &AppType, exe: &Path, log: Option<&fs::File>) -> Result<u32, String> {
     let mut cmd = Command::new(exe);
     cmd.args(["--app", app.as_str(), "proxy", PROXY_DAEMON_CMD])
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(stdout))
-        .stderr(Stdio::from(stderr));
+        .stdin(Stdio::null());
+    match log {
+        Some(file) => {
+            let stdout = file
+                .try_clone()
+                .map_err(|e| format!("复制日志句柄失败: {e}"))?;
+            let stderr = file
+                .try_clone()
+                .map_err(|e| format!("复制日志句柄失败: {e}"))?;
+            cmd.stdout(Stdio::from(stdout)).stderr(Stdio::from(stderr));
+        }
+        None => {
+            cmd.stdout(Stdio::null()).stderr(Stdio::null());
+        }
+    }
 
     #[cfg(unix)]
     {
@@ -243,34 +251,58 @@ fn cmd_proxy_control(app: AppType, action: &str) {
         remove_proxy_pid();
 
         let log_path = proxy_log_path();
-        let log = match OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&log_path)
-        {
-            Ok(f) => f,
-            Err(e) => err(&format!("打开日志 {} 失败: {e}", log_path.display())),
+        let logging = proxy_log_enabled();
+        // 默认不写 cli-proxy.log；只有显式 `proxy log on` 才创建/截断日志文件。
+        let log = if logging {
+            match OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&log_path)
+            {
+                Ok(f) => Some(f),
+                Err(e) => err(&format!("打开日志 {} 失败: {e}", log_path.display())),
+            }
+        } else {
+            None
         };
         let exe = match env::current_exe() {
             Ok(p) => p,
             Err(e) => err(&format!("取当前可执行文件路径失败: {e}")),
         };
-        let pid = match spawn_proxy_daemon(&app, &exe, &log) {
+        let pid = match spawn_proxy_daemon(&app, &exe, log.as_ref()) {
             Ok(pid) => pid,
             Err(e) => err(&e),
         };
         write_proxy_pid(pid);
 
-        // 等代理真正 bind 成功再返回；失败时把日志尾巴打出来，别让用户只看到
-        // 「已启动」却连不上。日志里的「代理已起」由守护进程在 start() 成功后打印。
+        let stop_hint = format!("停止: cc-switch-cli --app {} proxy disable", app.as_str());
+        if !logging {
+            // 日志关闭时没有「代理已起」可读：靠守护进程存活判断就绪，
+            // 启动失败（bind 失败等）会让它立刻 err() 退出。
+            let ready_at = Instant::now() + Duration::from_secs(2);
+            while Instant::now() < ready_at {
+                if !pid_alive(pid) {
+                    remove_proxy_pid();
+                    err("后台代理启动失败（进程已退出）；运行 `proxy log on` 打开日志后重新 enable 可查看原因");
+                }
+                thread::sleep(Duration::from_millis(150));
+            }
+            println!("后台代理已启动（pid {pid}）");
+            println!("日志: 已关闭（proxy log on 可打开）");
+            println!("{stop_hint}");
+            return;
+        }
+
+        // 开启日志：等代理真正 bind 成功再返回；失败时把日志尾巴打出来。
+        // 日志里的「代理已起」由守护进程在 start() 成功后打印。
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
             if let Ok(text) = fs::read_to_string(&log_path) {
                 if text.contains("代理已起:") {
                     println!("后台代理已启动（pid {pid}）");
                     println!("日志: {}", log_path.display());
-                    println!("停止: cc-switch-cli --app {} proxy disable", app.as_str());
+                    println!("{stop_hint}");
                     return;
                 }
                 if text.contains("启动代理失败") {
@@ -335,31 +367,69 @@ fn cmd_proxy_control(app: AppType, action: &str) {
     println!("后台代理已停止（pid {pid}）");
 }
 
-/// CLI 专属用量开关：默认 false（关）。文件不存在或解析失败时都按关处理，
-/// 避免一次写坏配置就把后台代理变成“偷偷记用量”。
-fn usage_recording_enabled() -> bool {
-    let Ok(text) = fs::read_to_string(cli_config_path()) else {
-        return false;
-    };
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
-        return false;
-    };
-    v.get("usage_recording")
+/// CLI 专属开关都放在 cli.json，默认一律 false：文件不存在或解析失败时按关处理，
+/// 避免一次写坏配置就让后台代理偷偷记用量 / 写日志。
+fn read_cli_config() -> serde_json::Value {
+    fs::read_to_string(cli_config_path())
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .filter(|v| v.is_object())
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
+fn cli_config_bool(key: &str) -> bool {
+    read_cli_config()
+        .get(key)
         .and_then(|x| x.as_bool())
         .unwrap_or(false)
 }
 
-fn set_usage_recording(enabled: bool) {
-    let text = format!(
-        "{{\n  \"usage_recording\": {enabled},\n  \"note\": \"仅对 CLI 自己的代理进程生效，GUI 不受影响\"\n}}\n"
+/// 合并写入，避免 `proxy usage` / `proxy log` 互相抹掉对方的配置。
+fn set_cli_config_bool(key: &str, enabled: bool) {
+    let mut cfg = read_cli_config();
+    let obj = cfg
+        .as_object_mut()
+        .expect("read_cli_config 保证返回 object");
+    obj.insert(key.to_string(), serde_json::Value::Bool(enabled));
+    obj.insert(
+        "note".to_string(),
+        serde_json::json!("仅对 CLI 自己的代理进程生效，GUI 不受影响"),
     );
-    if let Err(e) = fs::write(cli_config_path(), text) {
+    let text = serde_json::to_string_pretty(&cfg).unwrap_or_else(|_| "{}".to_string());
+    if let Err(e) = fs::write(cli_config_path(), format!("{text}\n")) {
         err(&format!("写 {} 失败: {e}", cli_config_path().display()));
     }
+}
+
+fn usage_recording_enabled() -> bool {
+    cli_config_bool("usage_recording")
+}
+
+/// 后台代理日志开关，默认关：不创建 cli-proxy.log。
+fn proxy_log_enabled() -> bool {
+    cli_config_bool("proxy_log")
+}
+
+fn set_usage_recording(enabled: bool) {
+    set_cli_config_bool("usage_recording", enabled);
     println!(
         "用量记录: {}（仅对本 CLI 代理生效，下次 proxy enable 起效）",
         if enabled { "开" } else { "关" }
     );
+}
+
+fn set_proxy_log(enabled: bool) {
+    set_cli_config_bool("proxy_log", enabled);
+    println!(
+        "后台代理日志: {}（{}）",
+        if enabled { "开" } else { "关（默认）" },
+        if enabled {
+            format!("写入 {}", proxy_log_path().display())
+        } else {
+            "不创建 cli-proxy.log".to_string()
+        }
+    );
+    println!("下次 proxy enable 起效；已运行的代理需 proxy disable 后重新 enable");
 }
 
 fn parse_bool(s: &str) -> bool {
@@ -1010,6 +1080,14 @@ fn cmd_proxy(state: &AppState, app: AppType, args: &[String]) {
                                 "关（默认）"
                             }
                         );
+                        println!(
+                            "  后台代理日志: {}",
+                            if proxy_log_enabled() {
+                                format!("开（{}）", proxy_log_path().display())
+                            } else {
+                                "关（默认，不写 cli-proxy.log）".to_string()
+                            }
+                        );
                     }
                     Err(e) => err(&format!("读代理配置失败: {e}")),
                 },
@@ -1028,12 +1106,25 @@ fn cmd_proxy(state: &AppState, app: AppType, args: &[String]) {
                 }
             ),
         },
+        Some("log") => match args.get(1).map(|s| s.as_str()) {
+            Some("on") => set_proxy_log(true),
+            Some("off") => set_proxy_log(false),
+            _ => println!(
+                "后台代理日志: {}",
+                if proxy_log_enabled() {
+                    "开"
+                } else {
+                    "关（默认）"
+                }
+            ),
+        },
         Some(PROXY_DAEMON_CMD) => run_proxy_daemon(state, app),
-        _ => err("proxy 只支持 show / enable / disable / usage [on|off]"),
+        _ => err("proxy 只支持 show / enable / disable / usage [on|off] / log [on|off]"),
     }
 }
 
-/// 后台代理本体：只由 `proxy enable` 通过内部命令拉起，日志重定向到 cli-proxy.log。
+/// 后台代理本体：只由 `proxy enable` 通过内部命令拉起；是否写 cli-proxy.log
+/// 由 cli.json 的 proxy_log 开关决定（默认不写）。
 /// 退出（SIGTERM / Ctrl-C）时主动停代理并清掉自己的 pid 文件。
 fn run_proxy_daemon(state: &AppState, app: AppType) {
     if app != AppType::Codex {

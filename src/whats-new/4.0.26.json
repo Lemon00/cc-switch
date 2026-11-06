@@ -3,17 +3,24 @@
   "items": [
     {
       "type": "new",
-      "zh": "发布包新增命令行版本 cc-switch-cli",
-      "zh-TW": "發佈包新增命令列版本 cc-switch-cli",
-      "en": "Release packages now include the cc-switch-cli command-line build",
-      "ja": "リリースパッケージに CLI 版 cc-switch-cli を同梱"
+      "zh": "Ubuntu 压缩包内含命令行版本 cc-switch-cli",
+      "zh-TW": "Ubuntu 壓縮包內含命令列版本 cc-switch-cli",
+      "en": "The Ubuntu archive now bundles the cc-switch-cli command-line build",
+      "ja": "Ubuntu 向けアーカイブに CLI 版 cc-switch-cli を同梱"
+    },
+    {
+      "type": "improve",
+      "zh": "Linux 改为压缩包分发，不再提供 deb",
+      "zh-TW": "Linux 改為壓縮包分發，不再提供 deb",
+      "en": "Linux is shipped as a tarball instead of a .deb package",
+      "ja": "Linux 版は deb ではなくアーカイブで配布"
     },
     {
       "type": "fix",
-      "zh": "同步上游多项稳定性修复与性能优化",
-      "zh-TW": "同步上游多項穩定性修復與效能最佳化",
-      "en": "Synced upstream stability fixes and performance improvements",
-      "ja": "上流の安定性修正とパフォーマンス改善を同期"
+      "zh": "同步上游修复与优化，后台代理日志默认关闭",
+      "zh-TW": "同步上游修復與最佳化，背景代理日誌預設關閉",
+      "en": "Synced upstream fixes and disabled proxy logging by default",
+      "ja": "上流の修正を同期し、プロキシログを既定で無効化"
     }
   ]
 }
