@@ -192,6 +192,18 @@ jobs:
             pnpm tauri build --bundles deb --config "$RUNNER_TEMP/no-updater.json"
           fi
 
+      - name: Build CLI (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cargo build --release --manifest-path crates/cc-switch-cli/Cargo.toml
+
+      - name: Build CLI (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cargo build --release --manifest-path crates/cc-switch-cli/Cargo.toml
+
       - name: Prepare Windows Assets
         if: runner.os == 'Windows'
         shell: pwsh
@@ -204,6 +216,15 @@ jobs:
           $assetSuffix = ''
           # 配置了签名密钥才要求 .sig，否则发无签名版
           $requireSig = $env:HAS_SIGNING_KEY -eq 'true'
+
+          # CLI 二进制不参与 updater，不打 .sig
+          $cli = 'crates/cc-switch-cli/target/release/cc-switch-cli.exe'
+          if (-not (Test-Path $cli)) {
+            throw "CLI binary not found: $cli"
+          }
+          $cliDest = "CC-Switch-CLI-$VERSION-Windows-x86_64.exe"
+          Copy-Item $cli (Join-Path release-assets $cliDest)
+          Write-Host "CLI copied: $cliDest"
 
           # 仅打包 MSI 安装器 + .sig（用于 Updater）
           $msi = Get-ChildItem -Path (Join-Path $targetRoot 'bundle/msi') -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -284,6 +305,17 @@ jobs:
           NEW_DEB="CC-Switch-${VERSION}-Linux-${ARCH}.deb"
           cp "$DEB" "release-assets/$NEW_DEB"
           echo "Deb package copied: $NEW_DEB"
+
+          # CLI 二进制不参与 updater，不打 .sig
+          CLI="crates/cc-switch-cli/target/release/cc-switch-cli"
+          if [ ! -f "$CLI" ]; then
+            echo "❌ CLI binary not found: $CLI" >&2
+            exit 1
+          fi
+          CLI_DEST="CC-Switch-CLI-${VERSION}-Linux-${ARCH}"
+          cp "$CLI" "release-assets/$CLI_DEST"
+          chmod +x "release-assets/$CLI_DEST"
+          echo "CLI copied: $CLI_DEST"
           if [ -f "$DEB.sig" ]; then
             cp "$DEB.sig" "release-assets/$NEW_DEB.sig"
             echo "Deb signature copied: $NEW_DEB.sig"
@@ -416,8 +448,9 @@ jobs:
 
             - **Windows (x86_64)**: `CC-Switch-${{ github.ref_name }}-Windows.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-Portable.zip`（绿色版）
             - **Linux (x86_64)**: `CC-Switch-${{ github.ref_name }}-Linux-x86_64.deb`
+            - **CLI**: `CC-Switch-CLI-${{ github.ref_name }}-Windows-x86_64.exe` / `CC-Switch-CLI-${{ github.ref_name }}-Linux-x86_64`
 
-            > `.sig` 为 Tauri updater 自动更新签名，无需手动下载。
+            > `.sig` 为 Tauri updater 自动更新签名，无需手动下载。CLI 不参与应用内更新。
           files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -43,8 +43,13 @@ use cc_switch_core::proxy::providers::xai_oauth_auth::XaiOAuthManager;
 use cc_switch_core::{config, frontend_apps, AppState, AppType, Database, ProviderService};
 use tokio::sync::RwLock;
 
-const VERSION: &str =
-    "cc-switch-cli 0.1.0 (A方案, 基于官方 cc-switch v4.0.25, 白名单默认 codex/agy)";
+const VERSION: &str = concat!(
+    "cc-switch-cli ",
+    env!("CARGO_PKG_VERSION"),
+    " (A方案, 基于官方 cc-switch v",
+    env!("CARGO_PKG_VERSION"),
+    ", 白名单默认 codex/agy)"
+);
 
 /// `proxy enable` 拉起的后台进程用的内部命令。不出现在 help 里，也不做参数校验包装：
 /// 它始终由本 CLI 自己用同一个可执行文件 + 同一个 `--app` 拉起。
@@ -77,7 +82,7 @@ fn help() -> &'static str {
      \x20 cc-switch-cli --app agy launch <id> --exec -- --model foo  # 透传额外 agy 参数\n\
      \n\
      通用:\n\
-     \x20 cc-switch-cli version\n\
+     \x20 cc-switch-cli version / --version / -V\n\
      \x20 cc-switch-cli config path\n"
 }
 
@@ -574,7 +579,7 @@ fn main() {
         print!("{help}", help = help());
         return;
     }
-    if args[0] == "version" {
+    if matches!(args[0].as_str(), "version" | "--version" | "-V") {
         println!("{VERSION}");
         return;
     }

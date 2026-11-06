@@ -1,0 +1,19 @@
+{
+  "version": "4.0.26",
+  "items": [
+    {
+      "type": "new",
+      "zh": "发布包新增命令行版本 cc-switch-cli",
+      "zh-TW": "發佈包新增命令列版本 cc-switch-cli",
+      "en": "Release packages now include the cc-switch-cli command-line build",
+      "ja": "リリースパッケージに CLI 版 cc-switch-cli を同梱"
+    },
+    {
+      "type": "fix",
+      "zh": "同步上游多项稳定性修复与性能优化",
+      "zh-TW": "同步上游多項穩定性修復與效能最佳化",
+      "en": "Synced upstream stability fixes and performance improvements",
+      "ja": "上流の安定性修正とパフォーマンス改善を同期"
+    }
+  ]
+}
