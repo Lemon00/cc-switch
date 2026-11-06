@@ -170,12 +170,27 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           # 只打 MSI 安装器（和便携版 exe），不打用不上的 NSIS 安装包
-          pnpm tauri build --bundles msi
+          if ($env:HAS_SIGNING_KEY -eq 'true') {
+            pnpm tauri build --bundles msi
+          } else {
+            # fork 没配 updater 私钥：关掉 updater 产物，否则 Tauri CLI 见到 pubkey
+            # 就强制要 TAURI_SIGNING_PRIVATE_KEY，构建阶段直接失败，走不到后面
+            # "发无签名版"的降级逻辑。
+            $config = Join-Path $env:RUNNER_TEMP 'no-updater.json'
+            '{"bundle":{"createUpdaterArtifacts":false}}' | Set-Content -Encoding utf8 $config
+            pnpm tauri build --bundles msi --config "$config"
+          }
 
       - name: Build Tauri App (Linux)
         if: runner.os == 'Linux'
         run: |
-          pnpm tauri build --bundles deb
+          if [ "${HAS_SIGNING_KEY:-false}" = 'true' ]; then
+            pnpm tauri build --bundles deb
+          else
+            # 同上：无私钥时不生成 updater 产物（无 .sig / 无 latest.json）
+            printf '%s' '{"bundle":{"createUpdaterArtifacts":false}}' > "$RUNNER_TEMP/no-updater.json"
+            pnpm tauri build --bundles deb --config "$RUNNER_TEMP/no-updater.json"
+          fi
 
       - name: Prepare Windows Assets
         if: runner.os == 'Windows'
