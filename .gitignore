@@ -34,3 +34,6 @@ target/
 
 # core 只作为路径依赖被 GUI / CLI 使用；单独 cargo check 生成的 lock 不提交
 /crates/cc-switch-core/Cargo.lock
+
+# Tauri updater 私钥只放 ~/.tauri/ 或 GitHub Secrets，绝不入库
+*.key

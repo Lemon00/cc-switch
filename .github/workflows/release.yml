@@ -2,8 +2,8 @@ name: Release
 
 on:
   # 推 tag 直接发布：检查 →（签名）→ 打包 → 创建/更新 GitHub Release
-  # 产物：Windows MSI + 便携版 zip；Linux 绿色压缩包（仅含 GUI）+ 独立 CLI 文件。
-  # 不产 .deb；只有 Windows 安装包在配置了签名密钥时额外带 .sig 和 latest.json。
+  # 产物：Windows MSI + 便携版 zip；Linux .deb + 绿色压缩包（仅含 GUI）+ 独立 CLI 文件。
+  # 配置签名密钥时 Windows MSI / Linux deb 额外带 .sig 和 latest.json（应用内更新）。
   push:
     tags:
       - 'v*'
@@ -184,9 +184,15 @@ jobs:
       - name: Build Tauri App (Linux)
         if: runner.os == 'Linux'
         run: |
-          # Linux 只出绿色压缩包：不构建 .deb，也不生成 updater 产物（无签名需求）。
-          printf '%s' '{"bundle":{"createUpdaterArtifacts":false}}' > "$RUNNER_TEMP/no-updater.json"
-          pnpm tauri build --no-bundle --config "$RUNNER_TEMP/no-updater.json"
+          if [ "$HAS_SIGNING_KEY" = 'true' ]; then
+            # 有私钥：deb 及其 .sig 一起产出，供 Linux 应用内更新使用。
+            pnpm tauri build --bundles deb
+          else
+            # 没配私钥时仍要发 deb，但关掉 updater 产物：否则 Tauri CLI 见到
+            # pubkey 就强制要 TAURI_SIGNING_PRIVATE_KEY，构建阶段直接失败。
+            printf '%s' '{"bundle":{"createUpdaterArtifacts":false}}' > "$RUNNER_TEMP/no-updater.json"
+            pnpm tauri build --bundles deb --config "$RUNNER_TEMP/no-updater.json"
+          fi
 
       - name: Build CLI (Linux)
         if: runner.os == 'Linux'
@@ -278,7 +284,7 @@ jobs:
           ARCH="x86_64"
           NAME="CC-Switch-${VERSION}-Ubuntu-${ARCH}"
 
-          # --no-bundle 只出可执行文件；压缩包里只放 GUI，CLI 作为独立文件单独发布。
+          # 压缩包里只放 GUI，CLI 作为独立文件单独发布。
           GUI=$(find src-tauri/target/release -maxdepth 1 -type f -name cc-switch -perm -u+x | head -1 || true)
           if [ -z "$GUI" ]; then
             echo "❌ GUI binary not found under src-tauri/target/release" >&2
@@ -288,6 +294,25 @@ jobs:
           if [ ! -f "$CLI" ]; then
             echo "❌ CLI binary not found: $CLI" >&2
             exit 1
+          fi
+
+          # .deb 安装版参与应用内更新：签名产物随包一起上传。
+          DEB=$(find src-tauri/target/release/bundle -name "*.deb" | head -1 || true)
+          if [ -z "$DEB" ]; then
+            echo "❌ No .deb found under target/release/bundle" >&2
+            exit 1
+          fi
+          NEW_DEB="CC-Switch-${VERSION}-Linux-${ARCH}.deb"
+          cp "$DEB" "release-assets/$NEW_DEB"
+          echo "Deb package copied: $NEW_DEB"
+          if [ -f "$DEB.sig" ]; then
+            cp "$DEB.sig" "release-assets/$NEW_DEB.sig"
+            echo "Deb signature copied: $NEW_DEB.sig"
+          elif [ "${HAS_SIGNING_KEY:-false}" = "true" ]; then
+            echo "❌ Updater signature not found: $DEB.sig" >&2
+            exit 1
+          else
+            echo "WARNING: no updater signature (signing key not configured); publishing without .sig"
           fi
 
           STAGE_ROOT="$(mktemp -d)"
@@ -305,7 +330,7 @@ jobs:
             echo ""
             echo "Run ./cc-switch directly."
             echo "The CLI (cc-switch-cli) is a separate download on the release page."
-            echo "No .deb and no in-app updates: download new releases manually."
+            echo "Install the .deb package for in-app updates; this portable archive needs manual downloads."
           } > "$STAGE/README.txt"
           tar -czf "release-assets/${NAME}.tar.gz" -C "$STAGE_ROOT" "$NAME"
           rm -rf "$STAGE_ROOT"
@@ -353,9 +378,8 @@ jobs:
           set -euo pipefail
           ls -la release-assets
 
-      # Linux 改发压缩包、不参与应用内更新；只有 Windows MSI 带 .sig 时生成
-      # latest.json（仅 windows-x86_64）。没有签名密钥时产物里没有 .sig——
-      # 跳过 latest.json，安装包照常发布。
+      # 签名就在刚下载的产物里：latest.json 随安装包一起上传。没有配置签名密钥
+      # 时产物里没有 .sig——跳过 latest.json（应用内更新不可用），安装包照常发布。
       - name: Generate latest.json
         env:
           # 本 fork 的 updater 端点固定指向 Lemon00/cc-switch（见
@@ -373,6 +397,7 @@ jobs:
           PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           base_url="https://github.com/$REPO/releases/download/$TAG"
           win_x64_url=""; win_x64_sig=""
+          linux_x64_deb_url=""; linux_x64_deb_sig=""
           shopt -s nullglob
           for sig in release-assets/*.sig; do
             base=${sig%.sig}
@@ -382,10 +407,16 @@ jobs:
             case "$fname" in
               *-Windows.msi)
                 win_x64_url="$url"; win_x64_sig="$sig_content";;
+              *-Linux-x86_64.deb)
+                linux_x64_deb_url="$url"; linux_x64_deb_sig="$sig_content";;
             esac
           done
-          if [ -z "$win_x64_sig" ]; then
-            echo "❌ Missing updater signature for windows-x86_64" >&2
+          # 缺任一平台都不能发：缺的那批用户会静默收不到更新
+          missing=""
+          [ -n "$win_x64_sig" ] || missing="$missing windows-x86_64"
+          [ -n "$linux_x64_deb_sig" ] || missing="$missing linux-x86_64-deb"
+          if [ -n "$missing" ]; then
+            echo "❌ Missing updater signatures for:$missing" >&2
             exit 1
           fi
           # 构造 JSON
@@ -396,7 +427,9 @@ jobs:
             echo "  \"notes\": \"Release $TAG\",";
             echo "  \"pub_date\": \"$PUB_DATE\",";
             echo '  "platforms": {'
-            echo "    \"windows-x86_64\": {\"signature\": \"$win_x64_sig\", \"url\": \"$win_x64_url\"}"
+            # 两个平台的 sig/url 已在上面校验齐备，不会留下尾随逗号。
+            echo "    \"windows-x86_64\": {\"signature\": \"$win_x64_sig\", \"url\": \"$win_x64_url\"},"
+            echo "    \"linux-x86_64-deb\": {\"signature\": \"$linux_x64_deb_sig\", \"url\": \"$linux_x64_deb_url\"}"
             echo '  }'
             echo '}'
           } > "$tmp_json"
@@ -419,10 +452,10 @@ jobs:
             ### 下载
 
             - **Windows (x86_64)**: `CC-Switch-${{ github.ref_name }}-Windows.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-Portable.zip`（绿色版）
-            - **Ubuntu / Linux (x86_64)**: `CC-Switch-${{ github.ref_name }}-Ubuntu-x86_64.tar.gz`（绿色压缩包，**仅含 GUI** `cc-switch`；需系统已装 WebKitGTK 4.1 等运行库）
+            - **Ubuntu / Linux (x86_64)**: `CC-Switch-${{ github.ref_name }}-Linux-x86_64.deb`（安装版，支持应用内更新）或 `CC-Switch-${{ github.ref_name }}-Ubuntu-x86_64.tar.gz`（绿色压缩包，**仅含 GUI** `cc-switch`；需系统已装 WebKitGTK 4.1 等运行库）
             - **Linux CLI (x86_64)**: `cc-switch-cli`（独立可执行文件，单独下载；`chmod +x cc-switch-cli` 后 `./cc-switch-cli --help`）
 
-            > Linux 不提供 .deb，也不参与应用内自动更新；`.sig` / `latest.json` 仅用于 Windows 安装版的更新签名。
+            > 安装 `.deb` 的版本支持应用内自动更新；绿色压缩包仍需手动下载新版。`.sig` / `latest.json` 用于 Windows MSI 与 Linux deb 的更新签名。
           files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
