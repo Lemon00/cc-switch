@@ -2491,43 +2491,6 @@ pub fn codex_single_model_catalog(
     codex_catalog_from_specs_for_row(&[spec], config_text, profile)
 }
 
-/// CLI 专属开关：直连切换时，卡上没配 `modelCatalog` 就按 config.toml 顶层的
-/// `model` 生成单模型目录（`cc-switch-model-catalog.json`）。
-///
-/// 默认 `false`：GUI / mode 切换有一整套「目录指针什么时候该撤掉」的语义
-/// （见 `mode::controller` 的单测），不能因为自动补目录而被破坏。只有 CLI
-/// 进程在启动后显式打开。和 `set_cli_usage_recording` 一样，唯一的写入口。
-static CLI_MODEL_CATALOG_FALLBACK: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-pub fn set_cli_model_catalog_fallback(enabled: bool) {
-    CLI_MODEL_CATALOG_FALLBACK.store(enabled, std::sync::atomic::Ordering::Relaxed);
-}
-
-pub fn cli_model_catalog_fallback_enabled() -> bool {
-    CLI_MODEL_CATALOG_FALLBACK.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-/// 直连切换写 live 时的兜底：卡上没配 `modelCatalog` 时，用 config.toml 顶层的
-/// `model` 生成单模型目录，保证 `cc-switch-model-catalog.json` 落盘、客户端能
-/// 读到这一家的模型。
-///
-/// `plan_codex_model_catalog` 「没配目录就是 None」的语义保持不变（web search
-/// 策略等依赖它），兜底只在 CLI 打开开关后的写盘路径上生效。
-pub fn codex_fallback_single_model_catalog(
-    config_text: &str,
-    profile: CodexCatalogToolProfile,
-) -> Result<Option<Value>, AppError> {
-    let Some(model) = codex_top_level_model(config_text) else {
-        return Ok(None);
-    };
-    Ok(Some(codex_single_model_catalog(
-        &model,
-        config_text,
-        profile,
-    )?))
-}
-
 /// 一家第三方供应商发布的模型：行里的模型目录；没有配置目录时只有行的 `model`。
 fn codex_published_specs(settings: &Value, config_text: &str) -> Vec<CodexCatalogModelSpec> {
     let specs = codex_catalog_model_specs(settings);

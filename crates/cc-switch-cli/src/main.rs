@@ -642,9 +642,6 @@ fn main() {
     // 最先做：白名单、cli.json、数据库都按配置目录定位，而 GUI 里设的自定义
     // 目录只写在 Tauri Store 里。这里不先应用，CLI 就会和 GUI 各开一份数据库。
     let _ = config::apply_startup_app_config_dir_override();
-    // CLI 直连切换额外要求：卡上没配 modelCatalog 时也把模型目录写出去。
-    // GUI 不设这个开关，目录指针的生命周期语义保持原样。
-    cc_switch_core::codex_config::set_cli_model_catalog_fallback(true);
 
     let raw: Vec<String> = env::args().skip(1).collect();
     let (app, args) = parse_app(&raw);

@@ -725,11 +725,9 @@ pub fn plan(
                 plan_codex_model_catalog(&provider.settings_config, &config_text, profile)?;
             match planned.catalog {
                 Some(catalog) => Some(catalog),
-                // 只有 CLI 显式打开开关时才补单模型目录。GUI / mode 切换下保持
-                // 「没配目录就是 None」，目录指针该撤掉的语义不能被覆盖。
-                None if crate::codex_config::cli_model_catalog_fallback_enabled() => {
-                    crate::codex_config::codex_fallback_single_model_catalog(&config_text, profile)?
-                }
+                // 卡上没配 modelCatalog 就不写模型目录：与 GUI 完全一致。
+                // 不能拿 config.toml 顶层的 model 造单模型目录顶上去，那会把
+                // 客户端的模型菜单替换成只有一个模型的假列表。
                 None => None,
             }
         }
