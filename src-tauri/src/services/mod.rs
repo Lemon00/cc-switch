@@ -11,10 +11,8 @@ pub mod dsh_account;
 pub mod env_checker;
 pub mod env_manager;
 pub mod mcp_connectivity;
-pub mod pi_prompt_files;
 pub(crate) mod pi_state;
 pub mod profile;
-pub mod prompt;
 pub mod speedtest;
 pub mod stream_check;
 
@@ -28,6 +26,9 @@ pub use cc_switch_core::services::mcp;
 pub use cc_switch_core::services::model_fetch;
 pub use cc_switch_core::services::model_pricing;
 pub use cc_switch_core::services::omo;
+pub use cc_switch_core::services::pi_prompt_files;
+pub use cc_switch_core::services::prompt;
+pub use cc_switch_core::services::prompt::PromptService;
 pub use cc_switch_core::services::provider;
 pub use cc_switch_core::services::proxy;
 pub use cc_switch_core::services::s3;
@@ -72,7 +73,6 @@ pub use cc_switch_core::services::webdav_sync;
 pub use config::ConfigService;
 pub use mcp::McpService;
 pub use omo::OmoService;
-pub use prompt::PromptService;
 pub use provider::{ProviderService, ProviderSortUpdate, SwitchResult};
 pub use proxy::ProxyService;
 #[allow(unused_imports)]

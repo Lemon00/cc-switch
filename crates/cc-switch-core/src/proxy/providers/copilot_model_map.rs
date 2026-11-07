@@ -955,7 +955,7 @@ mod tests {
             formats: Vec<CodexCopilotApiFormat>,
         }
         let cases: Vec<Case> = serde_json::from_str(include_str!(
-            "../../../../tests/fixtures/copilot-endpoint-cases.json"
+            "../../../../../tests/fixtures/copilot-endpoint-cases.json"
         ))
         .unwrap();
         for case in cases {

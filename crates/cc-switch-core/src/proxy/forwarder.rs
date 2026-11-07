@@ -6503,8 +6503,11 @@ mod tests {
                 Ok(_) => panic!("expected local validation failure: {body}"),
             };
             if body["model"] == "gpt-5.5" {
+                // core 拆出 GUI 后不再有 tauri AppHandle：缺 OAuth hook 时真实文案是
+                // 「前端 OAuth 不可用」。仍然必须是可故障转移的 ConfigError，且带上
+                // 客户端传的模型名，不能退化成泛化的“认证失败”。
                 assert!(matches!(&error, ProxyError::ConfigError(message)
-                    if message.contains("AppHandle") && message.contains("gpt-5.5")));
+                    if message.contains("gpt-5.5") && message.contains("前端 OAuth 不可用")));
                 assert_eq!(
                     forwarder.categorize_proxy_error(&error, &copilot),
                     ErrorCategory::Retryable

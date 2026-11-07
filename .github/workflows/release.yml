@@ -2,8 +2,8 @@ name: Release
 
 on:
   # 推 tag 直接发布：检查 →（签名）→ 打包 → 创建/更新 GitHub Release
-  # 产物不变：Windows MSI + 便携版 zip、Linux deb；配置了签名密钥时
-  # 额外带 .sig 和 latest.json（应用内更新用）
+  # 产物：Windows MSI + 便携版 zip；Linux 绿色压缩包（仅含 GUI）+ 独立 CLI 文件。
+  # 不产 .deb；只有 Windows 安装包在配置了签名密钥时额外带 .sig 和 latest.json。
   push:
     tags:
       - 'v*'
@@ -278,7 +278,7 @@ jobs:
           ARCH="x86_64"
           NAME="CC-Switch-${VERSION}-Ubuntu-${ARCH}"
 
-          # --no-bundle 只出可执行文件；GUI 与 CLI 一起打进绿色压缩包，不再产 .deb。
+          # --no-bundle 只出可执行文件；压缩包里只放 GUI，CLI 作为独立文件单独发布。
           GUI=$(find src-tauri/target/release -maxdepth 1 -type f -name cc-switch -perm -u+x | head -1 || true)
           if [ -z "$GUI" ]; then
             echo "❌ GUI binary not found under src-tauri/target/release" >&2
@@ -294,21 +294,23 @@ jobs:
           STAGE="$STAGE_ROOT/$NAME"
           mkdir -p "$STAGE"
           cp "$GUI" "$STAGE/cc-switch"
-          cp "$CLI" "$STAGE/cc-switch-cli"
-          chmod +x "$STAGE/cc-switch" "$STAGE/cc-switch-cli"
+          chmod +x "$STAGE/cc-switch"
+          # CLI 不进压缩包：直接作为独立的 release asset 上传。
+          cp "$CLI" "release-assets/cc-switch-cli"
+          chmod +x "release-assets/cc-switch-cli"
           {
             echo "CC Switch - Ubuntu / Linux x86_64 portable archive"
             echo ""
-            echo "- cc-switch      GUI (Tauri; needs WebKitGTK 4.1 and libayatana-appindicator3)"
-            echo "- cc-switch-cli  CLI (cc-switch-cli --help for usage)"
+            echo "- cc-switch  GUI (Tauri; needs WebKitGTK 4.1 and libayatana-appindicator3)"
             echo ""
-            echo "Run ./cc-switch directly; ./cc-switch-cli config path shows the config dir."
+            echo "Run ./cc-switch directly."
+            echo "The CLI (cc-switch-cli) is a separate download on the release page."
             echo "No .deb and no in-app updates: download new releases manually."
-            echo "Proxy logging is off by default; enable with: cc-switch-cli --app codex proxy log on"
           } > "$STAGE/README.txt"
           tar -czf "release-assets/${NAME}.tar.gz" -C "$STAGE_ROOT" "$NAME"
           rm -rf "$STAGE_ROOT"
-          echo "Archive created: ${NAME}.tar.gz"
+          echo "Archive created: ${NAME}.tar.gz (GUI only)"
+          echo "CLI asset created: cc-switch-cli (standalone)"
 
       - name: List prepared assets
         shell: bash
@@ -356,7 +358,10 @@ jobs:
       # 跳过 latest.json，安装包照常发布。
       - name: Generate latest.json
         env:
-          REPO: ${{ github.repository }}
+          # 本 fork 的 updater 端点固定指向 Lemon00/cc-switch（见
+          # tauri.conf.json），清单里的下载地址必须和它是同一个仓库；
+          # 不能用 github.repository，否则从别的 fork 触发会写出对不上的 URL。
+          REPO: Lemon00/cc-switch
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
@@ -414,9 +419,10 @@ jobs:
             ### 下载
 
             - **Windows (x86_64)**: `CC-Switch-${{ github.ref_name }}-Windows.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-Portable.zip`（绿色版）
-            - **Ubuntu / Linux (x86_64)**: `CC-Switch-${{ github.ref_name }}-Ubuntu-x86_64.tar.gz`（绿色压缩包，内含 GUI 与 CLI；需系统已装 WebKitGTK 4.1 等运行库）
+            - **Ubuntu / Linux (x86_64)**: `CC-Switch-${{ github.ref_name }}-Ubuntu-x86_64.tar.gz`（绿色压缩包，**仅含 GUI** `cc-switch`；需系统已装 WebKitGTK 4.1 等运行库）
+            - **Linux CLI (x86_64)**: `cc-switch-cli`（独立可执行文件，单独下载；`chmod +x cc-switch-cli` 后 `./cc-switch-cli --help`）
 
-            > 压缩包不提供 .deb，也不参与应用内自动更新；`.sig` 仅用于 Windows 安装版的更新签名。
+            > Linux 不提供 .deb，也不参与应用内自动更新；`.sig` / `latest.json` 仅用于 Windows 安装版的更新签名。
           files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

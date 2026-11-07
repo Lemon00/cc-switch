@@ -474,8 +474,8 @@ impl ProxyServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::AppError;
     use crate::provider::{Provider, ProviderMeta};
-    use crate::AppError;
     use axum::http::{header, HeaderMap, StatusCode};
     use serde_json::{json, Value};
     use tokio::sync::Mutex;
@@ -519,7 +519,7 @@ mod tests {
                 ..ProxyConfig::default()
             },
             db,
-            None,
+            crate::events::FrontendHooks::default(),
         );
         let proxy_info = proxy.start().await.expect("start test proxy");
         let client = reqwest::Client::new();
@@ -553,7 +553,7 @@ mod tests {
                 ..ProxyConfig::default()
             },
             db,
-            None,
+            crate::events::FrontendHooks::default(),
         );
         let info = proxy.start().await.expect("start test proxy");
         let base = format!("http://127.0.0.1:{}", info.port);
@@ -615,7 +615,7 @@ mod tests {
                 ..ProxyConfig::default()
             },
             db.clone(),
-            None,
+            crate::events::FrontendHooks::default(),
         );
         let info = proxy.start().await.expect("start proxy");
         let client = reqwest::Client::builder()
@@ -738,7 +738,7 @@ mod tests {
                 ..ProxyConfig::default()
             },
             db.clone(),
-            None,
+            crate::events::FrontendHooks::default(),
         );
         let proxy_info = proxy.start().await.expect("start test proxy");
         let client = reqwest::Client::new();
@@ -914,7 +914,7 @@ mod tests {
                 ..ProxyConfig::default()
             },
             db.clone(),
-            None,
+            crate::events::FrontendHooks::default(),
         );
         let proxy_info = proxy.start().await.expect("start test proxy");
         let client = reqwest::Client::new();
@@ -1124,7 +1124,7 @@ mod tests {
                 ..ProxyConfig::default()
             },
             db.clone(),
-            None,
+            crate::events::FrontendHooks::default(),
         );
         let proxy_info = proxy.start().await.expect("start test proxy");
         let client = reqwest::Client::new();
@@ -1349,7 +1349,7 @@ mod tests {
                 ..ProxyConfig::default()
             },
             db.clone(),
-            None,
+            crate::events::FrontendHooks::default(),
         );
         let proxy_info = proxy.start().await.expect("start test proxy");
         let client = reqwest::Client::new();

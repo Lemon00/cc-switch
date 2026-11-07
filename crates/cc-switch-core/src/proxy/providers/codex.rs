@@ -671,8 +671,12 @@ fn normalize_codex_chat_reasoning_config(
         .as_deref()
         .map(|p| p.trim().eq_ignore_ascii_case("none"))
         .unwrap_or(false);
-    if config.supports_effort.unwrap_or(false) && !thinking_param_is_none {
-        if config.supports_thinking.is_none() {
+    if config.supports_effort.unwrap_or(false) {
+        // #8970 只约束「不由 effort 派生 supports_thinking」；effort_param 的
+        // 修复是独立的：显式写了 "none" 表示不支持，但 supports_effort 已开启，
+        // 两者矛盾，后端要把它修成可用的真实参数名，否则转换层会拿 "none"
+        // 当字段名发到上游。
+        if !thinking_param_is_none && config.supports_thinking.is_none() {
             config.supports_thinking = Some(true);
         }
         if config.effort_param.as_deref().is_none_or(|value| {

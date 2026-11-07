@@ -49,6 +49,7 @@ pub mod services;
 #[cfg(feature = "session-monitor")]
 pub mod session_manager;
 pub mod settings;
+pub mod startup;
 pub mod store;
 pub mod usage_events;
 pub mod usage_script;
@@ -219,3 +220,5 @@ pub fn url_for_log_with_secrets<'a>(url: &'a str, known_secrets: &'a [String]) -
 pub fn redact_known_secrets_strict(text: &str, known_secrets: &[String]) -> String {
     redact_known_secrets_with_min_length(text, known_secrets, 1)
 }
+
+pub use startup::initialize_common_config_snippets;

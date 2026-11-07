@@ -111,3 +111,8 @@ windows-sys = { version = "0.61", features = [
     "Win32_Storage_FileSystem",
     "Win32_System_Threading",
 ] }
+
+[dev-dependencies]
+# core 从 src-tauri 拆出后，#[cfg(test)] 里的 #[serial_test::serial] 原本靠
+# GUI crate 的 dev-dependency 提供；core 自己跑 cargo test 时必须自己声明。
+serial_test = "3"

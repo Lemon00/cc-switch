@@ -45,7 +45,10 @@ pub fn init(sink: Arc<dyn EventSink>) {
 /// 调用方**不**需要持有 AppHandle，可以从任意线程/任意写入路径调用。
 /// 内部 200ms 防抖合并，绝不阻塞调用线程。
 pub fn notify_log_recorded() {
-    #[cfg(test)]
+    // 与下面的 TEST_NOTIFY_COUNT / take_test_notify_count 保持同一门控：
+    // 只写 `#[cfg(test)]` 的话，core 作为依赖编进 GUI 测试时（dev-dependency
+    // 开 test-support）读取端可见但递增端被裁掉，计数永远为 0。
+    #[cfg(any(test, feature = "test-support"))]
     TEST_NOTIFY_COUNT.with(|count| count.set(count.get().saturating_add(1)));
 
     // 接收端未注入（典型出现在单元测试或 setup 之前）：直接放弃。

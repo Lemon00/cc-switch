@@ -491,11 +491,11 @@ mod tests {
     #[test]
     fn message_sizes_match_serialized_wire_fixtures() {
         for fixture in [
-            include_str!("../../../tests/fixtures/sessions/claude.messages.json"),
-            include_str!("../../../tests/fixtures/sessions/codex.messages.json"),
-            include_str!("../../../tests/fixtures/sessions/gemini.messages.json"),
-            include_str!("../../../tests/fixtures/sessions/pi.messages.json"),
-            include_str!("../../../tests/fixtures/sessions/opencode.messages.json"),
+            include_str!("../../../../tests/fixtures/sessions/claude.messages.json"),
+            include_str!("../../../../tests/fixtures/sessions/codex.messages.json"),
+            include_str!("../../../../tests/fixtures/sessions/gemini.messages.json"),
+            include_str!("../../../../tests/fixtures/sessions/pi.messages.json"),
+            include_str!("../../../../tests/fixtures/sessions/opencode.messages.json"),
         ] {
             let messages: Vec<SessionMessage> = serde_json::from_str(fixture).unwrap();
             let expected: Vec<_> = messages

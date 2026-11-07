@@ -7,6 +7,8 @@ pub mod kimi_oauth;
 pub mod mcp;
 pub mod model_pricing;
 pub mod omo;
+pub mod pi_prompt_files;
+pub mod prompt;
 pub mod provider;
 pub mod proxy;
 pub mod s3_auto_sync;
@@ -25,6 +27,7 @@ pub mod webdav_auto_sync;
 
 pub use mcp::McpService;
 pub use omo::OmoService;
+pub use prompt::PromptService;
 pub use provider::{ProviderService, ProviderSortUpdate, SwitchResult};
 pub use proxy::ProxyService;
 pub use skill::{DiscoverableSkill, Skill, SkillRepo, SkillService};

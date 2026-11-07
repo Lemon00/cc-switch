@@ -295,9 +295,10 @@ mod tests {
     /// 前端预设扫描用的镜像必须和这里的定义一字不差。
     #[test]
     fn frontend_mirror_matches_the_claude_definitions() {
-        let mirror: serde_json::Value =
-            serde_json::from_str(include_str!("../../../tests/config/claudeKeyFields.json"))
-                .expect("mirror is valid JSON");
+        let mirror: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../tests/config/claudeKeyFields.json"
+        ))
+        .expect("mirror is valid JSON");
         let list = |key: &str| -> Vec<String> {
             mirror[key]
                 .as_array()

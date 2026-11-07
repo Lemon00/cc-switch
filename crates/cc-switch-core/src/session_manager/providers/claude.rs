@@ -2751,7 +2751,7 @@ mod transcript_tests {
     #[test]
     fn output_shape_matches_shared_fixture() {
         let fixture: Value = serde_json::from_str(include_str!(
-            "../../../../tests/fixtures/sessions/claude.messages.json"
+            "../../../../../tests/fixtures/sessions/claude.messages.json"
         ))
         .unwrap();
 

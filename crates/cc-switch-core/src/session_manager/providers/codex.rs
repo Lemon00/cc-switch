@@ -3618,9 +3618,9 @@ mod tests {
 
         let mut known: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
         for raw in [
-            include_str!("../../../../tests/fixtures/sessions/codex.messages.json"),
-            include_str!("../../../../tests/fixtures/sessions/claude.messages.json"),
-            include_str!("../../../../tests/fixtures/sessions/opencode.messages.json"),
+            include_str!("../../../../../tests/fixtures/sessions/codex.messages.json"),
+            include_str!("../../../../../tests/fixtures/sessions/claude.messages.json"),
+            include_str!("../../../../../tests/fixtures/sessions/opencode.messages.json"),
         ] {
             let fixture: Value = serde_json::from_str(raw).unwrap();
             for block in fixture

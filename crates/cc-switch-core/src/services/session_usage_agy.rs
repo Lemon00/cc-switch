@@ -548,7 +548,7 @@ mod tests {
     #[test]
     fn agy_native_fixture_preserves_fresh_input_and_combined_thinking_output() {
         let db = Database::memory().unwrap();
-        let rows = include_str!("../../../tests/fixtures/sessions/agy.jsonl")
+        let rows = include_str!("../../../../tests/fixtures/sessions/agy.jsonl")
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect::<Vec<Value>>();

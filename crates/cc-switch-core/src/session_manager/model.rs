@@ -609,27 +609,27 @@ mod tests {
         let fixtures = [
             (
                 "claude",
-                include_str!("../../../tests/fixtures/sessions/claude.messages.json"),
+                include_str!("../../../../tests/fixtures/sessions/claude.messages.json"),
             ),
             (
                 "codex",
-                include_str!("../../../tests/fixtures/sessions/codex.messages.json"),
+                include_str!("../../../../tests/fixtures/sessions/codex.messages.json"),
             ),
             (
                 "gemini",
-                include_str!("../../../tests/fixtures/sessions/gemini.messages.json"),
+                include_str!("../../../../tests/fixtures/sessions/gemini.messages.json"),
             ),
             (
                 "opencode",
-                include_str!("../../../tests/fixtures/sessions/opencode.messages.json"),
+                include_str!("../../../../tests/fixtures/sessions/opencode.messages.json"),
             ),
             (
                 "pi",
-                include_str!("../../../tests/fixtures/sessions/pi.messages.json"),
+                include_str!("../../../../tests/fixtures/sessions/pi.messages.json"),
             ),
             (
                 "generic",
-                include_str!("../../../tests/fixtures/sessions/generic.messages.json"),
+                include_str!("../../../../tests/fixtures/sessions/generic.messages.json"),
             ),
         ];
         for (name, raw) in fixtures {
