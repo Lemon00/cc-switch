@@ -845,6 +845,62 @@ async fn enter_locked(
     Ok(())
 }
 
+/// 只把客户端文件接上代理，不在本进程起服务（接上之后客户端要有一个跑着的代理才可用）。
+///
+/// CLI 在「路由 / 聚合模式但已经分离」（CC Switch 没运行）时切换供应商只落定了状态
+/// （见 [`switch_route_locked`]）：客户端文件还是分离时写回去的直连那一份，`config.toml`
+/// 和 `cc-switch-model-catalog.json` 都不动，Codex 的模型列表因此停在旧的那几个。
+/// 调用方要先确保后台代理在跑，再调这里（`cc-switch-cli` 的 `proxy enable` 拉起的守护进程）。
+pub async fn attach_files(state: &AppState, app: &AppType) -> Result<(), String> {
+    require_proxy_app(app)?;
+    let _guard = lock_settled(state, app).await.map_err(|e| e.to_string())?;
+    let mode = current::mode_state(app);
+    if !mode.is_proxy() {
+        return Err(format!(
+            "{} 不在路由 / 聚合模式，客户端文件已经是直连配置，不用接上",
+            app.as_str()
+        ));
+    }
+    // 路由那家就是刚刚切换落定的那家；没有记录时和进入代理一样退回直连指针。
+    let route = match route_provider(state, app, &mode)? {
+        Some(route) => route,
+        None => direct_provider(state, app)?.ok_or_else(|| {
+            format!(
+                "{} 没有当前供应商，无法接上代理 (No current provider for {})",
+                app.as_str(),
+                app.as_str()
+            )
+        })?,
+    };
+    let live_now = LiveNow::of(state, app, &mode)?;
+    let was_stack = settled_stack(app).is_ok_and(|stack| stack.enabled);
+    let rewritten = write_proxy(
+        state,
+        app,
+        op::ATTACH,
+        &route,
+        &live_now,
+        ModeState {
+            mode: Some(Mode::Proxy),
+            attached: true,
+            proxy_route: Some(route.id.clone()),
+            contract: None,
+        },
+        None,
+    )
+    .await?;
+    log::info!(
+        "[MODE] {} {}：接上{}，路由 {}，客户端配置{}",
+        app.as_str(),
+        op::ATTACH,
+        mode_label(true, was_stack),
+        route.id,
+        rewrite_label(rewritten)
+    );
+    state.proxy_service.set_active_target(app, &route).await;
+    Ok(())
+}
+
 async fn warn_if_official_route(state: &AppState, app: &AppType, route: &Provider) {
     if route.category.as_deref() == Some("official")
         && !crate::services::provider::official_provider_supports_proxy_takeover(app, route)
@@ -4136,6 +4192,70 @@ model_provider = "c"
         // 真正退出路由仍按保留登录开关走。
         exit(&state, &AppType::Codex).await.expect("exit");
         assert_eq!(codex_login_file(), None);
+    }
+
+    /// 分离态（CC Switch 没运行）下换路由只落定状态：`config.toml` 和模型目录都还是分离
+    /// 时那份，Codex 的模型列表因此停在旧的那几个。CLI 切换之后要调 [`attach_files`] 把
+    /// 客户端接上（代理得先在跑），客户端文件才会按新路由重写。
+    #[tokio::test]
+    #[serial]
+    async fn attaching_files_after_a_detached_route_switch_rewrites_the_catalog() {
+        let _home = Home::new();
+        seed_codex("", None);
+        let rows = [
+            codex_native(
+                "a",
+                "https://a.example/v1",
+                "",
+                Some(json!({"models": [{"model": "gpt-a", "displayName": "A"}]})),
+            ),
+            codex_native(
+                "b",
+                "https://b.example/v1",
+                "",
+                Some(json!({"models": [{"model": "gpt-b", "displayName": "B"}]})),
+            ),
+        ];
+        let state = state_with(AppType::Codex, &rows, "a").await;
+        let slugs = || -> Vec<String> {
+            let catalog: serde_json::Value =
+                crate::config::read_json_file(&crate::codex_config::get_codex_model_catalog_path())
+                    .unwrap();
+            catalog["models"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|model| model["slug"].as_str().unwrap().to_string())
+                .collect()
+        };
+
+        enter(&state, &AppType::Codex, false).await.expect("enter");
+        assert_eq!(slugs(), vec!["gpt-a"]);
+
+        detach_all(&state).await;
+        assert!(!mode(&AppType::Codex).attached);
+
+        // 分离态换路由：路由记下了，客户端文件和模型目录一个都不动。
+        switch_route(&state, &AppType::Codex, "b")
+            .await
+            .expect("route b");
+        let detached = codex_text();
+        assert_eq!(mode(&AppType::Codex).proxy_route.as_deref(), Some("b"));
+        assert_eq!(codex_text(), detached, "客户端文件不动");
+        assert_eq!(slugs(), vec!["gpt-a"], "模型目录停在分离时那份");
+
+        // 接上客户端：按新路由重写，模型目录跟着换。
+        attach_files(&state, &AppType::Codex)
+            .await
+            .expect("attach files");
+        assert!(mode(&AppType::Codex).attached);
+        assert_ne!(codex_text(), detached);
+        assert_eq!(codex_doc()["model"].as_str(), Some("gpt-b"));
+        assert_eq!(
+            codex_doc()["model_catalog_json"].as_str(),
+            Some("cc-switch-model-catalog.json")
+        );
+        assert_eq!(slugs(), vec!["gpt-b"]);
     }
 
     /// 登录已经被暂存走了（旧版的分离、或进路由前直连切到了第三方）：进入、接上代理时还回去。
