@@ -45,7 +45,11 @@ import { useUsageQuery } from "@/lib/query/queries";
 import { resolveProviderIcon } from "@/utils/providerIcon";
 import { isProxyAppId } from "@/config/appConfig";
 import { ProviderCardActions } from "./ProviderCardActions";
-import { terminalAvailable, terminalIsIsolated } from "./OpenTerminalDialog";
+import {
+  terminalAvailable,
+  terminalIsIsolated,
+  terminalNeedsRoute,
+} from "./OpenTerminalDialog";
 import type { CardChip, CardPresentation, CardTone } from "./presentation";
 
 interface DragHandleProps {
@@ -658,6 +662,11 @@ export function ProviderCard({
                 : undefined
             }
             openTerminalIsolated={terminalIsIsolated(provider, appId)}
+            openTerminalDisabledReason={
+              terminalNeedsRoute(provider, appId)
+                ? t("provider.openTerminalNeedsRoute")
+                : undefined
+            }
           />
         </div>
       </div>
