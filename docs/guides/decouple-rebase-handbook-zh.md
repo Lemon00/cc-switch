@@ -76,10 +76,8 @@ git merge upstream/main
 
 ## 五、同步记录
 
-| 日期 | 分支 HEAD | 同步到上游客 | 备注 |
-| --- | --- | --- | --- |
-| 2026-11-04 | `abbeb8de` | `e217bfcb` | 已合并 4 个提交（`perf(proxy) #9161`、codex 并发、presets 默认模型、macOS 签名重试），47 文件。冲突 3 处：`proxy/forwarder.rs`（`ActiveConnectionGuard::acquire` 加 `last_request_at`，取 main 实现保持 `pub(crate)`）、`proxy/json_canonical.rs`（main 的 `CanonicalValue`/`sort_all_objects` 实现，core 侧保持 `pub`）、`proxy/sse.rs`（`strip_sse_field` 取 main 实现；`take_sse_block` 被新 `SseBlocks`/`SseBuffer` 取代，无调用方，删除）。合并后已对 crates/** 全量 rustfmt 并打开 CI 的 core fmt 门禁。 |
-
+历次同步的日期、分支 HEAD、同步到的上游 commit、冲突归位清单，统一记在
+[upstream-sync-log-zh.md](./upstream-sync-log-zh.md)，记录口径也写在那里。
 每次同步完成后补一行：日期、本分支 HEAD、上游客，以及冲突归位的文件清单。
 
 ## 六、同步后的验证清单
