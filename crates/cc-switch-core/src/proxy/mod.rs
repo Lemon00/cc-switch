@@ -7,6 +7,7 @@ pub mod browser_guard;
 pub mod cache_injector;
 pub mod circuit_breaker;
 pub mod classifier_guard;
+mod codex_models_passthrough;
 pub mod codex_quota_protection;
 pub mod content_encoding;
 pub mod copilot_optimizer;
