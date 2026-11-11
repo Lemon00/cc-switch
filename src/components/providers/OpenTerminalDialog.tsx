@@ -140,8 +140,9 @@ export function terminalAvailable(
   appId: AppId,
   isCurrent: boolean,
 ): boolean {
+  if (appId === "grokbuild") return isCurrent;
   if (appId !== "codex") return true;
-  if (providerNeedsRouting("codex", provider)) return false;
+  if (terminalNeedsRoute(provider, appId)) return true;
   return isCurrent || codexHasOwnRoute(provider);
 }
 
