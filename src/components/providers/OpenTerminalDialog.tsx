@@ -146,6 +146,14 @@ export function terminalAvailable(
   return isCurrent || codexHasOwnRoute(provider);
 }
 
+/** True when the card only works through the local proxy. */
+export function terminalNeedsRoute(provider: Provider, appId: AppId): boolean {
+  return (
+    (appId === "claude" || appId === "codex") &&
+    providerNeedsRouting(appId, provider)
+  );
+}
+
 /**
  * Claude Code：终端经 `claude --settings <临时文件>` 启动，临时文件只放这张卡的 env，没写的
  * 键仍从 ~/.claude/settings.json 读。卡上同时有地址和凭据才压得住全局配置。官方卡绑了授权
