@@ -1,0 +1,33 @@
+{
+  "version": "4.0.28",
+  "items": [
+    {
+      "type": "fix",
+      "zh": "修复第三方模型经路由时的请求格式、推理内容与输出上限问题",
+      "zh-TW": "修正第三方模型經路由時的請求格式、推理內容與輸出上限問題",
+      "en": "Fixed request formatting, reasoning content and output limits for routed third-party models",
+      "ja": "ルーティング経由のサードパーティモデルでリクエスト形式・推論内容・出力上限を修正"
+    },
+    {
+      "type": "fix",
+      "zh": "AGY 配额接口对齐命令行，识别 Ultra 5x/20x 并提示区域无资格",
+      "zh-TW": "AGY 配額介面對齊命令列，辨識 Ultra 5x/20x 並提示區域無資格",
+      "en": "AGY quota now matches the CLI, detects Ultra 5x/20x plans and explains region ineligibility",
+      "ja": "AGY の配額を CLI に合わせ、Ultra 5x/20x 判別と地域対象外の通知を追加"
+    },
+    {
+      "type": "improve",
+      "zh": "官方 Codex 路由补齐官方模型目录，模型列表更完整",
+      "zh-TW": "官方 Codex 路由補齊官方模型目錄，模型清單更完整",
+      "en": "Official Codex routes now pass through the official model catalog",
+      "ja": "公式 Codex ルートで公式モデル一覧を転送し、モデルリストを補完"
+    },
+    {
+      "type": "fix",
+      "zh": "修复更新弹窗折叠、路由卡终端按钮与 Copilot 空模型列表提示",
+      "zh-TW": "修正更新彈窗摺疊、路由卡終端按鈕與 Copilot 空模型清單提示",
+      "en": "Fixed the what's-new dialog, route card terminal buttons and Copilot empty model lists",
+      "ja": "更新ダイアログの折りたたみ、ルートカードの端末ボタン、Copilot 空一覧を修正"
+    }
+  ]
+}

@@ -77,8 +77,8 @@ fn help() -> String {
         "    # 其余可选项：--effort-value-mode passthrough|low_high|deepseek|openrouter|zen",
         "    #             --output-format auto|reasoning_content|reasoning|reasoning_details|think_tags",
         "  cc-switch-cli --app codex proxy show",
-        "  cc-switch-cli --app codex proxy enable    # 启动后台代理（守护进程，立即返回）",
-        "  cc-switch-cli --app codex proxy disable   # 停止后台代理",
+        "  cc-switch-cli --app codex proxy enable    # 启动后台代理，并按当前路由重写客户端配置（含模型目录）",
+        "  cc-switch-cli --app codex proxy disable   # 停止后台代理，并把客户端配置指回直连",
         "  cc-switch-cli --app codex proxy usage [on|off]  # 默认 off，仅对本 CLI 代理生效",
         "  cc-switch-cli --app codex proxy log [on|off]    # 默认 off，关闭时不写 cli-proxy.log",
         "",
@@ -344,7 +344,11 @@ fn start_proxy_daemon(app: &AppType, logging: bool) -> Result<u32, String> {
     }
 }
 
-/// enable / disable：只做进程管理，不开数据库，避免和即将拉起的守护进程抢 SQLite。
+/// enable / disable：进程管理 + 客户端接上/分离。
+///
+/// 守护进程只管代理本身；客户端文件（`config.toml` / 模型目录）由发起命令的父进程
+/// 在代理就绪后接上、在代理停掉后分离。这样常驻进程不必写用户配置，也避免父进程
+/// 和守护进程同时 attach。开库放在起/停之后，是 best-effort：失败只警告，不改命令结果。
 fn cmd_proxy_control(app: AppType, action: &str) {
     if action == "enable" {
         if app != AppType::Codex {
@@ -352,20 +356,26 @@ fn cmd_proxy_control(app: AppType, action: &str) {
         }
         if let Some(pid) = running_proxy_pid() {
             println!("后台代理已在运行（pid {pid}），无需重复 enable");
-            return;
-        }
-        let logging = proxy_log_enabled();
-        let pid = match start_proxy_daemon(&app, logging) {
-            Ok(pid) => pid,
-            Err(e) => err(&e),
-        };
-        println!("后台代理已启动（pid {pid}）");
-        if logging {
-            println!("日志: {}", proxy_log_path().display());
         } else {
-            println!("日志: 已关闭（proxy log on 可打开）");
+            let logging = proxy_log_enabled();
+            let pid = match start_proxy_daemon(&app, logging) {
+                Ok(pid) => pid,
+                Err(e) => err(&e),
+            };
+            println!("后台代理已启动（pid {pid}）");
+            if logging {
+                println!("日志: {}", proxy_log_path().display());
+            } else {
+                println!("日志: 已关闭（proxy log on 可打开）");
+            }
+            println!("停止: cc-switch-cli --app {} proxy disable", app.as_str());
         }
-        println!("停止: cc-switch-cli --app {} proxy disable", app.as_str());
+        // GUI 退出时 detach_all 把客户端写回了直连，只起代理不会重写 config.toml
+        // 和模型目录，Codex 的模型列表会停在旧的那几个。代理就绪后补一次接上。
+        match try_open_state() {
+            Ok(state) => ensure_client_live(&state, &app),
+            Err(e) => println!("警告: 客户端配置保持原样（{e}）"),
+        }
         return;
     }
 
@@ -409,6 +419,24 @@ fn cmd_proxy_control(app: AppType, action: &str) {
     }
     remove_proxy_pid();
     println!("后台代理已停止（pid {pid}）");
+    // 停完代理要把客户端指回直连，否则 config.toml 还指向没人监听的端口。
+    // detach_all 只分离已接上的应用；已经是分离态时 exit_locked 直接返回，不会误写。
+    // 只在确实停掉自己的守护进程时做，pid 文件缺失/过期那几条出口不碰 GUI 管的客户端。
+    match try_open_state() {
+        Ok(state) => {
+            match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => {
+                    rt.block_on(cc_switch_core::mode::controller::detach_all(&state));
+                    println!("客户端配置已分离（指回直连）");
+                }
+                Err(e) => println!("警告: 客户端配置保持接上（建运行时失败: {e}）"),
+            }
+        }
+        Err(e) => println!("警告: 客户端配置保持接上（{e}）"),
+    }
 }
 
 /// CLI 专属开关都放在 cli.json，默认一律 false：文件不存在或解析失败时按关处理，
@@ -592,10 +620,16 @@ fn cli_hooks(state: &Arc<AppState>) -> FrontendHooks {
 }
 
 fn open_state() -> Arc<AppState> {
-    let db = match Database::init() {
-        Ok(db) => Arc::new(db),
-        Err(e) => err(&format!("打开数据库失败: {e}")),
-    };
+    match try_open_state() {
+        Ok(state) => state,
+        Err(e) => err(&e),
+    }
+}
+
+/// `proxy enable` / `disable` 的客户端收尾用：代理已经起/停成功了，这时数据库打不开
+/// 也不能把整条命令判成失败，只能放弃重写客户端配置并给出警告。
+fn try_open_state() -> Result<Arc<AppState>, String> {
+    let db = Arc::new(Database::init().map_err(|e| format!("打开数据库失败: {e}"))?);
     let state = Arc::new(AppState::new(db));
     // 不注入钩子时 ProxyService 用 FrontendHooks::default()：故障转移永不执行、
     // OAuth 路由直接报错、事件静默丢弃。CLI 要的是和 GUI 不同的最小实现，
@@ -604,7 +638,7 @@ fn open_state() -> Arc<AppState> {
     // 用量写入通知是另一套 OnceLock sink（不在 ProxyService.hooks 里），
     // 不单独注入就会整条链路静默。
     cc_switch_core::usage_events::init(Arc::new(QuietEventSink));
-    state
+    Ok(state)
 }
 
 fn parse_app(args: &[String]) -> (AppType, Vec<String>) {
@@ -706,7 +740,8 @@ fn main() {
         return;
     }
 
-    // enable / disable 只做进程管理，不开数据库：守护进程马上也要开同一个库。
+    // enable / disable 自己控制开库时机：先起/停代理，再做客户端接上/分离，
+    // 不走下面统一 open_state() 的命令分派。
     if args[0] == "proxy" {
         if let Some(action @ ("enable" | "disable")) = args.get(1).map(|s| s.as_str()) {
             cmd_proxy_control(app, action);

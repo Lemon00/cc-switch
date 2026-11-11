@@ -1,6 +1,6 @@
 [package]
 name = "cc-switch-cli"
-version = "4.0.27"
+version = "4.0.28"
 edition = "2021"
 rust-version = "1.85"
 

@@ -363,7 +363,7 @@ dependencies = [
 
 [[package]]
 name = "cc-switch-cli"
-version = "4.0.27"
+version = "4.0.28"
 dependencies = [
  "cc-switch-core",
  "libc",
@@ -374,7 +374,7 @@ dependencies = [
 
 [[package]]
 name = "cc-switch-core"
-version = "4.0.25"
+version = "4.0.28"
 dependencies = [
  "anyhow",
  "async-stream",
