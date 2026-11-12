@@ -389,11 +389,12 @@ impl AgyAccountManager {
     pub async fn quota(&self, account_id: &str) -> Result<Vec<QuotaTier>, AccountQuotaError> {
         let token = self.access_token(account_id).await?;
         match quota::fetch(&token).await {
-            Ok(tiers) => Ok(tiers),
+            Ok(quota) => Ok(quota.tiers),
             Err(quota::QuotaError::Unauthorized) => {
                 let token = self.refresh_account(account_id).await?;
                 quota::fetch(&token)
                     .await
+                    .map(|quota| quota.tiers)
                     .map_err(|error| AccountQuotaError::Failed(error.to_string()))
             }
             Err(error) => Err(AccountQuotaError::Failed(error.to_string())),
