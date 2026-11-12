@@ -21,6 +21,7 @@ pub mod codex_chat_history;
 pub mod codex_chat_tool_history;
 pub mod codex_compaction;
 pub mod codex_oauth_auth;
+pub mod codex_responses_arguments;
 pub mod codex_responses_sse;
 pub mod copilot_auth;
 pub mod copilot_model_map;
