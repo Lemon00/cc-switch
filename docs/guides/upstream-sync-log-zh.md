@@ -20,6 +20,7 @@
 | 2026-11-04 ~ 11-06 | v4.0.25 → v4.0.26 | `c1e56f4e` | `566448f0` | 4 + 29 提交 / 47 + 111 文件 | 分两批，冲突 3 处，见下 |
 | 2026-11-09 | v4.0.26 → v4.0.27 | `8ee8536c` | `cac921f5` | 30 提交 / 65 文件 | 版本号升到 4.0.27，无 merge 冲突，见下 |
 | 2026-11-08 ~ 11-11 | fix 批次（v4.0.28 → v4.0.29 区间） | `3b6b47d9` | `abf50589` | 15 提交 / 31 文件 | 逐条 cherry-pick，跳过 feat / 发布 / WSL，见下 |
+| 2026-11-12 | `abf50589` → `3a0b86a2`（v4.0.30 发布前） | `f0a1566f` | `3a0b86a2` | 17 提交分析 / 合入 9 条 | 版本仍是 4.0.28，逐条 cherry-pick + core 归位，见下 |
 
 > 上游原版 clone（`cc-switch-source`）的 `main` 停在 `cdca0984`。第三轮的基线是本仓库
 > `origin/main@abf50589`——先把上游主线同步进 fork 的 `main`，再从那里挑 fix，两边基线
@@ -110,3 +111,44 @@ presets 默认模型、macOS 签名重试），47 文件。冲突 3 处：
   `src-tauri/src/settings.rs` 有字段与 getter）。因此当前 `cargo check` 会在 core 侧报
   E0425；GNU 目标在临时补齐该函数后编译通过，本机缺 MSVC `link.exe`。前端
   `pnpm typecheck` 已通过。这一项属于代码问题，本次只记录、不改动。
+
+### 第四次：同步 `origin/main` 的 fix 批次（v4.0.30 之前）
+
+**2026-11-12**，从 `abf50589` 到 `3a0b86a2`（v4.0.30 发布提交的前一条），区间内
+17 个提交，合入 9 条。本分支版本号仍是 `4.0.28`，没有跟随上游 v4.0.30 的版本号与
+发布说明。取舍清单见 [upstream-sync-plan-2026-11-12-zh.md](./upstream-sync-plan-2026-11-12-zh.md)。
+
+- 9 条 fix/perf 逐条 cherry-pick，**上游侧没有一处 merge 冲突**；冲突全部来自解耦树本身：
+  core 侧文件与上游 `src-tauri/src` 同名文件无共同祖先，三方合并用不上，改为按路径
+  重写补丁（`git apply --reject`）后手工收拾剩余分块。
+- 提交映射（本分支 → `origin/main`）：
+
+  | 本分支 | origin/main | 主题 | 归位 |
+  | --- | --- | --- | --- |
+  | `93798b8c` | `d0e47b2d` | 供应商编辑器打开不再卡顿 | 纯前端 |
+  | `d6b66e37` | `7d5fb657` | Gemini 流式模型归属 / Vertex 字符串 token | core `proxy/` |
+  | `c1eeeaa6` | `16092b97` | AGY transcript 同步游标 | core `services/` + `session_manager/` |
+  | `ab986077` | `74f0d41c` | 回放工具参数重复 JSON key 去重 | core `proxy/providers/` |
+  | `9745da59` | `08ec82aa` | 第三方 Responses 剥离 OpenAI-only 字段 | core `proxy/` |
+  | `c2955d79` | `5628bb11` | 主窗口启动收进显示器工作区 | GUI |
+  | `61f0a9b5` | `1a98613e` | agy 1.5 无 `id_token` 钥匙串凭证 / 切号刷新配额 | GUI `services/agy_account/` |
+  | `385337be` | `d4647fbb` | 技能元数据刷新移出列表查询 | core `services/skill.rs` + GUI + 前端 |
+  | `f0a1566f` | `2abcaa6e` | Codex OAuth 卡片显示账号身份 | 纯前端 |
+
+- 解耦适配提交：`8a3d334f` — `AgyAccountManager::quota()` / `live_quota()` 在本分支
+  返回 `Vec<QuotaTier>`，实现里却直接返回 `quota::fetch()` 的 `AccountQuota`，HEAD
+  本来编译不过；改为在调用点取 `.tiers`。
+- 手工解冲突的三处：`useCodexConfigState.ts`（丢掉上游 `officialSpeedTiers` 那一段，
+  本分支没有该功能）、`session_usage_agy.rs`（`sync_agy_usage` 结构性重写，保留本分支的
+  `pub mod native_models` 与 `include_str!` 相对深度）、`ProviderCard.tsx` +
+  其测试（本分支已无登录后的套餐后缀，测试里 `· Plus` 相关断言一并去掉）。
+- 跳过 8 条：`859ffa10`（历史发布说明页脚链接）、`49a57446` / `210103c6`（feat 定价种子）、
+  `f6c7eed0`（CONTRIBUTING）、`4a1369f2`（copilot 卡片分组重构，依赖未合入功能）、
+  `23c57e8d`（只改 `src-tauri/src/copilot_config.rs`，本分支无此文件）、
+  `609e7914` / `3a0b86a2`（v4.0.30 版本号与发布说明）。
+- 验证：core `cargo test --lib` 3918 passed / 2 failed（两个 symlink 测试因本机缺创建
+  符号链接权限，`os error 1314`，与改动无关）；GUI `cargo check --all-targets` 通过
+  （GNU 目标，`TMP` 需指向工作区内目录，否则 gcc 建不了临时文件）；GUI 单测因
+  `tauri-build` 给 GNU 链接器塞 MSVC 的 `/MANIFEST:EMBED` 参数，本机无法链接，
+  只做到编译级验证；前端 `pnpm typecheck` 通过，相关 vitest 用例（ProviderCard、
+  Skills、ProviderForm、EditProviderDialog 等）全绿。
