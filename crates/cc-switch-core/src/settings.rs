@@ -526,6 +526,11 @@ pub struct AppSettings {
     /// Pre-exhaustion protection for ChatGPT requests passing through the Codex proxy.
     #[serde(default)]
     pub codex_quota_protection: CodexQuotaProtection,
+    /// Codex 官方额度用完时可暂停官方登录，继续用第三方模型：auth.json 不动，
+    /// 开着期间代理在本地拒绝官方请求，新会话记在 custom 组。直连不受影响。
+    /// 手动开关，默认关。
+    #[serde(default)]
+    pub codex_proxy_without_official_login: bool,
     /// Run official Codex providers under the shared "custom" model_provider id
     /// so official sessions share one resume-history bucket with third-party
     /// providers. Opt-in: defaults to false.
@@ -719,6 +724,7 @@ impl Default for AppSettings {
             native_tray_menu: false,
             preserve_codex_official_auth_on_switch: false,
             codex_quota_protection: CodexQuotaProtection::default(),
+            codex_proxy_without_official_login: false,
             unify_codex_session_history: false,
             unify_codex_migrate_existing: None,
             codex_stack_classic_tools: true,
@@ -1388,6 +1394,16 @@ pub fn preserve_codex_official_auth_on_switch() -> bool {
             e.into_inner()
         })
         .preserve_codex_official_auth_on_switch
+}
+
+pub fn codex_proxy_without_official_login() -> bool {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .codex_proxy_without_official_login
 }
 
 pub fn unify_codex_session_history() -> bool {
