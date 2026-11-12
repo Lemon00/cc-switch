@@ -83,6 +83,24 @@ describe("useRefreshLocalSkillMetadata", () => {
     expect(refreshLocalMetadataMock).toHaveBeenCalledTimes(1);
   });
 
+  it("surfaces a failed refresh without invalidating the installed list", async () => {
+    refreshLocalMetadataMock.mockRejectedValue(new Error("scan failed"));
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const invalidateSpy = vi
+      .spyOn(queryClient, "invalidateQueries")
+      .mockResolvedValue(undefined);
+
+    const { result } = renderHook(() => useRefreshLocalSkillMetadata(), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(refreshLocalMetadataMock).toHaveBeenCalledTimes(1);
+    expect(invalidateSpy).not.toHaveBeenCalled();
+  });
+
   it("keeps the result cached across remounts in the same session", async () => {
     refreshLocalMetadataMock.mockResolvedValue(1);
     const queryClient = new QueryClient({

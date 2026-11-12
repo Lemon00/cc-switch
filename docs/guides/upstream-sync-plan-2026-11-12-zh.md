@@ -1,21 +1,22 @@
 # `decouple-core` 上游同步计划（2026-11-12）
 
-> 本文只做提交级分析与取舍，**尚未执行任何合并、未改动任何代码**。
-> 合并动作请在确认本清单后单独执行。
+> 本文按「先出清单、确认后再动手」的流程写作，初版只做提交级分析与取舍。
+> **清单已确认并于 2026-11-12 执行完毕**，下面保留分析时的口径与基线，执行结果见第六节。
 
 ## 一、范围与基线
 
 | 项 | 值 |
 | --- | --- |
-| 本分支 | `decouple-core`，HEAD `6096f37b`（`chore(release): v4.0.28`） |
+| 本分支 | `decouple-core`，分析时 HEAD `6096f37b`（`chore(release): v4.0.28`） |
 | 上轮同步到的上游点 | `origin/main@abf50589`（2026-11-11，见 `upstream-sync-log-zh.md` 第三次记录） |
 | 本次 `origin/main` HEAD | `3a0b86a2`（2026-11-12，`docs(release): add v4.0.30 release notes`） |
 | 待分析提交 | `abf50589..origin/main`，共 **17 个** |
 | 已在本分支的补丁 | `git cherry HEAD origin/main` 显示这 17 个全为 `+`，无一已合入 |
 
-工作区另有一处未提交改动：`crates/cc-switch-core/src/settings.rs`（补
+分析时工作区另有一处未提交改动：`crates/cc-switch-core/src/settings.rs`（补
 `codex_proxy_without_official_login` 的字段 / 默认值 / getter，用于修 v4.0.28 构建的 E0425）。
-该改动不属于本轮同步，分析时已排除，也不会被本计划的合并覆盖。
+该改动不属于本轮同步，分析时已排除，也没有混进同步提交；事后已作为独立提交
+`705af7bc` 落地（见第六节）。
 
 ## 二、判定口径
 
@@ -128,8 +129,8 @@
 - **验证**：core 三档 `cargo check`、CLI / GUI `cargo check`、前端 `pnpm typecheck`；
   本分支已知 GNU 目标可编译，`src-tauri` 的 `tauri-build` 在本机缺 `windres`，
   与代码无关，CI runner 不受影响。
-- **不在本轮范围**：工作区那处未提交的 `settings.rs` 修复（E0425）应先独立提交，
-  不要混进同步提交，否则回溯困难。
+- **不在本轮范围**：那处 `settings.rs` 修复（E0425）独立提交，不要混进同步提交，
+  否则回溯困难；执行结果见下。
 
 ## 六、执行结果
 
@@ -145,4 +146,11 @@
      只保留账号身份相关的验证。
 - 追加一条清单外的修复：`8a3d334f`（`AgyAccountManager::quota()` 的返回类型与实现不一致，
   HEAD 本来编译不过）。它不在上游 17 个提交里，是解耦树上遗留的代码问题。
-- 文档里的"工作区那处未提交的 `settings.rs` 修复"仍未提交，本轮没有把它混进同步提交。
+- 复查后补做：`settings.rs` 的 E0425 修复独立提交为 `705af7bc`（字段 / 默认值 / getter，
+  `#[serde(default)]` 兼容旧配置）；`4.0.28.json` 恢复原有 4 条发布说明，只把误写的
+  "识别 Ultra 5x/20x"改为实际已落地的"按项目查询"，本轮 9 条 fix 不塞进 What's New
+  （该文件最多 4 条），完整清单以同步日志为准。
+- 已知缺口（未处理）：`8a3d334f` 以取 `.tiers` 的方式修编译，`AccountQuota.plan` 仍被丢弃，
+  本分支 `SubscriptionQuota` 没有 `plan_name` 字段，前端也不消费套餐名，因此上游 #9319 的
+  "Ultra 5x/20x 识别"实际未落地。补齐它属于功能补全，超出本轮「只合 fix/perf」范围，
+  需单独确认。

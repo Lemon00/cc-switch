@@ -20,8 +20,12 @@
 | 2026-11-04 ~ 11-06 | v4.0.25 → v4.0.26 | `c1e56f4e` | `566448f0` | 4 + 29 提交 / 47 + 111 文件 | 分两批，冲突 3 处，见下 |
 | 2026-11-09 | v4.0.26 → v4.0.27 | `8ee8536c` | `cac921f5` | 30 提交 / 65 文件 | 版本号升到 4.0.27，无 merge 冲突，见下 |
 | 2026-11-08 ~ 11-11 | fix 批次（v4.0.28 → v4.0.29 区间） | `3b6b47d9` | `abf50589` | 15 提交 / 31 文件 | 逐条 cherry-pick，跳过 feat / 发布 / WSL，见下 |
-| 2026-11-12 | `abf50589` → `3a0b86a2`（v4.0.30 发布前） | `f0a1566f` | `3a0b86a2` | 17 提交分析 / 合入 9 条 | 版本仍是 4.0.28，逐条 cherry-pick + core 归位，见下 |
+| 2026-11-12 | `abf50589` → `3a0b86a2`（v4.0.30 发布前） | `f0a1566f` | `3a0b86a2` | 17 提交分析 / 合入 9 条 | 版本仍是 4.0.28，cherry-pick + core 补丁归位，见下 |
 
+> 「分支 HEAD」列记的是每轮**同步代码收尾时**的 HEAD，不含随后的文档与复查修正提交。
+> 第四轮的代码收尾是 `f0a1566f`，之后还有 `c89a3228`（同步记录 / What's New）与
+> `705af7bc` 等复查修正提交，因此该列不等于任何时候的仓库当前 HEAD。
+>
 > 上游原版 clone（`cc-switch-source`）的 `main` 停在 `cdca0984`。第三轮的基线是本仓库
 > `origin/main@abf50589`——先把上游主线同步进 fork 的 `main`，再从那里挑 fix，两边基线
 > 口径不同，记录时以本轮实际取用的 `origin/main` 短 hash 为准。
@@ -105,12 +109,12 @@ presets 默认模型、macOS 签名重试），47 文件。冲突 3 处：
   `cf12f010` / `4d68975b`、语言包、v4.0.28 / v4.0.29 版本号与发布说明、纯文档与
   测试配套提交。完整清单见
   [upstream-sync-audit-2026-11-11-zh.md](./upstream-sync-audit-2026-11-11-zh.md)。
-- 已知问题（未处理）：`be1857ca` 引入的 `codex_models_passthrough.rs` 调用
+- 已知问题：`be1857ca` 引入的 `codex_models_passthrough.rs` 调用
   `crate::settings::codex_proxy_without_official_login()`，但该提交只改了 proxy 目录下的
   文件，core 的 `settings.rs` 既没有这个 getter 也没有对应字段（上游
-  `src-tauri/src/settings.rs` 有字段与 getter）。因此当前 `cargo check` 会在 core 侧报
-  E0425；GNU 目标在临时补齐该函数后编译通过，本机缺 MSVC `link.exe`。前端
-  `pnpm typecheck` 已通过。这一项属于代码问题，本次只记录、不改动。
+  `src-tauri/src/settings.rs` 有字段与 getter），干净 HEAD 会在 core 侧报 E0425。
+  本轮未处理，第四轮之后以独立提交 `705af7bc` 补齐字段、默认值与 getter，
+  `#[serde(default)]` 保证旧配置文件兼容。
 
 ### 第四次：同步 `origin/main` 的 fix 批次（v4.0.30 之前）
 
@@ -118,9 +122,12 @@ presets 默认模型、macOS 签名重试），47 文件。冲突 3 处：
 17 个提交，合入 9 条。本分支版本号仍是 `4.0.28`，没有跟随上游 v4.0.30 的版本号与
 发布说明。取舍清单见 [upstream-sync-plan-2026-11-12-zh.md](./upstream-sync-plan-2026-11-12-zh.md)。
 
-- 9 条 fix/perf 逐条 cherry-pick，**上游侧没有一处 merge 冲突**；冲突全部来自解耦树本身：
-  core 侧文件与上游 `src-tauri/src` 同名文件无共同祖先，三方合并用不上，改为按路径
-  重写补丁（`git apply --reject`）后手工收拾剩余分块。
+- 9 条 fix/perf 分两种方式落地：前端 / GUI 路径用 `git cherry-pick -n`；core 侧文件与
+  上游 `src-tauri/src` 同名文件无共同祖先，三方合并用不上，改为按路径重写补丁
+  （`git diff` 改路径后 `git apply --reject`）并手工收拾 rejected 分块。
+  **上游提交彼此之间没有冲突**：`74f0d41c` 与 `08ec82aa` 同改 `forwarder.rs`，
+  按上游顺序应用时两轮都干净落地。真正的 3 处冲突全部来自解耦树的既有分叉
+  （缺 `officialSpeedTiers`、AGY cursor 的结构性重写、无套餐后缀的 ProviderCard）。
 - 提交映射（本分支 → `origin/main`）：
 
   | 本分支 | origin/main | 主题 | 归位 |
@@ -136,8 +143,16 @@ presets 默认模型、macOS 签名重试），47 文件。冲突 3 处：
   | `f0a1566f` | `2abcaa6e` | Codex OAuth 卡片显示账号身份 | 纯前端 |
 
 - 解耦适配提交：`8a3d334f` — `AgyAccountManager::quota()` / `live_quota()` 在本分支
-  返回 `Vec<QuotaTier>`，实现里却直接返回 `quota::fetch()` 的 `AccountQuota`，HEAD
-  本来编译不过；改为在调用点取 `.tiers`。
+  返回 `Vec<QuotaTier>`，实现里却直接返回 `quota::fetch()` 的 `AccountQuota`，干净 HEAD
+  本来编译不过；改为在调用点取 `.tiers`。同一批复查还提交 `705af7bc` 补齐
+  `settings.rs` 的 E0425 字段 / 默认值 / getter。
+- **已知缺口（复查发现，未处理）**：`8a3d334f` 取 `.tiers` 会丢掉 `AccountQuota.plan`。
+  上游 `origin/main` 的 `agy_account_quota` 会把它填进 `SubscriptionQuota.plan_name`，
+  本分支 `crates/cc-switch-core/src/services/subscription.rs` 的 `SubscriptionQuota`
+  根本没有这个字段，前端也不消费套餐名，因此第三次记录里宣称已同步的
+  「Ultra 5x/20x 识别」（`f09f5079` / #9319）实际未落地。补齐属于功能补全，
+  超出本轮「只合 fix/perf」范围，留待单独确认；`src/whats-new/4.0.28.json`
+  已把「识别 Ultra 5x/20x」改为实际已落地的「按项目查询」。
 - 手工解冲突的三处：`useCodexConfigState.ts`（丢掉上游 `officialSpeedTiers` 那一段，
   本分支没有该功能）、`session_usage_agy.rs`（`sync_agy_usage` 结构性重写，保留本分支的
   `pub mod native_models` 与 `include_str!` 相对深度）、`ProviderCard.tsx` +
@@ -152,3 +167,15 @@ presets 默认模型、macOS 签名重试），47 文件。冲突 3 处：
   `tauri-build` 给 GNU 链接器塞 MSVC 的 `/MANIFEST:EMBED` 参数，本机无法链接，
   只做到编译级验证；前端 `pnpm typecheck` 通过，相关 vitest 用例（ProviderCard、
   Skills、ProviderForm、EditProviderDialog 等）全绿。
+- 前端全量的噪声已定性：默认并发 3555 passed / 53 failed；改 4 workers 后两次复跑分别
+  3568 passed / 44 failed 与 3596 passed / 16 failed，同一并发设置下结果都不稳定，
+  失败全为 `Test timed out in 5000ms`，集中在 `PiProviderForm` 等慢组件。最集中的
+  `PiProviderForm.test.tsx` 单独跑仍 4 failed / 51 passed，但在**同步前基线**
+  `6096f37b` 上单独跑是 13 failed / 42 passed——属于本机既有的慢测试，不是本轮回归，
+  需在 CI 上用正常机器复核。
+- 复查后补的测试：`editProviderStore.test.tsx`（store 的开/换/关/退订与 hook 稳定性）、
+  `useRefreshLocalSkillMetadata` 的命令失败路径、`ProviderCard.codexAccount` 的
+  `enabled: isCodexOauth` 负向断言。
+- 复查后仍未补的验证：core `forwarder.rs` 里 dedupe / strip 的门控组合没有直接单测；
+  agy 1.5 与 `window_fit` 的 GUI 单测需要在 macOS / MSVC 环境的 CI 上跑
+  （本机链接不了，且相关用例多在 `#[cfg(target_os = "macos")]` 下）。

@@ -1,5 +1,5 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ProviderCard } from "@/components/providers/ProviderCard";
@@ -134,6 +134,13 @@ describe("ProviderCard Codex Official account identity", () => {
     },
   });
 
+  const plainProvider = (): Provider => ({
+    id: "plain-third-party",
+    name: "Plain",
+    category: "third_party",
+    settingsConfig: { auth: {}, config: "" },
+  });
+
   it.each(["claude", "claude-desktop"] as const)(
     "shows the bound Codex account instead of the website in %s",
     async (appId) => {
@@ -178,6 +185,23 @@ describe("ProviderCard Codex Official account identity", () => {
 
     expect(screen.getByText("Work account")).toBeInTheDocument();
     expect(screen.queryByText("me@example.com")).not.toBeInTheDocument();
+  });
+
+  it("does not query managed auth status for a plain Codex provider", async () => {
+    const statusRequest = vi.fn();
+    server.use(
+      http.post("http://tauri.local/auth_get_status", () => {
+        statusRequest();
+        return HttpResponse.json(authStatus("me@example.com"));
+      }),
+    );
+
+    renderCard(plainProvider(), { appId: "codex" });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(statusRequest).not.toHaveBeenCalled();
   });
 
   it("does not replace a missing bound proxy account with the default account", () => {

@@ -2,32 +2,32 @@
   "version": "4.0.28",
   "items": [
     {
-      "type": "improve",
-      "zh": "路由第三方模型补齐官方目录，修正请求格式与输出上限",
-      "zh-TW": "路由第三方模型補齊官方目錄，修正請求格式與輸出上限",
-      "en": "Third-party routes pass the official catalog; request format and output limits fixed",
-      "ja": "サードパーティ経路で公式カタログを転送、形式と出力上限を修正"
+      "type": "fix",
+      "zh": "修复第三方模型经路由时的请求格式、推理内容与输出上限问题",
+      "zh-TW": "修正第三方模型經路由時的請求格式、推理內容與輸出上限問題",
+      "en": "Fixed request formatting, reasoning content and output limits for routed third-party models",
+      "ja": "ルーティング経由のサードパーティモデルでリクエスト形式・推論内容・出力上限を修正"
     },
     {
       "type": "fix",
-      "zh": "AGY 配额对齐命令行并识别 Ultra；agy 1.5 凭证与切号刷新配额",
-      "zh-TW": "AGY 配額對齊命令列並辨識 Ultra；agy 1.5 憑證與切號更新配額",
-      "en": "AGY quota matches the CLI and detects Ultra; agy 1.5 credentials and quota refresh work",
-      "ja": "AGY 配額を CLI に合わせ Ultra を判別、agy 1.5 の資格情報と切替配額を修正"
-    },
-    {
-      "type": "fix",
-      "zh": "Gemini 用量保留真实模型名；Codex 回放重复键不再 400",
-      "zh-TW": "Gemini 用量保留真實模型名；Codex 重放重複鍵不再 400",
-      "en": "Gemini usage keeps the real model; repeated Codex argument keys no longer 400",
-      "ja": "Gemini 使用量で実モデル名を保持、Codex のキー重複による 400 を解消"
+      "zh": "AGY 配额接口对齐命令行，按项目查询并提示区域无资格",
+      "zh-TW": "AGY 配額介面對齊命令列，按項目查詢並提示區域無資格",
+      "en": "AGY quota now matches the CLI, queries with the project id and explains region ineligibility",
+      "ja": "AGY の配額を CLI に合わせ、プロジェクト指定で照会し地域対象外を通知"
     },
     {
       "type": "improve",
-      "zh": "编辑器与窗口更顺，技能列表与 Codex OAuth 卡片更准",
-      "zh-TW": "編輯器與視窗更順，技能清單與 Codex OAuth 卡片更準",
-      "en": "Editor and window behave better; skills list and Codex OAuth cards are accurate",
-      "ja": "編集画面とウィンドウを改善、スキル一覧と Codex OAuth カードを正確に"
+      "zh": "官方 Codex 路由补齐官方模型目录，模型列表更完整",
+      "zh-TW": "官方 Codex 路由補齊官方模型目錄，模型列表更完整",
+      "en": "Official Codex routes now pass through the official model catalog",
+      "ja": "公式 Codex ルートで公式モデル一覧を転送し、モデルリストを補完"
+    },
+    {
+      "type": "fix",
+      "zh": "修复更新弹窗折叠、路由卡终端按钮与 Copilot 空模型列表提示",
+      "zh-TW": "修正更新彈窗摺疊、路由卡終端按鈕與 Copilot 空模型清單提示",
+      "en": "Fixed the what's-new dialog, route card terminal buttons and Copilot empty model lists",
+      "ja": "更新ダイアログの折りたたみ、ルートカードの端末ボタン、Copilot 空一覧を修正"
     }
   ]
 }
