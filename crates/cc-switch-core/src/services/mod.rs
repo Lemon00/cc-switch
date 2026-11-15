@@ -1,5 +1,6 @@
 //! Core services only. GUI-only services stay in the GUI crate.
 
+pub mod auto_sync;
 pub mod claude_account;
 pub mod codex_oauth_models;
 pub mod exchange_rates;

@@ -1181,13 +1181,15 @@ pub fn run() {
             let _tray = tray_builder.build(app)?;
             #[cfg(target_os = "windows")]
             tray_compat::install(app.handle());
-            crate::services::webdav_auto_sync::start_worker(
+            let event_sink = std::sync::Arc::new(frontend_hooks::TauriEventSink(
+                app.handle().clone(),
+            ));
+            crate::services::auto_sync::start_worker::<
+                crate::services::webdav_auto_sync::WebDavAutoSync,
+            >(app_state.db.clone(), event_sink.clone());
+            crate::services::auto_sync::start_worker::<crate::services::s3_auto_sync::S3AutoSync>(
                 app_state.db.clone(),
-                std::sync::Arc::new(frontend_hooks::TauriEventSink(app.handle().clone())),
-            );
-            crate::services::s3_auto_sync::start_worker(
-                app_state.db.clone(),
-                std::sync::Arc::new(frontend_hooks::TauriEventSink(app.handle().clone())),
+                event_sink,
             );
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);

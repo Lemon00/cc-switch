@@ -1448,14 +1448,13 @@ fn run_proxy_daemon(state: &AppState, app: AppType) {
     cc_switch_core::set_cli_usage_recording(enabled);
     // 长驻进程：和 GUI 一样启动 WebDAV/S3 自动同步 worker（远端没配置时
     // worker 自己空转）。一次性命令不启，短进程没必要拉起后台 runtime。
-    cc_switch_core::services::webdav_auto_sync::start_worker(
-        state.db.clone(),
-        Arc::new(QuietEventSink),
-    );
-    cc_switch_core::services::s3_auto_sync::start_worker(
-        state.db.clone(),
-        Arc::new(QuietEventSink),
-    );
+    let event_sink = Arc::new(QuietEventSink);
+    cc_switch_core::services::auto_sync::start_worker::<
+        cc_switch_core::services::webdav_auto_sync::WebDavAutoSync,
+    >(state.db.clone(), event_sink.clone());
+    cc_switch_core::services::auto_sync::start_worker::<
+        cc_switch_core::services::s3_auto_sync::S3AutoSync,
+    >(state.db.clone(), event_sink);
     println!(
         "启动 codex 后台代理（pid {pid}；用量记录: {}，仅对本进程生效）",
         if enabled { "开" } else { "关" }

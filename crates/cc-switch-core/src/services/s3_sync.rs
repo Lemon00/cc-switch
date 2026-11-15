@@ -12,6 +12,7 @@ use crate::error::AppError;
 use crate::services::s3::{self, S3Credentials};
 use crate::settings::{update_s3_sync_status, S3SyncSettings, WebDavSyncStatus};
 
+// 本分支 GUI commands 仍经此重导出拿锁；上游已改为直接用 sync_protocol。
 pub use super::sync_protocol::run_with_sync_lock;
 use super::sync_protocol::{
     apply_snapshot, build_local_snapshot, localized, persist_sync_success_best_effort, sha256_hex,

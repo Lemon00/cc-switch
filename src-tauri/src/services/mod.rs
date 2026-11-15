@@ -17,6 +17,7 @@ pub mod speedtest;
 pub mod stream_check;
 
 // 后端服务（核心）
+pub use cc_switch_core::services::auto_sync;
 pub use cc_switch_core::services::claude_account;
 pub use cc_switch_core::services::codex_oauth_models;
 pub use cc_switch_core::services::coding_plan;
