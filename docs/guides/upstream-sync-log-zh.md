@@ -21,6 +21,7 @@
 | 2026-11-09 | v4.0.26 → v4.0.27 | `8ee8536c` | `cac921f5` | 30 提交 / 65 文件 | 版本号升到 4.0.27，无 merge 冲突，见下 |
 | 2026-11-08 ~ 11-11 | fix 批次（v4.0.28 → v4.0.29 区间） | `3b6b47d9` | `abf50589` | 15 提交 / 31 文件 | 逐条 cherry-pick，跳过 feat / 发布 / WSL，见下 |
 | 2026-11-12 | `abf50589` → `3a0b86a2`（v4.0.30 发布前） | `f0a1566f` | `3a0b86a2` | 17 提交分析 / 合入 9 条 | 版本仍是 4.0.28，cherry-pick + core 补丁归位，见下 |
+| 2026-11-17 | `3a0b86a2` → `09acca04`（v4.0.30 之后 fix/优化/清理批次） | `a32bce0d` | `09acca04` | 59 条计划 / 52 提交 + 7 空补丁 / 115 文件 | 全量矩阵筛选 + 逐条 cherry-pick，见下 |
 
 > 「分支 HEAD」列记的是每轮**同步代码收尾时**的 HEAD，不含随后的文档与复查修正提交。
 > 第四轮的代码收尾是 `f0a1566f`，之后还有 `c89a3228`（同步记录 / What's New）与
@@ -179,3 +180,36 @@ presets 默认模型、macOS 签名重试），47 文件。冲突 3 处：
 - 复查后仍未补的验证：core `forwarder.rs` 里 dedupe / strip 的门控组合没有直接单测；
   agy 1.5 与 `window_fit` 的 GUI 单测需要在 macOS / MSVC 环境的 CI 上跑
   （本机链接不了，且相关用例多在 `#[cfg(target_os = "macos")]` 下）。
+
+### 第五次：同步 `3a0b86a2` → `09acca04`（v4.0.30 之后 fix/优化/清理批次）
+
+**2026-11-17**，从 `3a0b86a2` 到 `origin/main@09acca04`。本分支代码收尾 `a32bce0d`，
+115 文件（+7744 / -5632），版本号仍是 `4.0.28`。取舍与逐条进度见
+[upstream-merge-plan-2026-11-17-zh.md](./upstream-merge-plan-2026-11-17-zh.md)。
+
+- 范围：先对 `origin/main` 独有的 250 条提交做内容矩阵（已合入 108 / 部分合入 68 / 未合入 74），
+  剔除 feat、新模块/新接口、语言包、发布说明、Copilot/WSL 不适用项与文件缺失项，得到 32 条
+  补充候选；与上一轮 27 条暂存批次合并为 59 条统一计划，按上游拓扑顺序逐条 `cherry-pick -x`。
+  原 27 条暂存批次先备份为 `.audit/staged.patch`（备份 commit
+  `c62d9c2c25e5099241499288788a29444c535946`）并还原，再重新入列。
+- 结果：实际提交 52 条；7 条为空补丁（HEAD 已有等价实现，核对净改动后跳过）：
+  `98777515`、`fc9b17cb`、`80ad02c5`、`883382f1`、`49f2882e`、`8ff9e3b5`、`e9285cf1`。
+- 解耦适配与冲突要点：
+  - `c70d61de`：只取 `@tauri-apps/cli` 升级与 lock；`release.yml` 保留本分支 deb 构建逻辑，
+    不引入上游 AppImage 参数。
+  - `60a68363`：只取 `dsh_config` 的 clippy 修正，跳过本分支不存在的 ru/ko 语言纯测试。
+  - `7dec90e9`：删除未用 UI 组件、脚本与命令层注释；`Cargo.toml`/`Cargo.lock` 保留 core
+    解耦结构（`tower-http` 仍是 core 依赖），跳过上游基线带入的 `privacy_filter` 命令。
+  - `f1d438e0`：保留镜像行 `displayName` 恢复；本分支没有 `officialSpeedTiers`，移除上游
+    镜像分支里的 `official_speed_tiers` 更新。
+  - `3369fe89`：补 `CopilotUsageResponse.access_type_sku`（上游基线已有、本分支缺）。
+  - `f72c3048`：`responses_to_chat_completions_with_reasoning` 新增第三参数后，补齐测试调用。
+  - `9bc68243`：墓碑机制的调用点已落在 core `mode/controller.rs` 与 GUI `lib.rs`。
+- 复查修复：`copilot_auth.rs` 补 SKU 字段、`codex_config.rs` 移除无宿主变量的
+  `official_speed_tiers`、`transform_codex_chat.rs` 测试补 `preserve_reasoning_content` 参数。
+- 验证：core `cargo check` 通过；core `cargo check --tests` 通过；前端 `pnpm typecheck` 通过。
+  core `cargo test` 链接、GUI `cargo check --lib`（缺 `windres`）与前端 vitest（esbuild 0.21.5
+  崩溃）受本机环境阻塞，未实际执行，需要在 CI 复核。
+- 未纳入：全部 feat、新模块重构（AppSpec / ProviderKind / sync_support / terminal_launch /
+  ToolSpec / tool_process）、新计价能力、语言包与多语言 README、版本发布说明、Copilot/WSL
+  特定栈、纯文档与纯测试提交。
