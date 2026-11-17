@@ -343,7 +343,7 @@ pub(crate) fn settle_tombstones() {
 }
 
 /// 启动时（补完上次没做完的操作之后）：上次退出或崩溃前没删的墓碑，等到有效期满接着删。
-pub(crate) fn resume_tombstone_sweep() {
+pub fn resume_tombstone_sweep() {
     let store = DeviceStore::for_device();
     let Some(marker) = read_marker(&store) else {
         return;
@@ -362,7 +362,7 @@ pub(crate) fn resume_tombstone_sweep() {
 
 /// 退出 CC Switch 时（指回直连之后）：还没删的墓碑现在删掉，不留到下次启动。刚写进去不到
 /// [`TOMBSTONE_MIN_VISIBLE`] 的，先等开着的会话读到（最多等这么久）。会阻塞，在阻塞线程上调。
-pub(crate) fn finish_tombstones_before_exit() {
+pub fn finish_tombstones_before_exit() {
     let store = DeviceStore::for_device();
     let Some(marker) = read_marker(&store) else {
         return;
