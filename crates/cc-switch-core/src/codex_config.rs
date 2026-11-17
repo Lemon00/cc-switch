@@ -2962,10 +2962,6 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
                 {
                     restored["displayName"] = json!(name);
                 }
-                official_speed_tiers |= entry
-                    .get("additional_speed_tiers")
-                    .and_then(Value::as_array)
-                    .is_some_and(|tiers| !tiers.is_empty());
                 entries.push(restored);
                 continue;
             }

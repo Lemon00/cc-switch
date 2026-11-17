@@ -4230,7 +4230,7 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "medium"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, Some(&config), false).unwrap();
         assert_eq!(result["reasoning_effort"], "medium");
         assert!(result.get("thinking").is_none());
         assert!(result.get("enable_thinking").is_none());
