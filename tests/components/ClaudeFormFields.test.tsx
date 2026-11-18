@@ -27,14 +27,15 @@ vi.mock("@/lib/api/copilot", () => ({
   copilotGetModelsForAccount: copilotApiMock.copilotGetModelsForAccount,
 }));
 
-vi.mock("@/lib/api/model-fetch", async (importOriginal) => ({
-  claudeModelFetchApiFormat: (
-    await importOriginal<typeof import("@/lib/api/model-fetch")>()
-  ).claudeModelFetchApiFormat,
-  fetchCodexOauthModels: modelFetchApiMock.fetchCodexOauthModels,
-  fetchModelsForConfig: modelFetchApiMock.fetchModelsForConfig,
-  showFetchModelsError: modelFetchApiMock.showFetchModelsError,
-}));
+vi.mock("@/lib/api/model-fetch", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api/model-fetch")>();
+  return {
+    ...actual,
+    fetchCodexOauthModels: modelFetchApiMock.fetchCodexOauthModels,
+    fetchModelsForConfig: modelFetchApiMock.fetchModelsForConfig,
+    showFetchModelsError: modelFetchApiMock.showFetchModelsError,
+  };
+});
 
 vi.mock("@/components/providers/forms/CopilotAuthSection", () => ({
   CopilotAuthSection: () => <div data-testid="copilot-auth-section" />,
@@ -166,9 +167,7 @@ describe("ClaudeFormFields", () => {
         isCopilotPreset: false,
         apiFormat: "openai_chat",
       });
-      expect(
-        screen.getByRole("combobox", { name: "思考档位" }),
-      ).toBeVisible();
+      expect(screen.getByRole("combobox", { name: "思考档位" })).toBeVisible();
       unmount();
 
       renderCopilotForm({
@@ -224,7 +223,7 @@ describe("ClaudeFormFields", () => {
     });
   });
 
-  it("Genesis 使用当前 Key 拉取可用对话模型", async () => {
+  it("DeepSeek 使用当前 Key 拉取预设的对话模型", async () => {
     Element.prototype.scrollIntoView ??= vi.fn();
     const onModelChange = vi.fn();
     modelFetchApiMock.fetchModelsForConfig.mockResolvedValueOnce([
@@ -237,7 +236,7 @@ describe("ClaudeFormFields", () => {
       category: "aggregator",
       shouldShowApiKey: true,
       apiKey: "test-key",
-      baseUrl: "https://token.moi.matrixorigin.cn",
+      baseUrl: "https://api.deepseek.com/anthropic",
       defaultSonnetModel: "",
       defaultSonnetModelName: "",
       onModelChange,
@@ -254,12 +253,12 @@ describe("ClaudeFormFields", () => {
 
     await waitFor(() => {
       expect(modelFetchApiMock.fetchModelsForConfig).toHaveBeenCalledWith(
-        "https://token.moi.matrixorigin.cn",
+        "https://api.deepseek.com/anthropic",
         "test-key",
         false,
-        "https://token.moi.matrixorigin.cn/v1/models?type=chat",
+        "https://api.deepseek.com/models",
         "",
-        { requestHeaders: undefined },
+        { apiFormat: undefined, requestHeaders: undefined },
       );
     });
 

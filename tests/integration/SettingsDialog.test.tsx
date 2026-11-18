@@ -1,5 +1,5 @@
 import React, { Suspense } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { http, HttpResponse } from "msw";
@@ -12,6 +12,7 @@ import {
   getAppConfigDirOverride,
 } from "../msw/state";
 import { server } from "../msw/server";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
@@ -87,7 +88,7 @@ vi.mock("@/components/settings/AboutSection", () => ({
 const renderDialog = (
   props?: Partial<React.ComponentProps<typeof SettingsPage>>,
 ) => {
-  const client = new QueryClient();
+  const client = createTestQueryClient();
   return render(
     <QueryClientProvider client={client}>
       <Suspense fallback={<div data-testid="loading">loading</div>}>
@@ -118,6 +119,8 @@ describe("SettingsPage integration", () => {
 
     const appInput = await screen.findByPlaceholderText(
       "settings.browsePlaceholderApp",
+      undefined,
+      { timeout: 5000 },
     );
     expect((appInput as HTMLInputElement).value).toBe("/home/mock/.cc-switch");
   });

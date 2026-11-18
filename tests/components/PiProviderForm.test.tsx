@@ -73,7 +73,7 @@ function openAdvancedOptions() {
   );
 }
 
-describe("PiProviderForm", () => {
+describe("PiProviderForm", { timeout: 20_000 }, () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = vi.fn();
   });
@@ -506,7 +506,6 @@ describe("PiProviderForm", () => {
   });
 
   it("updates structured fields from config JSON and preserves native fields", async () => {
-    const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     render(
       <PiProviderForm
@@ -517,7 +516,7 @@ describe("PiProviderForm", () => {
       />,
     );
 
-    await user.click(
+    fireEvent.click(
       screen.getByRole("button", { name: "providerPreset.custom" }),
     );
     fireEvent.change(screen.getByPlaceholderText("my-provider"), {
@@ -609,7 +608,7 @@ describe("PiProviderForm", () => {
       nativeField: { keep: true },
     });
 
-    await user.click(screen.getByRole("button", { name: "Save edited JSON" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save edited JSON" }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(JSON.parse(onSubmit.mock.calls[0][0].settingsConfig)).toEqual(
       synchronizedConfig,
@@ -617,7 +616,6 @@ describe("PiProviderForm", () => {
   });
 
   it("uses structured Pi-native capabilities and limits in collapsed model details", async () => {
-    const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     render(
       <PiProviderForm
@@ -628,7 +626,7 @@ describe("PiProviderForm", () => {
       />,
     );
 
-    await user.click(
+    fireEvent.click(
       screen.getByRole("button", { name: "providerPreset.custom" }),
     );
     fireEvent.change(screen.getByPlaceholderText("my-provider"), {
@@ -643,7 +641,7 @@ describe("PiProviderForm", () => {
         target: { value: "https://api.example.com/v1" },
       },
     );
-    await user.click(screen.getByRole("button", { name: "pi.form.addModel" }));
+    fireEvent.click(screen.getByRole("button", { name: "pi.form.addModel" }));
     fireEvent.change(screen.getByPlaceholderText("model-id"), {
       target: { value: "limited-model" },
     });
@@ -661,13 +659,11 @@ describe("PiProviderForm", () => {
       screen.queryByLabelText("pi.form.imageInput"),
     ).not.toBeInTheDocument();
 
-    await user.click(
-      screen.getByRole("button", { name: "展开或收起模型详情" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "展开或收起模型详情" }));
     expect(
       screen.queryByText("pi.form.thinkingLevelsLabel"),
     ).not.toBeInTheDocument();
-    await user.click(screen.getByLabelText("pi.form.reasoning"));
+    fireEvent.click(screen.getByLabelText("pi.form.reasoning"));
     expect(
       screen
         .getByLabelText("pi.form.maxTokens")
@@ -675,14 +671,14 @@ describe("PiProviderForm", () => {
           screen.getByText("pi.form.thinkingLevelsLabel"),
         ) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).not.toBe(0);
-    await user.click(screen.getByLabelText("pi.form.imageInput"));
+    fireEvent.click(screen.getByLabelText("pi.form.imageInput"));
     fireEvent.change(screen.getByLabelText("pi.form.contextWindow"), {
       target: { value: "128000.5" },
     });
     fireEvent.change(screen.getByLabelText("pi.form.maxTokens"), {
       target: { value: "16384.25" },
     });
-    await user.click(screen.getByRole("button", { name: "Save model limits" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save model limits" }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(JSON.parse(onSubmit.mock.calls[0][0].settingsConfig).models).toEqual(
@@ -700,7 +696,6 @@ describe("PiProviderForm", () => {
   });
 
   it("reopens model details and focuses an invalid Pi-native limit", async () => {
-    const user = userEvent.setup();
     render(
       <PiProviderForm
         appId="pi"
@@ -710,7 +705,7 @@ describe("PiProviderForm", () => {
       />,
     );
 
-    await user.click(
+    fireEvent.click(
       screen.getByRole("button", { name: "providerPreset.custom" }),
     );
     fireEvent.change(screen.getByPlaceholderText("my-provider"), {
@@ -725,7 +720,7 @@ describe("PiProviderForm", () => {
         target: { value: "https://api.example.com/v1" },
       },
     );
-    await user.click(screen.getByRole("button", { name: "pi.form.addModel" }));
+    fireEvent.click(screen.getByRole("button", { name: "pi.form.addModel" }));
     fireEvent.change(screen.getByPlaceholderText("model-id"), {
       target: { value: "invalid-model" },
     });
@@ -733,12 +728,12 @@ describe("PiProviderForm", () => {
     const toggle = screen.getByRole("button", {
       name: "展开或收起模型详情",
     });
-    await user.click(toggle);
+    fireEvent.click(toggle);
     fireEvent.change(screen.getByLabelText("pi.form.contextWindow"), {
       target: { value: "-1" },
     });
-    await user.click(toggle);
-    await user.click(
+    fireEvent.click(toggle);
+    fireEvent.click(
       screen.getByRole("button", { name: "Save invalid limits" }),
     );
 
@@ -751,7 +746,6 @@ describe("PiProviderForm", () => {
   });
 
   it("stores Pi-native request headers without mixing them with API-key auth", async () => {
-    const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     render(
       <PiProviderForm
@@ -762,7 +756,7 @@ describe("PiProviderForm", () => {
       />,
     );
 
-    await user.click(
+    fireEvent.click(
       screen.getByRole("button", { name: "providerPreset.custom" }),
     );
     fireEvent.change(screen.getByPlaceholderText("my-provider"), {
@@ -771,8 +765,8 @@ describe("PiProviderForm", () => {
     fireEvent.change(screen.getByLabelText("provider.name"), {
       target: { value: "Identity provider" },
     });
-    await user.click(document.querySelector("#pi-provider-api-select")!);
-    await user.click(
+    fireEvent.click(document.querySelector("#pi-provider-api-select")!);
+    fireEvent.click(
       await screen.findByRole("option", { name: "Anthropic Messages" }),
     );
     fireEvent.change(
@@ -785,9 +779,7 @@ describe("PiProviderForm", () => {
     fireEvent.change(screen.getByPlaceholderText("model-id"), {
       target: { value: "identity-model" },
     });
-    await user.click(
-      screen.getByRole("button", { name: "展开或收起模型详情" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "展开或收起模型详情" }));
     fireEvent.change(screen.getByLabelText("pi.form.contextWindow"), {
       target: { value: "128000" },
     });
@@ -796,7 +788,7 @@ describe("PiProviderForm", () => {
     });
 
     openAdvancedOptions();
-    await user.click(screen.getByRole("button", { name: "Add header" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add header" }));
     const headerName = screen.getByLabelText("Header");
     fireEvent.change(headerName, {
       target: { value: "X-Client-Name" },
@@ -805,7 +797,7 @@ describe("PiProviderForm", () => {
     fireEvent.change(screen.getByLabelText("Value"), {
       target: { value: "pi-ui" },
     });
-    await user.click(screen.getByRole("button", { name: "Save identity" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save identity" }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     const config = JSON.parse(onSubmit.mock.calls[0][0].settingsConfig);

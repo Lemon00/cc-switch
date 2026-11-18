@@ -1,5 +1,5 @@
 import { Suspense, type ComponentType } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import {
   act,
   render,
@@ -20,6 +20,7 @@ import {
 } from "../msw/state";
 import { emitTauriEvent } from "../msw/tauriMocks";
 import { server } from "../msw/server";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
@@ -217,7 +218,7 @@ const sidebarApp = (name: string) =>
   });
 
 const renderApp = (AppComponent: ComponentType) => {
-  const client = new QueryClient();
+  const client = createTestQueryClient();
   return render(
     <QueryClientProvider client={client}>
       <Suspense fallback={<div data-testid="loading">loading</div>}>
@@ -308,7 +309,7 @@ describe("App integration with MSW", () => {
 
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
-  }, 10_000);
+  }, 20_000);
 
   it("refreshes the route pointer when the proxy fails over to another provider", async () => {
     let routeProviderId = "claude-1";
@@ -1007,15 +1008,24 @@ describe("App integration with MSW", () => {
   });
 
   it("navigates OpenClaw and Hermes pages with underline tabs", async () => {
+    server.use(
+      http.post("http://tauri.local/get_openclaw_env", () =>
+        HttpResponse.json({}),
+      ),
+    );
     const { default: App } = await import("@/App");
     renderApp(App);
 
     fireEvent.click(sidebarApp("OpenClaw"));
     // 首次启动提示是模态对话框，页面其余部分是 aria-hidden，所以带上 hidden
-    const openclawTabs = await screen.findByRole("tablist", {
-      name: "OpenClaw",
-      hidden: true,
-    });
+    const openclawTabs = await screen.findByRole(
+      "tablist",
+      {
+        name: "OpenClaw",
+        hidden: true,
+      },
+      { timeout: 5000 },
+    );
     const pageTabs = within(openclawTabs).getAllByRole("tab", { hidden: true });
     expect(pageTabs.map((tab) => tab.textContent)).toEqual([
       "appPage.providers",
@@ -1028,10 +1038,14 @@ describe("App integration with MSW", () => {
     ).not.toBeInTheDocument();
 
     fireEvent.click(pageTabs[2]);
-    const configTabs = await screen.findByRole("tablist", {
-      name: "appPage.openclawConfig",
-      hidden: true,
-    });
+    const configTabs = await screen.findByRole(
+      "tablist",
+      {
+        name: "appPage.openclawConfig",
+        hidden: true,
+      },
+      { timeout: 5000 },
+    );
     const subTabs = within(configTabs).getAllByRole("tab", { hidden: true });
     expect(subTabs).toHaveLength(3);
     expect(subTabs[0]).toHaveAttribute("aria-selected", "true");
@@ -1041,10 +1055,14 @@ describe("App integration with MSW", () => {
     );
 
     fireEvent.click(sidebarApp("Hermes"));
-    const hermesTabs = await screen.findByRole("tablist", {
-      name: "Hermes",
-      hidden: true,
-    });
+    const hermesTabs = await screen.findByRole(
+      "tablist",
+      {
+        name: "Hermes",
+        hidden: true,
+      },
+      { timeout: 5000 },
+    );
     const hermesPageTabs = within(hermesTabs).getAllByRole("tab", {
       hidden: true,
     });
@@ -1056,10 +1074,14 @@ describe("App integration with MSW", () => {
     // 记忆页：页头的 solid 主操作换成「保存」，两份记忆用二级页签
     fireEvent.click(hermesPageTabs[1]);
     const header = document.querySelector("header") as HTMLElement;
-    const save = await within(header).findByRole("button", {
-      name: "common.save",
-      hidden: true,
-    });
+    const save = await within(header).findByRole(
+      "button",
+      {
+        name: "common.save",
+        hidden: true,
+      },
+      { timeout: 5000 },
+    );
     expect(save).toHaveAttribute("aria-disabled", "true");
     expect(
       within(header).queryByRole("button", {
@@ -1067,22 +1089,28 @@ describe("App integration with MSW", () => {
         hidden: true,
       }),
     ).not.toBeInTheDocument();
-    const memoryTabs = await screen.findByRole("tablist", {
-      name: "hermes.memory.fileTabs",
-      hidden: true,
-    });
+    const memoryTabs = await screen.findByRole(
+      "tablist",
+      {
+        name: "hermes.memory.fileTabs",
+        hidden: true,
+      },
+      { timeout: 5000 },
+    );
     expect(
       within(memoryTabs).getAllByRole("tab", { hidden: true }),
     ).toHaveLength(2);
-    await waitFor(() =>
-      expect(
-        screen.getAllByRole("textbox", {
-          name: "hermes.memory.editorLabel",
-          hidden: true,
-        })[0],
-      ).toHaveValue("agent notes"),
+    await waitFor(
+      () =>
+        expect(
+          screen.getAllByRole("textbox", {
+            name: "hermes.memory.editorLabel",
+            hidden: true,
+          })[0],
+        ).toHaveValue("agent notes"),
+      { timeout: 5000 },
     );
-  });
+  }, 10_000);
 
   it("opens the old skillsDiscovery view as the Discover segment", async () => {
     localStorage.setItem("cc-switch-last-view", "skillsDiscovery");

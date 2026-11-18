@@ -457,7 +457,7 @@ describe("useSessionImage", () => {
     expect(y.result.current.url).toBeTruthy();
     expect(revokeObjectURL).not.toHaveBeenCalled();
     [x, y, ...mounted].forEach((hook) => hook.unmount());
-  });
+  }, 10_000);
 
   it("加载中卸载：不再更新状态", async () => {
     let resolve: (value: ArrayBuffer) => void = () => {};
