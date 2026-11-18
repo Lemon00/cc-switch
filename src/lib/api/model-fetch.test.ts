@@ -8,17 +8,15 @@ import {
 const invoke = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
-describe("Genesis model discovery", () => {
-  it.each([
-    "https://token.moi.matrixorigin.cn",
-    "https://token.moi.matrixorigin.cn/v1",
-  ])("fetches current chat models for %s", async (baseUrl) => {
+describe("model discovery requests", () => {
+  it("leaves automatic catalog URL resolution to the backend", async () => {
+    const baseUrl = "https://example.com/v1";
     await fetchModelsForConfig(baseUrl, "test-key");
     expect(invoke).toHaveBeenLastCalledWith("fetch_models_for_config", {
       baseUrl,
       apiKey: "test-key",
       isFullUrl: undefined,
-      modelsUrl: "https://token.moi.matrixorigin.cn/v1/models?type=chat",
+      modelsUrl: undefined,
       customUserAgent: undefined,
       apiFormat: undefined,
       requestHeaders: undefined,

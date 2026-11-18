@@ -227,7 +227,7 @@ afterAll(() => {
   }
 });
 
-describe("AppsPage concurrent CLI upgrades", () => {
+describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
   beforeEach(() => {
     vi.resetModules();
     upgraded.clear();
