@@ -134,7 +134,7 @@ fn webdav_stalled_error(key: &'static str, op_zh: &str, op_en: &str, target_url:
 /// Test WebDAV connectivity via PROPFIND Depth=0 on the base URL.
 pub async fn test_connection(base_url: &str, auth: &WebDavAuth) -> Result<(), AppError> {
     let url = parse_base_url(base_url)?;
-    let client = http_client::get();
+    let client = http_client::no_redirect().map_err(AppError::Message)?;
 
     let resp = apply_auth(
         client
@@ -173,7 +173,7 @@ pub async fn ensure_remote_directories(
     if segments.is_empty() {
         return Ok(());
     }
-    let client = http_client::get();
+    let client = http_client::no_redirect().map_err(AppError::Message)?;
 
     for depth in 1..=segments.len() {
         let prefix = &segments[..depth];
@@ -237,7 +237,7 @@ pub async fn put_bytes(
     bytes: Vec<u8>,
     content_type: &str,
 ) -> Result<(), AppError> {
-    let client = http_client::get();
+    let client = http_client::no_redirect().map_err(AppError::Message)?;
     let resp = apply_auth(
         client
             .put(url)
@@ -264,7 +264,7 @@ pub async fn get_bytes(
     auth: &WebDavAuth,
     max_bytes: usize,
 ) -> Result<Option<(Vec<u8>, Option<String>)>, AppError> {
-    let client = http_client::get();
+    let client = http_client::no_redirect().map_err(AppError::Message)?;
     let request = apply_auth(
         client.get(url).timeout(transfer_timeout(max_bytes as u64)),
         auth,
@@ -320,7 +320,7 @@ pub async fn get_bytes(
 
 /// HEAD request to retrieve the ETag. Returns `None` on 404.
 pub async fn head_etag(url: &str, auth: &WebDavAuth) -> Result<Option<String>, AppError> {
-    let client = http_client::get();
+    let client = http_client::no_redirect().map_err(AppError::Message)?;
     let resp = apply_auth(
         client
             .head(url)

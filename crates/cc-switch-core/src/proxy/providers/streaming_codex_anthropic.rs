@@ -729,7 +729,7 @@ pub fn create_responses_sse_stream_from_anthropic_with_context<
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    sse.push_bytes(&bytes);
+                    sse.push_bytes(&bytes)?;
 
                     // A few compatible gateways ignore stream:true and return one
                     // JSON document. Hold that body intact (including pretty-printed

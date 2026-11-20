@@ -332,6 +332,8 @@ pub async fn update_proxy_config_for_app(
     let circuit_config = CircuitBreakerConfig::from(&config);
     // `enabled` 是模式的镜像，只由进入 / 退出代理改写。
     let mut config = config;
+    // 前端可能传别名（如 `grok`）；落库必须用规范化 `app.as_str()`，否则 UPDATE 零行。
+    config.app_type = app.as_str().to_string();
     config.enabled = crate::mode::current::is_proxy(&app);
 
     db.update_proxy_config_for_app(config)

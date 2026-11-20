@@ -505,11 +505,16 @@ fn create_device_id(path: &Path) -> Result<String, String> {
     Ok(id)
 }
 
-fn request(endpoints: &Endpoints, path: &str, device_id: &str) -> reqwest::RequestBuilder {
-    identify(
-        crate::proxy::http_client::get().post(format!("{}{path}", endpoints.oauth_host)),
+fn request(
+    endpoints: &Endpoints,
+    path: &str,
+    device_id: &str,
+) -> Result<reqwest::RequestBuilder, String> {
+    let client = crate::proxy::http_client::no_redirect()?;
+    Ok(identify(
+        client.post(format!("{}{path}", endpoints.oauth_host)),
         device_id,
-    )
+    ))
 }
 
 fn identify(request: reqwest::RequestBuilder, device_id: &str) -> reqwest::RequestBuilder {
@@ -724,7 +729,7 @@ impl KimiOAuthManager {
         // Starting again always invalidates the previous flow before any I/O.
         *pending = None;
         let identity = device_id(&home)?;
-        let response = request(&endpoints, "/api/oauth/device_authorization", &identity)
+        let response = request(&endpoints, "/api/oauth/device_authorization", &identity)?
             .form(&[("client_id", CLIENT_ID)])
             .send()
             .await
@@ -841,7 +846,7 @@ impl KimiOAuthManager {
     async fn advance(flow: &mut PendingLogin) -> Result<PollOutcome, String> {
         flow.next_poll = Instant::now() + Duration::from_secs(flow.interval);
         if flow.credential.is_none() {
-            let response = request(&flow.endpoints, "/api/oauth/token", &flow.device_id)
+            let response = request(&flow.endpoints, "/api/oauth/token", &flow.device_id)?
                 .form(&[
                     ("client_id", CLIENT_ID),
                     ("device_code", flow.device_code.as_str()),
@@ -882,8 +887,9 @@ impl KimiOAuthManager {
                 account::identify_accounts(&flow.home, &flow.store).await;
             }
         }
+        let client = crate::proxy::http_client::no_redirect()?;
         let response = identify(
-            crate::proxy::http_client::get().get(format!("{}/models", flow.endpoints.base_url)),
+            client.get(format!("{}/models", flow.endpoints.base_url)),
             &flow.device_id,
         )
         .bearer_auth(required_string(credential, "access_token")?)
@@ -1013,8 +1019,9 @@ async fn models_at(
             return Err("Sign in to this Kimi account again in the Authorization Center".into())
         }
     };
+    let client = crate::proxy::http_client::no_redirect()?;
     let response = identify(
-        crate::proxy::http_client::get().get(format!("{base_url}/models")),
+        client.get(format!("{base_url}/models")),
         &device,
     )
     .bearer_auth(token)

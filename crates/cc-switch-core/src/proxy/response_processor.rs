@@ -793,7 +793,7 @@ pub fn create_logged_passthrough_stream(
                     }
                     is_first_chunk = false;
                     if inspect_sse_events {
-                        sse.push_bytes(&bytes);
+                        sse.push_bytes(&bytes)?;
 
                         // 尝试解析并记录完整的 SSE 事件
                         while let Some(event_text) = sse.next_block() {

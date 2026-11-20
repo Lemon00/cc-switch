@@ -268,7 +268,7 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    sse.push_bytes(&bytes);
+                    sse.push_bytes(&bytes)?;
 
                     while let Some(line) = sse.next_block() {
                         if line.trim().is_empty() {

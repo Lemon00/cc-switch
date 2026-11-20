@@ -2737,7 +2737,9 @@ outbound_model: None,
             log::debug!(
                 "[Forwarder] Using pooled reqwest client (preserve_exact_header_case={preserve_exact_header_case}, socks_proxy={is_socks_proxy})"
             );
-            let client = super::http_client::get_for_url(&url);
+            // 上游转发可能带 x-api-key 等自定义头：禁止自动重定向跨源带走凭据/正文。
+            let client = super::http_client::no_redirect_for_url(&url)
+                .map_err(ProxyError::ConfigError)?;
             let mut request = client.request(method.clone(), &url);
             if request_is_streaming {
                 // reqwest 的 timeout 是整请求超时；流式请求交给 response_processor
@@ -3002,7 +3004,9 @@ outbound_model: None,
                     "Failed while validating Responses stream start: {error}"
                 ))
             })?;
-            sse.push_bytes(&chunk);
+            sse.push_bytes(&chunk).map_err(|e| {
+                ProxyError::ForwardFailed(format!("SSE framing buffer exceeded: {e}"))
+            })?;
             replay_chunks.push(chunk);
 
             // Some compatible gateways ignore `stream:true` and return a complete
@@ -3074,7 +3078,9 @@ outbound_model: None,
             // 还没有交出流，读出错和首包前出错一样回到重试循环。
             let chunk = chunk
                 .map_err(|error| ProxyError::ForwardFailed(format!("读取流式响应失败: {error}")))?;
-            sse.push_bytes(&chunk);
+            sse.push_bytes(&chunk).map_err(|e| {
+                ProxyError::ForwardFailed(format!("SSE framing buffer exceeded: {e}"))
+            })?;
             held_bytes += chunk.len();
             replay_chunks.push(chunk);
 

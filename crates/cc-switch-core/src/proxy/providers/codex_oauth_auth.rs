@@ -441,7 +441,7 @@ impl CodexOAuthManager {
         let (login_epoch, target_account_id, target_generation) =
             self.prepare_login_target(target_account_id).await?;
 
-        let response = crate::proxy::http_client::get()
+        let response = crate::proxy::http_client::no_redirect().map_err(|e| CodexOAuthError::NetworkError(e))?
             .post(DEVICE_AUTH_USERCODE_URL)
             .timeout(OAUTH_HTTP_TIMEOUT)
             .header("Content-Type", "application/json")
@@ -601,7 +601,7 @@ impl CodexOAuthManager {
 
         log::debug!("[CodexOAuth] 轮询 Device Code");
 
-        let poll_response = crate::proxy::http_client::get()
+        let poll_response = crate::proxy::http_client::no_redirect().map_err(|e| CodexOAuthError::NetworkError(e))?
             .post(DEVICE_AUTH_TOKEN_URL)
             .timeout(OAUTH_HTTP_TIMEOUT)
             .header("Content-Type", "application/json")
@@ -715,7 +715,7 @@ impl CodexOAuthManager {
         code_verifier: &str,
         redirect_uri: &str,
     ) -> Result<OAuthTokenResponse, CodexOAuthError> {
-        let response = crate::proxy::http_client::get()
+        let response = crate::proxy::http_client::no_redirect().map_err(|e| CodexOAuthError::NetworkError(e))?
             .post(OAUTH_TOKEN_URL)
             .timeout(OAUTH_HTTP_TIMEOUT)
             .header("Content-Type", "application/x-www-form-urlencoded")
@@ -749,7 +749,7 @@ impl CodexOAuthManager {
         &self,
         refresh_token: &str,
     ) -> Result<OAuthTokenResponse, CodexOAuthError> {
-        let response = crate::proxy::http_client::get()
+        let response = crate::proxy::http_client::no_redirect().map_err(|e| CodexOAuthError::NetworkError(e))?
             .post(OAUTH_TOKEN_URL)
             .timeout(OAUTH_HTTP_TIMEOUT)
             .header("Content-Type", "application/x-www-form-urlencoded")

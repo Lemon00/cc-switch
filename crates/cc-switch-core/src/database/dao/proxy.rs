@@ -202,8 +202,9 @@ impl Database {
     ) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
 
-        conn.execute(
-            "UPDATE proxy_config SET
+        let updated = conn
+            .execute(
+                "UPDATE proxy_config SET
                 enabled = ?2,
                 auto_failover_enabled = ?3,
                 max_retries = ?4,
@@ -217,22 +218,29 @@ impl Database {
                 circuit_min_requests = ?12,
                 updated_at = datetime('now')
              WHERE app_type = ?1",
-            rusqlite::params![
-                config.app_type,
-                if config.enabled { 1 } else { 0 },
-                if config.auto_failover_enabled { 1 } else { 0 },
-                config.max_retries as i32,
-                config.streaming_first_byte_timeout as i32,
-                config.streaming_idle_timeout as i32,
-                config.non_streaming_timeout as i32,
-                config.circuit_failure_threshold as i32,
-                config.circuit_success_threshold as i32,
-                config.circuit_timeout_seconds as i32,
-                config.circuit_error_rate_threshold,
-                config.circuit_min_requests as i32,
-            ],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
+                rusqlite::params![
+                    config.app_type,
+                    if config.enabled { 1 } else { 0 },
+                    if config.auto_failover_enabled { 1 } else { 0 },
+                    config.max_retries as i32,
+                    config.streaming_first_byte_timeout as i32,
+                    config.streaming_idle_timeout as i32,
+                    config.non_streaming_timeout as i32,
+                    config.circuit_failure_threshold as i32,
+                    config.circuit_success_threshold as i32,
+                    config.circuit_timeout_seconds as i32,
+                    config.circuit_error_rate_threshold,
+                    config.circuit_min_requests as i32,
+                ],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        if updated == 0 {
+            return Err(AppError::Database(format!(
+                "proxy_config 中不存在应用类型 {}",
+                config.app_type
+            )));
+        }
 
         Ok(())
     }
@@ -876,6 +884,32 @@ mod tests {
             }
         ));
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_proxy_config_rejects_unknown_or_alias_app_type_strings() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let mut config = db.get_proxy_config_for_app(&AppType::GrokBuild).await?;
+        assert_eq!(config.app_type, "grokbuild");
+
+        // 别名 "grok" 能 parse 成 GrokBuild，但库里存的是规范名；不规范化就零行。
+        config.app_type = "grok".to_string();
+        config.max_retries = 9;
+        let err = db
+            .update_proxy_config_for_app(config.clone())
+            .await
+            .expect_err("alias app_type must not silently no-op");
+        assert!(
+            err.to_string().contains("grok"),
+            "error should name the missing app_type: {err}"
+        );
+
+        config.app_type = AppType::GrokBuild.as_str().to_string();
+        db.update_proxy_config_for_app(config).await?;
+        let stored = db.get_proxy_config_for_app(&AppType::GrokBuild).await?;
+        assert_eq!(stored.max_retries, 9);
+        assert_eq!(stored.app_type, "grokbuild");
         Ok(())
     }
 }

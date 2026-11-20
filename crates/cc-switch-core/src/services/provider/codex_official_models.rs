@@ -327,7 +327,11 @@ fn fetch_models(login: &OfficialLogin, version: &str, etag: Option<&str>) -> Fet
     let etag = etag.map(str::to_string);
     let run = move || {
         crate::block_on(async move {
-            let mut request = crate::proxy::http_client::get()
+            let client = match crate::proxy::http_client::no_redirect() {
+                Ok(c) => c,
+                Err(e) => return Fetch::Failed(format!("HTTP 客户端创建失败: {e}")),
+            };
+            let mut request = client
                 .get(crate::services::codex_oauth_models::CODEX_OAUTH_MODELS_URL)
                 .query(&[("client_version", version.as_str())])
                 .header("Authorization", format!("Bearer {access_token}"))
@@ -362,17 +366,14 @@ fn fetch_models(login: &OfficialLogin, version: &str, etag: Option<&str>) -> Fet
                 .get(reqwest::header::ETAG)
                 .and_then(|value| value.to_str().ok())
                 .map(str::to_string);
-            let bytes = match response.bytes().await {
-                Ok(bytes) if bytes.len() <= MAX_BODY_BYTES => bytes,
-                Ok(_) => return Fetch::Failed("响应过大".to_string()),
-                // reqwest 把读响应体时的任何错误（超时、连接被断开）都报成「error decoding
-                // response body」，真正的原因在原因链里。
-                Err(error) => {
-                    return Fetch::Failed(format!(
-                        "读取响应失败: {}",
-                        crate::proxy::error::describe_reqwest_error(error)
-                    ))
-                }
+            let bytes = match crate::proxy::http_client::read_body_with_limit(
+                response,
+                MAX_BODY_BYTES,
+            )
+            .await
+            {
+                Ok(bytes) => bytes,
+                Err(error) => return Fetch::Failed(format!("读取响应失败: {error}")),
             };
             match serde_json::from_slice::<Value>(&bytes)
                 .ok()

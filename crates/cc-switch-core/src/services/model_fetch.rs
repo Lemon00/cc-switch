@@ -123,7 +123,9 @@ pub async fn fetch_models(
             "[ModelFetch] Trying endpoint: {}",
             crate::url_for_log_with_secrets(url, &known_secrets)
         );
-        let request = crate::proxy::http_client::get_for_url(url)
+        let client = crate::proxy::http_client::no_redirect_for_url(url)
+            .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+        let request = client
             .get(url)
             .headers(headers.clone())
             .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS));
@@ -137,9 +139,14 @@ pub async fn fetch_models(
         let status = response.status();
 
         if status.is_success() {
-            let resp: ModelsResponse = response
-                .json()
-                .await
+            const MAX_MODEL_FETCH_BYTES: usize = 16 * 1024 * 1024;
+            let body = crate::proxy::http_client::read_body_with_limit(
+                response,
+                MAX_MODEL_FETCH_BYTES,
+            )
+            .await
+            .map_err(|e| format!("Failed to read response: {e}"))?;
+            let resp: ModelsResponse = serde_json::from_slice(&body)
                 .map_err(|e| format!("Failed to parse response: {e}"))?;
 
             let mut models: Vec<FetchedModel> = if let Some(data) = resp.data {
@@ -162,7 +169,10 @@ pub async fn fetch_models(
 
         if status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED {
             let body = redact_model_fetch_error_body(
-                response.text().await.unwrap_or_default(),
+                crate::proxy::http_client::read_body_with_limit(response, 64 * 1024)
+                    .await
+                    .map(|b| String::from_utf8_lossy(&b).into_owned())
+                    .unwrap_or_default(),
                 &known_secrets,
             );
             last_err = Some(format!("HTTP {status}: {body}"));
@@ -170,7 +180,10 @@ pub async fn fetch_models(
         }
 
         let body = redact_model_fetch_error_body(
-            response.text().await.unwrap_or_default(),
+            crate::proxy::http_client::read_body_with_limit(response, 64 * 1024)
+                .await
+                .map(|b| String::from_utf8_lossy(&b).into_owned())
+                .unwrap_or_default(),
             &known_secrets,
         );
         return Err(format!("HTTP {status}: {body}"));

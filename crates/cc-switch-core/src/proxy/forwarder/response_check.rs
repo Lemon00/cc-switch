@@ -199,4 +199,3 @@ pub(super) fn inspect_responses_start_event(block: &str) -> Option<Result<(), Pr
         _ => Some(Ok(())),
     }
 }
-

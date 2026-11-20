@@ -767,7 +767,7 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    sse.push_bytes(&bytes);
+                    sse.push_bytes(&bytes)?;
 
                     while let Some(block) = sse.next_block() {
                         if block.trim().is_empty() {

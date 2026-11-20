@@ -219,7 +219,7 @@ impl XaiOAuthManager {
 
     pub async fn start_device_flow(&self) -> Result<GitHubDeviceCodeResponse, XaiOAuthError> {
         let endpoints = self.discover_endpoints().await?;
-        let response = crate::proxy::http_client::get()
+        let response = crate::proxy::http_client::no_redirect().map_err(|e| XaiOAuthError::NetworkError(e))?
             .post(&endpoints.device_authorization_endpoint)
             .header("User-Agent", XAI_USER_AGENT)
             .form(&[("client_id", XAI_CLIENT_ID), ("scope", XAI_SCOPE)])
@@ -293,7 +293,7 @@ impl XaiOAuthManager {
         self.schedule_next_poll(device_code, entry.interval_secs)
             .await;
 
-        let response = crate::proxy::http_client::get()
+        let response = crate::proxy::http_client::no_redirect().map_err(|e| XaiOAuthError::NetworkError(e))?
             .post(&entry.token_endpoint)
             .header("User-Agent", XAI_USER_AGENT)
             .form(&[
@@ -506,7 +506,7 @@ impl XaiOAuthManager {
         if let Some(endpoints) = self.discovered_endpoints.read().await.clone() {
             return Ok(endpoints);
         }
-        let response = crate::proxy::http_client::get()
+        let response = crate::proxy::http_client::no_redirect().map_err(|e| XaiOAuthError::NetworkError(e))?
             .get(XAI_DISCOVERY_URL)
             .header("User-Agent", XAI_USER_AGENT)
             .send()
@@ -539,7 +539,7 @@ impl XaiOAuthManager {
         refresh_token: &str,
     ) -> Result<OAuthTokenResponse, XaiOAuthError> {
         let endpoints = self.discover_endpoints().await?;
-        let response = crate::proxy::http_client::get_for_url(&endpoints.token_endpoint)
+        let response = crate::proxy::http_client::no_redirect_for_url(&endpoints.token_endpoint).map_err(|e| XaiOAuthError::NetworkError(e))?
             .post(&endpoints.token_endpoint)
             .header("User-Agent", XAI_USER_AGENT)
             .form(&[
@@ -986,20 +986,9 @@ fn validate_xai_endpoint(value: &str) -> Result<(), XaiOAuthError> {
 async fn read_json_response(
     response: reqwest::Response,
 ) -> Result<serde_json::Value, XaiOAuthError> {
-    if response
-        .content_length()
-        .is_some_and(|length| length > MAX_OAUTH_RESPONSE_BYTES as u64)
-    {
-        return Err(XaiOAuthError::ParseError(
-            "OAuth 响应超过大小限制".to_string(),
-        ));
-    }
-    let bytes = response.bytes().await?;
-    if bytes.len() > MAX_OAUTH_RESPONSE_BYTES {
-        return Err(XaiOAuthError::ParseError(
-            "OAuth 响应超过大小限制".to_string(),
-        ));
-    }
+    let bytes = crate::proxy::http_client::read_body_with_limit(response, MAX_OAUTH_RESPONSE_BYTES)
+        .await
+        .map_err(|e| XaiOAuthError::ParseError(e))?;
     serde_json::from_slice(&bytes)
         .map_err(|_| XaiOAuthError::ParseError("OAuth 响应不是有效 JSON".to_string()))
 }

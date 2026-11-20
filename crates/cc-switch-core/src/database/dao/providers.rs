@@ -585,11 +585,18 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        tx.execute(
-            "UPDATE providers SET is_current = 1 WHERE id = ?1 AND app_type = ?2",
-            params![id, app_type],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        let updated = tx
+            .execute(
+                "UPDATE providers SET is_current = 1 WHERE id = ?1 AND app_type = ?2",
+                params![id, app_type],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if updated != 1 {
+            // 目标行不存在时回滚，避免「全部 is_current=0」的悬空状态。
+            return Err(AppError::Message(format!(
+                "供应商 {id} 不存在，无法设为当前"
+            )));
+        }
 
         tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())

@@ -4769,10 +4769,20 @@ impl SkillService {
 
             Self::preflight_install_destination(&skill_dir, &install_name, current_app)?;
 
-            // 复制到 SSOT
+            // 复制到 SSOT。目标目录已存在但库里没有同名记录时绝不能递归删除：
+            // 那可能是用户自管文件，上一轮冲突检查只扫了 InstalledSkill。
             let dest = ssot_dir.join(&install_name);
-            if dest.exists() {
-                let _ = fs::remove_dir_all(&dest);
+            if dest.exists() || Self::is_symlink(&dest) {
+                log::warn!(
+                    "Skill directory '{}' already exists on disk without a managed record, skipping",
+                    install_name
+                );
+                skipped.push(ZipSkippedSkill {
+                    directory: install_name,
+                    existing_id: String::new(),
+                    existing_name: "(unregistered directory)".to_string(),
+                });
+                continue;
             }
             Self::copy_dir_recursive(&skill_dir, &dest)?;
 

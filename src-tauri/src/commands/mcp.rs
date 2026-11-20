@@ -209,12 +209,17 @@ pub async fn upsert_mcp_server(
     state: State<'_, AppState>,
     server: McpServer,
 ) -> Result<(), String> {
-    McpService::upsert_server(&state, server).map_err(|e| e.to_string())
+    // 与 toggle/resync 共用逐应用切换锁，避免整文件读改写互相覆盖。
+    McpService::upsert_server_locked(&state, server)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn delete_mcp_server(state: State<'_, AppState>, id: String) -> Result<bool, String> {
-    McpService::delete_server(&state, &id).map_err(|e| e.to_string())
+    McpService::delete_server_locked(&state, &id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// 切换 MCP 服务器在指定应用的启用状态

@@ -321,4 +321,3 @@ pub(super) fn is_protected_local_proxy_override_header(name: &http::HeaderName) 
             | "tracestate"
     )
 }
-

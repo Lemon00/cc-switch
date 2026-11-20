@@ -6483,13 +6483,38 @@ impl ProviderService {
             }
 
             // Save to database after live-config presence is resolved so parse errors
-            // do not report failure after already mutating DB state.
+            // do not report failure after already mutating DB state. Live 写失败时
+            // 回滚数据库，避免「DB 新值、客户端旧值」的部分提交（与 Mcode 路径一致）。
+            let previous = existing_provider.clone();
             state.db.save_provider(&app_type, &provider)?;
 
             if !live_config_managed {
                 return Ok(true);
             }
-            write_live_for_state(state, &app_type, &provider)?;
+            if let Err(error) = write_live_for_state(state, &app_type, &provider) {
+                match previous {
+                    Some(previous) => {
+                        if let Err(rollback_err) = state.db.save_provider(&app_type, &previous) {
+                            log::warn!(
+                                "Failed to roll back additive provider {} after live write error: {}",
+                                provider.id,
+                                rollback_err
+                            );
+                        }
+                    }
+                    None => {
+                        if let Err(rollback_err) = state.db.delete_provider(&app_type, &provider.id)
+                        {
+                            log::warn!(
+                                "Failed to roll back new additive provider {} after live write error: {}",
+                                provider.id,
+                                rollback_err
+                            );
+                        }
+                    }
+                }
+                return Err(error);
+            }
             return Ok(true);
         }
 
@@ -6651,6 +6676,13 @@ impl ProviderService {
         if app_type == AppType::Omp {
             return omp::delete(state, id);
         }
+
+        // 与切换共用应用锁：引用检查与删行之间不能被 switch 插入旧快照写 live。
+        let _switch_guard = if !app_type.is_additive_mode() {
+            Some(crate::mode::controller::lock_settled_blocking(state, &app_type)?)
+        } else {
+            None
+        };
 
         // Additive mode apps - no current provider concept
         if app_type.is_additive_mode() {
@@ -6992,6 +7024,13 @@ impl ProviderService {
         // 没做完的写入之后再读模式和指针：刚进入代理的应用不会被一次直连写入覆盖，上次
         // 失败后重试也按补完后的指针删上一家的独有字段。
         let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
+
+        // 锁外预读的快照可能已被并发 update 改掉；锁内重读再写 live，避免旧密钥覆盖新配置。
+        let rows = state.db.get_provider_rows(&app_type)?;
+        let _provider = rows
+            .get(id)?
+            .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+        let providers = &rows.readable;
 
         if crate::mode::current::is_proxy(&app_type) {
             // 代理模式：只换代理路由，直连指针不变。契约没变时客户端文件不读也不写；
@@ -8586,26 +8625,61 @@ impl ProviderService {
         // 获取统一供应商（用于删除生成的子供应商）
         let provider = state.db.get_universal_provider(id)?;
 
-        // 删除统一供应商
-        state.db.delete_universal_provider(id)?;
-
-        // 删除生成的子供应商
-        if let Some(p) = provider {
+        // 子供应商若正被直连/代理/Stack 引用，拒绝整单删除，避免绕过普通删除保护。
+        if let Some(p) = &provider {
+            Self::ensure_universal_children_deletable(state, id, p)?;
             if p.apps.claude {
-                let claude_id = format!("universal-claude-{id}");
-                let _ = state.db.delete_provider(&AppType::Claude, &claude_id);
+                Self::delete(state, AppType::Claude, &format!("universal-claude-{id}"))?;
             }
             if p.apps.codex {
-                let codex_id = format!("universal-codex-{id}");
-                let _ = state.db.delete_provider(&AppType::Codex, &codex_id);
+                Self::delete(state, AppType::Codex, &format!("universal-codex-{id}"))?;
             }
             if p.apps.gemini {
-                let gemini_id = format!("universal-gemini-{id}");
-                let _ = state.db.delete_provider(&AppType::Gemini, &gemini_id);
+                Self::delete(state, AppType::Gemini, &format!("universal-gemini-{id}"))?;
             }
         }
 
+        state.db.delete_universal_provider(id)?;
         Ok(true)
+    }
+
+    fn ensure_universal_children_deletable(
+        state: &AppState,
+        id: &str,
+        provider: &crate::provider::UniversalProvider,
+    ) -> Result<(), AppError> {
+        let mut blocking = Vec::new();
+        for (enabled, app, child_id) in [
+            (
+                provider.apps.claude,
+                AppType::Claude,
+                format!("universal-claude-{id}"),
+            ),
+            (
+                provider.apps.codex,
+                AppType::Codex,
+                format!("universal-codex-{id}"),
+            ),
+            (
+                provider.apps.gemini,
+                AppType::Gemini,
+                format!("universal-gemini-{id}"),
+            ),
+        ] {
+            if !enabled {
+                continue;
+            }
+            if crate::mode::current::is_referenced(&state.db, &app, &child_id)? {
+                blocking.push(format!("{} ({})", child_id, app.as_str()));
+            }
+        }
+        if blocking.is_empty() {
+            return Ok(());
+        }
+        Err(AppError::Message(format!(
+            "无法删除统一供应商：以下子供应商正在使用中：{}",
+            blocking.join("、")
+        )))
     }
 
     /// 同步统一供应商到各应用
@@ -8645,9 +8719,19 @@ impl ProviderService {
                 &mut live_failures,
             );
         } else {
-            // 如果禁用了 Claude，删除对应的子供应商
+            // 如果禁用了 Claude，走普通删除（含引用检查与切换锁）。
             let claude_id = format!("universal-claude-{id}");
-            let _ = state.db.delete_provider(&AppType::Claude, &claude_id);
+            if state
+                .db
+                .get_provider_by_id(&claude_id, &AppType::Claude)?
+                .is_some()
+                || state
+                    .db
+                    .get_unreadable_provider(&AppType::Claude, &claude_id)?
+                    .is_some()
+            {
+                Self::delete(state, AppType::Claude, &claude_id)?;
+            }
         }
 
         // 同步到 Codex
@@ -8674,7 +8758,17 @@ impl ProviderService {
             );
         } else {
             let codex_id = format!("universal-codex-{id}");
-            let _ = state.db.delete_provider(&AppType::Codex, &codex_id);
+            if state
+                .db
+                .get_provider_by_id(&codex_id, &AppType::Codex)?
+                .is_some()
+                || state
+                    .db
+                    .get_unreadable_provider(&AppType::Codex, &codex_id)?
+                    .is_some()
+            {
+                Self::delete(state, AppType::Codex, &codex_id)?;
+            }
         }
 
         // 同步到 Gemini
@@ -8701,7 +8795,17 @@ impl ProviderService {
             );
         } else {
             let gemini_id = format!("universal-gemini-{id}");
-            let _ = state.db.delete_provider(&AppType::Gemini, &gemini_id);
+            if state
+                .db
+                .get_provider_by_id(&gemini_id, &AppType::Gemini)?
+                .is_some()
+                || state
+                    .db
+                    .get_unreadable_provider(&AppType::Gemini, &gemini_id)?
+                    .is_some()
+            {
+                Self::delete(state, AppType::Gemini, &gemini_id)?;
+            }
         }
 
         if live_failures.is_empty() {

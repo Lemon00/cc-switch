@@ -247,6 +247,36 @@ pub fn get_current_proxy_url() -> Option<String> {
         .and_then(|url| url.clone())
 }
 
+/// 流式读取响应体，同时检查 `Content-Length` 与累计字节，避免 `.bytes()`/`.text()` 无界灌内存。
+pub async fn read_body_with_limit(
+    mut response: reqwest::Response,
+    limit: usize,
+) -> Result<Vec<u8>, String> {
+    if let Some(len) = response.content_length() {
+        if len as usize > limit {
+            return Err(format!(
+                "response Content-Length {len} exceeds limit of {limit} bytes"
+            ));
+        }
+    }
+    let mut buf = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| format!("Failed to read response body: {e}"))?
+    {
+        if buf.len().saturating_add(chunk.len()) > limit {
+            return Err(format!(
+                "response body exceeds limit of {limit} bytes (read {}+{} so far)",
+                buf.len(),
+                chunk.len()
+            ));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(buf)
+}
+
 /// 两种客户端共用的参数
 fn base_builder() -> reqwest::ClientBuilder {
     let builder = Client::builder()

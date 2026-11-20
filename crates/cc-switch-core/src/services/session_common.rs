@@ -4,6 +4,9 @@
 
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
+use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
+use crate::proxy::usage::parser::TokenUsage;
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::time::SystemTime;
@@ -103,4 +106,28 @@ pub fn update_sync_state_on_conn(
 pub struct EstimatedTiming {
     pub latency_ms: i64,
     pub first_token_ms: Option<i64>,
+}
+
+/// 五个金额列（输入、输出、缓存读、缓存写、合计）。查不到价格的全记 "0"，
+/// 表示没有定价，不代表免费。
+///
+/// 放在始终编译的模块里：`session_usage_codex` 在关闭 `session-monitor` 时仍会编译。
+pub(crate) fn cost_columns(
+    app_type: &str,
+    usage: &TokenUsage,
+    pricing: Option<&ModelPricing>,
+    multiplier: Decimal,
+) -> [String; 5] {
+    let Some(pricing) = pricing else {
+        return std::array::from_fn(|_| "0".to_string());
+    };
+    let cost = CostCalculator::calculate_for_app(app_type, usage, pricing, multiplier);
+    [
+        cost.input_cost,
+        cost.output_cost,
+        cost.cache_read_cost,
+        cost.cache_creation_cost,
+        cost.total_cost,
+    ]
+    .map(|value| value.to_string())
 }

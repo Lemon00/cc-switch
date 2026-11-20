@@ -2348,6 +2348,18 @@ fn order_anthropic_web_search_result_stream(
                         state.observe_emitted(event.as_ref(), &hosted_web_search_name);
                         yield Ok(bytes);
                     } else {
+                        const MAX_PENDING_EVENTS: usize = 10_000;
+                        const MAX_PENDING_BYTES: usize = 16 * 1024 * 1024;
+                        let pending_bytes: usize = pending.iter().map(|b| b.len()).sum();
+                        if pending.len() >= MAX_PENDING_EVENTS
+                            || pending_bytes.saturating_add(bytes.len()) > MAX_PENDING_BYTES
+                        {
+                            yield Ok(anthropic_error_sse(
+                                "Hosted web-search ordering queue exceeded budget while waiting for a paired result",
+                                "stream_truncated",
+                            ));
+                            break;
+                        }
                         pending.push_back(bytes);
                         // Keep the downstream stream observably active while semantic
                         // content waits for the paired hosted-search result.
@@ -2453,7 +2465,7 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
         'stream_loop: while let Some((chunk, is_eof)) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    sse.push_bytes(&bytes);
+                    sse.push_bytes(&bytes)?;
 
                     // A few compatible gateways ignore stream:true and return one
                     // JSON document. Hold it intact until EOF, including any pretty-
@@ -2493,7 +2505,7 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                     }
 
                     if is_eof && !sse.pending().trim().is_empty() {
-                        sse.push_str("\n\n");
+                        sse.push_str("\n\n")?;
                     }
 
                     // SSE 事件由 \n\n 分隔

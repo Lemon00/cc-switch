@@ -245,8 +245,14 @@ struct RequestConfig {
 
 /// 发送 HTTP 请求
 async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<String, AppError> {
-    // 使用全局 HTTP 客户端（已包含代理配置）
-    let client = crate::proxy::http_client::get();
+    // 用量脚本常带自定义认证头：禁止自动重定向，避免跨源带走凭据。
+    let client = crate::proxy::http_client::no_redirect().map_err(|e| {
+        AppError::localized(
+            "usage_script.client_build_failed",
+            format!("创建 HTTP 客户端失败: {e}"),
+            format!("Failed to build HTTP client: {e}"),
+        )
+    })?;
     // 约束超时范围，防止异常配置导致长时间阻塞（最小 2 秒，最大 30 秒）
     let request_timeout = std::time::Duration::from_secs(timeout_secs.clamp(2, 30));
 
@@ -283,13 +289,17 @@ async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<
     })?;
 
     let status = resp.status();
-    let text = resp.text().await.map_err(|e| {
-        AppError::localized(
-            "usage_script.read_response_failed",
-            format!("读取响应失败: {e}"),
-            format!("Failed to read response: {e}"),
-        )
-    })?;
+    const MAX_USAGE_SCRIPT_BYTES: usize = 2 * 1024 * 1024;
+    let text = crate::proxy::http_client::read_body_with_limit(resp, MAX_USAGE_SCRIPT_BYTES)
+        .await
+        .map_err(|e| {
+            AppError::localized(
+                "usage_script.read_response_failed",
+                format!("读取响应失败: {e}"),
+                format!("Failed to read response: {e}"),
+            )
+        })
+        .map(|b| String::from_utf8_lossy(&b).into_owned())?;
 
     if !status.is_success() {
         let preview = if text.len() > 200 {

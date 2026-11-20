@@ -147,4 +147,3 @@ pub(super) fn copilot_api_format_for_model(
         "openai_chat"
     }
 }
-

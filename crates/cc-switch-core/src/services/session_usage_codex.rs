@@ -25,7 +25,7 @@ use crate::services::session_common::{
     parse_timestamp_millis, update_sync_state, update_sync_state_on_conn, EstimatedTiming,
     SessionSyncResult,
 };
-use crate::services::session_usage::cost_columns;
+use crate::services::session_common::cost_columns;
 use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_TOTAL;
 use crate::services::usage_stats::{
     find_model_pricing, has_suspected_codex_session_duplicate, should_skip_session_insert, DedupKey,

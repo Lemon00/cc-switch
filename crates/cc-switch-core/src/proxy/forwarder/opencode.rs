@@ -104,4 +104,3 @@ pub(super) fn without_cache_control(value: &Value) -> Value {
         other => other.clone(),
     }
 }
-

@@ -1070,6 +1070,13 @@ pub async fn exit_all(state: &AppState) -> Result<(), String> {
 /// 分离反而会在 CC Switch 关着时把 Desktop 换成直连那家（映射卡写不进去时是官方登录），
 /// 下次打开 CC Switch 又换回来，每次都要重启 Desktop。
 pub async fn detach_all(state: &AppState) {
+    let _ = detach_all_checked(state).await;
+}
+
+/// 与 [`detach_all`] 相同，但汇总客户端分离失败原因；CLI 用这个判断是否真的已指回直连。
+/// 代理服务停止失败也记入错误（不吞掉）。
+pub async fn detach_all_checked(state: &AppState) -> Result<(), String> {
+    let mut errors = Vec::new();
     for app in PROXY_APPS
         .into_iter()
         .filter(|app| *app != AppType::ClaudeDesktop)
@@ -1080,12 +1087,19 @@ pub async fn detach_all(state: &AppState) {
         };
         if let Err(error) = result {
             log::error!("退出时把 {} 指回直连失败: {error}", app.as_str());
+            errors.push(format!("{}: {error}", app.as_str()));
         }
     }
     if state.proxy_service.is_running().await {
         if let Err(error) = state.proxy_service.stop().await {
             log::warn!("退出时停止代理服务失败: {error}");
+            errors.push(format!("stop proxy: {error}"));
         }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("；"))
     }
 }
 

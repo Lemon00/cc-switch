@@ -155,7 +155,14 @@ impl ProxyServer {
         let state = self.state.clone();
         let handle = tokio::spawn(async move {
             let mut shutdown_rx = shutdown_rx;
+            // 跟踪已接受连接，停止时 abort；accept 前拿 permit 限制并发。
+            const MAX_INBOUND_CONNECTIONS: usize = 256;
+            const PEEK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+            let conn_limit = std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_INBOUND_CONNECTIONS));
+            let mut connections = tokio::task::JoinSet::new();
             loop {
+                // 回收已结束的连接任务，释放 JoinSet 槽位。
+                while connections.try_join_next().is_some() {}
                 tokio::select! {
                     result = listener.accept() => {
                         let (stream, _remote_addr) = match result {
@@ -167,14 +174,24 @@ impl ProxyServer {
                             }
                         };
 
+                        let Ok(permit) = conn_limit.clone().try_acquire_owned() else {
+                            log::warn!(
+                                "[{SRV}] 拒绝连接：已达并发上限 {MAX_INBOUND_CONNECTIONS}",
+                                SRV = log_srv::ACCEPT_ERR
+                            );
+                            drop(stream);
+                            continue;
+                        };
+
                         let app = app.clone();
-                        tokio::spawn(async move {
+                        connections.spawn(async move {
+                            let _permit = permit;
                             // Peek raw TCP bytes to capture original header casing
                             // before hyper parses (and lowercases) the header names.
                             let original_cases = {
                                 let mut peek_buf = vec![0u8; 8192];
-                                match stream.peek(&mut peek_buf).await {
-                                    Ok(n) => {
+                                match tokio::time::timeout(PEEK_TIMEOUT, stream.peek(&mut peek_buf)).await {
+                                    Ok(Ok(n)) => {
                                         let cases = super::hyper_client::OriginalHeaderCases::from_raw_bytes(&peek_buf[..n]);
                                         log::debug!(
                                             "[ProxyServer] Peeked {} bytes, captured {} header casings",
@@ -182,9 +199,13 @@ impl ProxyServer {
                                         );
                                         cases
                                     }
-                                    Err(e) => {
+                                    Ok(Err(e)) => {
                                         log::debug!("[ProxyServer] peek failed (non-fatal): {e}");
                                         super::hyper_client::OriginalHeaderCases::default()
+                                    }
+                                    Err(_) => {
+                                        log::debug!("[ProxyServer] peek timed out; dropping slow connection");
+                                        return;
                                     }
                                 }
                             };
@@ -219,6 +240,19 @@ impl ProxyServer {
                     _ = &mut shutdown_rx => {
                         break;
                     }
+                }
+            }
+
+            // 停止 accept 后强制结束仍在跑的连接，避免 keep-alive 继续打上游。
+            connections.abort_all();
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+            while !connections.is_empty() {
+                if tokio::time::timeout_at(deadline, connections.join_next())
+                    .await
+                    .is_err()
+                {
+                    connections.abort_all();
+                    break;
                 }
             }
 

@@ -379,49 +379,54 @@ fn cmd_proxy_control(app: AppType, action: &str) {
         return;
     }
 
-    // disable：即使没在跑也当成功，方便脚本里直接调用。
-    let Some(pid) = read_proxy_pid() else {
-        println!("后台代理未在运行");
-        return;
-    };
-    if !pid_alive(pid) || !pid_is_our_daemon(pid) {
-        remove_proxy_pid();
-        println!("后台代理未在运行（已清理陈旧的 pid 文件）");
-        return;
+    // disable：进程停止与客户端分离拆成独立幂等步骤。PID 缺失/陈旧时仍尝试
+    // detach——守护进程崩溃后客户端可能仍指向无人监听的端口。
+    let mut require_detach = false;
+    match read_proxy_pid() {
+        None => {
+            println!("后台代理未在运行（无 pid 文件）；仍尝试分离客户端配置");
+            require_detach = true;
+        }
+        Some(pid) if !pid_alive(pid) || !pid_is_our_daemon(pid) => {
+            remove_proxy_pid();
+            println!("后台代理未在运行（已清理陈旧的 pid 文件）；仍尝试分离客户端配置");
+            require_detach = true;
+        }
+        Some(pid) => {
+            #[cfg(unix)]
+            {
+                // SAFETY: pid 已确认是本 CLI 的守护进程；SIGTERM 触发它优雅停代理后退出。
+                unsafe {
+                    libc::kill(pid as libc::pid_t, libc::SIGTERM);
+                }
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while pid_alive(pid) && Instant::now() < deadline {
+                    thread::sleep(Duration::from_millis(100));
+                }
+                if pid_alive(pid) {
+                    unsafe {
+                        libc::kill(pid as libc::pid_t, libc::SIGKILL);
+                    }
+                }
+            }
+            #[cfg(windows)]
+            {
+                let status = Command::new("taskkill")
+                    .args(["/PID", &pid.to_string(), "/T", "/F"])
+                    .status();
+                match status {
+                    Ok(s) if s.success() => {}
+                    Ok(s) => err(&format!("停止后台代理失败: taskkill 退出码 {s}")),
+                    Err(e) => err(&format!("执行 taskkill 失败: {e}")),
+                }
+            }
+            remove_proxy_pid();
+            require_detach = true;
+            println!("后台代理已停止（pid {pid}）");
+        }
     }
 
-    #[cfg(unix)]
-    {
-        // SAFETY: pid 已确认是本 CLI 的守护进程；SIGTERM 触发它优雅停代理后退出。
-        unsafe {
-            libc::kill(pid as libc::pid_t, libc::SIGTERM);
-        }
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while pid_alive(pid) && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(100));
-        }
-        if pid_alive(pid) {
-            unsafe {
-                libc::kill(pid as libc::pid_t, libc::SIGKILL);
-            }
-        }
-    }
-    #[cfg(windows)]
-    {
-        let status = Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .status();
-        match status {
-            Ok(s) if s.success() => {}
-            Ok(s) => err(&format!("停止后台代理失败: taskkill 退出码 {s}")),
-            Err(e) => err(&format!("执行 taskkill 失败: {e}")),
-        }
-    }
-    remove_proxy_pid();
-    println!("后台代理已停止（pid {pid}）");
-    // 停完代理要把客户端指回直连，否则 config.toml 还指向没人监听的端口。
-    // detach_all 只分离已接上的应用；已经是分离态时 exit_locked 直接返回，不会误写。
-    // 只在确实停掉自己的守护进程时做，pid 文件缺失/过期那几条出口不碰 GUI 管的客户端。
+    // 停完或发现守护进程已死：把客户端指回直连。exit_locked 对已分离态幂等。
     match try_open_state() {
         Ok(state) => {
             match tokio::runtime::Builder::new_current_thread()
@@ -429,12 +434,23 @@ fn cmd_proxy_control(app: AppType, action: &str) {
                 .build()
             {
                 Ok(rt) => {
-                    rt.block_on(cc_switch_core::mode::controller::detach_all(&state));
-                    println!("客户端配置已分离（指回直连）");
+                    match rt.block_on(cc_switch_core::mode::controller::detach_all_checked(
+                        &state,
+                    )) {
+                        Ok(()) => println!("客户端配置已分离（指回直连）"),
+                        Err(e) if require_detach => {
+                            err(&format!("客户端配置分离失败: {e}"))
+                        }
+                        Err(e) => println!("警告: 客户端配置分离失败: {e}"),
+                    }
+                }
+                Err(e) if require_detach => {
+                    err(&format!("客户端配置保持接上（建运行时失败: {e}）"))
                 }
                 Err(e) => println!("警告: 客户端配置保持接上（建运行时失败: {e}）"),
             }
         }
+        Err(e) if require_detach => err(&format!("客户端配置保持接上（{e}）")),
         Err(e) => println!("警告: 客户端配置保持接上（{e}）"),
     }
 }

@@ -299,12 +299,16 @@ pub async fn send_request(
 
         match result {
             Ok(resp) => return Ok(resp),
-            Err(e) => {
+            // 请求字节可能已发出：绝不能再用同一 body 走 hyper-util 重发（尤其 POST）。
+            Err(RawSendFailure::AfterWrite(e)) => return Err(e),
+            Err(RawSendFailure::BeforeWrite(e)) => {
                 if proxy_url.is_some() {
                     // Don't bypass configured proxy with direct connect fallback
                     return Err(e);
                 }
-                log::warn!("[HyperClient] Raw write failed, falling back to hyper-util: {e}");
+                log::warn!(
+                    "[HyperClient] Raw connect/TLS failed before write, falling back to hyper-util: {e}"
+                );
                 // Fall through to hyper-util Client
             }
         }
@@ -390,6 +394,13 @@ impl tokio::io::AsyncWrite for ProxyStream {
     }
 }
 
+/// raw-hyper 失败阶段：只有「尚未写出请求」时才允许回退到 hyper-util。
+#[derive(Debug)]
+enum RawSendFailure {
+    BeforeWrite(ProxyError),
+    AfterWrite(ProxyError),
+}
+
 /// Send request via raw TCP/TLS with exact original header casing.
 ///
 /// When `proxy_url` is provided, establishes an HTTP CONNECT tunnel through
@@ -402,13 +413,13 @@ async fn send_raw_request(
     original_cases: &OriginalHeaderCases,
     body: &[u8],
     proxy_url: Option<&str>,
-) -> Result<ProxyResponse, ProxyError> {
+) -> Result<ProxyResponse, RawSendFailure> {
     use tokio::io::AsyncWriteExt;
 
     let scheme = uri.scheme_str().unwrap_or("https");
-    let host = uri
-        .host()
-        .ok_or_else(|| ProxyError::ForwardFailed("URI has no host".into()))?;
+    let host = uri.host().ok_or_else(|| {
+        RawSendFailure::BeforeWrite(ProxyError::ForwardFailed("URI has no host".into()))
+    })?;
     let port = uri
         .port_u16()
         .unwrap_or(if scheme == "https" { 443 } else { 80 });
@@ -419,44 +430,57 @@ async fn send_raw_request(
 
     // Establish TCP connection — either direct or through HTTP CONNECT proxy
     let stream = if let Some(proxy) = proxy_url {
-        connect_via_proxy(proxy, host, port).await?
+        connect_via_proxy(proxy, host, port)
+            .await
+            .map_err(RawSendFailure::BeforeWrite)?
     } else {
-        ProxyStream::Tcp(connect_direct(host, port).await?)
+        ProxyStream::Tcp(
+            connect_direct(host, port)
+                .await
+                .map_err(RawSendFailure::BeforeWrite)?,
+        )
     };
 
     if scheme == "https" {
         let tls_connector = global_tls_connector();
-        let server_name = rustls::pki_types::ServerName::try_from(host.to_string())
-            .map_err(|e| ProxyError::ForwardFailed(format!("Invalid server name: {e}")))?;
+        let server_name = rustls::pki_types::ServerName::try_from(host.to_string()).map_err(|e| {
+            RawSendFailure::BeforeWrite(ProxyError::ForwardFailed(format!(
+                "Invalid server name: {e}"
+            )))
+        })?;
         let mut tls_stream = tls_connector
             .connect(server_name, stream)
             .await
-            .map_err(|e| ProxyError::ForwardFailed(format!("TLS handshake failed: {e}")))?;
+            .map_err(|e| {
+                RawSendFailure::BeforeWrite(ProxyError::ForwardFailed(format!(
+                    "TLS handshake failed: {e}"
+                )))
+            })?;
 
-        tls_stream
-            .write_all(&raw)
-            .await
-            .map_err(|e| ProxyError::ForwardFailed(format!("Write failed: {e}")))?;
-        tls_stream
-            .flush()
-            .await
-            .map_err(|e| ProxyError::ForwardFailed(format!("Flush failed: {e}")))?;
+        tls_stream.write_all(&raw).await.map_err(|e| {
+            RawSendFailure::AfterWrite(ProxyError::ForwardFailed(format!("Write failed: {e}")))
+        })?;
+        tls_stream.flush().await.map_err(|e| {
+            RawSendFailure::AfterWrite(ProxyError::ForwardFailed(format!("Flush failed: {e}")))
+        })?;
 
         let filtered = WriteFilter::new(tls_stream);
-        do_hyper_response(filtered, method.clone()).await
+        do_hyper_response(filtered, method.clone())
+            .await
+            .map_err(RawSendFailure::AfterWrite)
     } else {
         let mut stream = stream;
-        stream
-            .write_all(&raw)
-            .await
-            .map_err(|e| ProxyError::ForwardFailed(format!("Write failed: {e}")))?;
-        stream
-            .flush()
-            .await
-            .map_err(|e| ProxyError::ForwardFailed(format!("Flush failed: {e}")))?;
+        stream.write_all(&raw).await.map_err(|e| {
+            RawSendFailure::AfterWrite(ProxyError::ForwardFailed(format!("Write failed: {e}")))
+        })?;
+        stream.flush().await.map_err(|e| {
+            RawSendFailure::AfterWrite(ProxyError::ForwardFailed(format!("Flush failed: {e}")))
+        })?;
 
         let filtered = WriteFilter::new(stream);
-        do_hyper_response(filtered, method.clone()).await
+        do_hyper_response(filtered, method.clone())
+            .await
+            .map_err(RawSendFailure::AfterWrite)
     }
 }
 

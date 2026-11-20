@@ -2749,6 +2749,12 @@ fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
         match event_name {
             "response.output_item.done" => {
                 if let Some(item) = data.get("item") {
+                    const MAX_OUTPUT_ITEMS: usize = 100_000;
+                    if output_items.len() >= MAX_OUTPUT_ITEMS {
+                        return Err(ProxyError::TransformError(
+                            "Responses SSE aggregation exceeded output item budget".to_string(),
+                        ));
+                    }
                     output_items.push(item.clone());
                 }
             }

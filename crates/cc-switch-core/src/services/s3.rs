@@ -356,7 +356,7 @@ pub async fn test_connection(creds: &S3Credentials) -> Result<(), AppError> {
         )
     })?;
 
-    let client = http_client::get();
+    let client = http_client::no_redirect().map_err(AppError::Message)?;
     let body_hash = sha256_hex(b"");
     let mut headers = reqwest::header::HeaderMap::new();
     sign_request(
@@ -398,7 +398,7 @@ pub async fn put_object(
         )
     })?;
 
-    let client = http_client::get();
+    let client = http_client::no_redirect().map_err(AppError::Message)?;
     let body_hash = sha256_hex(&bytes);
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert("content-type", content_type.parse().unwrap());
@@ -443,7 +443,7 @@ pub async fn get_object(
         )
     })?;
 
-    let client = http_client::get();
+    let client = http_client::no_redirect().map_err(AppError::Message)?;
     let body_hash = sha256_hex(b"");
     let mut headers = reqwest::header::HeaderMap::new();
     sign_request(
@@ -511,7 +511,7 @@ pub async fn head_object(creds: &S3Credentials, key: &str) -> Result<Option<Stri
         )
     })?;
 
-    let client = http_client::get();
+    let client = http_client::no_redirect().map_err(AppError::Message)?;
     let body_hash = sha256_hex(b"");
     let mut headers = reqwest::header::HeaderMap::new();
     sign_request(

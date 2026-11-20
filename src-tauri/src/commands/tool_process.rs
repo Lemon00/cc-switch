@@ -472,4 +472,3 @@ fn run_wsl_tool_command(
     }
     Ok(output)
 }
-

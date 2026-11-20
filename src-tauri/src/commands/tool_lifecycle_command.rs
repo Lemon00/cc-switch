@@ -125,7 +125,7 @@ pub(super) const KIMI_INSTALL_UNIX: &str =
 #[cfg(target_os = "windows")]
 pub(super) const KIMI_INSTALL_WINDOWS_SCRIPT: &str = "irm https://code.kimi.com/kimi-code/install.ps1 | iex";
 
-const OMP_INSTALL_UNIX: &str =
+pub(super) const OMP_INSTALL_UNIX: &str =
     "bash -c 'tmp=$(mktemp) && curl -fsSL https://omp.sh/install -o $tmp && sh $tmp; status=$?; rm -f $tmp; exit $status'";
 
 #[cfg(target_os = "windows")]
@@ -1541,7 +1541,7 @@ pub(super) fn posix_install_command_for(tool: &str) -> String {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn install_command_for(tool: &str) -> String {
+pub(super) fn install_command_for(tool: &str) -> String {
     posix_install_command_for(tool)
 }
 
@@ -1583,4 +1583,3 @@ pub(super) fn is_conflicting(installs: &[ToolInstallation]) -> bool {
         installs.iter().any(|i| i.runnable) && installs.iter().any(|i| !i.runnable);
     distinct_versions.len() > 1 || runnable_mixed
 }
-

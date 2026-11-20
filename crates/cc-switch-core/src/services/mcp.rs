@@ -41,6 +41,29 @@ impl McpService {
         Ok(state.db.get_mcp_server_rows()?.unreadable)
     }
 
+    /// 命令入口：先按涉及的应用拿切换锁再 upsert，避免与 toggle/resync 交错丢更新。
+    pub async fn upsert_server_locked(
+        state: &AppState,
+        server: McpServer,
+    ) -> Result<(), AppError> {
+        let previous = state.db.get_mcp_server_rows()?.get(&server.id)?.cloned();
+        let prev_apps = previous
+            .as_ref()
+            .map(|s| s.apps.clone())
+            .unwrap_or_default();
+        let mut apps: Vec<AppType> = AppType::all()
+            .filter(|app| server.apps.is_enabled_for(app) || prev_apps.is_enabled_for(app))
+            .collect();
+        apps.sort_by_key(|a| a.as_str().to_string());
+        apps.dedup();
+        let mut guards = Vec::with_capacity(apps.len());
+        for app in &apps {
+            guards.push(state.proxy_service.lock_switch_for_app(app.as_str()).await);
+        }
+        let _guards = guards;
+        Self::upsert_server(state, server)
+    }
+
     /// 添加或更新 MCP 服务器
     pub fn upsert_server(state: &AppState, server: McpServer) -> Result<(), AppError> {
         // 读取旧状态：用于处理“编辑时取消勾选某个应用”的场景（需要从对应 live 配置中移除）。
@@ -135,14 +158,46 @@ impl McpService {
         // 处理禁用：若旧版本启用但新版本取消，则需要从该应用的 live 配置移除
         for app in AppType::all().filter(|app| !commits_with_db(app)) {
             if prev_apps.is_enabled_for(&app) && !server.apps.is_enabled_for(&app) {
-                Self::remove_server_from_app(&server.id, &app)?;
+                if let Err(error) = Self::remove_server_from_app(&server.id, &app) {
+                    // 传统应用 live 失败：回滚数据库，避免 DB/live 分裂且删后无法按原定义重试。
+                    if let Some(prev) = &previous {
+                        let _ = state.db.save_mcp_server(prev);
+                    } else {
+                        let _ = state.db.delete_mcp_server(&server.id);
+                    }
+                    return Err(error);
+                }
             }
         }
 
         // 同步到各个启用的应用
-        Self::sync_server_to_apps(&server)?;
+        if let Err(error) = Self::sync_server_to_apps(&server) {
+            if let Some(prev) = &previous {
+                let _ = state.db.save_mcp_server(prev);
+            } else {
+                let _ = state.db.delete_mcp_server(&server.id);
+            }
+            return Err(error);
+        }
 
         Ok(())
+    }
+
+    /// 命令入口：先按涉及应用拿切换锁再删除。
+    pub async fn delete_server_locked(state: &AppState, id: &str) -> Result<bool, AppError> {
+        let server = state.db.get_mcp_server_rows()?.get(id)?.cloned();
+        let mut apps: Vec<AppType> = server
+            .as_ref()
+            .map(|s| s.apps.enabled_apps())
+            .unwrap_or_default();
+        apps.sort_by_key(|a| a.as_str().to_string());
+        apps.dedup();
+        let mut guards = Vec::with_capacity(apps.len());
+        for app in &apps {
+            guards.push(state.proxy_service.lock_switch_for_app(app.as_str()).await);
+        }
+        let _guards = guards;
+        Self::delete_server(state, id)
     }
 
     /// 删除 MCP 服务器
@@ -155,6 +210,9 @@ impl McpService {
         let server = state.db.get_mcp_server_rows()?.readable.shift_remove(id);
 
         if let Some(server) = server {
+            // 传统应用先清 live，成功后再删库，避免删后无法按原记录重试清理。
+            Self::remove_server_from_all_apps(id, &server)?;
+
             let delete_with_dsh = || {
                 if server.apps.dsh {
                     mcp::dsh::sync_and_commit(id, None, || state.db.delete_mcp_server(id))
@@ -218,8 +276,6 @@ impl McpService {
                     log::warn!("Cleaning disabled Oh My Pi MCP '{id}' failed: {err}");
                 }
             }
-            // 从所有应用的 live 配置中移除
-            Self::remove_server_from_all_apps(id, &server)?;
             Ok(true)
         } else {
             Ok(false)

@@ -660,4 +660,3 @@ fn try_get_version_wsl(
 ) -> ShellProbe {
     ShellProbe::NotFound("WSL check not supported on this platform".to_string())
 }
-

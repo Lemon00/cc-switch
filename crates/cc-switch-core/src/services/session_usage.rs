@@ -11,7 +11,7 @@
 use crate::config::get_claude_config_dir;
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
-use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
+use crate::proxy::usage::calculator::ModelPricing;
 use crate::proxy::usage::parser::{claude_cache_creation_1h_tokens, TokenUsage};
 use crate::services::usage_stats::{
     effective_usage_log_filter, find_model_pricing, has_matching_proxy_usage_log, DedupKey,
@@ -1104,27 +1104,7 @@ fn session_costs(
     )
 }
 
-/// 五个金额列（输入、输出、缓存读、缓存写、合计）。查不到价格的全记 "0"，
-/// 表示没有定价，不代表免费。
-pub(crate) fn cost_columns(
-    app_type: &str,
-    usage: &TokenUsage,
-    pricing: Option<&ModelPricing>,
-    multiplier: Decimal,
-) -> [String; 5] {
-    let Some(pricing) = pricing else {
-        return std::array::from_fn(|_| "0".to_string());
-    };
-    let cost = CostCalculator::calculate_for_app(app_type, usage, pricing, multiplier);
-    [
-        cost.input_cost,
-        cost.output_cost,
-        cost.cache_read_cost,
-        cost.cache_creation_cost,
-        cost.total_cost,
-    ]
-    .map(|value| value.to_string())
-}
+pub(crate) use crate::services::session_common::cost_columns;
 
 /// 补全一条已经入库的回复。
 ///

@@ -235,4 +235,3 @@ pub(super) fn value_for_log(value: &Value) -> String {
         Value::Object(values) => format!("object(len={})", values.len()),
     }
 }
-

@@ -151,7 +151,8 @@ pub(super) async fn fetch_identity(
     device_id: &str,
 ) -> Result<Identity, String> {
     let endpoint = format!("{base_url}/me");
-    let response = identify(crate::proxy::http_client::get().get(&endpoint), device_id)
+    let client = crate::proxy::http_client::no_redirect()?;
+    let response = identify(client.get(&endpoint), device_id)
         .bearer_auth(access_token)
         .send()
         .await
@@ -290,7 +291,7 @@ pub(super) async fn access_token(
             .unwrap_or_else(|| account_region(provider).endpoints().oauth_host),
         base_url: String::new(),
     };
-    let response = request(&endpoints, "/api/oauth/token", device_id)
+    let response = request(&endpoints, "/api/oauth/token", device_id)?
         .form(&[
             ("client_id", super::CLIENT_ID),
             ("grant_type", "refresh_token"),

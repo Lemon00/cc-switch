@@ -140,6 +140,50 @@ fn register_db_change_hook(conn: &Connection) {
     ));
 }
 
+/// Unix：新建主库用 0600 占位后再交给 SQLite；已有文件收紧到 0600。
+/// Windows 仍依赖用户目录 ACL，这里只确保父目录与文件存在。
+fn ensure_private_db_file(db_path: &std::path::Path, db_exists: bool) -> Result<(), AppError> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        if !db_exists {
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(db_path)
+                .map_err(|e| AppError::io(db_path, e))?;
+            file.write_all(b"")
+                .map_err(|e| AppError::io(db_path, e))?;
+            // 空文件交给 Connection::open 初始化；权限已是 0600。
+            drop(file);
+        } else if let Err(e) =
+            std::fs::set_permissions(db_path, std::fs::Permissions::from_mode(0o600))
+        {
+            log::warn!(
+                "Failed to tighten permissions on {}: {e}",
+                db_path.display()
+            );
+        }
+        // WAL/SHM 若已存在一并收紧（SQLite 可能稍后创建）。
+        for suffix in ["-wal", "-shm"] {
+            let side = db_path.with_file_name(format!(
+                "{}{suffix}",
+                db_path.file_name().and_then(|s| s.to_str()).unwrap_or("cc-switch.db")
+            ));
+            if side.exists() {
+                let _ = std::fs::set_permissions(&side, std::fs::Permissions::from_mode(0o600));
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (db_path, db_exists);
+    }
+    Ok(())
+}
+
 impl Database {
     /// 初始化数据库连接并创建表
     ///
@@ -148,10 +192,16 @@ impl Database {
         let db_path = get_app_config_dir().join("cc-switch.db");
         let db_exists = db_path.exists();
 
-        // 确保父目录存在
+        // 确保父目录存在；Unix 下配置目录 0700、主库 0600（含凭据）。
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+            }
         }
+        ensure_private_db_file(&db_path, db_exists)?;
 
         let conn = Connection::open(&db_path).map_err(|e| AppError::Database(e.to_string()))?;
 

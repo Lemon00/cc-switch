@@ -356,4 +356,3 @@ pub(super) fn is_streaming_request(endpoint: &str, body: &Value, headers: &axum:
         .map(|accept| accept.contains("text/event-stream"))
         .unwrap_or(false)
 }
-

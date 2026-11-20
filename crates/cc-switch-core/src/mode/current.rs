@@ -79,12 +79,8 @@ fn proxy_route_id(db: &Database, app: &AppType) -> Result<Option<String>, AppErr
     let Some(route) = mode.proxy_route else {
         return Ok(None);
     };
-    let row = db.get_provider_by_id(&route, app)?;
-    if row.is_none() {
-        log::warn!(
-            "{} 的代理路由 {route} 在数据库中不存在，按直连指针处理",
-            app.as_str()
-        );
+    if db.provider_exists(&route, app)? {
+        return Ok(Some(route));
     }
     log::warn!(
         "{} 的代理路由 {route} 在数据库中不存在，按直连指针处理",

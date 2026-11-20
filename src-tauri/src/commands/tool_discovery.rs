@@ -1010,7 +1010,7 @@ pub(super) fn infer_install_source_for_install(launcher: &Path, real: &Path) -> 
 /// 从 shell 输出里挑出第一个绝对路径行（trim 后以 `/` 开头），跳过交互式登录 shell
 /// （`-lic`）里 .zshrc 打印的欢迎语/提示符等噪音。canonicalize 由调用方做（碰 FS）。
 #[cfg(not(target_os = "windows"))]
-fn first_abs_path_line(raw: &str) -> Option<&str> {
+pub(super) fn first_abs_path_line(raw: &str) -> Option<&str> {
     raw.lines().map(str::trim).find(|l| l.starts_with('/'))
 }
 
@@ -1018,7 +1018,7 @@ fn first_abs_path_line(raw: &str) -> Option<&str> {
 /// 这条约束顺带跳过"某个多行值的环境变量恰好有一行以 `PATH=` 开头"的污染，
 /// 与 `first_abs_path_line` 对交互式 shell 噪音的容错同理。
 #[cfg(not(target_os = "windows"))]
-fn path_line_from_env_output(raw: &str) -> Option<&str> {
+pub(super) fn path_line_from_env_output(raw: &str) -> Option<&str> {
     raw.lines()
         .filter_map(|line| line.strip_prefix("PATH="))
         .find(|value| value.starts_with('/'))
@@ -1358,7 +1358,7 @@ pub(super) fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> 
 /// 安装（#9515）。换成 mise 自己说的真身（入口与真身一起换）再去重；shim 模式下登录 shell
 /// 的默认入口也是 mise 本体，一并换成真身。不是 mise shim 或解析不了时原样返回。
 #[cfg(not(target_os = "windows"))]
-fn resolve_mise_shim_install(
+pub(super) fn resolve_mise_shim_install(
     tool: &str,
     tool_path: std::path::PathBuf,
     real: std::path::PathBuf,
@@ -1376,7 +1376,7 @@ fn resolve_mise_shim_install(
 }
 
 #[cfg(target_os = "windows")]
-fn resolve_mise_shim_install(
+pub(super) fn resolve_mise_shim_install(
     _tool: &str,
     tool_path: std::path::PathBuf,
     real: std::path::PathBuf,
@@ -1452,7 +1452,7 @@ pub(super) fn locate_default_tool(
 /// 问不出默认入口时，让 mise 自己说 shim 现在指向哪个文件（按用户的 mise 配置选版本，
 /// 与终端里跑这个 shim 的结果一致），直接用那个真身。不是 mise shim 或解析失败返回 None。
 #[cfg(not(target_os = "windows"))]
-fn mise_shim_target(
+pub(super) fn mise_shim_target(
     tool: &str,
     candidate: &Path,
     real: &Path,
@@ -1485,4 +1485,3 @@ fn mise_shim_target(
     let target = std::path::PathBuf::from(first_abs_path_line(&raw)?);
     target.is_file().then_some(target)
 }
-
