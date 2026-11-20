@@ -10,7 +10,6 @@ use std::{
 };
 
 use futures::{future::AbortHandle, future::Abortable, stream, StreamExt};
-use once_cell::sync::Lazy;
 use process_wrap::tokio::{KillOnDrop, TokioChildWrapper, TokioCommandWrap};
 use rmcp::{
     model::{ClientInfo, Implementation},
@@ -27,6 +26,7 @@ use rmcp::{
     RoleClient, ServiceExt,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::LazyLock;
 use tokio::process::Command;
 
 use crate::app_config::McpServer;
@@ -37,14 +37,15 @@ const MAX_CONCURRENT_CHECKS: usize = 3;
 // Shared across batches: rows can be tested while another batch is still running.
 static CHECK_PERMITS: tokio::sync::Semaphore =
     tokio::sync::Semaphore::const_new(MAX_CONCURRENT_CHECKS);
-static BATCHES: Lazy<std::sync::Mutex<HashMap<String, AbortHandle>>> = Lazy::new(Default::default);
+static BATCHES: LazyLock<std::sync::Mutex<HashMap<String, AbortHandle>>> =
+    LazyLock::new(Default::default);
 // GUI launches can inherit only launchd's minimal PATH. Resolve the user's shell
 // once, off the async executor, and share it across all page visits and probes.
 // Bound it so a hanging shell profile cannot keep every later probe waiting.
 #[cfg(not(target_os = "windows"))]
 const LOGIN_SHELL_PATH_TIMEOUT: Duration = Duration::from_secs(10);
 #[cfg(not(target_os = "windows"))]
-static LOGIN_SHELL_PATH: Lazy<Option<String>> = Lazy::new(|| {
+static LOGIN_SHELL_PATH: LazyLock<Option<String>> = LazyLock::new(|| {
     crate::commands::login_shell_path(crate::commands::CommandDeadline::from_timeout(Some(
         LOGIN_SHELL_PATH_TIMEOUT,
     )))

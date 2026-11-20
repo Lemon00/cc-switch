@@ -4,12 +4,12 @@ use crate::app_config::AppType;
 use crate::init_status::{InitErrorPayload, SkillsMigrationPayload};
 use crate::services::ProviderService;
 use indexmap::IndexSet;
-use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use tauri::AppHandle;
 use tauri::State;
 use tauri_plugin_opener::OpenerExt;
@@ -287,8 +287,8 @@ impl ToolLifecycleCoordinator {
     }
 }
 
-static TOOL_LIFECYCLE: Lazy<ToolLifecycleCoordinator> =
-    Lazy::new(ToolLifecycleCoordinator::default);
+static TOOL_LIFECYCLE: LazyLock<ToolLifecycleCoordinator> =
+    LazyLock::new(ToolLifecycleCoordinator::default);
 
 /// Display-only plan. Execution regenerates it under the lifecycle lock and rejects changes.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
