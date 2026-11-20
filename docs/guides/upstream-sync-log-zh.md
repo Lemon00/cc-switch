@@ -22,10 +22,12 @@
 | 2026-11-08 ~ 11-11 | fix 批次（v4.0.28 → v4.0.29 区间） | `3b6b47d9` | `abf50589` | 15 提交 / 31 文件 | 逐条 cherry-pick，跳过 feat / 发布 / WSL，见下 |
 | 2026-11-12 | `abf50589` → `3a0b86a2`（v4.0.30 发布前） | `f0a1566f` | `3a0b86a2` | 17 提交分析 / 合入 9 条 | 版本仍是 4.0.28，cherry-pick + core 补丁归位，见下 |
 | 2026-11-17 | `3a0b86a2` → `09acca04`（v4.0.30 之后 fix/优化/清理批次） | `a32bce0d` | `09acca04` | 59 条计划 / 52 提交 + 7 空补丁 / 115 文件 | 全量矩阵筛选 + 逐条 cherry-pick，见下 |
+| 2026-11-20 | `09acca04` → `bd3d3880`（fix + 功能重构） | `e4492f09` | `bd3d3880` | 101 条分析 / 合入 43 + 适配 1 / SKIP 58 | 含功能重构；大拆分与调用图清死代码跳过，见下 |
 
 > 「分支 HEAD」列记的是每轮**同步代码收尾时**的 HEAD，不含随后的文档与复查修正提交。
 > 第四轮的代码收尾是 `f0a1566f`，之后还有 `c89a3228`（同步记录 / What's New）与
 > `705af7bc` 等复查修正提交，因此该列不等于任何时候的仓库当前 HEAD。
+> 第六轮代码收尾是 `e4492f09`，之后还有 `8dd02d62`（补 `sync_utils`）等适配提交。
 >
 > 上游原版 clone（`cc-switch-source`）的 `main` 停在 `cdca0984`。第三轮的基线是本仓库
 > `origin/main@abf50589`——先把上游主线同步进 fork 的 `main`，再从那里挑 fix，两边基线
@@ -213,3 +215,41 @@ presets 默认模型、macOS 签名重试），47 文件。冲突 3 处：
 - 未纳入：全部 feat、新模块重构（AppSpec / ProviderKind / sync_support / terminal_launch /
   ToolSpec / tool_process）、新计价能力、语言包与多语言 README、版本发布说明、Copilot/WSL
   特定栈、纯文档与纯测试提交。
+
+### 第六次：同步 `09acca04` → `bd3d3880`（fix + 功能重构）
+
+**2026-11-20**，从 `09acca04` 到 `origin/main@bd3d3880`。本分支代码收尾 `e4492f09`，
+之后适配提交 `8dd02d62`（补 `sync_utils`）。版本号仍是 `4.0.28`。逐条进度见
+`.audit/sixth-progress.txt` / `.audit/merge-plan-2026-11-20.txt`。
+
+- 口径：在「只合 fix」之上追加**功能重构**（`refactor` 中重组现有逻辑、不引入新产品能力
+  的提交）。仍跳过全部 feat、版本发布、发布说明、纯 i18n / 纯测试基建、Plugins 依赖项。
+- 结果：上游区间 101 条 → 计划合入约 59；实际 **43 OK** + **16 SKIP-ADAPT**；另有计划外
+  跳过的 feat/发布/调用图清死代码等。路径重写：`src-tauri/src` → `crates/cc-switch-core/src`
+  （GUI 独有 commands/tray/deeplink/部分 services 除外）；缺 de/ko/ru 语言包的改动自动跳过。
+- 已合入（摘）：
+  - fix：MCP/DSH 锁恢复、Mistral 官方 host、skill sync 跳过坏链、Fable catalog id、
+    Copilot Gemini system→user / 1M 门控、Skills 卸载、Codex OAuth 0.169.0 / Responses Lite /
+    空 user / thinking 重试 / 配额放行、usage 日期与计价、OpenCode V1/V2、私有参数保留
+    tool-call args、泄漏与 proxy 限流等。
+  - refactor：DirectorySettings 删除、settings 目录循环与 override 表、UsageFilter /
+    session cost / balance HTTP 共用、`/responses/compact` 归并、legacy transform 清理、
+    once_cell→LazyLock、Moonshot/DeepSeek host-suffix、MCP 导入路径共用、McpApps/SkillApps
+    生成、quota 列共用等。
+- SKIP-ADAPT（16，依赖未合架构或与解耦树冲突过大）：
+  - 调用图清死代码 / ProxyConfig 收缩依赖 #9570：`cfe78474` 族已在计划阶段剔除；
+    `8f465ebd`。
+  - 缺 `sync_utils`/`MutexExt` 大扫：`c29bfe59`（本轮后以 `8dd02d62` 只补模块，未重做
+    36 文件 lock_recover 扫荡）。
+  - misc.rs → tool_discovery / tool_lifecycle：`f4ef3eba` `26831d4e` `176bb05e`。
+  - DAO `&AppType` 浪潮及后续：`f9e40d4f` `45ec87d7` `fca6b1bb` `bd3d3880`。
+  - forwarder 子模块大拆：`69cdc63c` `3493be84` `09678477`。
+  - 命令签名扫荡：`88f59fad`。
+  - AGY Orchestrator/Hydrogen 计价与归因（本分支无 Hydrogen 基线）：`9331e562`
+    `6da70837` `933cba13`。
+- 适配：`8dd02d62` 把上游 `sync_utils.rs` 落到 core 与 GUI，供 `MutexExt`（Codex 官方模型
+  缓存）与 MCP/DSH 隔离毒锁测试使用。
+- 验证：前端 `tsc` 与 vitest（3694）通过。本机无 MSVC `link.exe`，core/GUI `cargo check`
+  未跑，需 CI 复核。
+- 未纳入：全部 feat（Plugins / Skills 托管源 / 计价种子 / Sessions 展示增强等）、语言包、
+  发布说明、knip CI 清理、以及上述 SKIP-ADAPT 结构性大拆。
