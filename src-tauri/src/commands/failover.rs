@@ -143,8 +143,9 @@ pub async fn remove_from_failover_queue(
 ) -> Result<(), String> {
     require_failover_app(&app_type)?;
     state
-        .db
+        .proxy_service
         .remove_from_failover_queue(&app_type, &provider_id)
+        .await
         .map_err(|e| e.to_string())?;
     crate::tray::refresh_tray_menu(&app);
     Ok(())
@@ -273,7 +274,10 @@ pub async fn set_auto_failover_enabled(
         .await
         {
             if let Some(provider_id) = auto_added_provider_id {
-                let _ = state.db.remove_from_failover_queue(&app_type, &provider_id);
+                let _ = state
+                    .proxy_service
+                    .remove_from_failover_queue(&app_type, &provider_id)
+                    .await;
             }
             return Err(e);
         }

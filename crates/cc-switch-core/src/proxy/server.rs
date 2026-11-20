@@ -469,6 +469,13 @@ impl ProxyServer {
             .reset_provider_breaker(provider_id, app_type)
             .await;
     }
+
+    pub async fn forget_circuit_breakers(&self, app_type: &str, provider_id: Option<&str>) {
+        self.state
+            .provider_router
+            .forget(app_type, provider_id)
+            .await;
+    }
 }
 
 #[cfg(test)]

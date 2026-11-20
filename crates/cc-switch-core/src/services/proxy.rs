@@ -651,6 +651,35 @@ impl ProxyService {
         }
         Ok(())
     }
+
+    /// 移出故障转移队列：DB 清掉它的健康状态，运行中的路由也丢掉它的熔断器，
+    /// 再加回队列时路由和卡片显示的一样是健康的。
+    pub async fn remove_from_failover_queue(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+    ) -> Result<(), crate::error::AppError> {
+        self.db.remove_from_failover_queue(app_type, provider_id)?;
+        self.forget_circuit_breakers(app_type, Some(provider_id))
+            .await;
+        Ok(())
+    }
+
+    /// 清掉一个应用的健康状态，DB 和运行中路由的熔断器一起清。
+    pub async fn clear_provider_health_for_app(
+        &self,
+        app_type: &str,
+    ) -> Result<(), crate::error::AppError> {
+        self.db.clear_provider_health_for_app(app_type).await?;
+        self.forget_circuit_breakers(app_type, None).await;
+        Ok(())
+    }
+
+    async fn forget_circuit_breakers(&self, app_type: &str, provider_id: Option<&str>) {
+        if let Some(server) = self.server.read().await.as_ref() {
+            server.forget_circuit_breakers(app_type, provider_id).await;
+        }
+    }
 }
 
 #[cfg(test)]

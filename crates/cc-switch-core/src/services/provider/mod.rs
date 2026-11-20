@@ -7046,8 +7046,14 @@ impl ProviderService {
                     .db
                     .set_omo_provider_current(app_type.as_str(), id, enable.category)?;
                 crate::services::OmoService::write_config_to_file(state, enable)?;
-                let _ = crate::services::OmoService::delete_config_file(disable);
-                return Ok(SwitchResult::default());
+                let mut result = SwitchResult::default();
+                if let Err(err) = crate::services::OmoService::delete_config_file(disable) {
+                    log::warn!("切到 {id} 后删除另一个 OMO 变体的配置失败: {err}");
+                    result
+                        .warnings
+                        .push(format!("omo_variant_cleanup_failed:{id}"));
+                }
+                return Ok(result);
             }
         }
 

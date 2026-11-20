@@ -209,6 +209,21 @@ impl ProviderRouter {
         self.reset_circuit_breaker(&circuit_key).await;
     }
 
+    /// 丢掉熔断器状态（`provider_id` 为 `None` 时丢掉这个应用的全部）。DB 里的健康状态被清掉
+    /// 时调用：不丢的话卡片显示健康，路由却还在跳过它，直到熔断超时。
+    pub async fn forget(&self, app_type: &str, provider_id: Option<&str>) {
+        let mut breakers = self.circuit_breakers.write().await;
+        match provider_id {
+            Some(provider_id) => {
+                breakers.remove(&format!("{app_type}:{provider_id}"));
+            }
+            None => {
+                let prefix = format!("{app_type}:");
+                breakers.retain(|key, _| !key.starts_with(&prefix));
+            }
+        }
+    }
+
     /// 更新所有熔断器的配置（热更新）
     pub async fn update_all_configs(&self, config: CircuitBreakerConfig) {
         let breakers = self.circuit_breakers.read().await;

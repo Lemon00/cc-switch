@@ -922,7 +922,11 @@ pub async fn exit(state: &AppState, app: &AppType) -> Result<(), String> {
         let _guard = lock_settled(state, app).await.map_err(|e| e.to_string())?;
         exit_locked(state, app, false)?;
     }
-    if let Err(error) = state.db.clear_provider_health_for_app(app.as_str()).await {
+    if let Err(error) = state
+        .proxy_service
+        .clear_provider_health_for_app(app.as_str())
+        .await
+    {
         log::warn!("清除 {} 健康状态失败: {error}", app.as_str());
     }
     stop_server_if_unused(state).await;
@@ -941,7 +945,11 @@ pub async fn exit_apps_in_mode(state: &AppState, stack: bool) -> Result<Vec<Stri
             }
             exit_locked(state, &app, false)?;
         }
-        if let Err(error) = state.db.clear_provider_health_for_app(app.as_str()).await {
+        if let Err(error) = state
+            .proxy_service
+            .clear_provider_health_for_app(app.as_str())
+            .await
+        {
             log::warn!("清除 {} 健康状态失败: {error}", app.as_str());
         }
         exited.push(app.as_str().to_string());
