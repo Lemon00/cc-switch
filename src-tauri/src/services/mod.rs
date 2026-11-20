@@ -66,6 +66,7 @@ pub use cc_switch_core::services::subscription_agy;
 pub use cc_switch_core::services::subscription_grok;
 pub use cc_switch_core::services::sync_protocol;
 pub use cc_switch_core::services::usage_cache;
+pub use cc_switch_core::services::usage_http;
 pub use cc_switch_core::services::usage_stats;
 pub use cc_switch_core::services::webdav;
 pub use cc_switch_core::services::webdav_auto_sync;

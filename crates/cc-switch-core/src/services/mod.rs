@@ -23,6 +23,7 @@ pub mod subscription;
 pub mod subscription_agy;
 pub mod subscription_grok;
 pub mod usage_cache;
+pub mod usage_http;
 pub mod usage_stats;
 pub mod webdav_auto_sync;
 
