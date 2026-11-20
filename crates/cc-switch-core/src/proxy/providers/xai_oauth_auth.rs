@@ -480,8 +480,8 @@ impl XaiOAuthManager {
         Ok(())
     }
 
-    #[cfg(test)]
-    pub(crate) async fn seed_test_account_with_token_endpoint(
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn seed_test_account_with_token_endpoint(
         &self,
         account_id: &str,
         refresh_token: &str,

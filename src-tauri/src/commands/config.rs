@@ -322,7 +322,7 @@ pub async fn get_claude_common_config_snippet(
 ) -> Result<Option<String>, String> {
     state
         .db
-        .get_config_snippet("claude")
+        .get_config_snippet(AppType::Claude.as_str())
         .map_err(|e| e.to_string())
 }
 
@@ -341,11 +341,11 @@ pub async fn set_claude_common_config_snippet(
 
     state
         .db
-        .set_config_snippet("claude", value)
+        .set_config_snippet(AppType::Claude.as_str(), value)
         .map_err(|e| e.to_string())?;
     state
         .db
-        .set_config_snippet_cleared("claude", is_cleared)
+        .set_config_snippet_cleared(AppType::Claude.as_str(), is_cleared)
         .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -387,7 +387,7 @@ pub async fn set_common_config_snippet(
     if app_type == "omo"
         && state
             .db
-            .get_current_omo_provider("opencode", "omo")
+            .get_current_omo_provider(&AppType::OpenCode, "omo")
             .map_err(|e| e.to_string())?
             .is_some()
     {
@@ -400,7 +400,7 @@ pub async fn set_common_config_snippet(
     if app_type == "omo-slim"
         && state
             .db
-            .get_current_omo_provider("opencode", "omo-slim")
+            .get_current_omo_provider(&AppType::OpenCode, "omo-slim")
             .map_err(|e| e.to_string())?
             .is_some()
     {

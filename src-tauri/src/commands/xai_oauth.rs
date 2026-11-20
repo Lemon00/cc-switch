@@ -226,7 +226,7 @@ mod tests {
             .await;
         let state = XaiOAuthState(Arc::new(RwLock::new(manager)));
 
-        let net_err = query_xai_oauth_quota_for(&state, None, false)
+        let net_err = query_xai_oauth_quota_for(&state, None)
             .await
             .expect_err("connection failure during refresh must propagate as Err");
         assert!(net_err.contains("xAI OAuth token unavailable"), "{net_err}");
@@ -248,7 +248,7 @@ mod tests {
             .await
             .seed_test_account_with_token_endpoint("acct-503", "refresh-2", json_503)
             .await;
-        let err_503 = query_xai_oauth_quota_for(&state, Some("acct-503".to_string()), false)
+        let err_503 = query_xai_oauth_quota_for(&state, Some("acct-503".to_string()))
             .await
             .expect_err("HTTP 503 during refresh must propagate as Err");
         assert!(err_503.contains("xAI OAuth token unavailable"), "{err_503}");
@@ -266,7 +266,7 @@ mod tests {
             .await
             .seed_test_account_with_token_endpoint("acct-502", "refresh-3", html_502)
             .await;
-        let err_502 = query_xai_oauth_quota_for(&state, Some("acct-502".to_string()), false)
+        let err_502 = query_xai_oauth_quota_for(&state, Some("acct-502".to_string()))
             .await
             .expect_err("HTTP 502 HTML gateway error during refresh must propagate as Err");
         assert!(err_502.contains("xAI OAuth token unavailable"), "{err_502}");
@@ -278,7 +278,7 @@ mod tests {
         let manager = XaiOAuthManager::new(data_dir.path().to_path_buf());
         let state = XaiOAuthState(Arc::new(RwLock::new(manager)));
 
-        let empty = query_xai_oauth_quota_for(&state, None, false)
+        let empty = query_xai_oauth_quota_for(&state, None)
             .await
             .expect("missing default account returns Ok(not_found)");
         assert!(matches!(
@@ -286,7 +286,7 @@ mod tests {
             CredentialStatus::NotFound
         ));
 
-        let missing = query_xai_oauth_quota_for(&state, Some("unknown-id".to_string()), false)
+        let missing = query_xai_oauth_quota_for(&state, Some("unknown-id".to_string()))
             .await
             .expect("explicit missing account returns Ok(Expired)");
         assert!(!missing.success);
@@ -308,7 +308,7 @@ mod tests {
             .seed_test_account_with_token_endpoint("acct-expired", "bad-refresh", unauthorized)
             .await;
 
-        let expired = query_xai_oauth_quota_for(&state, Some("acct-expired".to_string()), false)
+        let expired = query_xai_oauth_quota_for(&state, Some("acct-expired".to_string()))
             .await
             .expect("HTTP 401 refresh failure returns Ok(Expired)");
         assert!(!expired.success);

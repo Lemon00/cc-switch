@@ -1096,7 +1096,7 @@ fn merge_reasoning_options(
 }
 
 fn cmd_reasoning(state: &AppState, id: &str, opts: &[String]) {
-    let mut provider = match state.db.get_provider_by_id(id, "codex") {
+    let mut provider = match state.db.get_provider_by_id(id, &AppType::Codex) {
         Ok(Some(p)) => p,
         Ok(None) => err(&format!("codex 供应商 {id} 不存在")),
         Err(e) => err(&format!("读供应商失败: {e}")),
@@ -1140,7 +1140,7 @@ fn cmd_reasoning(state: &AppState, id: &str, opts: &[String]) {
         Err(e) => eprintln!("警告: 数据库备份失败（继续写入）: {e}"),
     }
     provider.meta = Some(parsed_meta);
-    if let Err(e) = state.db.save_provider("codex", &provider) {
+    if let Err(e) = state.db.save_provider(&AppType::Codex, &provider) {
         err(&format!("保存推理参数失败: {e}"));
     }
     println!(
@@ -1242,7 +1242,7 @@ fn create_dir_link(_shared: &Path, _link: &Path) -> std::io::Result<()> {
 }
 
 fn cmd_agy_launch(state: &AppState, id: &str, args: &[String]) {
-    let provider = match state.db.get_provider_by_id(id, "agy") {
+    let provider = match state.db.get_provider_by_id(id, &AppType::Agy) {
         Ok(Some(p)) => p,
         Ok(None) => err(&format!("agy 供应商 {id} 不存在")),
         Err(e) => err(&format!("读供应商失败: {e}")),

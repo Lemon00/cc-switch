@@ -2,6 +2,7 @@
 //!
 //! 提供前端调用的 API 接口
 
+use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::proxy::types::*;
 use crate::proxy::{CircuitBreakerConfig, CircuitBreakerStats};
@@ -311,9 +312,9 @@ pub async fn get_proxy_config_for_app(
     state: tauri::State<'_, AppState>,
     app_type: String,
 ) -> Result<AppProxyConfig, String> {
-    require_proxy_app(&app_type)?;
+    let app = require_proxy_app(&app_type)?;
     let db = &state.db;
-    db.get_proxy_config_for_app(&app_type)
+    db.get_proxy_config_for_app(&app)
         .await
         .map_err(|e| e.to_string())
 }
@@ -327,8 +328,7 @@ pub async fn update_proxy_config_for_app(
     config: AppProxyConfig,
 ) -> Result<(), String> {
     let db = &state.db;
-    let app_type = config.app_type.clone();
-    let app = require_proxy_app(&app_type)?;
+    let app = require_proxy_app(&config.app_type)?;
     let circuit_config = CircuitBreakerConfig::from(&config);
     // `enabled` 是模式的镜像，只由进入 / 退出代理改写。
     let mut config = config;
@@ -340,13 +340,13 @@ pub async fn update_proxy_config_for_app(
 
     state
         .proxy_service
-        .update_circuit_breaker_config_for_app(&app_type, circuit_config)
+        .update_circuit_breaker_config_for_app(&app, circuit_config)
         .await
 }
 
 async fn get_pricing_model_source_internal(
     state: &AppState,
-    app_type: &str,
+    app_type: &AppType,
 ) -> Result<String, AppError> {
     let db = &state.db;
     db.get_pricing_model_source(app_type).await
@@ -355,7 +355,7 @@ async fn get_pricing_model_source_internal(
 #[cfg_attr(not(feature = "test-hooks"), doc(hidden))]
 pub async fn get_pricing_model_source_test_hook(
     state: &AppState,
-    app_type: &str,
+    app_type: &AppType,
 ) -> Result<String, AppError> {
     get_pricing_model_source_internal(state, app_type).await
 }
@@ -365,14 +365,15 @@ pub async fn get_pricing_model_source(
     state: tauri::State<'_, AppState>,
     app_type: String,
 ) -> Result<String, String> {
-    get_pricing_model_source_internal(&state, &app_type)
+    let app = require_proxy_app(&app_type)?;
+    get_pricing_model_source_internal(&state, &app)
         .await
         .map_err(|e| e.to_string())
 }
 
 async fn set_pricing_model_source_internal(
     state: &AppState,
-    app_type: &str,
+    app_type: &AppType,
     value: &str,
 ) -> Result<(), AppError> {
     let db = &state.db;
@@ -382,7 +383,7 @@ async fn set_pricing_model_source_internal(
 #[cfg_attr(not(feature = "test-hooks"), doc(hidden))]
 pub async fn set_pricing_model_source_test_hook(
     state: &AppState,
-    app_type: &str,
+    app_type: &AppType,
     value: &str,
 ) -> Result<(), AppError> {
     set_pricing_model_source_internal(state, app_type, value).await
@@ -394,7 +395,8 @@ pub async fn set_pricing_model_source(
     app_type: String,
     value: String,
 ) -> Result<(), String> {
-    set_pricing_model_source_internal(&state, &app_type, &value)
+    let app = require_proxy_app(&app_type)?;
+    set_pricing_model_source_internal(&state, &app, &value)
         .await
         .map_err(|e| e.to_string())
 }
@@ -428,9 +430,9 @@ pub async fn get_provider_health(
     provider_id: String,
     app_type: String,
 ) -> Result<ProviderHealth, String> {
-    require_mode_app(&app_type)?;
+    let app = require_mode_app(&app_type)?;
     let db = &state.db;
-    db.get_provider_health(&provider_id, &app_type)
+    db.get_provider_health(&provider_id, &app)
         .await
         .map_err(|e| e.to_string())
 }
@@ -450,20 +452,20 @@ pub async fn reset_circuit_breaker(
     let app = require_proxy_app(&app_type)?;
     // 1. 重置数据库健康状态
     let db = &state.db;
-    db.update_provider_health(&provider_id, &app_type, true, None)
+    db.update_provider_health(&provider_id, &app, true, None)
         .await
         .map_err(|e| e.to_string())?;
 
     // 2. 如果代理正在运行，重置内存中的熔断器状态
     state
         .proxy_service
-        .reset_provider_circuit_breaker(&provider_id, &app_type)
+        .reset_provider_circuit_breaker(&provider_id, app.as_str())
         .await?;
 
     // 3. 检查是否应该切回优先级更高的供应商
     // 只有当该应用处于代理模式且开启了自动故障转移时才执行
     let app_in_proxy = crate::mode::current::is_proxy(&app);
-    let auto_failover_enabled = match db.get_proxy_config_for_app(&app_type).await {
+    let auto_failover_enabled = match db.get_proxy_config_for_app(&app).await {
         Ok(config) => config.auto_failover_enabled,
         Err(e) => {
             log::error!("[{app_type}] Failed to read proxy_config: {e}, defaulting to disabled");
@@ -480,7 +482,7 @@ pub async fn reset_circuit_breaker(
         if let Some(current_id) = current_id {
             // 获取故障转移队列
             let queue = db
-                .get_failover_queue(&app_type)
+                .get_failover_queue(&app)
                 .map_err(|e| e.to_string())?;
 
             // 找到恢复的供应商和当前供应商在队列中的位置（使用 sort_index）
@@ -503,7 +505,7 @@ pub async fn reset_circuit_breaker(
 
                     // 获取供应商名称用于日志和事件
                     let provider_name = db
-                        .get_all_providers(&app_type)
+                        .get_all_providers(&app)
                         .ok()
                         .and_then(|providers| providers.get(&provider_id).map(|p| p.name.clone()))
                         .unwrap_or_else(|| provider_id.clone());

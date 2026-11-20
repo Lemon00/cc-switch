@@ -1243,7 +1243,7 @@ fn tray_mode(app_state: &AppState, app: &AppType) -> TrayMode {
     if crate::mode::stack::stack_mode_now(app) {
         return TrayMode::Stack;
     }
-    let (_, auto_failover) = app_state.db.get_proxy_flags_sync(app.as_str());
+    let (_, auto_failover) = app_state.db.get_proxy_flags_sync(app);
     if auto_failover {
         TrayMode::Failover
     } else {
@@ -1262,7 +1262,7 @@ fn collect_app_snapshot(
     // 读不出来的行在托盘里略过（界面里单独列出），不拖累其余供应商。
     let rows = app_state
         .db
-        .get_provider_rows(app.as_str())?
+        .get_provider_rows(app)?
         .into_readable("托盘供应商列表");
     let claude_accounts = if *app == AppType::Claude {
         crate::services::claude_account::labels_on_disk(&crate::config::get_app_config_dir())
@@ -1285,7 +1285,7 @@ fn collect_app_snapshot(
     let queue = if mode == TrayMode::Failover {
         app_state
             .db
-            .get_failover_queue(app.as_str())?
+            .get_failover_queue(app)?
             .into_iter()
             .map(|item| item.provider_id)
             .filter(|id| rows.contains_key(id))
@@ -2298,10 +2298,9 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
 
     let mut apps = Vec::with_capacity(snapshots.len());
     for snapshot in &snapshots {
-        let app = snapshot.app.as_str();
         let providers = app_state
             .db
-            .get_provider_rows(app)?
+            .get_provider_rows(&snapshot.app)?
             .into_readable("托盘用量面板");
         let (header, rows) = panel_rows(&app_state.usage_cache, &texts, snapshot, &providers, now);
         let credits = snapshot
@@ -2317,7 +2316,7 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
             .as_ref()
             .map(|view| panel_quota(&texts, view, now, credits));
         apps.push(PanelApp {
-            app: app.to_string(),
+            app: snapshot.app.as_str().to_string(),
             name: app_display_name(&snapshot.app),
             current: snapshot.current().map(|p| p.name.clone()),
             mode: match snapshot.mode {
@@ -2336,7 +2335,7 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
             add_id: snapshot
                 .providers
                 .is_empty()
-                .then(|| format!("nav:add:{app}")),
+                .then(|| format!("nav:add:{}", snapshot.app.as_str())),
             add_text: texts.add_provider.to_string(),
             rows,
         });
@@ -3067,7 +3066,7 @@ fn handle_provider_click(
     }
     let provider = state
         .db
-        .get_provider_by_id(provider_id, app_type.as_str())?
+        .get_provider_by_id(provider_id, app_type)?
         .ok_or_else(|| AppError::Message(format!("供应商 {provider_id} 不存在")))?;
     if mode == TrayMode::Direct && provider_needs_routing(app_type, &provider) {
         return Ok(ClickOutcome::NeedsRoute);
@@ -3083,7 +3082,7 @@ fn emit_switched(app: &tauri::AppHandle, app_type: &AppType, provider_id: &str) 
     let proxy_enabled = crate::mode::current::is_proxy(app_type);
     let auto_failover = app
         .try_state::<AppState>()
-        .map(|state| state.db.get_proxy_flags_sync(app_type.as_str()).1)
+        .map(|state| state.db.get_proxy_flags_sync(app_type).1)
         .unwrap_or(false);
     let event_data = serde_json::json!({
         "appType": app_type.as_str(),
@@ -3241,7 +3240,7 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
         };
         // 只需当前 provider —— by-id 查询避免把整个 app 的 provider 列表加载
         // 进内存（每次悬停的热路径）。
-        let current = match app_state.db.get_provider_by_id(&current_id, app_type_str) {
+        let current = match app_state.db.get_provider_by_id(&current_id, app_type) {
             Ok(Some(p)) => p,
             Ok(None) => continue,
             Err(e) => {
@@ -3323,7 +3322,7 @@ pub(crate) async fn refresh_panel_provider_usage(app: &tauri::AppHandle) {
     for app_type in TRAY_APPS.iter().filter(|app| visible_apps.is_visible(app)) {
         let rows = match app_state
             .db
-            .get_provider_rows(app_type.as_str())
+            .get_provider_rows(&app_type)
             .map(|rows| rows.into_readable("托盘用量自动查询"))
         {
             Ok(rows) => rows,

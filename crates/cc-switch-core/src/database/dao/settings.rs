@@ -58,7 +58,10 @@ impl Database {
 
     // --- 通用配置片段 (Common Config Snippet) ---
 
-    /// 获取通用配置片段
+    /// 获取通用配置片段。
+    ///
+    /// `app_type` 是设置键后缀：正常应用用 [`crate::app_config::AppType::as_str`]，
+    /// 本地 omo / omo-slim 片段也走这里，所以不能收窄成 `&AppType`。
     pub fn get_config_snippet(&self, app_type: &str) -> Result<Option<String>, AppError> {
         self.get_setting(&format!("common_config_{app_type}"))
     }

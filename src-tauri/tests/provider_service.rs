@@ -65,7 +65,7 @@ fn migrate_legacy_common_config_usage_marks_historical_provider_enabled() {
 
     let providers = state
         .db
-        .get_all_providers(AppType::Claude.as_str())
+        .get_all_providers(&AppType::Claude)
         .expect("get providers after migration");
     let provider = providers
         .get("legacy-provider")
@@ -214,7 +214,7 @@ command = "say"
 
     let current_id = state
         .db
-        .get_current_provider(AppType::Codex.as_str())
+        .get_current_provider(&AppType::Codex)
         .expect("read current provider after switch");
     assert_eq!(
         current_id.as_deref(),
@@ -224,7 +224,7 @@ command = "say"
 
     let providers = state
         .db
-        .get_all_providers(AppType::Codex.as_str())
+        .get_all_providers(&AppType::Codex)
         .expect("read providers after switch");
     let legacy = providers
         .get("old-provider")
@@ -334,7 +334,7 @@ requires_openai_auth = true
 
     let providers = state
         .db
-        .get_all_providers(AppType::Codex.as_str())
+        .get_all_providers(&AppType::Codex)
         .expect("read providers after switch");
     let new_config_text = providers
         .get("new-provider")
@@ -440,7 +440,7 @@ requires_openai_auth = true
     let state = create_test_state_with_config(&initial_config).expect("create test state");
     let bridge_before = state
         .db
-        .get_provider_by_id("bridge-provider", AppType::Codex.as_str())
+        .get_provider_by_id("bridge-provider", &AppType::Codex)
         .expect("read bridge row")
         .expect("bridge row");
 
@@ -507,7 +507,7 @@ requires_openai_auth = true
         .expect("switch away from the bridge provider");
     let bridge_after = state
         .db
-        .get_provider_by_id("bridge-provider", AppType::Codex.as_str())
+        .get_provider_by_id("bridge-provider", &AppType::Codex)
         .expect("read bridge row")
         .expect("bridge row");
     assert_eq!(
@@ -1209,7 +1209,7 @@ wire_api = "responses"
     // config into the refused card's DB row.
     let current = state
         .db
-        .get_current_provider(AppType::Codex.as_str())
+        .get_current_provider(&AppType::Codex)
         .expect("read current provider");
     assert_eq!(
         current.as_deref(),
@@ -1434,7 +1434,7 @@ requires_openai_auth = true
 
     let providers = state
         .db
-        .get_all_providers(AppType::Codex.as_str())
+        .get_all_providers(&AppType::Codex)
         .expect("read providers after switch");
     assert_eq!(
         providers
@@ -1948,7 +1948,7 @@ requires_openai_auth = true
 
     let providers = state
         .db
-        .get_all_providers(AppType::Codex.as_str())
+        .get_all_providers(&AppType::Codex)
         .expect("read providers after switches");
     let provider_b_config = providers
         .get("provider-b")
@@ -2163,7 +2163,7 @@ wire_api = "responses"
     );
     let old_row = state
         .db
-        .get_provider_by_id("old-provider", AppType::Codex.as_str())
+        .get_provider_by_id("old-provider", &AppType::Codex)
         .expect("read old provider")
         .expect("old provider exists");
     assert!(
@@ -2385,7 +2385,7 @@ fn switching_back_to_imported_gemini_default_keeps_an_export_line_key() {
     );
     state
         .db
-        .save_provider("gemini", &relay)
+        .save_provider(&AppType::Gemini, &relay)
         .expect("save relay");
 
     ProviderService::switch(&state, AppType::Gemini, "relay").expect("switch to relay");
@@ -2533,11 +2533,11 @@ fn provider_service_switch_claude_updates_live_and_state() {
 
     let providers = state
         .db
-        .get_all_providers(AppType::Claude.as_str())
+        .get_all_providers(&AppType::Claude)
         .expect("get all providers");
     let current_id = state
         .db
-        .get_current_provider(AppType::Claude.as_str())
+        .get_current_provider(&AppType::Claude)
         .expect("get current provider");
     assert_eq!(
         current_id.as_deref(),
@@ -2593,7 +2593,7 @@ fn seed_claude_switch_state(
 fn claude_row(state: &cc_switch_lib::AppState, id: &str) -> serde_json::Value {
     state
         .db
-        .get_provider_by_id(id, AppType::Claude.as_str())
+        .get_provider_by_id(id, &AppType::Claude)
         .expect("read provider")
         .expect("provider exists")
         .settings_config
@@ -2818,7 +2818,7 @@ fn switch_claude_refuses_a_settings_file_it_cannot_parse() {
     assert_eq!(
         state
             .db
-            .get_current_provider(AppType::Claude.as_str())
+            .get_current_provider(&AppType::Claude)
             .expect("current")
             .as_deref(),
         Some("a")
@@ -2936,7 +2936,7 @@ fn provider_service_delete_codex_removes_provider_and_files() {
 
     let providers = app_state
         .db
-        .get_all_providers(AppType::Codex.as_str())
+        .get_all_providers(&AppType::Codex)
         .expect("get all providers");
     assert!(
         !providers.contains_key("to-delete"),
@@ -2996,7 +2996,7 @@ fn provider_service_delete_claude_removes_provider_files() {
 
     let providers = app_state
         .db
-        .get_all_providers(AppType::Claude.as_str())
+        .get_all_providers(&AppType::Claude)
         .expect("get all providers");
     assert!(
         !providers.contains_key("delete"),
@@ -3087,11 +3087,11 @@ fn recover_from_crash_without_backup_cleans_placeholder_instead_of_writing_it_ba
     );
     state
         .db
-        .save_provider(AppType::Claude.as_str(), &provider)
+        .save_provider(&AppType::Claude, &provider)
         .expect("save placeholder provider");
     state
         .db
-        .set_current_provider(AppType::Claude.as_str(), "default")
+        .set_current_provider(&AppType::Claude, "default")
         .expect("set current provider");
 
     // 启动时处理旧版遗留的接管态：没开代理（enabled=0），写回直连。
@@ -3184,7 +3184,7 @@ fn switch_writes_credential_files_owner_only() {
     state
         .db
         .save_provider(
-            AppType::GrokBuild.as_str(),
+            &AppType::GrokBuild,
             &Provider::with_id(
                 "grok-relay".to_string(),
                 "Relay".to_string(),
@@ -3220,7 +3220,7 @@ fn editor_save(base: &serde_json::Value, on_conflict: &str) -> cc_switch_lib::Ed
 fn open_claude_editor(state: &cc_switch_lib::AppState, id: &str) -> (Provider, serde_json::Value) {
     let row = state
         .db
-        .get_provider_by_id(id, AppType::Claude.as_str())
+        .get_provider_by_id(id, &AppType::Claude)
         .expect("read provider")
         .expect("provider exists");
     let view = ProviderService::editor_view(state, AppType::Claude, &row.settings_config, None)
@@ -3426,7 +3426,7 @@ fn claude_editor_lists_row_fields_that_never_reach_live() {
 
     let row = state
         .db
-        .get_provider_by_id("relay", AppType::Claude.as_str())
+        .get_provider_by_id("relay", &AppType::Claude)
         .expect("read")
         .expect("row");
     let mut edited = view.settings.clone();
@@ -3531,7 +3531,7 @@ fn claude_editor_first_provider_keeps_the_existing_settings() {
     );
     let row = state
         .db
-        .get_provider_by_id("relay", AppType::Claude.as_str())
+        .get_provider_by_id("relay", &AppType::Claude)
         .expect("read")
         .expect("row");
     assert_eq!(
@@ -3548,7 +3548,7 @@ fn claude_editor_first_provider_keeps_the_existing_settings() {
     assert_eq!(
         state
             .db
-            .get_current_provider(AppType::Claude.as_str())
+            .get_current_provider(&AppType::Claude)
             .expect("current")
             .as_deref(),
         Some("relay")
@@ -3664,7 +3664,7 @@ fn gemini_editor_recognizes_a_legacy_google_card_like_switching_does() {
     google.category = None;
     state
         .db
-        .save_provider(AppType::Gemini.as_str(), &google)
+        .save_provider(&AppType::Gemini, &google)
         .expect("save legacy google card");
 
     let category = ProviderService::editor_category(&state, &AppType::Gemini, Some("google"), None)
@@ -3822,7 +3822,7 @@ fn codex_editor_official_auth_shows_disk_login_and_keeps_row_auth() {
     for (id, stored_auth) in [("codex-official", login("stale")), ("follow", json!({}))] {
         let row = state
             .db
-            .get_provider_by_id(id, AppType::Codex.as_str())
+            .get_provider_by_id(id, &AppType::Codex)
             .expect("read provider")
             .expect("provider exists");
         let view = ProviderService::editor_view(
@@ -3851,7 +3851,7 @@ fn codex_editor_official_auth_shows_disk_login_and_keeps_row_auth() {
 
         let saved = state
             .db
-            .get_provider_by_id(id, AppType::Codex.as_str())
+            .get_provider_by_id(id, &AppType::Codex)
             .expect("read provider")
             .expect("provider exists");
         assert_eq!(

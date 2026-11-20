@@ -1432,7 +1432,7 @@ pub fn get_effective_current_provider(
     if let Some(local_id) = get_current_provider(app_type) {
         // 2. 验证该 ID 在数据库中存在
         // 只问在不在，不解析那一行：读不出来的行指针照样指着它。
-        if db.provider_exists(&local_id, app_type.as_str())? {
+        if db.provider_exists(&local_id, app_type)? {
             // 存在，直接返回
             return Ok(Some(local_id));
         }
@@ -1447,7 +1447,7 @@ pub fn get_effective_current_provider(
     }
 
     // Fallback 到数据库的 is_current
-    db.get_current_provider(app_type.as_str())
+    db.get_current_provider(app_type)
 }
 
 // ===== Skill 同步方式管理函数 =====

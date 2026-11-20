@@ -64,7 +64,7 @@ pub fn provider_for(
 /// 正在用的那一行（见 [`Purpose::InUse`]）。
 pub fn provider_in_use(db: &Database, app: &AppType) -> Result<Option<Provider>, AppError> {
     match proxy_route_id(db, app)? {
-        Some(route) => db.get_provider_by_id(&route, app.as_str()),
+        Some(route) => db.get_provider_by_id(&route, app),
         None => direct_provider(db, app),
     }
 }
@@ -79,8 +79,12 @@ fn proxy_route_id(db: &Database, app: &AppType) -> Result<Option<String>, AppErr
     let Some(route) = mode.proxy_route else {
         return Ok(None);
     };
-    if db.provider_exists(&route, app.as_str())? {
-        return Ok(Some(route));
+    let row = db.get_provider_by_id(&route, app)?;
+    if row.is_none() {
+        log::warn!(
+            "{} 的代理路由 {route} 在数据库中不存在，按直连指针处理",
+            app.as_str()
+        );
     }
     log::warn!(
         "{} 的代理路由 {route} 在数据库中不存在，按直连指针处理",
@@ -92,7 +96,7 @@ fn proxy_route_id(db: &Database, app: &AppType) -> Result<Option<String>, AppErr
 /// 直连指针指向的那一行。
 pub fn direct_provider(db: &Database, app: &AppType) -> Result<Option<Provider>, AppError> {
     match provider_for(db, app, Purpose::Direct)? {
-        Some(id) => db.get_provider_by_id(&id, app.as_str()),
+        Some(id) => db.get_provider_by_id(&id, app),
         None => Ok(None),
     }
 }

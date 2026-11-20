@@ -1036,7 +1036,7 @@ fn test_import_prompt_allows_space_in_base64_content() {
 
     let prompt_id = import_prompt_from_deeplink(&state, request.clone()).expect("import prompt");
 
-    let prompts = state.db.get_prompts("codex").expect("get prompts");
+    let prompts = state.db.get_prompts(&AppType::Codex).expect("get prompts");
     let prompt = prompts.get(&prompt_id).expect("prompt saved");
 
     assert_eq!(prompt.content, ">>>");
@@ -1783,7 +1783,11 @@ fn test_pi_link_with_the_toggle_off_is_saved_without_touching_models_json() {
 
     let (state, id) = import_pi_link(Some(false));
 
-    assert!(state.db.get_provider_by_id(&id, "pi").unwrap().is_some());
+    assert!(state
+        .db
+        .get_provider_by_id(&id, &AppType::Pi)
+        .unwrap()
+        .is_some());
     assert!(!crate::pi_config::pi_provider_exists(&id).unwrap());
 }
 
@@ -1916,7 +1920,7 @@ fn test_first_switch_mode_provider_stays_inactive_when_the_toggle_is_off() {
 
         assert!(state
             .db
-            .get_provider_by_id(&id, "claude")
+            .get_provider_by_id(&id, &AppType::Claude)
             .unwrap()
             .is_some());
         let current = crate::mode::current::provider_for(
@@ -1989,7 +1993,11 @@ fn test_import_stores_a_valid_custom_icon_and_rejects_a_broken_one() {
     let db = Arc::new(Database::memory().expect("create memory db"));
     let state = AppState::new(db);
     let id = super::import_provider_from_deeplink(&state, request).expect("import provider");
-    let stored = state.db.get_provider_by_id(&id, "claude").unwrap().unwrap();
+    let stored = state
+        .db
+        .get_provider_by_id(&id, &AppType::Claude)
+        .unwrap()
+        .unwrap();
     assert_eq!(stored.icon.as_deref(), Some(icon.as_str()));
 
     // 截断的 PNG：保存校验拒绝
@@ -2186,7 +2194,7 @@ fn agy_deeplink_prompt_import_respects_activation() {
         let request = parse_deeplink_url(&format!("ccswitch://v1/import?resource=prompt&app=agy&name=Test-{enabled}&content={content}&enabled={enabled}")).unwrap();
         let id = import_prompt_from_deeplink(&state, request).unwrap();
         assert_eq!(
-            state.db.get_prompts("agy").unwrap()[&id].content,
+            state.db.get_prompts(&AppType::Agy).unwrap()[&id].content,
             "Agy instructions"
         );
         assert_eq!(path.exists(), enabled);
@@ -2217,7 +2225,11 @@ fn agy_deeplink_enabled_key_provider_stays_out_of_live_files() {
     // to agy started from "Open Terminal" with its private profile.
     assert!(!crate::agy_config::settings_path().exists());
     assert!(!crate::config::get_home_dir().join(".gemini/.env").exists());
-    let row = state.db.get_provider_by_id(&id, "agy").unwrap().unwrap();
+    let row = state
+        .db
+        .get_provider_by_id(&id, &AppType::Agy)
+        .unwrap()
+        .unwrap();
     let launch = crate::services::provider::agy_direct::terminal_launch(&row).unwrap();
     assert_eq!(
         launch.env[0],

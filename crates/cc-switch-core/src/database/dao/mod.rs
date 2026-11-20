@@ -23,6 +23,16 @@ pub use profiles::Profile;
 
 use crate::error::AppError;
 use indexmap::IndexMap;
+use crate::app_config::AppType;
+use rusqlite::types::{ToSql, ToSqlOutput};
+
+/// 库里 `app_type` 列存的就是 [`AppType::as_str`]，DAO 直接绑定 `&AppType`。
+impl ToSql for AppType {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        self.as_str().to_sql()
+    }
+}
+
 
 /// 解析一行里存的 JSON 列。解析失败就报错并点名是哪一行哪一列：不能换成默认值，
 /// 否则下一次保存会把默认值写回去，盖掉库里原来的数据（比如新版本写入、旧版本认不出的字段）。

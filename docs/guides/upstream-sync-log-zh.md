@@ -264,3 +264,34 @@ presets 默认模型、macOS 签名重试），47 文件。冲突 3 处：
 | `fca6b1bb` | `71dcb150` | `json_column` + readable/unreadable；MCP flag 读回失败回滚；前端不可读条目提示。未跟 `#9640` DAO 浪潮 |
 
 本机无 MSVC linker，Rust 未编译验证；前端相关 vitest / `tsc` 通过。需 CI 复核。
+
+### 第七次：结构性大拆（misc tool_* + forwarder 子模块）
+
+**2026-11-20**，在第六次 SKIP-ADAPT 之上，按上游模块边界**从本分支现有文件手工拆出**（不直接
+三路 cherry-pick 大 diff），并改用 `rustup run stable-x86_64-pc-windows-gnu cargo check`
+验证（本机 D 盘 MSYS2/ucrt64；新版 Cargo 的 `build/<pkg>/<hash>` 布局需在
+`.audit/target-gnu/debug/build/build` 放空目录以绕过 tauri-build 的 `read_dir` 兼容问题）。
+
+- **misc → tool_***（对应 `f4ef3eba` / `26831d4e` / `176bb05e`，GUI `src-tauri`）：
+  - 新增 `tool_version.rs`、`tool_discovery.rs`、`tool_process.rs`、`tool_lifecycle_command.rs`；
+    `misc.rs` 以 `#[path]` + `use …::*` 挂接；`mod.rs` 按上游路径重导
+    `login_shell_path` / `merge_path_segments` / `CommandDeadline` / `local_tool_version`。
+  - 本分支无上游 `tool_lifecycle_progress` 符号（仍用 `ToolLifecycleCoordinator`），该文件跳过。
+  - `model_fetch` 改为走 `commands::run_detected_tool_command_with_timeout` 重导。
+  - 验证：`cargo check --lib`（gnu）通过。
+- **forwarder 子模块**（对应 `69cdc63c` + `09678477`，core）：
+  - 新增 `proxy/forwarder/{copilot,diagnostics,endpoint,headers,opencode,request_body,response_check}.rs`；
+    子模块内原 `super::‹proxy sibling›` 改为 `super::super::…`。
+  - 引入 `Attempt`，`forward` 六处调用改为 `&attempt` + body。
+  - **未合** `3493be84`（`managed_auth` / `send` / `OutboundHeaderPlan`）：本分支 `forward()` 内
+    仍是内联 token/发送逻辑，尚无同名可抽方法，需另开一轮手工抽。
+  - 验证：core `cargo check`（gnu）通过。
+- **DAO `&AppType`（`f9e40d4f`）**：21 文件冲突已清——保留本分支 `json_column` /
+  `UnreadableEntry` / `proxy_service` / `supports_local_proxy`，跳过上游
+  Copilot/WorkBuddy/AppSpec 捆包；`provider_supports_failover` 改为 `pub` 供 GUI；
+  `ToSql for AppType` 落在 dao/mod；`mirror_proxy_flag` 用 `supports_local_proxy`；
+  **config snippet** 仍收 `&str`（本地 omo / omo-slim 键不是 `AppType`）。
+  gnu core / GUI `--lib` 通过。
+- **未合** `45ec87d7`（FromStr 收口）：干净树上仍 3 文件冲突，另开。补丁在
+  `.audit/45ec87d7-remapped.patch`。
+- 工作区尚未提交（第七次拆分 + DAO）；需要时再 `git add` 写提交说明。

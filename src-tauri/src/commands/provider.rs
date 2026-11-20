@@ -255,7 +255,7 @@ fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result
                     AppType::GrokBuild,
                 )?;
                 state.db.set_current_provider(
-                    app_type.as_str(),
+                    &app_type,
                     crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID,
                 )?;
                 crate::settings::set_current_provider(
@@ -288,9 +288,7 @@ fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result
         {
             match ProviderService::extract_common_config_snippet(state, app_type.clone()) {
                 Ok(snippet) if !snippet.is_empty() && snippet != "{}" => {
-                    let _ = state
-                        .db
-                        .set_config_snippet(app_type.as_str(), Some(snippet));
+                    let _ = state.db.set_config_snippet(app_type.as_str(), Some(snippet));
                     let _ = state
                         .db
                         .set_config_snippet_cleared(app_type.as_str(), false);
@@ -350,11 +348,11 @@ pub async fn import_claude_desktop_providers_from_claude(
 fn import_claude_desktop_providers_from_claude_blocking(state: &AppState) -> Result<usize, String> {
     let claude_providers = state
         .db
-        .get_all_providers(AppType::Claude.as_str())
+        .get_all_providers(&AppType::Claude)
         .map_err(|e| e.to_string())?;
     let existing_ids = state
         .db
-        .get_provider_ids(AppType::ClaudeDesktop.as_str())
+        .get_provider_ids(&AppType::ClaudeDesktop)
         .map_err(|e| e.to_string())?;
 
     let mut imported = 0usize;
@@ -380,7 +378,7 @@ fn import_claude_desktop_providers_from_claude_blocking(state: &AppState) -> Res
 
         state
             .db
-            .save_provider(AppType::ClaudeDesktop.as_str(), &desktop_provider)
+            .save_provider(&AppType::ClaudeDesktop, &desktop_provider)
             .map_err(|e| e.to_string())?;
         imported += 1;
     }
@@ -679,7 +677,7 @@ async fn query_provider_usage_inner(
     // 从数据库读取供应商信息，检查特殊模板类型
     let providers = state
         .db
-        .get_all_providers(app_type.as_str())
+        .get_all_providers(&app_type)
         .map_err(|e| format!("Failed to get providers: {e}"))?;
     let provider = providers.get(provider_id);
     let usage_script = provider

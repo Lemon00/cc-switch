@@ -2,6 +2,14 @@
 //!
 //! 负责将请求转发到上游Provider，支持故障转移
 
+mod copilot;
+mod diagnostics;
+mod endpoint;
+mod headers;
+mod opencode;
+mod request_body;
+mod response_check;
+
 use super::hyper_client::{ProxyResponse, MAX_RESPONSE_BODY_BYTES};
 use super::{
     body_filter::filter_private_params_with_whitelist,
@@ -48,173 +56,22 @@ use std::borrow::Cow;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use copilot::*;
+use diagnostics::*;
+use endpoint::*;
+use headers::*;
+use opencode::*;
+use request_body::*;
+use response_check::*;
+
 const PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
 
-/// Whether the upstream belongs to the OpenCode gateway (`opencode.ai`).
-///
-/// That gateway (<https://opencode.ai/docs/go/>) expects clients to identify
-/// themselves with a `User-Agent` and to carry a **stable per-conversation**
-/// session id in `x-opencode-session`; a request without the session header is
-/// rejected with `400 MissingSessionID`. Claude Code and Codex already send
-/// headers the gateway recognises, Claude Desktop does not - the proxy fills
-/// the gap (see the injection site in `forward`).
-fn is_opencode_upstream(upstream_host: Option<&str>) -> bool {
-    upstream_host
-        .map(|host| {
-            let host = host.rsplit_once(':').map_or(host, |(h, _)| h);
-            host.trim_matches(['[', ']']).to_ascii_lowercase()
-        })
-        .is_some_and(|host| host == "opencode.ai" || host.ends_with(".opencode.ai"))
-}
 
-/// Derive a session id that stays **stable within one conversation**: a digest
-/// of the system prompt plus the first user message.
-///
-/// The gateway uses the session id for upstream routing and prompt caching, so
-/// it must not change between the turns of a conversation. Claude Desktop hands
-/// CC Switch a fresh id on every request, which defeats that; hashing the
-/// conversation prefix keeps the id stable while still separating conversations.
-fn conversation_fingerprint(body: &Value) -> Option<String> {
-    let mut hasher = Sha256::new();
-    let mut fed = false;
-    if let Some(system) = body.get("system") {
-        hasher.update(without_cache_control(system).to_string().as_bytes());
-        fed = true;
-    }
-    if let Some(first_user) = body
-        .get("messages")
-        .and_then(Value::as_array)
-        .and_then(|messages| {
-            messages
-                .iter()
-                .find(|m| m.get("role").and_then(Value::as_str) == Some("user"))
-        })
-    {
-        hasher.update(without_cache_control(first_user).to_string().as_bytes());
-        fed = true;
-    }
-    if !fed {
-        return None;
-    }
-    let digest = format!("{:x}", hasher.finalize());
-    Some(format!("ccsw-{}", &digest[..32]))
-}
 
-/// A stable session header the client already sends and the gateway recognises
-/// natively (Claude Code, Codex). Checked before deriving an id of our own.
-fn native_session_header(headers: &http::HeaderMap) -> Option<&str> {
-    [
-        "x-claude-code-session-id",
-        "session-id",
-        "session_id",
-        "x-session-id",
-    ]
-    .iter()
-    .find_map(|name| {
-        headers
-            .get(*name)?
-            .to_str()
-            .ok()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-    })
-}
 
-/// Pick the value for `x-opencode-session`, most stable identity first: a native
-/// session header the client already sends, the client-provided session id, the
-/// conversation fingerprint, then the generated id.
-fn pick_opencode_session<'a>(
-    native: Option<&'a str>,
-    client_provided: Option<&'a str>,
-    fingerprint: Option<&'a str>,
-    generated: &'a str,
-) -> Option<String> {
-    [native, client_provided, fingerprint, Some(generated)]
-        .into_iter()
-        .flatten()
-        .map(str::trim)
-        .find(|value| !value.is_empty())
-        .map(str::to_string)
-}
 
-/// Clone `value` without any `cache_control` key, at any depth.
-///
-/// Clients move that marker between messages as the conversation grows (Claude
-/// Code puts it on the first user message, then on the last one), so hashing it
-/// would change the session id once, mid-conversation.
-fn without_cache_control(value: &Value) -> Value {
-    match value {
-        Value::Object(map) => Value::Object(
-            map.iter()
-                .filter(|(key, _)| key.as_str() != "cache_control")
-                .map(|(key, value)| (key.clone(), without_cache_control(value)))
-                .collect(),
-        ),
-        Value::Array(items) => Value::Array(items.iter().map(without_cache_control).collect()),
-        other => other.clone(),
-    }
-}
 
-fn codex_bearer_access_token(headers: &http::HeaderMap) -> Option<&str> {
-    let authorization = headers
-        .get(http::header::AUTHORIZATION)?
-        .to_str()
-        .ok()?
-        .trim();
-    let mut parts = authorization.split_whitespace();
-    let scheme = parts.next()?;
-    let token = parts.next()?;
-    if !scheme.eq_ignore_ascii_case("bearer") || token.is_empty() || parts.next().is_some() {
-        return None;
-    }
-    Some(token)
-}
 
-fn validate_codex_official_authorization(
-    headers: &http::HeaderMap,
-    provider: &Provider,
-    expected_chatgpt_account_id: Option<&str>,
-    managed_session_matches: Option<bool>,
-) -> Result<(), ProxyError> {
-    let authorization = headers
-        .get(http::header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim);
-    match authorization {
-        None | Some("") => Err(ProxyError::AuthError(
-            "Codex 官方登录不可用，请先在 Codex 中完成 ChatGPT 登录".to_string(),
-        )),
-        // 带占位 Key 的请求有两种来源：没重载配置的 Codex 进程；或切换前用第三方供应商建的
-        // 旧会话（Codex 按会话记下的 provider 走休眠的 custom 表，重启也还是它）。
-        Some(value) if value.contains(PROXY_AUTH_PLACEHOLDER) => Err(ProxyError::AuthError(
-            "已切换到 OpenAI 官方供应商，但这个请求仍按第三方供应商的配置发出。如果这是切换前用第三方供应商创建的旧会话，它会一直沿用原供应商，重启也无效，请新建会话继续；否则请重启 Codex 以加载官方登录配置".to_string(),
-        )),
-        Some(_) => {
-            let managed_account_id = provider
-                .meta
-                .as_ref()
-                .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
-                .map(|account_id| account_id.trim().to_string())
-                .filter(|account_id| !account_id.is_empty());
-            if managed_account_id.is_some() {
-                let request_account_id = headers
-                    .get("chatgpt-account-id")
-                    .and_then(|value| value.to_str().ok())
-                    .map(str::trim)
-                    .filter(|account_id| !account_id.is_empty());
-                if request_account_id != expected_chatgpt_account_id
-                    || managed_session_matches != Some(true)
-                {
-                    return Err(ProxyError::AuthError(
-                        "当前 Codex 会话未加载所选 ChatGPT 账号，请重启 Codex 或新建会话后重试"
-                            .to_string(),
-                    ));
-                }
-            }
-            Ok(())
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodexUpstreamFormat {
@@ -223,62 +80,7 @@ pub enum CodexUpstreamFormat {
     Anthropic,
 }
 
-struct CopilotRequestContext {
-    classification: super::copilot_optimizer::CopilotClassification,
-    request_id: Option<String>,
-    interaction_id: Option<String>,
-}
 
-impl CopilotRequestContext {
-    fn apply_headers(
-        &self,
-        headers: &mut Vec<(http::HeaderName, http::HeaderValue)>,
-        request_classification: bool,
-    ) -> Result<(), ProxyError> {
-        let request_id = self
-            .request_id
-            .as_deref()
-            .map(http::HeaderValue::from_str)
-            .transpose()
-            .map_err(|_| ProxyError::ConfigError("Invalid Copilot request ID".to_string()))?;
-        let interaction_id = self
-            .interaction_id
-            .as_deref()
-            .map(http::HeaderValue::from_str)
-            .transpose()
-            .map_err(|_| ProxyError::ConfigError("Invalid Copilot interaction ID".to_string()))?;
-
-        for (name, value) in headers.iter_mut() {
-            match name.as_str() {
-                "x-initiator" if request_classification => {
-                    *value = http::HeaderValue::from_static(self.classification.initiator);
-                }
-                "x-interaction-type" if self.classification.is_subagent => {
-                    *value = http::HeaderValue::from_static("conversation-subagent");
-                }
-                "x-request-id" | "x-agent-task-id" => {
-                    if let Some(request_id) = &request_id {
-                        *value = request_id.clone();
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        if let Some(interaction_id) = interaction_id {
-            headers.push((
-                http::HeaderName::from_static("x-interaction-id"),
-                interaction_id,
-            ));
-        }
-        if self.classification.is_subagent {
-            log::info!(
-                "[Copilot] 子代理请求: x-initiator=agent, x-interaction-type=conversation-subagent"
-            );
-        }
-        Ok(())
-    }
-}
 
 pub struct ForwardResult {
     pub response: ProxyResponse,
@@ -351,6 +153,20 @@ impl Drop for ActiveConnectionGuard {
         }
         // 没有 runtime 时静默丢失计数（仅 UI 展示用，可接受最终一致性）
     }
+}
+
+
+/// The provider and client request one failover attempt sends; the attempt
+/// and its rectifier retries differ only in the body.
+#[derive(Clone, Copy)]
+struct Attempt<'a> {
+    app_type: &'a AppType,
+    method: &'a http::Method,
+    provider: &'a Provider,
+    endpoint: &'a str,
+    headers: &'a axum::http::HeaderMap,
+    extensions: &'a Extensions,
+    adapter: &'a dyn ProviderAdapter,
 }
 
 pub struct RequestForwarder {
@@ -591,7 +407,7 @@ impl RequestForwarder {
     async fn record_success_result(
         &self,
         provider_id: &str,
-        app_type: &str,
+        app_type: &AppType,
         used_half_open_permit: bool,
     ) {
         // 名额本身由这次尝试的 HalfOpenPermitGuard 归还，这里只记结果，所以传 false。
@@ -610,7 +426,7 @@ impl RequestForwarder {
 
         let router = self.router.clone();
         let provider_id = provider_id.to_string();
-        let app_type = app_type.to_string();
+        let app_type = app_type.clone();
         tokio::spawn(async move {
             if let Err(e) = router
                 .record_result(&provider_id, &app_type, false, true, None)
@@ -634,7 +450,7 @@ impl RequestForwarder {
         &self,
         retry_err: ProxyError,
         provider: &Provider,
-        app_type_str: &str,
+        app_type: &AppType,
         rectifier_label: &str,
         last_error: &mut Option<ProxyError>,
         last_provider: &mut Option<Provider>,
@@ -650,7 +466,7 @@ impl RequestForwarder {
         if is_provider_error {
             self.record_provider_failure(
                 provider,
-                app_type_str,
+                app_type,
                 &retry_err,
                 format!(
                     "Provider {} {rectifier_label}重试失败: {}",
@@ -684,7 +500,7 @@ impl RequestForwarder {
     async fn finish_success(
         &self,
         provider: &Provider,
-        app_type_str: &str,
+        app_type: &AppType,
         used_half_open_permit: bool,
         (response, claude_api_format, outbound_model): (
             ProxyResponse,
@@ -707,13 +523,13 @@ impl RequestForwarder {
 
         // 普通闭合熔断状态异步记录，避免阻塞流式首包返回；
         // HalfOpen 探测仍同步等待，保证熔断状态在归还名额前就转回 Closed。
-        self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
+        self.record_success_result(&provider.id, app_type, used_half_open_permit)
             .await;
 
         {
             let mut current_providers = self.current_providers.write().await;
             current_providers.insert(
-                app_type_str.to_string(),
+                app_type.to_string(),
                 (provider.id.clone(), provider.name.clone()),
             );
         }
@@ -729,7 +545,7 @@ impl RequestForwarder {
                 let hooks = self.hooks.clone();
                 let pid = provider.id.clone();
                 let pname = provider.name.clone();
-                let at = app_type_str.to_string();
+                let at = app_type.to_string();
                 tokio::spawn(async move {
                     if let Some(notify) = hooks.failover_notify.clone() {
                         notify(&at, &pid, &pname);
@@ -754,7 +570,7 @@ impl RequestForwarder {
     async fn record_provider_failure(
         &self,
         provider: &Provider,
-        app_type_str: &str,
+        app_type: &AppType,
         error: &ProxyError,
         last_error: String,
     ) {
@@ -765,7 +581,7 @@ impl RequestForwarder {
             .router
             .record_result(
                 &provider.id,
-                app_type_str,
+                app_type,
                 false,
                 false,
                 Some(error.to_string()),
@@ -925,7 +741,7 @@ outbound_model: None,
             } else {
                 let permit = self
                     .router
-                    .allow_provider_request(&provider.id, app_type_str)
+                    .allow_provider_request(&provider.id, app_type)
                     .await;
                 (permit.allowed, permit.used_half_open_permit, Some(permit))
             };
@@ -965,19 +781,22 @@ outbound_model: None,
             // forward_with_retry wrapper 在客户端请求维度统一处理，这里只刷
             // 新「正在尝试哪个 provider」的展示字段。
             self.note_attempt(provider).await;
+            let attempt = Attempt {
+                app_type,
+                method: &method,
+                provider,
+                endpoint,
+                headers: &headers,
+                extensions: &extensions,
+                adapter: adapter.as_ref(),
+            };
 
             // 转发请求（每个 Provider 只尝试一次，重试由客户端控制）
             let mut attempted_codex_upstream_format = None;
             match self
                 .forward(
-                    app_type,
-                    &method,
-                    provider,
-                    endpoint,
+                    &attempt,
                     &provider_body,
-                    &headers,
-                    &extensions,
-                    adapter.as_ref(),
                     &mut attempted_codex_upstream_format,
                 )
                 .await
@@ -986,7 +805,7 @@ outbound_model: None,
                     return Ok(self
                         .finish_success(
                             provider,
-                            app_type_str,
+                            app_type,
                             used_half_open_permit,
                             forwarded,
                             attempted_codex_upstream_format,
@@ -1027,17 +846,11 @@ outbound_model: None,
 
                             let mut media_retry_codex_upstream_format = None;
                             match self
-                                .forward(
-                                    app_type,
-                                    &method,
-                                    provider,
-                                    endpoint,
-                                    &media_body,
-                                    &headers,
-                                    &extensions,
-                                    adapter.as_ref(),
-                                    &mut media_retry_codex_upstream_format,
-                                )
+                .forward(
+                    &attempt,
+                    &media_body,
+                    &mut media_retry_codex_upstream_format,
+                )
                                 .await
                             {
                                 Ok(forwarded) => {
@@ -1047,7 +860,7 @@ outbound_model: None,
                                     return Ok(self
                                         .finish_success(
                                             provider,
-                                            app_type_str,
+                                            app_type,
                                             used_half_open_permit,
                                             forwarded,
                                             media_retry_codex_upstream_format,
@@ -1062,7 +875,7 @@ outbound_model: None,
                                         .handle_rectifier_retry_failure(
                                             retry_err,
                                             provider,
-                                            app_type_str,
+                                            app_type,
                                             "media 降级",
                                             &mut last_error,
                                             &mut last_provider,
@@ -1092,17 +905,11 @@ outbound_model: None,
                         );
                         let mut retry_codex_upstream_format = None;
                         match self
-                            .forward(
-                                app_type,
-                                &method,
-                                provider,
-                                endpoint,
-                                &retry_body,
-                                &headers,
-                                &extensions,
-                                adapter.as_ref(),
-                                &mut retry_codex_upstream_format,
-                            )
+                .forward(
+                    &attempt,
+                    &retry_body,
+                    &mut retry_codex_upstream_format,
+                )
                             .await
                         {
                             Ok(forwarded) => {
@@ -1110,7 +917,7 @@ outbound_model: None,
                                 return Ok(self
                                     .finish_success(
                                         provider,
-                                        app_type_str,
+                                        app_type,
                                         used_half_open_permit,
                                         forwarded,
                                         retry_codex_upstream_format,
@@ -1167,17 +974,11 @@ outbound_model: None,
 
                             let mut opaque_retry_codex_upstream_format = None;
                             match self
-                                .forward(
-                                    app_type,
-                                    &method,
-                                    provider,
-                                    endpoint,
-                                    &opaque_body,
-                                    &headers,
-                                    &extensions,
-                                    adapter.as_ref(),
-                                    &mut opaque_retry_codex_upstream_format,
-                                )
+                .forward(
+                    &attempt,
+                    &opaque_body,
+                    &mut opaque_retry_codex_upstream_format,
+                )
                                 .await
                             {
                                 Ok(forwarded) => {
@@ -1185,7 +986,7 @@ outbound_model: None,
                                     return Ok(self
                                         .finish_success(
                                             provider,
-                                            app_type_str,
+                                            app_type,
                                             used_half_open_permit,
                                             forwarded,
                                             opaque_retry_codex_upstream_format,
@@ -1266,17 +1067,11 @@ outbound_model: None,
                                 // 使用同一供应商重试（不计入熔断器）
                                 let mut signature_retry_codex_upstream_format = None;
                                 match self
-                                    .forward(
-                                        app_type,
-                                        &method,
-                                        provider,
-                                        endpoint,
-                                        &provider_body,
-                                        &headers,
-                                        &extensions,
-                                        adapter.as_ref(),
-                                        &mut signature_retry_codex_upstream_format,
-                                    )
+                .forward(
+                    &attempt,
+                    &provider_body,
+                    &mut signature_retry_codex_upstream_format,
+                )
                                     .await
                                 {
                                     Ok(forwarded) => {
@@ -1284,7 +1079,7 @@ outbound_model: None,
                                         return Ok(self
                                             .finish_success(
                                                 provider,
-                                                app_type_str,
+                                                app_type,
                                                 used_half_open_permit,
                                                 forwarded,
                                                 signature_retry_codex_upstream_format,
@@ -1299,7 +1094,7 @@ outbound_model: None,
                                             .handle_rectifier_retry_failure(
                                                 retry_err,
                                                 provider,
-                                                app_type_str,
+                                                app_type,
                                                 "整流",
                                                 &mut last_error,
                                                 &mut last_provider,
@@ -1362,17 +1157,11 @@ outbound_model: None,
                             // 使用同一供应商重试（不计入熔断器）
                             let mut budget_retry_codex_upstream_format = None;
                             match self
-                                .forward(
-                                    app_type,
-                                    &method,
-                                    provider,
-                                    endpoint,
-                                    &provider_body,
-                                    &headers,
-                                    &extensions,
-                                    adapter.as_ref(),
-                                    &mut budget_retry_codex_upstream_format,
-                                )
+                .forward(
+                    &attempt,
+                    &provider_body,
+                    &mut budget_retry_codex_upstream_format,
+                )
                                 .await
                             {
                                 Ok(forwarded) => {
@@ -1380,7 +1169,7 @@ outbound_model: None,
                                     return Ok(self
                                         .finish_success(
                                             provider,
-                                            app_type_str,
+                                            app_type,
                                             used_half_open_permit,
                                             forwarded,
                                             budget_retry_codex_upstream_format,
@@ -1395,7 +1184,7 @@ outbound_model: None,
                                         .handle_rectifier_retry_failure(
                                             retry_err,
                                             provider,
-                                            app_type_str,
+                                            app_type,
                                             "budget 整流",
                                             &mut last_error,
                                             &mut last_provider,
@@ -1424,7 +1213,7 @@ outbound_model: None,
                             // 可重试：真正的 provider 故障 → 记录失败并更新熔断器/DB 健康度
                             self.record_provider_failure(
                                 provider,
-                                app_type_str,
+                                app_type,
                                 &e,
                                 format!("Provider {} 失败: {}", provider.name, e),
                             )
@@ -1489,16 +1278,19 @@ outbound_model: None,
     #[allow(clippy::too_many_arguments)]
     async fn forward(
         &self,
-        app_type: &AppType,
-        method: &http::Method,
-        provider: &Provider,
-        endpoint: &str,
+        attempt: &Attempt<'_>,
         body: &Value,
-        headers: &axum::http::HeaderMap,
-        extensions: &Extensions,
-        adapter: &dyn ProviderAdapter,
         codex_upstream_format_out: &mut Option<CodexUpstreamFormat>,
     ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
+        let Attempt {
+            app_type,
+            method,
+            provider,
+            endpoint,
+            headers,
+            extensions,
+            adapter,
+        } = *attempt;
         *codex_upstream_format_out = None;
         self.set_last_outbound_model(None);
         // 使用适配器提取 base_url
@@ -3559,56 +3351,7 @@ outbound_model: None,
     }
 }
 
-/// Shared request pipeline after native Responses transport selection.
-/// Normalize standalone receipts for third parties before the strict-Grok gate.
-fn apply_native_responses_request_compat(
-    provider: &Provider,
-    body: &mut Value,
-    keep_resolved_model: bool,
-) -> Result<(), ProxyError> {
-    if !super::providers::is_codex_official_provider(provider)
-        && super::providers::transform_codex_responses_xai_sanitize::rewrite_xai_call_id_less_tool_outputs(body)
-    {
-        log::info!(
-            "[Codex] Rewrote function_call_output items without call_id for native Responses upstream (provider={})",
-            provider.id
-        );
-    }
-    if !super::providers::provider_needs_responses_namespace_flatten(
-        provider,
-        body.get("model").and_then(Value::as_str),
-    ) {
-        return Ok(());
-    }
-    if super::providers::transform_codex_responses_namespace::flatten_request_namespaces(body)? {
-        log::debug!(
-            "[Codex] Flattened namespace tools for native Responses upstream (provider={})",
-            provider.id
-        );
-    }
-    // Copilot already resolved against its live catalog; never replace that
-    // model with the card default. Direct xAI keeps its existing fallback.
-    let upstream_model = if keep_resolved_model || provider.is_github_copilot() {
-        None
-    } else {
-        super::providers::codex_provider_upstream_model(provider)
-    };
-    super::providers::transform_codex_responses_xai_sanitize::apply_xai_native_responses_request_compat(
-        body,
-        &provider.id,
-        upstream_model.as_deref(),
-        &provider.settings_config,
-    );
-    Ok(())
-}
 
-/// 从 ProxyError 中提取错误消息
-fn extract_error_message(error: &ProxyError) -> Option<String> {
-    match error {
-        ProxyError::UpstreamError { body, .. } => body.clone(),
-        _ => Some(error.to_string()),
-    }
-}
 
 /// 检测 Provider 是否为 Bedrock（通过 CLAUDE_CODE_USE_BEDROCK 环境变量判断）
 fn is_bedrock_provider(provider: &Provider) -> bool {
@@ -3628,606 +3371,35 @@ fn refresh_success_rate(status: &mut ProxyStatus) {
     }
 }
 
-fn build_retryable_failure_log(
-    provider_name: &str,
-    attempted_providers: usize,
-    total_providers: usize,
-    error: &ProxyError,
-) -> (&'static str, String) {
-    let error_summary = summarize_proxy_error(error);
 
-    if total_providers <= 1 {
-        (
-            log_fwd::SINGLE_PROVIDER_FAILED,
-            format!("Provider {provider_name} 请求失败: {error_summary}"),
-        )
-    } else {
-        (
-            log_fwd::PROVIDER_FAILED_RETRY,
-            format!(
-                "Provider {provider_name} 失败，继续尝试下一个 ({attempted_providers}/{total_providers}): {error_summary}"
-            ),
-        )
-    }
-}
 
-fn build_terminal_failure_log(
-    attempted_providers: usize,
-    total_providers: usize,
-    last_error: Option<&ProxyError>,
-) -> Option<(&'static str, String)> {
-    if total_providers <= 1 {
-        return None;
-    }
 
-    let error_summary = last_error
-        .map(summarize_proxy_error)
-        .unwrap_or_else(|| "未知错误".to_string());
 
-    Some((
-        log_fwd::ALL_PROVIDERS_FAILED,
-        format!(
-            "已尝试 {attempted_providers}/{total_providers} 个 Provider，均失败。最后错误: {error_summary}"
-        ),
-    ))
-}
 
-fn summarize_proxy_error(error: &ProxyError) -> String {
-    match error {
-        ProxyError::UpstreamError { status, body } => {
-            let body_summary = body
-                .as_deref()
-                .map(summarize_upstream_body)
-                .filter(|summary| !summary.is_empty());
 
-            match body_summary {
-                Some(summary) => format!("上游 HTTP {status}: {summary}"),
-                None => format!("上游 HTTP {status}"),
-            }
-        }
-        ProxyError::Timeout(message) => {
-            format!("请求超时: {}", summarize_text_for_log(message, 180))
-        }
-        ProxyError::ForwardFailed(message) => {
-            format!("请求转发失败: {}", summarize_text_for_log(message, 180))
-        }
-        ProxyError::TransformError(message) => {
-            format!("响应转换失败: {}", summarize_text_for_log(message, 180))
-        }
-        ProxyError::ConfigError(message) => {
-            format!("配置错误: {}", summarize_text_for_log(message, 180))
-        }
-        ProxyError::AuthError(message) => {
-            format!("认证失败: {}", summarize_text_for_log(message, 180))
-        }
-        _ => summarize_text_for_log(&error.to_string(), 180),
-    }
-}
 
-fn summarize_upstream_body(body: &str) -> String {
-    if let Ok(json_body) = serde_json::from_str::<Value>(body) {
-        if let Some(message) = extract_json_error_message(&json_body) {
-            return summarize_text_for_log(&message, 180);
-        }
 
-        if let Ok(compact_json) = serde_json::to_string(&json_body) {
-            return summarize_text_for_log(&compact_json, 180);
-        }
-    }
 
-    summarize_text_for_log(body, 180)
-}
 
-fn extract_json_error_message(body: &Value) -> Option<String> {
-    let candidates = [
-        body.pointer("/error/message"),
-        body.pointer("/message"),
-        body.pointer("/detail"),
-        body.pointer("/error"),
-    ];
 
-    candidates
-        .into_iter()
-        .flatten()
-        .find_map(|value| value.as_str().map(ToString::to_string))
-}
 
-fn split_endpoint_and_query(endpoint: &str) -> (&str, Option<&str>) {
-    endpoint
-        .split_once('?')
-        .map_or((endpoint, None), |(path, query)| (path, Some(query)))
-}
 
-fn strip_beta_query(query: Option<&str>) -> Option<String> {
-    let filtered = query.map(|query| {
-        query
-            .split('&')
-            .filter(|pair| !pair.is_empty() && !pair.starts_with("beta="))
-            .collect::<Vec<_>>()
-            .join("&")
-    });
 
-    match filtered.as_deref() {
-        Some("") | None => None,
-        Some(_) => filtered,
-    }
-}
 
-fn is_claude_messages_path(path: &str) -> bool {
-    matches!(path, "/v1/messages" | "/claude/v1/messages")
-}
 
-fn rewrite_codex_responses_endpoint_to_chat(endpoint: &str) -> (String, Option<String>) {
-    let (_path, query) = split_endpoint_and_query(endpoint);
-    let passthrough_query = query.map(ToString::to_string);
-    let target_path = "/chat/completions";
-    let rewritten = match passthrough_query.as_deref() {
-        Some(query) if !query.is_empty() => format!("{target_path}?{query}"),
-        _ => target_path.to_string(),
-    };
 
-    (rewritten, passthrough_query)
-}
 
-/// Claude Code client fingerprint (used for Codex→Anthropic emulation to pass a
-/// gateway's "Claude Code only" check).
-const CLAUDE_CODE_USER_AGENT: &str = "claude-cli/1.0.119 (external, cli)";
-const CLAUDE_CODE_SYSTEM_IDENTITY: &str =
-    "You are Claude Code, Anthropic's official CLI for Claude.";
 
-/// Insert the Claude Code identity as the first line before the `system` field in
-/// the Anthropic request body.
-///
-/// Anthropic subscription/OAuth plans require the first system block to be exactly
-/// this identity line. After conversion `system` is a string (from Codex
-/// instructions); normalize it into an array here: [identity line, original system...].
-fn prepend_claude_code_system_prompt(body: &mut Value) {
-    let identity = serde_json::json!({ "type": "text", "text": CLAUDE_CODE_SYSTEM_IDENTITY });
-    let mut blocks: Vec<Value> = vec![identity];
-    match body.get("system") {
-        Some(Value::String(existing)) if !existing.is_empty() => {
-            blocks.push(serde_json::json!({ "type": "text", "text": existing }));
-        }
-        Some(Value::Array(existing)) => {
-            // Idempotent: skip re-injection if the first block is already the identity line.
-            if existing
-                .first()
-                .and_then(|b| b.get("text"))
-                .and_then(|t| t.as_str())
-                == Some(CLAUDE_CODE_SYSTEM_IDENTITY)
-            {
-                return;
-            }
-            blocks.extend(existing.iter().cloned());
-        }
-        _ => {}
-    }
-    body["system"] = Value::Array(blocks);
-}
 
-/// Headers a native Claude Code client never sends but the Codex/OpenAI CLI (and its
-/// stainless SDK layer) do. Dropped for every Codex→Anthropic request so the upstream sees a
-/// clean Anthropic client fingerprint. Centralized here so the set stays in one place and future
-/// additions can't miss a code path. `key_str` is already lowercased by the http crate.
-/// Whether `base_url` already ends in `endpoint_suffix` (e.g. `/v1/messages` or
-/// `/chat/completions`), ignoring surrounding whitespace, any `?query`/`#fragment`, and a
-/// trailing slash. Used to avoid double-appending the endpoint when a user pastes a full
-/// URL but leaves the "full URL" switch off (`.../v1/messages` → `.../v1/messages/v1/messages`,
-/// a non-retryable 400). `endpoint_suffix` must be lowercase.
-fn base_url_is_full_endpoint(base_url: &str, endpoint_suffix: &str) -> bool {
-    let trimmed = base_url.trim();
-    // Match against the path only: a `?query`/`#fragment` on a full endpoint URL must not
-    // hide the suffix (`.../v1/messages?beta=true` still ends in the endpoint).
-    let path = match trimmed.split_once(['?', '#']) {
-        Some((head, _)) => head,
-        None => trimmed,
-    };
-    path.trim_end_matches('/')
-        .to_ascii_lowercase()
-        .ends_with(endpoint_suffix)
-}
 
-fn is_codex_client_fingerprint_header(key_str: &str) -> bool {
-    matches!(
-        key_str,
-        "originator"
-            | "session_id"
-            | "session-id"
-            | "thread-id"
-            | "conversation_id"
-            | "chatgpt-account-id"
-            | "x-client-request-id"
-            | "openai-beta"
-            | "openai-organization"
-            | "openai-project"
-            // Codex 内置 openai 的固定请求头（值是 Codex 版本号）。
-            | "version"
-    ) || key_str.starts_with("x-stainless-")
-        || key_str.starts_with("x-codex-")
-        // ChatGPT 登录态下 Codex 每个请求都带：`x-oai-attestation`（设备证明）、
-        // `x-openai-fedramp`、`x-openai-account-routing-override`、`x-openai-memgen-request`、
-        // `x-openai-internal-codex-responses-lite`、`x-responsesapi-include-timing-metrics`。
-        || key_str.starts_with("x-oai-")
-        || key_str.starts_with("x-openai-")
-        || key_str.starts_with("x-responsesapi-")
-}
 
-/// Decide whether a Codex fingerprint header must be removed before the request
-/// reaches an upstream.
-///
-/// Stack requests to a third party still must not carry ChatGPT session or
-/// account identity. A native Responses third party, however, may use the
-/// non-identity `x-codex-beta-features` marker to recognize the Codex protocol
-/// and reject requests without it. Keep only that marker; all other Codex and
-/// OpenAI identity headers remain stripped. Converted Chat/Anthropic requests
-/// continue to receive a clean client fingerprint.
-///
-/// Any other Codex request to a third party (`codex_unmanaged_upstream`: Codex and
-/// not a CC Switch-managed ChatGPT account) drops only the ChatGPT account identity
-/// ([`is_chatgpt_identity_header`]): the client may be the built-in `openai`
-/// provider carrying the user's ChatGPT login. Session and client headers stay,
-/// so requests from a plain custom table are unchanged.
-fn should_strip_codex_client_fingerprint_header(
-    key_str: &str,
-    endpoint: &str,
-    codex_responses_to_anthropic: bool,
-    codex_responses_to_chat: bool,
-    codex_stack_request: bool,
-    codex_official_auth_passthrough: bool,
-    codex_unmanaged_upstream: bool,
-) -> bool {
-    if codex_responses_to_anthropic {
-        return is_codex_client_fingerprint_header(key_str);
-    }
 
-    if codex_stack_request && !codex_official_auth_passthrough {
-        let native_third_party_responses =
-            !codex_responses_to_chat && super::providers::is_codex_responses_endpoint(endpoint);
-        return is_codex_client_fingerprint_header(key_str)
-            && !(native_third_party_responses && key_str == "x-codex-beta-features");
-    }
 
-    codex_unmanaged_upstream
-        && !codex_official_auth_passthrough
-        && is_chatgpt_identity_header(key_str)
-}
 
-/// 只有带着 ChatGPT 登录的内置 openai 才会发的请求头：账号、组织 / 项目、设备证明和
-/// 内置 openai 的固定版本头。会话、客户端标识（`session_id`、`originator`、`x-codex-*`）
-/// 任何 Codex 客户端都发，不在其中。
-fn is_chatgpt_identity_header(key_str: &str) -> bool {
-    matches!(
-        key_str,
-        "chatgpt-account-id" | "openai-organization" | "openai-project" | "version"
-    ) || key_str.starts_with("x-oai-")
-        || key_str.starts_with("x-openai-")
-        || key_str.starts_with("x-responsesapi-")
-}
 
-/// Codex 只对内置 openai 发的字段（`output.encrypted_content`、
-/// `internal_chat_message_metadata_passthrough` 等，见
-/// `strip_codex_openai_only_request_fields`）只有 ChatGPT 后端认。第三方与本地原生
-/// Responses 网关收到会把整条请求 400 掉（#9042）。官方卡和 ChatGPT 托管账号那条路逐字节
-/// 不变；转 Chat / Anthropic 的路径重新组装请求，本来就不带这些字段。
-fn should_strip_codex_openai_only_fields(
-    app_type: &AppType,
-    provider: &Provider,
-    codex_responses_to_chat: bool,
-    codex_responses_to_anthropic: bool,
-) -> bool {
-    matches!(app_type, AppType::Codex)
-        && !codex_responses_to_chat
-        && !codex_responses_to_anthropic
-        && !super::providers::is_codex_official_provider(provider)
-        && !provider.is_codex_oauth()
-}
 
-fn codex_anthropic_error_envelope_message(body: &[u8]) -> Option<String> {
-    let value: Value = serde_json::from_slice(body).ok()?;
-    if value.get("type").and_then(Value::as_str) != Some("error") && value.get("error").is_none() {
-        return None;
-    }
-    let error = value.get("error").unwrap_or(&value);
-    let error_type = error.get("type").and_then(Value::as_str).unwrap_or("error");
-    let message = error
-        .get("message")
-        .and_then(Value::as_str)
-        .or_else(|| error.as_str())
-        .map(str::to_string)
-        .unwrap_or_else(|| error.to_string());
-    Some(format!("{error_type}: {message}"))
-}
 
-fn responses_error_envelope_message(body: &[u8]) -> Option<String> {
-    let value: Value = serde_json::from_slice(body).ok()?;
-    let status = value.get("status").and_then(Value::as_str);
-    let has_error = value.get("error").is_some_and(|error| !error.is_null());
-    if !matches!(status, Some("failed" | "cancelled")) && !has_error {
-        return None;
-    }
 
-    let error = value.get("error").unwrap_or(&value);
-    let error_type = error
-        .get("type")
-        .and_then(Value::as_str)
-        .or_else(|| error.get("code").and_then(Value::as_str))
-        .unwrap_or_else(|| status.unwrap_or("error"));
-    let message = error
-        .get("message")
-        .and_then(Value::as_str)
-        .or_else(|| error.as_str())
-        .filter(|message| !message.trim().is_empty())
-        .unwrap_or(match status {
-            Some("cancelled") => "response generation was cancelled",
-            _ => "response generation failed",
-        });
-    Some(format!("{error_type}: {message}"))
-}
-
-/// Prompt caching is part of the Codex→Anthropic protocol bridge rather than an
-/// optional Bedrock optimizer. Codex requests do not contain Anthropic
-/// `cache_control`, so keep bridge caching on by default while still honoring the
-/// dedicated cache-injection switch. Injected breakpoints always use Anthropic's
-/// standard 5-minute TTL.
-fn codex_anthropic_cache_config(config: &OptimizerConfig) -> OptimizerConfig {
-    OptimizerConfig {
-        enabled: true,
-        thinking_optimizer: false,
-        cache_injection: config.cache_injection,
-    }
-}
-
-/// [`Forwarder::hold_opaque_state_stream`] 看到一个完整 SSE 块之后怎么做。
-enum StreamStart {
-    /// 生命周期事件（或不是 JSON），接着读。
-    Pending,
-    /// 有输出或别的结局：交出流。
-    Commit,
-    /// 输出之前上游就自证验不了请求里的密文。
-    Rejected(ProxyError),
-}
-
-fn opaque_state_stream_start(block: &str, request: &Value) -> StreamStart {
-    let mut named_event = None;
-    let mut data_lines = Vec::new();
-    for line in block.lines() {
-        if let Some(event) = crate::proxy::sse::strip_sse_field(line, "event") {
-            named_event = Some(event.trim().to_string());
-        } else if let Some(data) = crate::proxy::sse::strip_sse_field(line, "data") {
-            data_lines.push(data);
-        }
-    }
-    let Ok(value) = serde_json::from_str::<Value>(&data_lines.join("\n")) else {
-        return StreamStart::Pending;
-    };
-    let event = named_event
-        .as_deref()
-        .filter(|event| !event.is_empty())
-        .or_else(|| value.get("type").and_then(Value::as_str))
-        .unwrap_or("");
-    match event {
-        "response.created" | "response.in_progress" | "response.queued" => StreamStart::Pending,
-        "response.failed" | "error" => {
-            let response = value.get("response").unwrap_or(&value);
-            let error = response.get("error").unwrap_or(response);
-            match super::opaque_state_rectifier::in_stream_rejection(error, request) {
-                Some(rejection) => StreamStart::Rejected(rejection),
-                None => StreamStart::Commit,
-            }
-        }
-        _ => StreamStart::Commit,
-    }
-}
-
-/// A streaming request may receive a whole JSON document even when the gateway
-/// omits `application/json`. `None` means either "not JSON" or "not complete yet";
-/// a parsed document is safe to commit unless it is a semantic failure envelope.
-fn inspect_responses_json_document(buffer: &str) -> Option<Result<(), ProxyError>> {
-    let trimmed = buffer.trim();
-    if !matches!(trimmed.as_bytes().first(), Some(b'{') | Some(b'[')) {
-        return None;
-    }
-    let _: Value = serde_json::from_str(trimmed).ok()?;
-    if let Some(message) = responses_error_envelope_message(trimmed.as_bytes()) {
-        if let Some(rejection) = responses_envelope_opaque_rejection(trimmed.as_bytes()) {
-            return Some(Err(rejection));
-        }
-        return Some(Err(ProxyError::TransformError(format!(
-            "Responses upstream returned a 2xx failure: {message}"
-        ))));
-    }
-    Some(Ok(()))
-}
-
-/// 有些网关先回 HTTP 200，再在输出前（或 2xx 的 Response 对象里）说验不了请求里的密文
-/// （#9424）。这种失败改成上游 400，回到重试循环和 HTTP 报错一样做密文整流；
-/// 其余失败照旧当转换错误，可以换下一家。
-fn opaque_rejection_before_output(error: &Value) -> Option<ProxyError> {
-    super::opaque_state_rectifier::in_stream_rejection(error, &Value::Null)
-}
-
-fn responses_envelope_opaque_rejection(body: &[u8]) -> Option<ProxyError> {
-    let value: Value = serde_json::from_slice(body).ok()?;
-    value
-        .get("error")
-        .filter(|error| !error.is_null())
-        .and_then(opaque_rejection_before_output)
-}
-
-/// Inspect one complete Responses SSE block while the response is still inside
-/// the retry loop. `None` means the event is lifecycle-only and priming should
-/// continue; `Some(Ok(()))` means it is safe to commit/replay the stream.
-fn inspect_responses_start_event(block: &str) -> Option<Result<(), ProxyError>> {
-    let mut named_event = None;
-    let mut data_lines = Vec::new();
-    for line in block.lines() {
-        if let Some(event) = crate::proxy::sse::strip_sse_field(line, "event") {
-            named_event = Some(event.trim().to_string());
-        } else if let Some(data) = crate::proxy::sse::strip_sse_field(line, "data") {
-            data_lines.push(data);
-        }
-    }
-    if data_lines.is_empty() {
-        return None;
-    }
-    let value: Value = match serde_json::from_str(&data_lines.join("\n")) {
-        Ok(value) => value,
-        Err(_) => return None,
-    };
-    let event = named_event
-        .as_deref()
-        .filter(|event| !event.is_empty())
-        .or_else(|| value.get("type").and_then(Value::as_str))
-        .unwrap_or("");
-
-    let response = value.get("response").unwrap_or(&value);
-    if matches!(
-        response.get("status").and_then(Value::as_str),
-        Some("failed" | "cancelled")
-    ) || response.get("error").is_some_and(|error| !error.is_null())
-    {
-        let error = response.get("error").unwrap_or(response);
-        if let Some(rejection) = opaque_rejection_before_output(error) {
-            return Some(Err(rejection));
-        }
-        let message = error
-            .get("message")
-            .and_then(Value::as_str)
-            .or_else(|| error.as_str())
-            .unwrap_or("Responses upstream failed before output");
-        let error_type = error
-            .get("type")
-            .and_then(Value::as_str)
-            .or_else(|| error.get("code").and_then(Value::as_str))
-            .or_else(|| response.get("status").and_then(Value::as_str))
-            .unwrap_or("upstream_error");
-        return Some(Err(ProxyError::TransformError(format!(
-            "Responses upstream {error_type}: {message}"
-        ))));
-    }
-
-    match event {
-        "response.failed" | "error" => {
-            let error = response.get("error").unwrap_or(response);
-            if let Some(rejection) = opaque_rejection_before_output(error) {
-                return Some(Err(rejection));
-            }
-            let message = error
-                .get("message")
-                .and_then(Value::as_str)
-                .or_else(|| error.as_str())
-                .unwrap_or("Responses upstream emitted an error before output");
-            let error_type = error
-                .get("type")
-                .and_then(Value::as_str)
-                .or_else(|| error.get("code").and_then(Value::as_str))
-                .unwrap_or("upstream_error");
-            Some(Err(ProxyError::TransformError(format!(
-                "Responses upstream {error_type}: {message}"
-            ))))
-        }
-        "response.created" | "response.in_progress" | "response.queued" => None,
-        "" => None,
-        // Productive output, incomplete, and completed terminals are all safe to
-        // expose. Mid-stream failures after this point are surfaced by the converter
-        // but intentionally do not switch providers.
-        _ => Some(Ok(())),
-    }
-}
-
-/// Rewrite Codex's `/responses` (and variants) to Anthropic's `/v1/messages`, preserving the query.
-fn rewrite_codex_responses_endpoint_to_anthropic(endpoint: &str) -> (String, Option<String>) {
-    let (_path, query) = split_endpoint_and_query(endpoint);
-    let passthrough_query = query.map(ToString::to_string);
-    let target_path = "/v1/messages";
-    let rewritten = match passthrough_query.as_deref() {
-        Some(query) if !query.is_empty() => format!("{target_path}?{query}"),
-        _ => target_path.to_string(),
-    };
-
-    (rewritten, passthrough_query)
-}
-
-fn is_managed_copilot_request(app_type: &AppType, provider: &Provider, base_url: &str) -> bool {
-    provider
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.provider_type.as_deref())
-        == Some("github_copilot")
-        || (!matches!(app_type, AppType::Codex) && base_url.contains("githubcopilot.com"))
-}
-
-fn codex_copilot_lookup_error(model_id: &str, error: CopilotAuthError) -> ProxyError {
-    let message =
-        format!("Failed to resolve GitHub Copilot capabilities for model {model_id}: {error}");
-    match error {
-        CopilotAuthError::DeviceFlowNotStarted
-        | CopilotAuthError::AuthorizationPending
-        | CopilotAuthError::AccessDenied
-        | CopilotAuthError::ExpiredToken
-        | CopilotAuthError::GitHubTokenInvalid
-        | CopilotAuthError::NoCopilotSubscription
-        | CopilotAuthError::AccountNotFound(_) => ProxyError::AuthError(message),
-        CopilotAuthError::NetworkError(_) | CopilotAuthError::CopilotTokenFetchFailed(_) => {
-            ProxyError::ForwardFailed(message)
-        }
-        CopilotAuthError::ParseError(_)
-        | CopilotAuthError::IoError(_)
-        | CopilotAuthError::InvalidDomain(_) => ProxyError::ConfigError(message),
-    }
-}
-
-fn apply_codex_copilot_model(
-    body: &mut Value,
-    resolved: Option<ResolvedCopilotModel>,
-    api_format: CodexCopilotApiFormat,
-) -> Result<CopilotTransport, ProxyError> {
-    let requested = match api_format {
-        CodexCopilotApiFormat::Auto => "a Responses or Chat Completions endpoint",
-        CodexCopilotApiFormat::OpenaiResponses => {
-            "the requested Responses endpoint (codexCopilotApiFormat=openai_responses)"
-        }
-        CodexCopilotApiFormat::OpenaiChat => {
-            "the requested Chat Completions endpoint (codexCopilotApiFormat=openai_chat)"
-        }
-    };
-    let Some(resolved) = resolved else {
-        let model = body
-            .get("model")
-            .and_then(Value::as_str)
-            .unwrap_or("<missing>");
-        return Err(ProxyError::ConfigError(format!(
-            "GitHub Copilot model {model} is unavailable for {requested} in this provider's catalogue"
-        )));
-    };
-    let Some(transport) = resolved.transport else {
-        return Err(ProxyError::ConfigError(format!(
-            "GitHub Copilot model {} does not advertise {requested}",
-            resolved.id
-        )));
-    };
-    body["model"] = Value::String(resolved.id);
-    Ok(transport)
-}
-
-fn rewrite_codex_endpoint_for_copilot(
-    inbound_endpoint: &str,
-    supported_endpoint: &str,
-) -> (String, Option<String>) {
-    let (inbound_path, query) = split_endpoint_and_query(inbound_endpoint);
-    let passthrough_query = query.map(ToString::to_string);
-    let mut target_path = supported_endpoint.trim_end_matches('/').to_string();
-    if inbound_path.ends_with("/responses/compact")
-        && matches!(target_path.as_str(), "/responses" | "/v1/responses")
-    {
-        target_path.push_str("/compact");
-    }
-    let rewritten = match passthrough_query.as_deref() {
-        Some(query) if !query.is_empty() => format!("{target_path}?{query}"),
-        _ => target_path,
-    };
-    (rewritten, passthrough_query)
-}
 
 /// Providers whose errors can come from an Anthropic Messages endpoint and therefore
 /// need the thinking signature / budget rectifiers. GitHub Copilot passes Anthropic
@@ -4241,660 +3413,31 @@ fn uses_anthropic_rectifiers(provider_type: Option<ProviderType>) -> bool {
     )
 }
 
-/// Pick the Copilot upstream protocol for a Claude-client request.
-///
-/// Anthropic models that advertise `/v1/messages` are passed through natively:
-/// the Chat Completions bridge drops `cache_control` breakpoints and Copilot's
-/// chat endpoint stops prefix caching at the first mid-conversation `system`
-/// message Claude Code inserts, so every turn re-bills the whole history.
-fn copilot_api_format_for_model(
-    vendor: Option<&str>,
-    supported_endpoints: &[String],
-) -> &'static str {
-    if vendor.is_some_and(|vendor| vendor.eq_ignore_ascii_case("openai")) {
-        "openai_responses"
-    } else if vendor.is_some_and(|vendor| vendor.eq_ignore_ascii_case("anthropic"))
-        && supported_endpoints
-            .iter()
-            .any(|endpoint| endpoint.trim_end_matches('/') == "/v1/messages")
-    {
-        "anthropic"
-    } else if transport_for(supported_endpoints, CodexCopilotApiFormat::OpenaiResponses).is_some()
-        && transport_for(supported_endpoints, CodexCopilotApiFormat::OpenaiChat).is_none()
-    {
-        // Copilot rejects these models on the chat endpoint (e.g. xAI grok)
-        "openai_responses"
-    } else {
-        "openai_chat"
-    }
-}
 
-fn build_copilot_unversioned_url(base_url: &str, endpoint: &str) -> String {
-    format!(
-        "{}/{}",
-        base_url.trim_end_matches('/'),
-        endpoint.trim_start_matches('/')
-    )
-}
 
-fn rewrite_claude_transform_endpoint(
-    endpoint: &str,
-    api_format: &str,
-    is_copilot: bool,
-    body: &Value,
-) -> (String, Option<String>) {
-    let (path, query) = split_endpoint_and_query(endpoint);
-    let passthrough_query = if is_claude_messages_path(path) {
-        strip_beta_query(query)
-    } else {
-        query.map(ToString::to_string)
-    };
 
-    if !is_claude_messages_path(path) {
-        return (endpoint.to_string(), passthrough_query);
-    }
 
-    if api_format == "gemini_native" {
-        let model =
-            super::providers::transform_gemini::extract_gemini_model(body).unwrap_or("unknown");
-        // Accept both bare ids (`gemini-2.5-pro`) and the resource-name
-        // form (`models/gemini-2.5-pro`) that Gemini SDKs emit. See
-        // `normalize_gemini_model_id` for rationale.
-        let model = super::gemini_url::normalize_gemini_model_id(model);
-        let is_stream = body
-            .get("stream")
-            .and_then(|value| value.as_bool())
-            .unwrap_or(false);
-        let target_path = if is_stream {
-            format!("/v1beta/models/{model}:streamGenerateContent")
-        } else {
-            format!("/v1beta/models/{model}:generateContent")
-        };
 
-        let rewritten_query = merge_query_params(
-            passthrough_query.as_deref(),
-            if is_stream { Some("alt=sse") } else { None },
-        );
 
-        let rewritten = match rewritten_query.as_deref() {
-            Some(query) if !query.is_empty() => format!("{target_path}?{query}"),
-            _ => target_path,
-        };
 
-        return (rewritten, rewritten_query);
-    }
 
-    let target_path = if is_copilot && api_format == "openai_responses" {
-        "/v1/responses"
-    } else if is_copilot {
-        "/chat/completions"
-    } else if api_format == "openai_responses" {
-        "/v1/responses"
-    } else {
-        "/v1/chat/completions"
-    };
 
-    let rewritten = match passthrough_query.as_deref() {
-        Some(query) if !query.is_empty() => format!("{target_path}?{query}"),
-        _ => target_path.to_string(),
-    };
 
-    (rewritten, passthrough_query)
-}
 
-fn merge_query_params(base_query: Option<&str>, extra_param: Option<&str>) -> Option<String> {
-    let mut params: Vec<String> = base_query
-        .into_iter()
-        .flat_map(|query| query.split('&'))
-        .filter(|pair| !pair.is_empty())
-        .filter(|pair| !pair.starts_with("alt="))
-        .map(ToString::to_string)
-        .collect();
 
-    if let Some(extra_param) = extra_param {
-        params.push(extra_param.to_string());
-    }
 
-    if params.is_empty() {
-        None
-    } else {
-        Some(params.join("&"))
-    }
-}
 
-fn append_query_to_full_url(base_url: &str, query: Option<&str>) -> String {
-    match query {
-        Some(query) if !query.is_empty() => {
-            if base_url.contains('?') {
-                format!("{base_url}&{query}")
-            } else {
-                format!("{base_url}?{query}")
-            }
-        }
-        _ => base_url.to_string(),
-    }
-}
 
-#[derive(Clone, Copy)]
-enum CodexStandaloneEndpoint {
-    AlphaSearch,
-    ImagesGenerations,
-    ImagesEdits,
-}
 
-impl CodexStandaloneEndpoint {
-    fn from_effective_endpoint(endpoint: &str) -> Option<Self> {
-        match split_endpoint_and_query(endpoint).0 {
-            "/alpha/search" => Some(Self::AlphaSearch),
-            "/images/generations" => Some(Self::ImagesGenerations),
-            "/images/edits" => Some(Self::ImagesEdits),
-            _ => None,
-        }
-    }
 
-    fn path(self) -> &'static str {
-        match self {
-            Self::AlphaSearch => "/alpha/search",
-            Self::ImagesGenerations => "/images/generations",
-            Self::ImagesEdits => "/images/edits",
-        }
-    }
 
-    fn label(self) -> &'static str {
-        match self {
-            Self::AlphaSearch => "Codex Alpha Search",
-            Self::ImagesGenerations => "Codex Images generations",
-            Self::ImagesEdits => "Codex Images edits",
-        }
-    }
 
-    fn full_url_hint(self) -> &'static str {
-        match self {
-            Self::AlphaSearch => "/responses",
-            Self::ImagesGenerations | Self::ImagesEdits => {
-                "/responses, /chat/completions, /images/generations, or /images/edits"
-            }
-        }
-    }
 
-    /// Full-URL suffixes that unambiguously locate this endpoint's sibling.
-    ///
-    /// Order matters: a longer suffix must precede any suffix it ends with
-    /// (`/responses/compact` before `/responses`), otherwise the shorter one
-    /// wins and the rewrite keeps a stray `/compact` segment.
-    fn source_suffixes(self) -> &'static [&'static str] {
-        match self {
-            Self::AlphaSearch => &["/responses/compact", "/responses"],
-            // Both Images routes live next to each other, so a full URL pasted
-            // for either one is a valid source for the other.
-            Self::ImagesGenerations | Self::ImagesEdits => &[
-                "/images/generations",
-                "/images/edits",
-                "/chat/completions",
-                "/responses/compact",
-                "/responses",
-            ],
-        }
-    }
 
-    fn source_suffix(self, parsed_path: &str) -> Option<&'static str> {
-        // Match the case-insensitive pasted-endpoint check. Only normalize for
-        // matching; the rewrite keeps the original URL prefix and query intact.
-        let parsed_path = parsed_path.to_ascii_lowercase();
-        self.source_suffixes()
-            .iter()
-            .copied()
-            .find(|suffix| parsed_path.ends_with(suffix))
-    }
 
-    /// Whether a base URL (full-URL switch off) already ends in one of this
-    /// endpoint's source suffixes, i.e. was pasted as a complete endpoint URL.
-    fn base_url_is_source_endpoint(self, base_url: &str) -> bool {
-        self.source_suffixes()
-            .iter()
-            .any(|suffix| base_url_is_full_endpoint(base_url, suffix))
-    }
-}
 
-/// Derive Codex standalone sibling endpoints from a provider configured with a
-/// complete Codex-compatible API URL.
-///
-/// Full-URL mode normally means "use this exact URL". That is correct for the
-/// request type it was configured for, but standalone Codex protocols cannot be
-/// posted to chat/responses endpoints. Only rewrite URL shapes whose sibling
-/// endpoint is unambiguous; opaque full URLs fail closed instead of leaking the
-/// payload to an unrelated route.
-fn rewrite_codex_standalone_full_url(
-    base_url: &str,
-    request_query: Option<&str>,
-    endpoint: CodexStandaloneEndpoint,
-) -> Result<String, ProxyError> {
-    let trimmed = base_url.trim();
-    let parsed = url::Url::parse(trimmed).map_err(|_| {
-        ProxyError::ConfigError(format!("{} requires a valid full URL", endpoint.label()))
-    })?;
 
-    // Fragments are never sent in HTTP requests. Drop one before splitting the
-    // query so an accidental fragment cannot move the incoming query behind `#`.
-    let without_fragment = trimmed
-        .split_once('#')
-        .map_or(trimmed, |(head, _fragment)| head);
-    let (url_without_query, base_query) = without_fragment
-        .split_once('?')
-        .map_or((without_fragment, None), |(head, query)| {
-            (head, Some(query))
-        });
-    let url_without_query = url_without_query.trim_end_matches('/');
 
-    let parsed_path = parsed.path().trim_end_matches('/').to_string();
-    let suffix = endpoint.source_suffix(&parsed_path).ok_or_else(|| {
-        ProxyError::ConfigError(format!(
-            "{} cannot derive {} from an opaque full URL; use a base URL or a full URL ending in {}",
-            endpoint.label(),
-            endpoint.path(),
-            endpoint.full_url_hint()
-        ))
-    })?;
-
-    let prefix_len = url_without_query
-        .len()
-        .checked_sub(suffix.len())
-        .ok_or_else(|| ProxyError::ConfigError("Invalid Codex full URL".to_string()))?;
-    let mut rewritten = format!("{}{}", &url_without_query[..prefix_len], endpoint.path());
-
-    let request_query = request_query.filter(|query| !query.is_empty());
-    let base_query = base_query.filter(|query| !query.is_empty());
-    match (base_query, request_query) {
-        (Some(base), Some(request)) => rewritten.push_str(&format!("?{base}&{request}")),
-        (Some(base), None) => rewritten.push_str(&format!("?{base}")),
-        (None, Some(request)) => rewritten.push_str(&format!("?{request}")),
-        (None, None) => {}
-    }
-
-    Ok(rewritten)
-}
-
-fn build_codex_oauth_session_headers(
-    session_id: &str,
-) -> Vec<(http::HeaderName, http::HeaderValue)> {
-    let session_id = session_id.trim();
-    if session_id.is_empty() {
-        return Vec::new();
-    }
-
-    let mut headers = Vec::new();
-    if let Ok(value) = http::HeaderValue::from_str(session_id) {
-        headers.push((http::HeaderName::from_static("session_id"), value.clone()));
-        headers.push((http::HeaderName::from_static("x-client-request-id"), value));
-    }
-
-    let window_id = format!("{session_id}:0");
-    if let Ok(value) = http::HeaderValue::from_str(&window_id) {
-        headers.push((http::HeaderName::from_static("x-codex-window-id"), value));
-    }
-
-    headers
-}
-
-fn reject_proxy_placeholder_for_managed_account_upstream(
-    url: &str,
-    headers: &http::HeaderMap,
-) -> Result<(), ProxyError> {
-    if !is_managed_account_upstream_url(url) || !headers_contain_proxy_placeholder(headers) {
-        return Ok(());
-    }
-
-    Err(ProxyError::AuthError(
-        "Managed account proxy auth was not resolved; PROXY_MANAGED must not be sent upstream"
-            .to_string(),
-    ))
-}
-
-fn is_managed_account_upstream_url(url: &str) -> bool {
-    let Ok(uri) = url.parse::<http::Uri>() else {
-        return false;
-    };
-
-    let Some(host) = uri.host().map(str::to_ascii_lowercase) else {
-        return false;
-    };
-
-    host == "githubcopilot.com"
-        || host.ends_with(".githubcopilot.com")
-        || (host == "chatgpt.com" && uri.path().starts_with("/backend-api/codex"))
-        || (host == "api.x.ai" && uri.path().starts_with("/v1/"))
-}
-
-fn headers_contain_proxy_placeholder(headers: &http::HeaderMap) -> bool {
-    headers.values().any(|value| {
-        value
-            .to_str()
-            .map(|value| value.contains(PROXY_AUTH_PLACEHOLDER))
-            .unwrap_or(false)
-    })
-}
-
-fn should_preserve_exact_header_case(
-    adapter_name: &str,
-    provider: &Provider,
-    resolved_claude_api_format: Option<&str>,
-    is_copilot: bool,
-) -> bool {
-    if matches!(adapter_name, "Codex" | "Gemini") {
-        return false;
-    }
-
-    if is_copilot || provider.is_codex_oauth() || provider.is_xai_oauth() {
-        return false;
-    }
-
-    matches!(resolved_claude_api_format, None | Some("anthropic"))
-}
-
-fn is_streaming_request(endpoint: &str, body: &Value, headers: &axum::http::HeaderMap) -> bool {
-    if body
-        .get("stream")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false)
-    {
-        return true;
-    }
-
-    if endpoint.contains("streamGenerateContent") || endpoint.contains("alt=sse") {
-        return true;
-    }
-
-    headers
-        .get(axum::http::header::ACCEPT)
-        .and_then(|value| value.to_str().ok())
-        .map(|accept| accept.contains("text/event-stream"))
-        .unwrap_or(false)
-}
-
-#[cfg(test)]
-fn should_force_identity_encoding(
-    endpoint: &str,
-    body: &Value,
-    headers: &axum::http::HeaderMap,
-) -> bool {
-    is_streaming_request(endpoint, body, headers)
-}
-
-fn map_reqwest_send_error(error: reqwest::Error) -> ProxyError {
-    let is_timeout = error.is_timeout();
-    let is_connect = error.is_connect();
-    let detail = super::error::describe_reqwest_error(error);
-    if is_timeout {
-        ProxyError::Timeout(format!("上游请求超时: {detail}"))
-    } else if is_connect {
-        ProxyError::ForwardFailed(format!("上游连接失败: {detail}"))
-    } else {
-        ProxyError::ForwardFailed(format!("上游请求发送失败: {detail}"))
-    }
-}
-
-fn summarize_text_for_log(text: &str, max_chars: usize) -> String {
-    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let trimmed = normalized.trim();
-
-    if trimmed.chars().count() <= max_chars {
-        return trimmed.to_string();
-    }
-
-    let truncated: String = trimmed.chars().take(max_chars).collect();
-    let truncated = truncated.trim_end();
-    format!("{truncated}...")
-}
-
-fn apply_local_proxy_body_overrides(
-    body: &mut Value,
-    overrides: &LocalProxyRequestOverrides,
-) -> bool {
-    let Some(override_body) = overrides.body.as_ref() else {
-        return false;
-    };
-
-    if !override_body.is_object() {
-        log::warn!("[LocalProxyOverrides] Ignoring body override because it is not an object");
-        return false;
-    }
-
-    merge_json_override(body, override_body)
-}
-
-fn merge_json_override(target: &mut Value, patch: &Value) -> bool {
-    merge_json_override_inner(target, patch, true)
-}
-
-fn merge_json_override_inner(target: &mut Value, patch: &Value, is_top_level: bool) -> bool {
-    match (target, patch) {
-        (Value::Object(target_map), Value::Object(patch_map)) => {
-            let mut changed = false;
-            for (key, patch_value) in patch_map {
-                if is_top_level && key == "stream" {
-                    log::warn!(
-                        "[LocalProxyOverrides] Ignoring body override for protected field: stream"
-                    );
-                    continue;
-                }
-                match target_map.get_mut(key) {
-                    Some(target_value) => {
-                        changed |= merge_json_override_inner(target_value, patch_value, false);
-                    }
-                    None => {
-                        target_map.insert(key.clone(), patch_value.clone());
-                        changed = true;
-                    }
-                }
-            }
-            changed
-        }
-        (target_value, patch_value) => {
-            if target_value == patch_value {
-                false
-            } else {
-                *target_value = patch_value.clone();
-                true
-            }
-        }
-    }
-}
-
-fn apply_local_proxy_header_overrides(
-    headers: &mut http::HeaderMap,
-    overrides: Option<&LocalProxyRequestOverrides>,
-    is_copilot: bool,
-) {
-    if is_copilot {
-        return;
-    }
-
-    let Some(header_overrides) = overrides.map(|overrides| &overrides.headers) else {
-        return;
-    };
-
-    for (raw_name, raw_value) in header_overrides {
-        let header_name = raw_name.trim().to_ascii_lowercase();
-        if header_name.is_empty() {
-            log::warn!("[LocalProxyOverrides] Ignoring header override with empty name");
-            continue;
-        }
-
-        let Ok(name) = http::HeaderName::from_bytes(header_name.as_bytes()) else {
-            log::warn!("[LocalProxyOverrides] Ignoring invalid header override name: {raw_name}");
-            continue;
-        };
-
-        if is_protected_local_proxy_override_header(&name) {
-            log::debug!(
-                "[LocalProxyOverrides] Ignoring protected header override: {}",
-                name.as_str()
-            );
-            continue;
-        }
-
-        let Ok(value) = http::HeaderValue::from_str(raw_value) else {
-            log::warn!(
-                "[LocalProxyOverrides] Ignoring invalid header override value for {}",
-                name.as_str()
-            );
-            continue;
-        };
-
-        headers.insert(name, value);
-    }
-}
-
-fn is_protected_local_proxy_override_header(name: &http::HeaderName) -> bool {
-    matches!(
-        name.as_str(),
-        "host"
-            | "content-length"
-            | "transfer-encoding"
-            | "connection"
-            | "proxy-authorization"
-            | "proxy-authenticate"
-            | "te"
-            | "trailer"
-            | "upgrade"
-            | "accept-encoding"
-            | "content-type"
-            | "authorization"
-            | "x-api-key"
-            | "x-goog-api-key"
-            | "chatgpt-account-id"
-            | "session_id"
-            | "x-client-request-id"
-            | "x-codex-window-id"
-            | "x-forwarded-host"
-            | "x-forwarded-port"
-            | "x-forwarded-proto"
-            | "forwarded"
-            | "cf-connecting-ip"
-            | "cf-ipcountry"
-            | "cf-ray"
-            | "cf-visitor"
-            | "true-client-ip"
-            | "fastly-client-ip"
-            | "x-azure-clientip"
-            | "x-azure-fdid"
-            | "x-azure-ref"
-            | "akamai-origin-hop"
-            | "x-akamai-config-log-detail"
-            | "x-request-id"
-            | "x-correlation-id"
-            | "x-trace-id"
-            | "x-amzn-trace-id"
-            | "x-b3-traceid"
-            | "x-b3-spanid"
-            | "x-b3-parentspanid"
-            | "x-b3-sampled"
-            | "traceparent"
-            | "tracestate"
-    )
-}
-
-fn prepare_upstream_request_body(request_body: Value) -> Value {
-    canonicalize_value(filter_private_params_with_whitelist(request_body, &[]))
-}
-
-fn log_prompt_cache_trace(
-    app_type: &AppType,
-    provider: &Provider,
-    endpoint: &str,
-    api_format: Option<&str>,
-    body: &Value,
-    session_client_provided: bool,
-) {
-    if !log::log_enabled!(log::Level::Debug) {
-        return;
-    }
-
-    let prompt_cache_key = body
-        .get("prompt_cache_key")
-        .and_then(|value| value.as_str())
-        .map(|key| format!("present(len={})", key.len()))
-        .unwrap_or_else(|| "absent".to_string());
-    let store = body
-        .get("store")
-        .map(value_for_log)
-        .unwrap_or_else(|| "absent".to_string());
-    let stream = body
-        .get("stream")
-        .map(value_for_log)
-        .unwrap_or_else(|| "absent".to_string());
-    let cache_controls = cache_control_summary(body);
-
-    log::debug!(
-        "[CacheTrace] app={}, provider={}, endpoint={}, api_format={}, session_client_provided={}, prompt_cache_key={}, store={}, stream={}, instructions_hash={}, system_hash={}, tools_hash={}, input_hash={}, messages_hash={}, include_hash={}, cache_controls={}, body_hash={}",
-        app_type.as_str(),
-        provider.id,
-        // Gemini 的 endpoint 带 ?key=<API_KEY>；脱敏剥掉 query 再落盘。
-        crate::redact_url_for_log(endpoint),
-        api_format.unwrap_or("native"),
-        session_client_provided,
-        prompt_cache_key,
-        store,
-        stream,
-        short_value_hash(body.get("instructions")),
-        short_value_hash(body.get("system")),
-        short_value_hash(body.get("tools")),
-        short_value_hash(body.get("input")),
-        short_value_hash(body.get("messages")),
-        short_value_hash(body.get("include")),
-        cache_controls,
-        short_value_hash(Some(body)),
-    );
-}
-
-fn cache_control_summary(value: &Value) -> String {
-    fn walk(value: &Value, count: &mut usize, ttls: &mut std::collections::BTreeSet<String>) {
-        match value {
-            Value::Object(object) => {
-                if let Some(cache_control) = object.get("cache_control") {
-                    *count += 1;
-                    let ttl = cache_control
-                        .get("ttl")
-                        .and_then(Value::as_str)
-                        .unwrap_or("default");
-                    ttls.insert(ttl.to_string());
-                }
-                for child in object.values() {
-                    walk(child, count, ttls);
-                }
-            }
-            Value::Array(items) => {
-                for child in items {
-                    walk(child, count, ttls);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let mut count = 0;
-    let mut ttls = std::collections::BTreeSet::new();
-    walk(value, &mut count, &mut ttls);
-    format!(
-        "count={count},ttls={}",
-        if ttls.is_empty() {
-            "none".to_string()
-        } else {
-            ttls.into_iter().collect::<Vec<_>>().join("|")
-        }
-    )
-}
-
-fn value_for_log(value: &Value) -> String {
-    match value {
-        Value::Bool(value) => value.to_string(),
-        Value::Number(value) => value.to_string(),
-        Value::String(value) => value.clone(),
-        Value::Null => "null".to_string(),
-        Value::Array(values) => format!("array(len={})", values.len()),
-        Value::Object(values) => format!("object(len={})", values.len()),
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -5158,7 +3701,7 @@ mod tests {
             let result = forwarder
                 .finish_success(
                     &provider,
-                    "codex",
+                    &AppType::Codex,
                     false,
                     (response, None, Some("resolved-model".to_string())),
                     format,
@@ -6771,18 +5314,19 @@ mod tests {
             json!({"model": "gpt-5.5"}),
         ] {
             let mut codex_upstream_format = None;
+            let headers = HeaderMap::new();
+            let extensions = Extensions::new();
+            let attempt = Attempt {
+                app_type: &AppType::Codex,
+                method: &http::Method::POST,
+                provider: &copilot,
+                endpoint: "/v1/responses",
+                headers: &headers,
+                extensions: &extensions,
+                adapter: adapter.as_ref(),
+            };
             let error = match forwarder
-                .forward(
-                    &AppType::Codex,
-                    &http::Method::POST,
-                    &copilot,
-                    "/v1/responses",
-                    &body,
-                    &HeaderMap::new(),
-                    &Extensions::new(),
-                    adapter.as_ref(),
-                    &mut codex_upstream_format,
-                )
+                .forward(&attempt, &body, &mut codex_upstream_format)
                 .await
             {
                 Err(error) => error,
@@ -9279,7 +7823,7 @@ mod tests {
             for _ in 0..200 {
                 if let Some(stats) = forwarder
                     .router
-                    .get_circuit_breaker_stats(provider_id, "claude")
+                    .get_circuit_breaker_stats(provider_id, &AppType::Claude)
                     .await
                 {
                     if stats.total_requests > 0 {
@@ -9290,7 +7834,7 @@ mod tests {
             }
             forwarder
                 .router
-                .get_circuit_breaker_stats(provider_id, "claude")
+                .get_circuit_breaker_stats(provider_id, &AppType::Claude)
                 .await
                 .map(|stats| (stats.total_requests, stats.failed_requests))
         }
@@ -9480,7 +8024,7 @@ mod tests {
                 for _ in 0..20 {
                     let _ = fwd
                         .router
-                        .record_result(id, "claude", false, false, Some("seed".into()))
+                        .record_result(id, &AppType::Claude, false, false, Some("seed".into()))
                         .await;
                 }
             }
@@ -9750,7 +8294,7 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
             forwarder
                 .router
-                .get_circuit_breaker_stats(provider_id, "claude")
+                .get_circuit_breaker_stats(provider_id, &AppType::Claude)
                 .await
                 .is_none()
         }

@@ -15,7 +15,7 @@ pub fn get_custom_endpoints(
     app_type: AppType,
     provider_id: &str,
 ) -> Result<Vec<CustomEndpoint>, AppError> {
-    let providers = state.db.get_all_providers(app_type.as_str())?;
+    let providers = state.db.get_all_providers(&app_type)?;
     let Some(provider) = providers.get(provider_id) else {
         return Ok(vec![]);
     };
@@ -49,7 +49,7 @@ pub fn add_custom_endpoint(
 
     state
         .db
-        .add_custom_endpoint(app_type.as_str(), provider_id, &normalized)?;
+        .add_custom_endpoint(&app_type, provider_id, &normalized)?;
     Ok(())
 }
 
@@ -63,7 +63,7 @@ pub fn remove_custom_endpoint(
     let normalized = url.trim().trim_end_matches('/').to_string();
     state
         .db
-        .remove_custom_endpoint(app_type.as_str(), provider_id, &normalized)?;
+        .remove_custom_endpoint(&app_type, provider_id, &normalized)?;
     Ok(())
 }
 
@@ -77,12 +77,12 @@ pub fn update_endpoint_last_used(
     let normalized = url.trim().trim_end_matches('/').to_string();
 
     // Get provider, update last_used, save back
-    let mut providers = state.db.get_all_providers(app_type.as_str())?;
+    let mut providers = state.db.get_all_providers(&app_type)?;
     if let Some(provider) = providers.get_mut(provider_id) {
         if let Some(meta) = provider.meta.as_mut() {
             if let Some(endpoint) = meta.custom_endpoints.get_mut(&normalized) {
                 endpoint.last_used = Some(now_millis());
-                state.db.save_provider(app_type.as_str(), provider)?;
+                state.db.save_provider(&app_type, provider)?;
             }
         }
     }
