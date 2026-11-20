@@ -2,6 +2,7 @@ use indexmap::IndexMap;
 use std::collections::HashMap;
 
 use crate::app_config::{AppType, McpServer, MultiAppConfig};
+use crate::database::UnreadableEntry;
 use crate::error::AppError;
 use crate::mcp;
 use crate::store::AppState;
@@ -24,25 +25,27 @@ pub struct McpAppSyncOutcome {
 fn commits_with_db(app: &AppType) -> bool {
     matches!(
         app,
-        AppType::Mcode
-            | AppType::Kimi
-            | AppType::Pi
-            | AppType::Agy
-            | AppType::Dsh
-            | AppType::Omp
+        AppType::Mcode | AppType::Kimi | AppType::Pi | AppType::Agy | AppType::Dsh | AppType::Omp
     )
 }
 
 impl McpService {
     /// 获取所有 MCP 服务器（统一结构）
+    /// 读不出来的行不在这里，见 [`Self::list_unreadable`]。
     pub fn get_all_servers(state: &AppState) -> Result<IndexMap<String, McpServer>, AppError> {
-        state.db.get_all_mcp_servers()
+        Ok(state.db.get_mcp_server_rows()?.readable)
+    }
+
+    /// 库里读不出来的 MCP 服务器：界面单独列出，只能删除。
+    pub fn list_unreadable(state: &AppState) -> Result<Vec<UnreadableEntry>, AppError> {
+        Ok(state.db.get_mcp_server_rows()?.unreadable)
     }
 
     /// 添加或更新 MCP 服务器
     pub fn upsert_server(state: &AppState, server: McpServer) -> Result<(), AppError> {
-        // 读取旧状态：用于处理“编辑时取消勾选某个应用”的场景（需要从对应 live 配置中移除）
-        let previous = state.db.get_all_mcp_servers()?.get(&server.id).cloned();
+        // 读取旧状态：用于处理“编辑时取消勾选某个应用”的场景（需要从对应 live 配置中移除）。
+        // 别的服务器读不出来不影响；这个 id 本身读不出来就在写任何 live 之前拒绝。
+        let previous = state.db.get_mcp_server_rows()?.get(&server.id)?.cloned();
         let prev_apps = previous
             .as_ref()
             .map(|s| s.apps.clone())
@@ -144,7 +147,12 @@ impl McpService {
 
     /// 删除 MCP 服务器
     pub fn delete_server(state: &AppState, id: &str) -> Result<bool, AppError> {
-        let server = state.db.get_all_mcp_servers()?.shift_remove(id);
+        // 读不出来的行只删库里这一行：不知道它往各应用写过什么，不碰 live，也不写回任何东西。
+        if state.db.get_unreadable_mcp_server(id)?.is_some() {
+            state.db.delete_mcp_server(id)?;
+            return Ok(true);
+        }
+        let server = state.db.get_mcp_server_rows()?.readable.shift_remove(id);
 
         if let Some(server) = server {
             let delete_with_dsh = || {
@@ -241,7 +249,7 @@ impl McpService {
         enabled: bool,
     ) -> Result<(), AppError> {
         if commits_with_db(&app) {
-            if let Some(server) = state.db.get_all_mcp_servers()?.get(server_id) {
+            if let Some(server) = state.db.get_mcp_server_rows()?.get(server_id)? {
                 let spec = enabled.then_some(&server.server);
                 let commit = || {
                     state
@@ -600,9 +608,20 @@ impl McpService {
         let Some(servers) = &temp_config.mcp.servers else {
             return Ok(0);
         };
-        let mut existing = state.db.get_all_mcp_servers()?;
+        let (mut existing, unreadable) = state
+            .db
+            .get_mcp_server_rows()?
+            .into_readable_and_unreadable_ids();
         let mut new_count = 0;
         for server in servers.values() {
+            if unreadable.contains(&server.id) {
+                log::warn!(
+                    "从 {} 导入 MCP 时跳过 '{}'：库里同名的这一行读不出来",
+                    app.as_str(),
+                    server.id
+                );
+                continue;
+            }
             let to_save = if let Some(existing_server) = existing.get(&server.id) {
                 let mut merged = existing_server.clone();
                 merged.apps.set_enabled_for(app, true);

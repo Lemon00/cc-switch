@@ -941,7 +941,8 @@ pub fn run() {
                     .db
                     .get_all_providers("opencode")
                     .map(|providers| providers.values().any(|p| p.category.as_deref() == Some("omo")))
-                    .unwrap_or(false);
+                    // 读不出 OpenCode 的供应商时不导入：没法确认已有，导入会每次启动都多加一份。
+                    .unwrap_or(true);
                 if !has_omo {
                     match crate::services::OmoService::import_from_local(&app_state, &crate::services::omo::STANDARD) {
                         Ok(provider) => {
@@ -967,7 +968,8 @@ pub fn run() {
                             .values()
                             .any(|p| p.category.as_deref() == Some("omo-slim"))
                     })
-                    .unwrap_or(false);
+                    // 读不出 OpenCode 的供应商时不导入：没法确认已有，导入会每次启动都多加一份。
+                    .unwrap_or(true);
                 if !has_omo_slim {
                     match crate::services::OmoService::import_from_local(&app_state, &crate::services::omo::SLIM) {
                         Ok(provider) => {
@@ -1432,6 +1434,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_providers,
+            commands::get_unreadable_providers,
             commands::get_current_provider,
             commands::add_provider,
             commands::update_provider,
@@ -1519,6 +1522,7 @@ pub fn run() {
             commands::set_mcp_enabled,
             // Unified MCP management
             commands::get_mcp_servers,
+            commands::get_unreadable_mcp_servers,
             commands::start_mcp_connectivity_checks,
             commands::cancel_mcp_connectivity_checks,
             commands::upsert_mcp_server,

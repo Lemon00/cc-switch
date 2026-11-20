@@ -1259,7 +1259,11 @@ fn collect_app_snapshot(
     service_running: Option<bool>,
     profiles: &[crate::database::Profile],
 ) -> Result<AppSnapshot, AppError> {
-    let rows = app_state.db.get_all_providers(app.as_str())?;
+    // 读不出来的行在托盘里略过（界面里单独列出），不拖累其余供应商。
+    let rows = app_state
+        .db
+        .get_provider_rows(app.as_str())?
+        .into_readable("托盘供应商列表");
     let claude_accounts = if *app == AppType::Claude {
         crate::services::claude_account::labels_on_disk(&crate::config::get_app_config_dir())
     } else {
@@ -2295,7 +2299,10 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
     let mut apps = Vec::with_capacity(snapshots.len());
     for snapshot in &snapshots {
         let app = snapshot.app.as_str();
-        let providers = app_state.db.get_all_providers(app)?;
+        let providers = app_state
+            .db
+            .get_provider_rows(app)?
+            .into_readable("托盘用量面板");
         let (header, rows) = panel_rows(&app_state.usage_cache, &texts, snapshot, &providers, now);
         let credits = snapshot
             .current_id
@@ -3314,7 +3321,11 @@ pub(crate) async fn refresh_panel_provider_usage(app: &tauri::AppHandle) {
         .unwrap_or_default();
     let mut due = Vec::new();
     for app_type in TRAY_APPS.iter().filter(|app| visible_apps.is_visible(app)) {
-        let rows = match app_state.db.get_all_providers(app_type.as_str()) {
+        let rows = match app_state
+            .db
+            .get_provider_rows(app_type.as_str())
+            .map(|rows| rows.into_readable("托盘用量自动查询"))
+        {
             Ok(rows) => rows,
             Err(e) => {
                 log::warn!("[Tray] 读取{}供应商失败: {e}", app_display_name(app_type));

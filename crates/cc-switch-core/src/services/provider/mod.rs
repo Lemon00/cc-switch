@@ -34,6 +34,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::app_config::AppType;
+use crate::database::UnreadableEntry;
 use crate::error::AppError;
 use crate::provider::{Provider, ProviderMeta, UsageResult};
 use crate::services::mcp::McpService;
@@ -5534,7 +5535,14 @@ impl ProviderService {
             } else {
                 crate::mcode_config::get_providers()?
             };
-            let mut saved = state.db.get_all_providers(app_type.as_str())?;
+            let mut saved = match state.db.get_all_providers(app_type.as_str()) {
+                Ok(saved) => saved,
+                // 有读不出来的行时不合并：按「库里没有」补存原生条目会盖掉那一行。
+                Err(error) => {
+                    log::warn!("Not merging native {app_type:?} providers: {error}");
+                    return Ok(state.db.get_provider_rows(app_type.as_str())?.readable);
+                }
+            };
             let nicknames = if app_type == AppType::Kimi {
                 crate::services::kimi_oauth::account_nicknames()
             } else {
@@ -5567,7 +5575,15 @@ impl ProviderService {
             }
             return Ok(saved);
         }
-        state.db.get_all_providers(app_type.as_str())
+        Ok(state.db.get_provider_rows(app_type.as_str())?.readable)
+    }
+
+    /// 库里读不出来的供应商：界面单独列出，只能删除。
+    pub fn list_unreadable(
+        state: &AppState,
+        app_type: AppType,
+    ) -> Result<Vec<UnreadableEntry>, AppError> {
+        Ok(state.db.get_provider_rows(app_type.as_str())?.unreadable)
     }
 
     /// Get current provider ID
@@ -6595,6 +6611,13 @@ impl ProviderService {
     /// 对于累加模式应用（OpenCode, OpenClaw），可以随时删除任意供应商，同时从 live 配置中移除。
     pub fn delete(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
         let _native_guard = lock_native_provider_operations(state, &app_type);
+        if state
+            .db
+            .get_unreadable_provider(app_type.as_str(), id)?
+            .is_some()
+        {
+            return Self::delete_unreadable(state, &app_type, id);
+        }
         if app_type == AppType::Pi {
             return pi::delete(state, id);
         }
@@ -6697,6 +6720,20 @@ impl ProviderService {
 
         state.db.delete_provider(app_type.as_str(), id)?;
         Ok(())
+    }
+
+    /// 读不出来的行只删库里这一行：不知道它往 live 写过什么，所以不碰 live，也不写回任何东西。
+    /// 正被使用的照样不能删。
+    fn delete_unreadable(state: &AppState, app_type: &AppType, id: &str) -> Result<(), AppError> {
+        if !app_type.is_additive_mode()
+            && *app_type != AppType::Agy
+            && crate::mode::current::is_referenced(&state.db, app_type, id)?
+        {
+            return Err(AppError::Message(
+                "无法删除当前正在使用的供应商".to_string(),
+            ));
+        }
+        state.db.delete_provider(app_type.as_str(), id)
     }
 
     /// Kimi「添加」：把卡片写进 config.toml，但不改 default_model（「切换」才改）。
@@ -6902,11 +6939,13 @@ impl ProviderService {
             return omp::enable(state, id);
         }
 
-        // Check if provider exists
-        let providers = state.db.get_all_providers(app_type.as_str())?;
-        let _provider = providers
-            .get(id)
+        // Check if provider exists. 别的行读不出来不拦这次切换（它们在下面只用来找上一家；
+        // 上一家读不出来就和它不在库里一样处理）；要切到的这一行读不出来则报错。
+        let rows = state.db.get_provider_rows(app_type.as_str())?;
+        let _provider = rows
+            .get(id)?
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+        let providers = &rows.readable;
 
         if matches!(app_type, AppType::Dsh) {
             let mut provider = _provider.clone();
@@ -6936,14 +6975,14 @@ impl ProviderService {
 
         // OMO providers are switched through their own exclusive path.
         if matches!(app_type, AppType::OpenCode) && _provider.category.as_deref() == Some("omo") {
-            return Self::switch_normal(state, app_type, id, &providers);
+            return Self::switch_normal(state, app_type, id, providers);
         }
 
         // OMO Slim providers are switched through their own exclusive path.
         if matches!(app_type, AppType::OpenCode)
             && _provider.category.as_deref() == Some("omo-slim")
         {
-            return Self::switch_normal(state, app_type, id, &providers);
+            return Self::switch_normal(state, app_type, id, providers);
         }
 
         // 切换和进入 / 退出代理都会改客户端文件和指针。按应用串行，拿到锁、补完上一次
@@ -6984,7 +7023,7 @@ impl ProviderService {
         }
 
         // Normal mode: full switch with Live config write
-        Self::switch_normal(state, app_type, id, &providers)
+        Self::switch_normal(state, app_type, id, providers)
     }
 
     /// Normal switch flow (non-proxy mode)

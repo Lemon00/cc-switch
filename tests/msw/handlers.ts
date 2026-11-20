@@ -59,6 +59,9 @@ export const handlers = [
     return success(getProviders(app));
   }),
 
+  http.post(`${TAURI_ENDPOINT}/get_unreadable_providers`, () => success([])),
+  http.post(`${TAURI_ENDPOINT}/get_unreadable_mcp_servers`, () => success([])),
+
   http.post(`${TAURI_ENDPOINT}/get_current_provider`, async ({ request }) => {
     const { app } = await withJson<{ app: AppId }>(request);
     return success(getCurrentProviderId(app));

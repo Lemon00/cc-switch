@@ -250,3 +250,95 @@ fn benchmark_provider_list() {
         );
     }
 }
+
+/// 新版本写入、本版本认不出的 meta（比如新增的枚举值）：读出来要报错点名，不能换成默认值，
+/// 库里的原文一个字节都不能动；列表读取把读不出来的行单独列出，其余照常。
+#[test]
+fn unreadable_stored_json_is_reported_and_left_untouched() {
+    let db = Database::memory().unwrap();
+    for id in ["good", "broken"] {
+        db.save_provider("claude", &provider(id)).unwrap();
+    }
+    let raw = |id: &str| -> (String, String) {
+        db.conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT settings_config, meta FROM providers WHERE app_type = 'claude' AND id = ?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap()
+    };
+    db.conn
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE providers SET settings_config = '{\"env\":' WHERE app_type = 'claude' AND id = 'broken'",
+            [],
+        )
+        .unwrap();
+    let stored = raw("broken");
+
+    // 严格读取停在读不出的行并点名它，不写回任何默认值。
+    let error = db.get_all_providers("claude").unwrap_err().to_string();
+    assert!(
+        error.contains("broken") && error.contains("settings_config"),
+        "{error}"
+    );
+    let error = db
+        .get_provider_by_id("broken", "claude")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("broken") && error.contains("settings_config"),
+        "{error}"
+    );
+
+    // 列表读取：能读的照常返回，读不出的单独列出。
+    let rows = db.get_provider_rows("claude").unwrap();
+    assert_eq!(rows.readable.keys().collect::<Vec<_>>(), ["good"]);
+    assert_eq!(rows.unreadable.len(), 1);
+    assert_eq!(rows.unreadable[0].id, "broken");
+    assert!(rows.get("broken").is_err());
+    assert!(rows.get("good").unwrap().is_some());
+    assert!(db
+        .get_unreadable_provider("claude", "broken")
+        .unwrap()
+        .is_some());
+    assert!(db
+        .get_unreadable_provider("claude", "good")
+        .unwrap()
+        .is_none());
+
+    // 只问存不存在的地方不解析 JSON。
+    assert!(db.provider_exists("broken", "claude").unwrap());
+    assert!(db.get_provider_by_id("good", "claude").unwrap().is_some());
+    assert_eq!(raw("broken"), stored);
+}
+
+/// 故障转移路由只读、不写：队列里读不出的成员被跳过，其余照常。
+#[test]
+fn failover_queue_skips_an_unreadable_member() {
+    let db = Database::memory().unwrap();
+    for id in ["a", "b"] {
+        db.save_provider("claude", &provider(id)).unwrap();
+        db.add_to_failover_queue("claude", id).unwrap();
+    }
+    db.conn
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE providers SET meta = '{' WHERE app_type = 'claude' AND id = 'a'",
+            [],
+        )
+        .unwrap();
+
+    let ids: Vec<String> = db
+        .get_failover_providers("claude")
+        .unwrap()
+        .into_iter()
+        .map(|p| p.id)
+        .collect();
+    assert_eq!(ids, ["b"]);
+}

@@ -50,7 +50,12 @@ impl Database {
 
     /// 获取故障转移队列中的供应商（完整 Provider 信息，与队列的排序一致）
     pub fn get_failover_providers(&self, app_type: &str) -> Result<Vec<Provider>, AppError> {
-        Ok(self.load_providers(app_type, true)?.into_values().collect())
+        // 路由不写库：一个成员读不出来就跳过它，用其余成员照常转发。
+        Ok(self
+            .load_providers(app_type, true)?
+            .into_readable("故障转移队列")
+            .into_values()
+            .collect())
     }
 
     /// 添加供应商到故障转移队列
@@ -130,7 +135,9 @@ impl Database {
         &self,
         app_type: &str,
     ) -> Result<Vec<Provider>, AppError> {
-        let all_providers = self.get_all_providers(app_type)?;
+        let all_providers = self
+            .get_provider_rows(app_type)?
+            .into_readable("可加入故障转移队列的供应商");
 
         let available: Vec<Provider> = all_providers
             .into_values()

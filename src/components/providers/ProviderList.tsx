@@ -47,6 +47,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
 import { Notice } from "@/components/ui/notice";
+import { UnreadableEntriesNotice } from "@/components/common/UnreadableEntriesNotice";
 import { cn } from "@/lib/utils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { extractProviderBaseUrl } from "@/utils/providerConfigUtils";
@@ -502,6 +503,16 @@ export function ProviderList({
     </Notice>
   ) : null;
 
+  // 库里读不出来的供应商不在 providers 里（不能编辑、切换），单独列出、只能删除
+  const unreadableNotice = (
+    <UnreadableEntriesNotice
+      queryKey={["providers", appId, "unreadable"]}
+      load={() => providersApi.getUnreadable(appId)}
+      remove={(id) => providersApi.delete(id, appId)}
+      invalidate={[["providers", appId]]}
+    />
+  );
+
   if (isLoading || (isLiveMembershipPending && sortedProviders.length > 0)) {
     return (
       <div className="space-y-2">
@@ -520,6 +531,7 @@ export function ProviderList({
       <div className="space-y-4">
         {piStateErrorNotice}
         {liveConfigErrorNotice}
+        {unreadableNotice}
         <ProviderEmptyState
           appId={appId}
           onCreate={isPiFamilyApp(appId) ? undefined : onCreate}
@@ -654,6 +666,7 @@ export function ProviderList({
     <div className="space-y-4">
       {piStateErrorNotice}
       {liveConfigErrorNotice}
+      {unreadableNotice}
       {searchSlot && createPortal(searchField, searchSlot)}
       {showListHeader && (
         <div

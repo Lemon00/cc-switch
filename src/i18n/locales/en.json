@@ -5182,5 +5182,11 @@
       "managedHint": "This account is managed in the Auth Center; the card disappears after you sign out."
     },
     "deleteSessionHint": "Delete this session in DeepSeek Harness to keep its history consistent."
+  },
+  "unreadableEntry": {
+    "title": "“{{name}}” can't be read",
+    "hint": "It may have been saved by a newer version of CC Switch. The stored data is kept as is and can't be edited or enabled; upgrading restores it, or you can delete it.",
+    "confirmTitle": "Delete unreadable entry",
+    "confirmMessage": "Delete “{{name}}”? Only this CC Switch record is removed; the apps' own config files are not changed."
   }
 }
