@@ -51,6 +51,7 @@ pub mod session_manager;
 pub mod settings;
 pub mod startup;
 pub mod store;
+pub mod sync_utils;
 pub mod usage_events;
 pub mod usage_script;
 

@@ -49,6 +49,7 @@ mod services;
 pub use cc_switch_core::session_manager;
 pub use cc_switch_core::settings;
 pub use cc_switch_core::store;
+mod sync_utils;
 
 mod tray;
 #[cfg(target_os = "windows")]
