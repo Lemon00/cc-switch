@@ -1277,75 +1277,26 @@ pub fn reload_settings() -> Result<(), AppError> {
     Ok(())
 }
 
-pub fn get_claude_override_dir() -> Option<PathBuf> {
+/// 用户在设置里为该应用指定的配置目录。没有目录覆盖项的应用返回 `None`。
+pub fn get_override_dir(app: &AppType) -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
-    settings
-        .claude_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_codex_override_dir() -> Option<PathBuf> {
-    let settings = settings_store().read().ok()?;
-    settings
-        .codex_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_gemini_override_dir() -> Option<PathBuf> {
-    let settings = settings_store().read().ok()?;
-    settings
-        .gemini_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_grok_override_dir() -> Option<PathBuf> {
-    let settings = settings_store().read().ok()?;
-    settings
-        .grok_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_opencode_override_dir() -> Option<PathBuf> {
-    let settings = settings_store().read().ok()?;
-    settings
-        .opencode_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_openclaw_override_dir() -> Option<PathBuf> {
-    let settings = settings_store().read().ok()?;
-    settings
-        .openclaw_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_hermes_override_dir() -> Option<PathBuf> {
-    let settings = settings_store().read().ok()?;
-    settings
-        .hermes_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_pi_override_dir() -> Option<PathBuf> {
-    let settings = settings_store().read().ok()?;
-    settings
-        .pi_config_dir
-        .as_ref()
-        .map(|path| resolve_override_path(path))
-}
-pub fn get_omp_override_dir() -> Option<PathBuf> {
-    let settings = settings_store().read().ok()?;
-    settings
-        .omp_config_dir
-        .as_ref()
-        .map(|path| resolve_override_path(path))
+    let dir = match app {
+        AppType::Claude => &settings.claude_config_dir,
+        AppType::Codex => &settings.codex_config_dir,
+        AppType::Gemini => &settings.gemini_config_dir,
+        AppType::GrokBuild => &settings.grok_config_dir,
+        AppType::OpenCode => &settings.opencode_config_dir,
+        AppType::OpenClaw => &settings.openclaw_config_dir,
+        AppType::Hermes => &settings.hermes_config_dir,
+        AppType::Pi => &settings.pi_config_dir,
+        AppType::Omp => &settings.omp_config_dir,
+        AppType::ClaudeDesktop
+        | AppType::Mcode
+        | AppType::Kimi
+        | AppType::Dsh
+        | AppType::Agy => return None,
+    };
+    dir.as_deref().map(resolve_override_path)
 }
 
 pub fn preserve_codex_official_auth_on_switch() -> bool {
