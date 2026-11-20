@@ -253,3 +253,14 @@ presets 默认模型、macOS 签名重试），47 文件。冲突 3 处：
   未跑，需 CI 复核。
 - 未纳入：全部 feat（Plugins / Skills 托管源 / 计价种子 / Sessions 展示增强等）、语言包、
   发布说明、knip CI 清理、以及上述 SKIP-ADAPT 结构性大拆。
+
+**复查补合（同日）**：原先因 `&AppType` / Hydrogen 捆包被 SKIP-ADAPT 的 3 条行为 fix，
+按解耦树适配后补入：
+
+| 上游 | 本分支 | 取舍 |
+| --- | --- | --- |
+| `bd3d3880` | `942a7f1a` | 清 health / 出队列时 `ProviderRouter::forget`；OMO 变体清理告警。仍用 `&str` app key |
+| `933cba13` | `138c55ee` | 只摘 usage 同价 reasoning 合并 + Neon 计价种子；跳过 agy Orchestrator/Hydrogen |
+| `fca6b1bb` | `71dcb150` | `json_column` + readable/unreadable；MCP flag 读回失败回滚；前端不可读条目提示。未跟 `#9640` DAO 浪潮 |
+
+本机无 MSVC linker，Rust 未编译验证；前端相关 vitest / `tsc` 通过。需 CI 复核。
