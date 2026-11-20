@@ -19,6 +19,7 @@ pub mod dsh;
 pub mod gemini;
 pub mod grokbuild;
 pub mod hermes;
+mod json_file;
 pub mod omp;
 pub mod opencode;
 pub mod validation;
