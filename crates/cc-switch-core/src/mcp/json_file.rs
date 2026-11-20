@@ -59,7 +59,7 @@ impl JsonMcpFile {
     }
 
     pub(crate) fn sync(&self, id: &str, spec: Option<&Value>) -> Result<(), AppError> {
-        let _guard = self\n            .lock\n            .lock()\n            .map_err(|e| AppError::Message(e.to_string()))?;
+        let _guard = crate::sync_utils::lock_file_operation(&self.lock);
         self.sync_file(&(self.path)(), id, spec)
     }
 
@@ -69,7 +69,7 @@ impl JsonMcpFile {
         spec: Option<&Value>,
         commit: impl FnOnce() -> Result<T, AppError>,
     ) -> Result<T, AppError> {
-        let _guard = self\n            .lock\n            .lock()\n            .map_err(|e| AppError::Message(e.to_string()))?;
+        let _guard = crate::sync_utils::lock_file_operation(&self.lock);
         let path = (self.path)();
         crate::mcode_config::write_and_commit(&path, || self.sync_file(&path, id, spec), commit)
     }
