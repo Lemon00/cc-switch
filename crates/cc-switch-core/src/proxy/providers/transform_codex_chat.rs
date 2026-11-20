@@ -4813,7 +4813,7 @@ mod tests {
                 {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Summary."}]}
             ]
         });
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         assert_eq!(messages.len(), 3);
@@ -4835,7 +4835,7 @@ mod tests {
                 {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "A2"}]}
             ]
         });
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         let roles: Vec<&str> = messages.iter().filter_map(|m| m["role"].as_str()).collect();
@@ -4857,7 +4857,7 @@ mod tests {
                 {"type": "message", "role": "user", "content": "Next."}
             ]
         });
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         assert_eq!(messages.len(), 3);
