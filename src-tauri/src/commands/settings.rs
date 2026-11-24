@@ -299,6 +299,7 @@ pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
         // 事件循环仍存活，在这里同步完成恢复（保留代理状态，新实例启动时自动
         // 重新接管）。
         crate::cleanup_before_exit(&app).await;
+        crate::wait_for_db_quiescent(&app).await;
         // 与自更新共用 restart_process，而不是 app.restart()：macOS 上经
         // LaunchServices 启动，新窗口才能回到前台。
         crate::restart_process(&app);
@@ -365,7 +366,7 @@ pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> 
         crate::cleanup_before_exit(&app).await;
         crate::remove_tray_icon_before_exit(&app);
         crate::destroy_single_instance_lock(&app);
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        crate::wait_for_db_quiescent(&app).await;
         update.install(bytes).map_err(|e| {
             format!(
                 "Windows 更新安装失败: {e}。已执行退出前清理，代理或 Live 接管可能已暂停；请重启应用或重新开启代理后再试。"
@@ -383,9 +384,9 @@ pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> 
 
         crate::save_window_state_before_exit(&app);
         crate::cleanup_before_exit(&app).await;
+        crate::wait_for_db_quiescent(&app).await;
 
         log::info!("应用更新安装完成，正在重启应用");
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         crate::restart_process(&app);
     }
 }

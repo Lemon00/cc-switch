@@ -1,0 +1,118 @@
+[package]
+name = "cc-switch-core"
+version = "4.0.28"
+edition = "2021"
+rust-version = "1.85"
+description = "cc-switch backend core: database, providers, proxy, live writers. No Tauri, no WebKit."
+
+[lib]
+name = "cc_switch_core"
+path = "src/lib.rs"
+
+[features]
+default = ["session-monitor"]
+# 会话聚合与监控：只有 GUI 仪表盘用。CLI 关掉它（default-features = false），
+# 代理自身的请求日志不受影响（那是 proxy/usage，不在这个 feature 里）。
+# 注意：session_usage_codex 不在这个 feature 里——数据库 v15->v16 迁移依赖它的
+# reset，关掉会改迁移语义，所以 codex 那份常驻。
+session-monitor = []
+# 供 GUI 测试用的测试辅助（TestAgentDir、sync_mutex 等）：正常构建不编，
+# GUI 的 dev-dependency 开它；核心自己的 cargo test 因 cfg(test) 也可见。
+test-support = []
+
+[dependencies]
+serde_json = { version = "1.0", features = ["preserve_order"] }
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5.0"
+toml = "0.8"
+toml_edit = "0.22"
+# 默认 features 里的 default-tls = native-tls（OpenSSL）。GUI 在自己的
+# Cargo.toml 里声明了 reqwest 默认 features，feature unification 后 GUI 仍保留
+# 系统 TLS；这里关掉默认只影响 CLI 构建（CLI 只经 core 用 reqwest），
+# 去掉 libssl/libcrypto 的加载与常驻页。http2/charset 原本也在默认集合里，
+# 显式补回避免行为变化。
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+    "json",
+    "stream",
+    "socks",
+    "http2",
+    "charset",
+    "macos-system-configuration",
+] }
+flate2 = "1"
+brotli = "7"
+zstd = "0.13"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "net", "process", "signal"] }
+futures = "0.3"
+# rmcp 只在 GUI 的 services/mcp_connectivity.rs 里使用，core 源码零引用；
+# GUI 自己在 src-tauri/Cargo.toml 里声明了 rmcp，删掉这里不影响 GUI，
+# 只让 CLI 构建不再链接整套 MCP 客户端。
+
+process-wrap = { version = "8.2", features = ["tokio1"] }
+async-stream = "0.3"
+bytes = "1.5"
+prost = "0.14"
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors"] }
+hyper = { version = "1.0", features = ["full"] }
+hyper-util = { version = "0.1", features = ["tokio", "http1", "client-legacy"] }
+hyper-rustls = { version = "0.27", features = ["http1", "tls12", "ring", "webpki-tokio"] }
+http = "1"
+http-body = "1"
+http-body-util = "0.1"
+httparse = "1"
+tokio-rustls = "0.26"
+rustls = "0.23"
+webpki-roots = "0.26"
+rustls-native-certs = "0.8"
+regex = "1.10"
+rquickjs = { version = "0.8", features = ["array-buffer", "classes"] }
+thiserror = "2.0"
+anyhow = "1.0"
+zip = "2.2"
+serde_yaml = "0.9"
+tempfile = "3"
+url = "2.5"
+once_cell = "1.21.3"
+base64 = "0.22"
+png = "0.18"
+rusqlite = { version = "0.31", features = ["bundled", "backup", "hooks", "limits"] }
+indexmap = { version = "2", features = ["serde"] }
+rust_decimal = "1.33"
+uuid = { version = "1.11", features = ["v4"] }
+sha2 = "0.10"
+hmac = "0.12"
+subtle = "2.6"
+json5 = "0.4"
+json-five = "0.3.1"
+sys-locale = "0.3"
+
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+libc = "0.2"
+
+# Windows aarch64 下 rquickjs 没有预编译 bindings，必须开 bindgen 现场生成；
+# 这条之前挂在 GUI crate 上，core 独立编译（CLI）时就丢了。
+[target.'cfg(all(target_os = "windows", target_arch = "aarch64"))'.dependencies]
+rquickjs = { version = "0.8", features = ["bindgen"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# 必须覆盖 core 源码实际用到的子集：GUI 之前靠 tauri 依赖的 feature unification
+# 掩盖了缺失项，core 单独 check 或 CLI（不依赖 tauri）在 Windows 上会编译失败。
+#   Foundation      -> GetHandleInformation / CloseHandle / FILETIME / STILL_ACTIVE
+#   Globalization   -> GetACP / GetOEMCP / MultiByteToWideChar
+#   Storage FileSystem / System Threading -> 句柄继承、子进程管理
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+# core 从 src-tauri 拆出后，#[cfg(test)] 里的 #[serial_test::serial] 原本靠
+# GUI crate 的 dev-dependency 提供；core 自己跑 cargo test 时必须自己声明。
+serial_test = "3"

@@ -1,10 +1,36 @@
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 use tauri::Manager;
 
 static LIGHTWEIGHT_MODE: AtomicBool = AtomicBool::new(false);
+/// 进出轻量模式与第二实例唤起共用，避免一边 destroy 主窗口、另一边重建。
+static LIFECYCLE_LOCK: Mutex<()> = Mutex::new(());
+
+fn lifecycle_lock() -> std::sync::MutexGuard<'static, ()> {
+    LIFECYCLE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// 持有轻量模式生命周期锁执行闭包（供第二实例回调等外部临界区使用）。
+pub fn with_lifecycle_lock<R>(f: impl FnOnce() -> R) -> R {
+    let _guard = lifecycle_lock();
+    f()
+}
 
 pub fn enter_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
+    let _guard = lifecycle_lock();
+    enter_lightweight_mode_unlocked(app)
+}
+
+pub fn exit_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
+    let _guard = lifecycle_lock();
+    exit_lightweight_mode_unlocked(app)
+}
+
+/// 调用方已持有 [`with_lifecycle_lock`] 时使用，避免重入死锁。
+pub(crate) fn enter_lightweight_mode_unlocked(app: &tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         if let Some(window) = app.get_webview_window("main") {
@@ -34,7 +60,8 @@ pub fn enter_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-pub fn exit_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
+/// 调用方已持有 [`with_lifecycle_lock`] 时使用，避免重入死锁。
+pub(crate) fn exit_lightweight_mode_unlocked(app: &tauri::AppHandle) -> Result<(), String> {
     use tauri::WebviewWindowBuilder;
 
     if let Some(window) = app.get_webview_window("main") {

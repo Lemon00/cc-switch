@@ -24,15 +24,20 @@ fn cell() -> &'static RwLock<Option<InitErrorPayload>> {
     INIT_ERROR.get_or_init(|| RwLock::new(None))
 }
 
+fn write_poison_ok<T>(result: std::sync::LockResult<std::sync::RwLockWriteGuard<'_, T>>) -> std::sync::RwLockWriteGuard<'_, T> {
+    result.unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn read_poison_ok<T>(result: std::sync::LockResult<std::sync::RwLockReadGuard<'_, T>>) -> std::sync::RwLockReadGuard<'_, T> {
+    result.unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 pub fn set_init_error(payload: InitErrorPayload) {
-    #[allow(clippy::unwrap_used)]
-    if let Ok(mut guard) = cell().write() {
-        *guard = Some(payload);
-    }
+    *write_poison_ok(cell().write()) = Some(payload);
 }
 
 pub fn get_init_error() -> Option<InitErrorPayload> {
-    cell().read().ok()?.clone()
+    read_poison_ok(cell().read()).clone()
 }
 
 // ============================================================
@@ -46,20 +51,15 @@ fn migration_cell() -> &'static RwLock<bool> {
 }
 
 pub fn set_migration_success() {
-    if let Ok(mut guard) = migration_cell().write() {
-        *guard = true;
-    }
+    *write_poison_ok(migration_cell().write()) = true;
 }
 
 /// 获取并消费迁移成功状态（只返回一次 true，之后返回 false）
 pub fn take_migration_success() -> bool {
-    if let Ok(mut guard) = migration_cell().write() {
-        let val = *guard;
-        *guard = false;
-        val
-    } else {
-        false
-    }
+    let mut guard = write_poison_ok(migration_cell().write());
+    let val = *guard;
+    *guard = false;
+    val
 }
 
 // ============================================================
@@ -80,27 +80,20 @@ fn skills_migration_cell() -> &'static RwLock<Option<SkillsMigrationPayload>> {
 }
 
 pub fn set_skills_migration_result(count: usize) {
-    if let Ok(mut guard) = skills_migration_cell().write() {
-        *guard = Some(SkillsMigrationPayload { count, error: None });
-    }
+    *write_poison_ok(skills_migration_cell().write()) =
+        Some(SkillsMigrationPayload { count, error: None });
 }
 
 pub fn set_skills_migration_error(error: String) {
-    if let Ok(mut guard) = skills_migration_cell().write() {
-        *guard = Some(SkillsMigrationPayload {
-            count: 0,
-            error: Some(error),
-        });
-    }
+    *write_poison_ok(skills_migration_cell().write()) = Some(SkillsMigrationPayload {
+        count: 0,
+        error: Some(error),
+    });
 }
 
 /// 获取并消费 Skills 迁移结果（只返回一次 Some，之后返回 None）
 pub fn take_skills_migration_result() -> Option<SkillsMigrationPayload> {
-    if let Ok(mut guard) = skills_migration_cell().write() {
-        guard.take()
-    } else {
-        None
-    }
+    write_poison_ok(skills_migration_cell().write()).take()
 }
 
 #[cfg(test)]

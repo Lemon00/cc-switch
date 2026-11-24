@@ -1,0 +1,408 @@
+//! MCP 服务器数据访问对象
+//!
+//! 提供 MCP 服务器的 CRUD 操作。
+
+use super::{Rows, UnreadableEntry};
+use crate::app_config::{AppType, McpApps, McpServer};
+use crate::database::{lock_conn, Database};
+use crate::error::AppError;
+use indexmap::IndexMap;
+use rusqlite::{params, OptionalExtension, Row};
+
+const MCP_SERVER_SELECT: &str =
+    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_agy, enabled_kimi, enabled_omp, enabled_dsh FROM mcp_servers";
+
+fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
+    let id: String = row.get(0)?;
+    let name: String = row.get(1)?;
+    let description: Option<String> = row.get(3)?;
+    let homepage: Option<String> = row.get(4)?;
+    let docs: Option<String> = row.get(5)?;
+    let enabled_claude: bool = row.get(7)?;
+    let enabled_codex: bool = row.get(8)?;
+    let enabled_gemini: bool = row.get(9)?;
+    let enabled_grokbuild: bool = row.get(10)?;
+    let enabled_opencode: bool = row.get(11)?;
+    let enabled_hermes: bool = row.get(12)?;
+
+    let entry = format!("MCP 服务器 {id}");
+    let server = super::json_column(row, 2, &entry)?;
+    let tags = super::json_column(row, 6, &entry)?;
+
+    Ok((
+        id.clone(),
+        McpServer {
+            id,
+            name,
+            server,
+            apps: McpApps {
+                claude: enabled_claude,
+                codex: enabled_codex,
+                gemini: enabled_gemini,
+                grokbuild: enabled_grokbuild,
+                opencode: enabled_opencode,
+                hermes: enabled_hermes,
+                mcode: row.get(13)?,
+                pi: row.get(14)?,
+                agy: row.get(15)?,
+                kimi: row.get(16)?,
+                omp: row.get(17)?,
+                dsh: row.get(18)?,
+            },
+            description,
+            homepage,
+            docs,
+            tags,
+        },
+    ))
+}
+
+impl Database {
+    /// 获取所有 MCP 服务器。一行读不出来就整体报错（见 [`super::Rows::into_strict`]）；
+    /// 只展示、不写的地方用 [`Self::get_mcp_server_rows`]。
+    pub fn get_all_mcp_servers(&self) -> Result<IndexMap<String, McpServer>, AppError> {
+        self.get_mcp_server_rows()?.into_strict()
+    }
+
+    /// 能读的 MCP 服务器照常返回，读不出来的单独列出。
+    pub fn get_mcp_server_rows(&self) -> Result<Rows<McpServer>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let mut stmt = conn
+            .prepare(&format!("{MCP_SERVER_SELECT} ORDER BY name ASC, id ASC"))
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let server_iter = stmt
+            .query_map([], |row| super::read_row(row, row_to_mcp_server))
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let mut rows = Rows {
+            readable: IndexMap::new(),
+            unreadable: Vec::new(),
+        };
+        for server_res in server_iter {
+            match server_res.map_err(|e| AppError::Database(e.to_string()))? {
+                Ok((id, server)) => {
+                    rows.readable.insert(id, server);
+                }
+                Err(entry) => rows.unreadable.push(entry),
+            }
+        }
+        Ok(rows)
+    }
+
+    /// 这一行在库里、但存的 JSON 读不出来。
+    pub fn get_unreadable_mcp_server(&self, id: &str) -> Result<Option<UnreadableEntry>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let result = conn
+            .query_row(
+                &format!("{MCP_SERVER_SELECT} WHERE id = ?1"),
+                params![id],
+                |row| super::read_row(row, row_to_mcp_server),
+            )
+            .optional()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(result.and_then(Result::err))
+    }
+
+    /// Atomically update one application's flag and return the authoritative row.
+    ///
+    /// The update and read share the same connection lock, so concurrent toggles
+    /// for different applications cannot overwrite one another through a stale
+    /// whole-row snapshot. A row that can't be read back rolls the flag change back.
+    pub fn update_mcp_server_app_enabled(
+        &self,
+        id: &str,
+        app: &AppType,
+        enabled: bool,
+    ) -> Result<Option<McpServer>, AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let conn = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let column = match app {
+            AppType::Claude => Some("enabled_claude"),
+            AppType::Codex => Some("enabled_codex"),
+            AppType::Gemini => Some("enabled_gemini"),
+            AppType::GrokBuild => Some("enabled_grokbuild"),
+            AppType::OpenCode => Some("enabled_opencode"),
+            AppType::Hermes => Some("enabled_hermes"),
+            // These applications intentionally have no MCP flag in the SSOT.
+            AppType::Mcode => Some("enabled_mcode"),
+            AppType::Kimi => Some("enabled_kimi"),
+            AppType::Dsh => Some("enabled_dsh"),
+            AppType::Pi => Some("enabled_pi"),
+            AppType::Omp => Some("enabled_omp"),
+            AppType::ClaudeDesktop | AppType::OpenClaw => None,
+            AppType::Agy => Some("enabled_agy"),
+        };
+
+        if let Some(column) = column {
+            // `column` comes exclusively from the fixed allow-list above.
+            let sql = format!("UPDATE mcp_servers SET {column} = ?1 WHERE id = ?2");
+            let affected = conn
+                .execute(&sql, params![enabled, id])
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            if affected == 0 {
+                return Ok(None);
+            }
+        }
+
+        let server = conn
+            .query_row(
+                &format!("{MCP_SERVER_SELECT} WHERE id = ?1"),
+                params![id],
+                |row| row_to_mcp_server(row).map(|(_, server)| server),
+            )
+            .optional()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.commit()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(server)
+    }
+
+    /// 保存 MCP 服务器
+    pub fn save_mcp_server(&self, server: &McpServer) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "INSERT OR REPLACE INTO mcp_servers (
+                id, name, server_config, description, homepage, docs, tags,
+                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_agy, enabled_kimi, enabled_omp, enabled_dsh
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+            params![
+                server.id,
+                server.name,
+                serde_json::to_string(&server.server).map_err(|e| AppError::Database(format!(
+                    "Failed to serialize server config: {e}"
+                )))?,
+                server.description,
+                server.homepage,
+                server.docs,
+                serde_json::to_string(&server.tags)
+                    .map_err(|e| AppError::Database(format!("Failed to serialize tags: {e}")))?,
+                server.apps.claude,
+                server.apps.codex,
+                server.apps.gemini,
+                server.apps.grokbuild,
+                server.apps.opencode,
+                server.apps.hermes,
+                server.apps.mcode,
+                server.apps.pi,
+                server.apps.agy,
+                server.apps.kimi,
+                server.apps.omp,
+                server.apps.dsh,
+            ],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// 删除 MCP 服务器
+    pub fn delete_mcp_server(&self, id: &str) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute("DELETE FROM mcp_servers WHERE id = ?1", params![id])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::sync::{Arc, Barrier};
+    use std::thread;
+
+    fn test_server() -> McpServer {
+        McpServer {
+            id: "shared-server".to_string(),
+            name: "Shared Server".to_string(),
+            server: json!({ "command": "echo", "args": ["hello"] }),
+            apps: McpApps {
+                gemini: true,
+                ..McpApps::default()
+            },
+            description: Some("description".to_string()),
+            homepage: Some("https://example.com".to_string()),
+            docs: None,
+            tags: vec!["shared".to_string()],
+        }
+    }
+
+    #[test]
+    fn app_flag_updates_preserve_other_flags_and_return_authoritative_row() {
+        let db = Database::memory().expect("create memory db");
+        db.save_mcp_server(&test_server()).expect("seed server");
+
+        let after_claude = db
+            .update_mcp_server_app_enabled("shared-server", &AppType::Claude, true)
+            .expect("enable Claude")
+            .expect("server exists");
+        assert!(after_claude.apps.claude);
+        assert!(after_claude.apps.gemini);
+
+        let after_codex = db
+            .update_mcp_server_app_enabled("shared-server", &AppType::Codex, true)
+            .expect("enable Codex")
+            .expect("server exists");
+        assert!(after_codex.apps.claude);
+        assert!(after_codex.apps.codex);
+        assert!(after_codex.apps.gemini);
+        assert_eq!(after_codex.description.as_deref(), Some("description"));
+        assert_eq!(after_codex.tags, vec!["shared"]);
+
+        let stored = db
+            .get_all_mcp_servers()
+            .expect("read servers")
+            .shift_remove("shared-server")
+            .expect("stored server");
+        assert_eq!(stored.apps, after_codex.apps);
+    }
+
+    #[test]
+    fn concurrent_app_flag_updates_do_not_lose_each_other() {
+        let db = Arc::new(Database::memory().expect("create memory db"));
+        db.save_mcp_server(&test_server()).expect("seed server");
+        let barrier = Arc::new(Barrier::new(3));
+
+        let handles = [AppType::Claude, AppType::Codex].map(|app| {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                db.update_mcp_server_app_enabled("shared-server", &app, true)
+                    .expect("update app flag")
+                    .expect("server exists");
+            })
+        });
+
+        barrier.wait();
+        for handle in handles {
+            handle.join().expect("join app toggle");
+        }
+
+        let stored = db
+            .get_all_mcp_servers()
+            .expect("read servers")
+            .shift_remove("shared-server")
+            .expect("stored server");
+        assert!(stored.apps.claude);
+        assert!(stored.apps.codex);
+        assert!(stored.apps.gemini);
+    }
+
+    #[test]
+    fn app_flag_update_does_not_insert_a_missing_server() {
+        let db = Database::memory().expect("create memory db");
+
+        let updated = db
+            .update_mcp_server_app_enabled("missing", &AppType::Claude, true)
+            .expect("update missing server");
+
+        assert!(updated.is_none());
+        assert!(db.get_all_mcp_servers().expect("read servers").is_empty());
+    }
+
+    #[test]
+    fn unsupported_mcp_apps_keep_the_existing_noop_semantics() {
+        let db = Database::memory().expect("create memory db");
+        let original = test_server();
+        db.save_mcp_server(&original).expect("seed server");
+
+        for app in [AppType::ClaudeDesktop, AppType::OpenClaw] {
+            let returned = db
+                .update_mcp_server_app_enabled("shared-server", &app, true)
+                .expect("toggle unsupported app")
+                .expect("server exists");
+            assert_eq!(returned.apps, original.apps);
+        }
+    }
+
+    #[test]
+    fn pi_mcp_flag_round_trips_through_the_database() {
+        let db = Database::memory().expect("create memory db");
+        db.save_mcp_server(&test_server()).expect("seed server");
+        let returned = db
+            .update_mcp_server_app_enabled("shared-server", &AppType::Pi, true)
+            .expect("toggle pi")
+            .expect("server exists");
+        assert!(returned.apps.pi);
+        assert!(db.get_all_mcp_servers().unwrap()["shared-server"].apps.pi);
+    }
+
+    fn read_raw_server(db: &Database) -> (String, String) {
+        db.conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT server_config, tags FROM mcp_servers WHERE id = 'shared-server'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap()
+    }
+
+    fn break_server_config(db: &Database) {
+        db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE mcp_servers SET server_config = '{\"command\":' WHERE id = 'shared-server'",
+                [],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn unreadable_stored_server_config_is_reported_and_left_untouched() {
+        let db = Database::memory().unwrap();
+        db.save_mcp_server(&test_server()).unwrap();
+        break_server_config(&db);
+        let stored = read_raw_server(&db);
+
+        let error = db.get_all_mcp_servers().unwrap_err().to_string();
+        assert!(
+            error.contains("shared-server") && error.contains("server_config"),
+            "{error}"
+        );
+        assert_eq!(read_raw_server(&db), stored);
+
+        let rows = db.get_mcp_server_rows().unwrap();
+        assert!(rows.readable.is_empty());
+        assert_eq!(rows.unreadable.len(), 1);
+        assert_eq!(rows.unreadable[0].id, "shared-server");
+        assert_eq!(rows.unreadable[0].name, "Shared Server");
+        assert!(db
+            .get_unreadable_mcp_server("shared-server")
+            .unwrap()
+            .is_some());
+        assert_eq!(read_raw_server(&db), stored);
+    }
+
+    #[test]
+    fn app_flag_toggle_rolls_back_when_the_row_cannot_be_read_back() {
+        let db = Database::memory().unwrap();
+        db.save_mcp_server(&test_server()).unwrap();
+        break_server_config(&db);
+        let enabled_claude = |db: &Database| -> bool {
+            db.conn
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT enabled_claude FROM mcp_servers WHERE id = 'shared-server'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap()
+        };
+        assert!(!enabled_claude(&db));
+
+        let error = db
+            .update_mcp_server_app_enabled("shared-server", &AppType::Claude, true)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("shared-server"), "{error}");
+        assert!(!enabled_claude(&db));
+    }
+}
