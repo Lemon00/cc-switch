@@ -425,8 +425,15 @@ export const listProviders = (appType: AppId) =>
 
 export const getSettings = () => deepClone(settingsState) as Settings;
 
-export const setSettings = (data: Partial<Settings>) => {
-  settingsState = { ...settingsState, ...data };
+export const setSettings = (data: {
+  [Key in keyof Settings]?: Settings[Key] | null;
+}) => {
+  settingsState = {
+    ...settingsState,
+    ...Object.fromEntries(
+      Object.entries(data).map(([key, value]) => [key, value ?? undefined]),
+    ),
+  };
 };
 
 export const getAppConfigDirOverride = () => appConfigDirOverride;

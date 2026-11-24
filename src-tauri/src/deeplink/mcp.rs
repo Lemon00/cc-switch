@@ -88,6 +88,8 @@ pub fn import_mcp_from_deeplink(
         ));
     }
 
+    let _guards = futures::executor::block_on(McpService::lock_live_sync_apps(state));
+
     // Get existing servers to check for duplicates
     let existing_servers = state.db.get_all_mcp_servers()?;
 

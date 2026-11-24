@@ -321,9 +321,7 @@ export function SwitchModePanel({
   const confirmFailoverOn = async () => {
     setConfirmFailover(false);
     try {
-      const current = await settingsApi.get();
       await settingsApi.save({
-        ...current,
         failoverConfirmed: true,
       });
       await queryClient.invalidateQueries({ queryKey: ["settings"] });
@@ -346,11 +344,7 @@ export function SwitchModePanel({
       subagent &&
       !sameStackSubagent(subagent, stackSubagentValue(settings))
     ) {
-      const current = await settingsApi.get();
-      await settingsApi.save({
-        ...current,
-        ...stackSubagentSettings(subagent),
-      });
+      await settingsApi.save(stackSubagentSettings(subagent));
       await queryClient.invalidateQueries({ queryKey: ["settings"] });
     }
     await modeActions.enter(target, pick, providers[pick]?.name);

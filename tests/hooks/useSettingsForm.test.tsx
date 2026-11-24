@@ -28,6 +28,84 @@ afterEach(() => {
 });
 
 describe("useSettingsForm Hook", () => {
+  it("preserves drafts and cleared directories while refreshing untouched fields", async () => {
+    const initial = {
+      language: "en",
+      showInTray: true,
+      claudeConfigDir: "/original",
+      codexConfigDir: "/codex",
+    };
+    useSettingsQueryMock.mockReturnValue({ data: initial, isLoading: false });
+    const { result, rerender } = renderHook(() => useSettingsForm());
+    await waitFor(() => expect(result.current.settings).not.toBeNull());
+
+    act(() => {
+      result.current.updateSettings({
+        claudeConfigDir: "/draft",
+        codexConfigDir: undefined,
+        language: "ja",
+      });
+    });
+    useSettingsQueryMock.mockReturnValue({
+      data: { ...initial, showInTray: false },
+      isLoading: false,
+    });
+    rerender();
+
+    await waitFor(() =>
+      expect(result.current.settings?.showInTray).toBe(false),
+    );
+    expect(result.current.settings?.claudeConfigDir).toBe("/draft");
+    expect(result.current.settings?.codexConfigDir).toBeUndefined();
+    expect(result.current.settings?.language).toBe("ja");
+    expect(i18n.language).toBe("ja");
+  });
+
+  it("accepts later server edits once a draft has been acknowledged", async () => {
+    const initial = { language: "en", claudeConfigDir: "/original" };
+    useSettingsQueryMock.mockReturnValue({ data: initial, isLoading: false });
+    const { result, rerender } = renderHook(() => useSettingsForm());
+    await waitFor(() => expect(result.current.settings).not.toBeNull());
+    act(() => result.current.updateSettings({ claudeConfigDir: "/saved" }));
+
+    useSettingsQueryMock.mockReturnValue({
+      data: { ...initial, claudeConfigDir: "/saved" },
+      isLoading: false,
+    });
+    rerender();
+    useSettingsQueryMock.mockReturnValue({
+      data: { ...initial, claudeConfigDir: "/external" },
+      isLoading: false,
+    });
+    rerender();
+
+    await waitFor(() =>
+      expect(result.current.settings?.claudeConfigDir).toBe("/external"),
+    );
+  });
+
+  it("does not retain discarded drafts after reset and refetch", async () => {
+    const initial = {
+      language: "en" as const,
+      claudeConfigDir: "/original",
+      showInTray: true,
+      minimizeToTrayOnClose: true,
+    };
+    useSettingsQueryMock.mockReturnValue({ data: initial, isLoading: false });
+    const { result, rerender } = renderHook(() => useSettingsForm());
+    await waitFor(() => expect(result.current.settings).not.toBeNull());
+    act(() => result.current.updateSettings({ claudeConfigDir: "/draft" }));
+    act(() => result.current.resetSettings(initial));
+    useSettingsQueryMock.mockReturnValue({
+      data: { ...initial, claudeConfigDir: "/external" },
+      isLoading: false,
+    });
+    rerender();
+    await waitFor(() =>
+      expect(result.current.settings?.claudeConfigDir).toBe("/external"),
+    );
+  });
+
   it("should normalize settings and sync language on initialization", async () => {
     useSettingsQueryMock.mockReturnValue({
       data: {

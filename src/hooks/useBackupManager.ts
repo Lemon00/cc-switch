@@ -72,6 +72,7 @@ export function useBackupLocations() {
   const query = useQuery({
     queryKey: BACKUP_LOCATIONS_KEY,
     queryFn: () => backupsApi.listBackupLocations(),
+    staleTime: 30_000,
   });
 
   const deleteMutation = useMutation({

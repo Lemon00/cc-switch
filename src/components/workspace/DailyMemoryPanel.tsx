@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import MarkdownEditor from "@/components/MarkdownEditor";
+import { useUnsavedChangesState } from "@/lib/unsavedChanges";
 import {
   workspaceApi,
   type DailyMemoryFileInfo,
@@ -53,6 +54,11 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
   // Edit state
   const [editingFile, setEditingFile] = useState<string | null>(null);
   const [content, setContent] = useState("");
+  const [savedContent, setSavedContent] = useState<string | null>(null);
+  const [confirmBack, setConfirmBack] = useState(false);
+  const dirty =
+    isOpen && editingFile !== null && content !== (savedContent ?? "");
+  useUnsavedChangesState(dirty);
   const contentRequestRef = useRef(0);
   const [saving, setSaving] = useState(false);
 
@@ -68,6 +74,9 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
   const [searching, setSearching] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchRequestRef = useRef(0);
+  const searchContextRef = useRef({ isOpen, isSearchOpen, searchTerm });
+  searchContextRef.current = { isOpen, isSearchOpen, searchTerm };
 
   // Dark mode
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -93,6 +102,14 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
   // Debounced search execution
   const executeSearch = useCallback(
     async (query: string) => {
+      const context = searchContextRef.current;
+      if (
+        !context.isOpen ||
+        !context.isSearchOpen ||
+        context.searchTerm !== query
+      )
+        return;
+      const request = ++searchRequestRef.current;
       if (!query.trim()) {
         setSearchResults([]);
         setSearching(false);
@@ -101,12 +118,14 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
       setSearching(true);
       try {
         const results = await workspaceApi.searchDailyMemoryFiles(query.trim());
+        if (request !== searchRequestRef.current) return;
         setSearchResults(results);
       } catch (err) {
+        if (request !== searchRequestRef.current) return;
         console.error("Failed to search daily memory files:", err);
         toast.error(t("workspace.dailyMemory.searchFailed"));
       } finally {
-        setSearching(false);
+        if (request === searchRequestRef.current) setSearching(false);
       }
     },
     [t],
@@ -115,6 +134,10 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
   // Handle search input change with debounce
   const handleSearchChange = useCallback(
     (value: string) => {
+      searchRequestRef.current += 1;
+      searchContextRef.current.searchTerm = value;
+      setSearchResults([]);
+      setSearching(Boolean(value.trim()));
       setSearchTerm(value);
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
@@ -137,6 +160,8 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
 
   // Close search bar and clear state
   const closeSearch = useCallback(() => {
+    searchRequestRef.current += 1;
+    searchContextRef.current.isSearchOpen = false;
     setIsSearchOpen(false);
     setSearchTerm("");
     setSearchResults([]);
@@ -171,12 +196,14 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
 
   // Clean up debounce timer on unmount
   useEffect(() => {
+    if (!isOpen) closeSearch();
     return () => {
+      searchRequestRef.current += 1;
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
     };
-  }, []);
+  }, [isOpen, closeSearch]);
 
   // Load file list
   const loadFiles = useCallback(async () => {
@@ -200,6 +227,9 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
 
   // Invalidate in-flight reads when panel visibility changes or the component unmounts.
   useEffect(() => {
+    setSaving(false);
+    setConfirmBack(false);
+    if (!isOpen) setEditingFile(null);
     return () => {
       contentRequestRef.current += 1;
     };
@@ -209,10 +239,12 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
   const openFile = useCallback(
     async (filename: string) => {
       const request = ++contentRequestRef.current;
+      setSaving(false);
       try {
         const data = await workspaceApi.readDailyMemoryFile(filename);
         if (request !== contentRequestRef.current) return;
         setContent(data ?? "");
+        setSavedContent(data);
         setEditingFile(filename);
       } catch (err) {
         if (request !== contentRequestRef.current) return;
@@ -237,22 +269,31 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
     contentRequestRef.current += 1;
     setEditingFile(filename);
     setContent("");
+    setSavedContent(null);
   }, [files, openFile]);
 
   // Save current file
   const handleSave = useCallback(async () => {
-    if (!editingFile) return;
+    if (!editingFile || saving) return;
+    const request = contentRequestRef.current;
     setSaving(true);
     try {
-      await workspaceApi.writeDailyMemoryFile(editingFile, content);
+      await workspaceApi.writeDailyMemoryFile(
+        editingFile,
+        content,
+        savedContent,
+      );
+      if (request !== contentRequestRef.current) return;
+      setSavedContent(content);
       toast.success(t("workspace.saveSuccess"));
     } catch (err) {
+      if (request !== contentRequestRef.current) return;
       console.error("Failed to save daily memory file:", err);
-      toast.error(t("workspace.saveFailed"));
+      toast.error(`${t("workspace.saveFailed")}: ${String(err)}`);
     } finally {
-      setSaving(false);
+      if (request === contentRequestRef.current) setSaving(false);
     }
-  }, [editingFile, content, t]);
+  }, [editingFile, content, savedContent, saving, t]);
 
   // Delete file
   const handleDelete = useCallback(async () => {
@@ -289,6 +330,8 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
 
   // Back from edit mode to list mode — preserve search state
   const handleBackToList = useCallback(() => {
+    contentRequestRef.current += 1;
+    setSaving(false);
     setEditingFile(null);
     setContent("");
     void loadFiles();
@@ -303,12 +346,9 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
     contentRequestRef.current += 1;
     setEditingFile(null);
     setContent("");
-    setIsSearchOpen(false);
-    setSearchTerm("");
-    setSearchResults([]);
-    setSearching(false);
+    closeSearch();
     onClose();
-  }, [onClose]);
+  }, [onClose, closeSearch]);
 
   // --- Edit mode ---
   if (editingFile) {
@@ -317,7 +357,10 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
         <FullScreenPanel
           isOpen={isOpen}
           title={t("workspace.editing", { filename: editingFile })}
-          onClose={handleBackToList}
+          onClose={() => {
+            if (dirty || saving) setConfirmBack(true);
+            else handleBackToList();
+          }}
           footer={
             <Button onClick={handleSave} disabled={saving}>
               {saving ? t("common.saving") : t("common.save")}
@@ -332,6 +375,18 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
             minHeight="calc(100vh - 240px)"
           />
         </FullScreenPanel>
+        <ConfirmDialog
+          isOpen={confirmBack}
+          title={t("common.unsavedLeaveTitle")}
+          message={t("common.unsavedLeaveMessage")}
+          confirmText={t("common.unsavedLeaveConfirm")}
+          pending={saving}
+          onCancel={() => setConfirmBack(false)}
+          onConfirm={() => {
+            setConfirmBack(false);
+            handleBackToList();
+          }}
+        />
 
         <ConfirmDialog
           isOpen={!!deletingFile}

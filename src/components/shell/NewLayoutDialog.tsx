@@ -77,13 +77,11 @@ export function NewLayoutDialog() {
     setClosed(true);
     if (!settings) return;
     try {
-      const { webdavSync: _, ...rest } = settings;
       // 更新摘要一并记成已看，不再接着弹第二个。看到这里的是从 3.x 升上来的用户，
       // 之前没有记录，摘要本来也只会显示当前这一版；那几条是相对上一个 4.x 预览版
       // 的改动，对他们不如这个弹窗和「查看更新说明」（正式版页面是 4.0 完整说明）有用。
       const version = await getVersion().catch(() => undefined);
       await settingsApi.save({
-        ...rest,
         newLayoutNoticeConfirmed: true,
         whatsNewSeenVersion: markSeen(settings.whatsNewSeenVersion, version),
       });

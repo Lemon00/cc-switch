@@ -12,6 +12,8 @@ export interface ConfigTransferResult {
   message: string;
   filePath?: string;
   backupId?: string;
+  /** 数据已导入，但后置同步（live/prompts/价格/设置缓存等）部分失败 */
+  warning?: string;
 }
 
 export interface WebDavTestResult {
@@ -28,15 +30,43 @@ export interface CodexUnifyHistoryRestoreResult {
 
 export interface WebDavSyncResult {
   status: string;
+  /** 下载成功但后置同步部分失败时由后端附带 */
+  warning?: string;
 }
+
+const clearableSettings = new Set<keyof Settings>([
+  "claudeConfigDir",
+  "codexConfigDir",
+  "geminiConfigDir",
+  "grokConfigDir",
+  "opencodeConfigDir",
+  "openclawConfigDir",
+  "hermesConfigDir",
+  "piConfigDir",
+  "ompConfigDir",
+  "codexStackSubagentModel",
+  "codexStackSubagentReasoningEffort",
+  "codexStackAutoReviewModel",
+  "preferredTerminal",
+]);
 
 export const settingsApi = {
   async get(): Promise<Settings> {
     return await invoke("get_settings");
   },
 
-  async save(settings: Settings): Promise<boolean> {
-    return await invoke("save_settings", { settings });
+  async save(settings: Partial<Settings>): Promise<boolean> {
+    return await invoke("save_settings", {
+      settings: Object.fromEntries(
+        Object.entries(settings)
+          .filter(
+            ([key, value]) =>
+              value !== undefined ||
+              clearableSettings.has(key as keyof Settings),
+          )
+          .map(([key, value]) => [key, value ?? null]),
+      ),
+    });
   },
 
   /** 是否存在统一 Codex 会话历史的迁移备份（关闭弹窗据此显示"恢复备份"勾选） */
@@ -424,6 +454,11 @@ export interface BackupEntry {
   createdAt: string;
 }
 
+export interface BackupRestoreResult {
+  backupId: string;
+  warning?: string;
+}
+
 export interface BackupLocation {
   id: string;
   path: string;
@@ -442,8 +477,12 @@ export const backupsApi = {
     return await invoke("list_db_backups");
   },
 
-  async restoreDbBackup(filename: string): Promise<string> {
-    return await invoke("restore_db_backup", { filename });
+  async restoreDbBackup(filename: string): Promise<BackupRestoreResult> {
+    const result = await invoke<BackupRestoreResult | string>(
+      "restore_db_backup",
+      { filename },
+    );
+    return typeof result === "string" ? { backupId: result } : result;
   },
 
   async renameDbBackup(oldFilename: string, newName: string): Promise<string> {

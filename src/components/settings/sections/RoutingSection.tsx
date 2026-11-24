@@ -105,6 +105,18 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
   const [addressError, setAddressError] = useState<string | null>(null);
   const [portError, setPortError] = useState<string | null>(null);
   const [clientHost, setClientHost] = useState("");
+  const [lanToken, setLanToken] = useState("");
+  const [loadingLanToken, setLoadingLanToken] = useState(false);
+  const loadLanToken = async (rotate = false) => {
+    setLoadingLanToken(true);
+    try {
+      setLanToken(await proxyApi.getLanToken(rotate));
+    } catch (error) {
+      toast.error(String(error));
+    } finally {
+      setLoadingLanToken(false);
+    }
+  };
   const [clientHostError, setClientHostError] = useState<string | null>(null);
   const [confirmExitAll, setConfirmExitAll] = useState(false);
   const [failoverApp, setFailoverApp] = useState<ProxyAppId>("claude");
@@ -369,6 +381,65 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
                   onClick={() => void saveClientHost()}
                 >
                   {t("common.save")}
+                </Button>
+              </div>
+            }
+          />
+          <SettingsRow
+            label={t("routingSettings.lanToken", {
+              defaultValue: "局域网访问令牌",
+            })}
+            help={{
+              title: t("routingSettings.lanToken", {
+                defaultValue: "局域网访问令牌",
+              }),
+              body: t("routingSettings.lanTokenHelp", {
+                defaultValue:
+                  "远程客户端必须将此令牌作为 API Key（Authorization: Bearer、x-api-key 或 x-goog-api-key），或通过 x-cc-switch-token 请求头发送。仅 TCP 回环连接免验证；不信任 X-Forwarded-For。请只在可信网络或 TLS 隧道中使用。重置立即撤销旧令牌，Claude Desktop 仍使用其专用令牌。",
+              }),
+            }}
+            control={
+              <div className="flex items-center gap-2">
+                <Input
+                  type="password"
+                  readOnly
+                  value={lanToken}
+                  aria-label={t("routingSettings.lanToken", {
+                    defaultValue: "局域网访问令牌",
+                  })}
+                />
+                <Button
+                  variant="neutral"
+                  disabled={loadingLanToken}
+                  onClick={() => void loadLanToken()}
+                >
+                  {t("routingSettings.loadLanToken", {
+                    defaultValue: "读取令牌",
+                  })}
+                </Button>
+                <Button
+                  variant="neutral"
+                  disabled={loadingLanToken || !lanToken}
+                  onClick={() => void loadLanToken(true)}
+                >
+                  {t("routingSettings.rotateLanToken", {
+                    defaultValue: "重置令牌",
+                  })}
+                </Button>
+                <Button
+                  variant="neutral"
+                  disabled={!lanToken}
+                  onClick={() => {
+                    void navigator.clipboard.writeText(lanToken).then(
+                      () =>
+                        toast.success(
+                          t("common.copied", { defaultValue: "已复制" }),
+                        ),
+                      (error) => toast.error(String(error)),
+                    );
+                  }}
+                >
+                  {t("common.copy", { defaultValue: "复制" })}
                 </Button>
               </div>
             }

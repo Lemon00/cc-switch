@@ -60,12 +60,14 @@ vi.mock("@tanstack/react-query", async () => {
     ...actual,
     useQueryClient: () => ({
       getQueryData: (...args: unknown[]) => getQueryDataMock(...args),
+      invalidateQueries: async () => {},
     }),
   };
 });
 
 vi.mock("@/lib/api", () => ({
   settingsApi: {
+    setAutoLaunch: vi.fn().mockResolvedValue(undefined),
     setAppConfigDirOverride: (...args: unknown[]) =>
       setAppConfigDirOverrideMock(...args),
     applyClaudePluginConfig: (...args: unknown[]) =>
@@ -201,6 +203,37 @@ describe("useSettings hook", () => {
     getQueryDataMock.mockImplementation(() => serverSettings);
   });
 
+  it("concurrent auto-saves submit disjoint patches, not stale forms", async () => {
+    const { result } = renderHook(() => useSettings());
+    await act(async () => {
+      await Promise.all([
+        result.current.autoSaveSettings({ showInTray: false }),
+        result.current.autoSaveSettings({ silentStartup: true }),
+      ]);
+    });
+    expect(mutateAsyncMock.mock.calls.map(([payload]) => payload)).toEqual([
+      { showInTray: false },
+      { silentStartup: true },
+    ]);
+  });
+
+  it("manual saves preserve unrelated settings that changed after the form loaded", async () => {
+    getQueryDataMock.mockImplementation(() => ({
+      ...serverSettings,
+      showInTray: false,
+    }));
+    const { result } = renderHook(() => useSettings());
+    await act(async () => {
+      await result.current.saveSettings(
+        { codexConfigDir: undefined },
+        { silent: true },
+      );
+    });
+    const patch = mutateAsyncMock.mock.calls[0][0];
+    expect(patch).not.toHaveProperty("showInTray");
+    expect(patch).toHaveProperty("codexConfigDir", undefined);
+  });
+
   it("auto-saves and applies Claude onboarding skip when toggled on", async () => {
     serverSettings = {
       ...serverSettings,
@@ -307,7 +340,8 @@ describe("useSettings hook", () => {
     expect(payload.claudeConfigDir).toBe("/custom/claude");
     expect(payload.codexConfigDir).toBeUndefined();
     expect(payload.openclawConfigDir).toBe("/custom/openclaw");
-    expect(payload.language).toBe("en");
+    expect(payload).not.toHaveProperty("language");
+    expect(payload).not.toHaveProperty("showInTray");
     expect(setAppConfigDirOverrideMock).toHaveBeenCalledWith("/override/app");
     // 状态改变，应该调用 API
     expect(applyClaudePluginConfigMock).toHaveBeenCalledWith({
@@ -363,24 +397,34 @@ describe("useSettings hook", () => {
     expect(syncCurrentProvidersLiveMock).not.toHaveBeenCalled();
   });
 
-  it("projects providers into a new Hermes directory on save", async () => {
-    settingsFormMock = createSettingsFormMock({
-      settings: {
-        ...serverSettings,
-        hermesConfigDir: "  /custom/hermes  ",
-      },
-    });
+  it.each([
+    ["claudeConfigDir", 1],
+    ["codexConfigDir", 1],
+    ["geminiConfigDir", 1],
+    ["grokConfigDir", 1],
+    ["opencodeConfigDir", 1],
+    ["openclawConfigDir", 1],
+    ["hermesConfigDir", 1],
+    ["piConfigDir", 0],
+    ["ompConfigDir", 0],
+  ] as const)(
+    "saves a changed %s and projects providers %i time(s)",
+    async (field, syncCalls) => {
+      settingsFormMock = createSettingsFormMock({
+        settings: { ...serverSettings, [field]: "  /custom/dir  " },
+      });
 
-    const { result } = renderHook(() => useSettings());
+      const { result } = renderHook(() => useSettings());
 
-    await act(async () => {
-      await result.current.saveSettings(undefined, { silent: true });
-    });
+      await act(async () => {
+        await result.current.saveSettings(undefined, { silent: true });
+      });
 
-    const payload = mutateAsyncMock.mock.calls[0][0] as Settings;
-    expect(payload.hermesConfigDir).toBe("/custom/hermes");
-    expect(syncCurrentProvidersLiveMock).toHaveBeenCalledTimes(1);
-  });
+      const payload = mutateAsyncMock.mock.calls[0][0] as Settings;
+      expect(payload[field]).toBe("/custom/dir");
+      expect(syncCurrentProvidersLiveMock).toHaveBeenCalledTimes(syncCalls);
+    },
+  );
 
   it("sanitizes the Pi directory without projecting providers", async () => {
     settingsFormMock = createSettingsFormMock({
@@ -429,8 +473,8 @@ describe("useSettings hook", () => {
     });
 
     const payload = mutateAsyncMock.mock.calls[0][0] as Settings;
-    expect(payload.ompConfigDir).toBe("/server/omp");
-    expect(payload.hermesConfigDir).toBe("/server/hermes");
+    expect(payload).not.toHaveProperty("ompConfigDir");
+    expect(payload).not.toHaveProperty("hermesConfigDir");
   });
 
   it("shows toast when Claude plugin sync fails but continues flow", async () => {
@@ -470,7 +514,7 @@ describe("useSettings hook", () => {
     expect(metadataMock.setRequiresRestart).toHaveBeenCalledWith(true);
   });
 
-  it("detects plugin toggle via live cache even when closure data is stale", async () => {
+  it("detects explicit plugin toggle via live cache even when closure data is stale", async () => {
     // 模拟快速连切后的 race：useSettingsQueryMock 的 data 滞后停留在 false（closure 未更新），
     // 但 queryClient 缓存（getQueryData）实时值已为 true（上次持久化到 enabled），
     // form 里用户想切回 false。旧实现会因 data === form 而跳过副作用；新实现应读 prev=true 并执行。
@@ -501,10 +545,12 @@ describe("useSettings hook", () => {
     const { result } = renderHook(() => useSettings());
 
     await act(async () => {
-      await result.current.saveSettings(undefined, { silent: true });
+      await result.current.saveSettings(
+        { enableClaudePluginIntegration: false },
+        { silent: true },
+      );
     });
 
-    // 修复生效：读的是缓存实时值 true，payload=false，差异触发 clear_claude_config
     expect(applyClaudePluginConfigMock).toHaveBeenCalledWith({
       official: true,
     });

@@ -5,6 +5,33 @@ import {
   injectCodingPlanUsageScript,
 } from "./codingPlanProviders";
 
+describe("coding plan URL boundaries", () => {
+  it.each([
+    "https://evil.example/api.kimi.com/coding",
+    "https://evil.example/?url=https://api.z.ai/v1",
+    "https://bigmodel.cn.evil.example/v1",
+    "https://api.z.ai@evil.example/v1",
+    "https://zenmux.ai.evil.example/usage",
+    "https://evil.example/api.commandcode.ai/provider",
+    "https://opencode.ai/zen/gopher",
+    "https://api.kimi.com/coding-other",
+    "https://ark.cn-beijing.volces.com/api/plans",
+    "ftp://api.z.ai/v1",
+  ])("does not infer a plan from an unrelated URL: %s", (baseUrl) => {
+    expect(detectCodingPlanProvider(baseUrl)).toBeNull();
+  });
+
+  it.each([
+    ["api.kimi.com/coding/v1", "kimi"],
+    ["https://open.bigmodel.cn:8443/api/paas/v4", "zhipu"],
+    ["https://zenmux.ai/api/v1", "zenmux"],
+    ["https://ark.cn-beijing.volces.com/api/plan/v3", "volcengine"],
+    ["https://API.CommandCode.ai./provider?x=1", "command_code"],
+  ])("recognizes parsed URLs: %s", (baseUrl, expected) => {
+    expect(detectCodingPlanProvider(baseUrl)).toBe(expected);
+  });
+});
+
 // codex 预设的 config 由 generateThirdPartyConfig 生成，这里取其等效形态
 const OPENCODE_GO_CODEX_TOML = `model_provider = "custom"
 model = "glm-5.2"

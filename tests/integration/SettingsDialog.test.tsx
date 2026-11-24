@@ -49,13 +49,6 @@ vi.mock("@/components/settings/LogConfigPanel", () => ({
   LogConfigPanel: () => <div>log-config-panel</div>,
 }));
 
-vi.mock("@/components/settings/DirectorySettings", async () => {
-  const actual = await vi.importActual<
-    typeof import("@/components/settings/DirectorySettings")
-  >("@/components/settings/DirectorySettings");
-  return actual;
-});
-
 vi.mock("@/components/settings/ImportExportSection", () => ({
   ImportExportSection: ({
     status,
@@ -211,7 +204,7 @@ describe("SettingsPage integration", () => {
   });
 
   it.each([undefined, "/saved/claude"])(
-    "discards directory drafts after unrelated autosave with saved directory %s",
+    "preserves directory drafts after unrelated autosave with saved directory %s",
     async (savedDirectory) => {
       setSettings({ claudeConfigDir: savedDirectory });
       const resolvedDirectory = savedDirectory ?? "/home/mock/.claude";
@@ -253,21 +246,23 @@ describe("SettingsPage integration", () => {
       await waitFor(() =>
         expect(getSettings().skipClaudeOnboarding).toBe(true),
       );
-      expect(saves[0].claudeConfigDir).toBe(savedDirectory);
+      expect(saves[0]).not.toHaveProperty("claudeConfigDir");
+      expect(getSettings().claudeConfigDir).toBe(savedDirectory);
       await waitFor(() =>
         expect(
-          screen.queryByRole("button", { name: "common.save" }),
-        ).toBeNull(),
+          screen.getByRole("button", { name: "common.save" }),
+        ).toBeEnabled(),
       );
-      await waitFor(() => expect(directory).toHaveValue(resolvedDirectory));
+      await waitFor(() => expect(directory).toHaveValue("/unsaved/claude"));
 
       fireEvent.click(toggle);
       await waitFor(() =>
         expect(getSettings().skipClaudeOnboarding).toBe(false),
       );
       expect(saves).toHaveLength(2);
-      expect(saves[1].claudeConfigDir).toBe(savedDirectory);
-      expect(directory).toHaveValue(resolvedDirectory);
+      expect(saves[1]).not.toHaveProperty("claudeConfigDir");
+      expect(getSettings().claudeConfigDir).toBe(savedDirectory);
+      expect(directory).toHaveValue("/unsaved/claude");
       expect(syncLive).not.toHaveBeenCalled();
     },
   );
@@ -288,11 +283,7 @@ describe("SettingsPage integration", () => {
         }),
         http.post("http://tauri.local/save_settings", async ({ request }) => {
           const { settings } = (await request.json()) as { settings: Settings };
-          // The backend replaces settings, so an omitted override is cleared.
-          setSettings({
-            ...settings,
-            claudeConfigDir: settings.claudeConfigDir,
-          });
+          setSettings(settings);
           return HttpResponse.json(true);
         }),
         http.post("http://tauri.local/pick_directory", () => {
@@ -336,6 +327,22 @@ describe("SettingsPage integration", () => {
   );
 
   it.each([
+    ["claude", "claudeConfigDir", "settings.browsePlaceholderClaude", "/env/c"],
+    ["codex", "codexConfigDir", "settings.browsePlaceholderCodex", "/env/x"],
+    ["gemini", "geminiConfigDir", "settings.browsePlaceholderGemini", "/env/g"],
+    ["grokbuild", "grokConfigDir", "settings.browsePlaceholderGrok", "/env/k"],
+    [
+      "opencode",
+      "opencodeConfigDir",
+      "settings.browsePlaceholderOpencode",
+      "/env/o",
+    ],
+    [
+      "openclaw",
+      "openclawConfigDir",
+      "settings.browsePlaceholderOpenclaw",
+      "/env/w",
+    ],
     [
       "hermes",
       "hermesConfigDir",
@@ -343,8 +350,9 @@ describe("SettingsPage integration", () => {
       "/env/hermes-home",
     ],
     ["pi", "piConfigDir", "settings.browsePlaceholderPi", "/env/pi-agent"],
+    ["omp", "ompConfigDir", "settings.browsePlaceholderOmp", "/env/omp-agent"],
   ] as const)(
-    "restores backend-resolved %s default after draft discard",
+    "preserves %s directory draft and leaves backend default unchanged after autosave",
     async (targetApp, field, placeholder, backendDefault) => {
       setSettings({ [field]: undefined });
       const saves: Settings[] = [];
@@ -358,7 +366,7 @@ describe("SettingsPage integration", () => {
         http.post("http://tauri.local/save_settings", async ({ request }) => {
           const { settings } = (await request.json()) as { settings: Settings };
           saves.push(settings);
-          setSettings({ ...settings, [field]: settings[field] });
+          setSettings(settings);
           return HttpResponse.json(true);
         }),
       );
@@ -375,11 +383,12 @@ describe("SettingsPage integration", () => {
       );
       await waitFor(() =>
         expect(
-          screen.queryByRole("button", { name: "common.save" }),
-        ).toBeNull(),
+          screen.getByRole("button", { name: "common.save" }),
+        ).toBeEnabled(),
       );
       expect(saves[0][field]).toBeUndefined();
-      await waitFor(() => expect(directory).toHaveValue(backendDefault));
+      expect(getSettings()[field]).toBeUndefined();
+      await waitFor(() => expect(directory).toHaveValue(`/draft/${targetApp}`));
     },
   );
 

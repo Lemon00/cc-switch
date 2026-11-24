@@ -315,7 +315,7 @@
     "supports1mShort": "1 milyon",
     "directModelListTitle": "Model Listesi",
     "directModelListCollapsedHint": "Yerel Claude modeli sağlayıcılarında buna genellikle gerek yoktur. Claude Desktop, /v1/models uç noktasını otomatik sorgular.",
-    "directModelListHint": "Claude Desktop için kullanılabilen Sonnet, Opus ve Haiku modellerini yapılandırın. Claude Desktop’ın /v1/models uç noktasını otomatik sorgulaması için boş bırakın. 1M seçeneğini işaretlemek, 1 milyon token bağlam desteğini bildirir.",
+    "directModelListHint": "Claude Desktop için kullanılabilen Sonnet, Opus ve Haiku modellerini yapılandırın. Doğrudan modda boş bırakırsanız Claude Desktop /v1/models uç noktasını otomatik sorgular; yönlendirme modunda boş liste yalnızca varsayılan Claude model adlarını sunar, sağlayıcının modellerini kullanmak için buraya girin. 1M seçeneğini işaretlemek, 1 milyon token bağlam desteğini bildirir.",
     "directModelInvalid": "Doğrudan modeller Claude Desktop tarafından tanınan Sonnet / Opus / Haiku model kimliklerini kullanmalıdır",
     "addModel": "Model ekle",
     "addRoute": "Model ekle",
@@ -383,6 +383,7 @@
     "openclawModelNotFound": "Seçilen model artık mevcut değil. Yenileyin ve tekrar deneyin.",
     "backfillWarning": "Başarılı bir şekilde geçiş yapıldı ancak değişiklikler önceki sağlayıcıya kaydedilemedi",
     "codexAuthCleanupFailed": "Başarılı bir şekilde geçiş yapıldı ancak auth.json kaldırılamadı; resmi oturum açma kimlik bilgileri hâlâ diskte; bunları kaldırmak için auth.json'u Codex yapılandırma dizininden silin",
+    "omoVariantCleanupFailed": "Geçiş başarılı oldu ancak diğer OMO varyantının yapılandırma dosyası (OMO / OMO Slim) kaldırılamadı; OpenCode her ikisini de yükleyebilir — OpenCode yapılandırma dizininden elle silin",
     "windowControlFailed": "Pencere kontrolü başarısız oldu: {{error}}",
     "officialBlockedByProxy": "Yerel yönlendirme etkinken resmi sağlayıcıya geçilemez. Yönlendirmenin resmi API'lerle kullanılması hesabın yasaklanmasına neden olabilir.",
     "proxyOfficialWarning": "Mevcut sağlayıcı {{name}} resmidir. Yerel yönlendirmeyi kullanmadan önce üçüncü taraf bir sağlayıcıya geçmeyi düşünün."
@@ -947,28 +948,18 @@
         }
       }
     },
-    "configDirectoryOverride": "Yapılandırma Dizinini Geçersiz Kılma (Gelişmiş)",
     "configDirectoryDescription": "WSL gibi ortamlarda Claude Code veya Codex kullanırken, sağlayıcı verilerini ana ortamla tutarlı tutmak için yapılandırma dizinini WSL'deki dizine manuel olarak belirtebilirsiniz.",
     "appConfigDir": "CC Switch Yapılandırma Dizini",
     "appConfigDirDescription": "CC Switch yapılandırması için depolama konumunu özelleştirin (yapılandırma eşitlemeunu etkinleştirmek için bulut eşitleme klasörünü işaretleyin)",
     "browsePlaceholderApp": "örneğin, C:\\Users\\Administrator\\.cc-switch",
-    "claudeConfigDir": "Claude Code Yapılandırma Dizini",
     "claudeConfigDirDescription": "Claude yapılandırma dizinini (settings.json) geçersiz kılın. Özel dizinler .claude.json'u (MCP) dizinin içinde saklar; varsayılan ~/.claude dizini Claude Code'nin bölünmüş ~/.claude.json yolunu korur.",
-    "codexConfigDir": "Codex Yapılandırma Dizini",
     "codexConfigDirDescription": "Codex yapılandırma dizinini geçersiz kılın.",
-    "geminiConfigDir": "Gemini Yapılandırma Dizini",
     "geminiConfigDirDescription": "Gemini yapılandırma dizinini (.env) geçersiz kılın.",
-    "grokConfigDir": "Grok Build Yapılandırma Dizini",
     "grokConfigDirDescription": "Grok Build yapılandırma dizinini (config.toml) geçersiz kılın.",
-    "opencodeConfigDir": "OpenCode Yapılandırma Dizini",
     "opencodeConfigDirDescription": "OpenCode yapılandırma dizinini (opencode.json / opencode.jsonc) geçersiz kılın.",
-    "openclawConfigDir": "OpenClaw Yapılandırma Dizini",
     "openclawConfigDirDescription": "OpenClaw yapılandırma dizinini (openclaw.json) geçersiz kılın.",
-    "hermesConfigDir": "Hermes Yapılandırma Dizini",
     "hermesConfigDirDescription": "Hermes yapılandırma dizinini (config.yaml) geçersiz kılın.",
-    "piConfigDir": "Pi Yapılandırma Dizini",
     "piConfigDirDescription": "Pi yapılandırma dizinini (models.json, talimat dosyaları, istemler, beceriler ve oturumlar) geçersiz kılın.",
-    "ompConfigDir": "Oh My Pi Yapılandırma Dizini",
     "browsePlaceholderClaude": "ör. /home/<your-username>/.claude",
     "browsePlaceholderCodex": "ör. /home/<your-username>/.codex",
     "browsePlaceholderGemini": "ör., /home/<your-username>/.gemini",
@@ -1774,6 +1765,8 @@
     "requestModelLabel": "İstenilen model",
     "modelOneMHeader": "1 milyon beyan edin",
     "modelOneMLabel": "1 milyon",
+    "copilotOneMUnavailable": "Copilot'ta bu modelin 1M sürümü yok",
+    "copilotOneMMismatch": "Copilot'ta {{models}} için 1M sürümü yok: istekler normal modele geri döner, ancak Claude Code bağlamı hâlâ 1M'ye göre planlar; uzun oturumlar sınırı aşabilir. 1M işaretini kaldırın.",
     "fallbackModelLabel": "Varsayılan geri dönüş modeli",
     "fallbackModelHelpDirect": "ANTHROPIC_MODEL'e yazıldı: Claude Code ana modeliyle başlıyor. Arka plan görevleri bunun yerine Haiku katmanını kullanır.",
     "fallbackModelHelp": "Bu modelde Sonnet, Opus, Fable veya Haiku katmanıyla eşleşmeyen istekler yukarı yönde gönderilir.",
@@ -4454,6 +4447,10 @@
     }
   },
   "routingSettings": {
+    "lanToken": "LAN erişim belirteci",
+    "lanTokenHelp": "Uzak istemciler bu belirteci x-cc-switch-token başlığıyla veya API anahtarı olarak (Authorization: Bearer, x-api-key ya da x-goog-api-key) göndermelidir. Resmî oturum bilgileri de gerekiyorsa x-cc-switch-token kullanın. Yalnızca TCP geri döngü bağlantıları muaftır; X-Forwarded-For güvenilir sayılmaz. Güvenilir bir ağ veya TLS tüneli kullanın. Sıfırlama eski belirteci hemen geçersiz kılar. Claude Desktop ayrı ağ geçidi belirtecini kullanmaya devam eder.",
+    "loadLanToken": "Belirteci yükle",
+    "rotateLanToken": "Belirteci sıfırla",
     "service": "Hizmet",
     "serviceName": "Yönlendirme hizmeti",
     "serviceHelp": "Yönlendirme ve Birleştirme modlarında istekler, sağlayıcıya ulaşmadan önce bu makinedeki yönlendirme hizmetinden geçer. Bir uygulama bu modlardan birine girdiğinde veya Claude Desktop model eşlemeyi kullandığında otomatik olarak başlar.",
@@ -4632,7 +4629,7 @@
       "failedTitle": "Bazı uygulamalar okunamadı",
       "filesTitle": "Hangi dosyalar okundu",
       "claudeNote": " (üst düzey mcpServers)",
-      "dshNote": " (başlatılmış her profile yazılır: web, desktop, headless, acp)",
+      "dshNote": " (başlatılmış her profile yazılır: web, desktop, headless, acp. Ana düzeydeki ~/.dsh/cordis.patch.yml okunmaz ve yazılmaz; içindeki MCP sunucularını o dosyada yönetin)",
       "ok": "Anladım"
     },
     "templateLabels": {
@@ -5133,5 +5130,11 @@
       "managedHint": "Hesap Yetkilendirme Merkezi'nde yönetilir; oturumu kapatınca bu kart kendiliğinden kaybolur."
     },
     "deleteSessionHint": "Geçmişin tutarlı kalması için bu oturumu DeepSeek Harness içinde silin."
+  },
+  "unreadableEntry": {
+    "title": "“{{name}}” okunamıyor",
+    "hint": "CC Switch'in daha yeni bir sürümüyle kaydedilmiş olabilir. Veriler olduğu gibi korunur, düzenlenemez veya etkinleştirilemez; güncelleme verileri geri getirir ya da kaydı silebilirsiniz.",
+    "confirmTitle": "Okunamayan kaydı sil",
+    "confirmMessage": "“{{name}}” silinsin mi? Yalnızca bu CC Switch kaydı silinir; uygulamaların kendi yapılandırma dosyaları değişmez."
   }
 }

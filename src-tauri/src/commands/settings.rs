@@ -51,6 +51,7 @@ fn merge_settings_for_save(
     // 客户端地址只经 set_proxy_client_host 保存（它还要重写客户端）；全量保存带的是前端
     // 缓存里的旧值，透传会把刚保存的地址冲掉。
     incoming.proxy_client_host = existing.proxy_client_host.clone();
+    incoming.proxy_lan_token = existing.proxy_lan_token.clone();
     // 轻量模式状态只由进入 / 退出轻量模式时写，前端缓存里的值总是旧的。
     incoming.lightweight_mode = existing.lightweight_mode;
     incoming
@@ -61,94 +62,108 @@ pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
     Ok(crate::settings::get_settings_for_frontend())
 }
 
+#[derive(Default)]
+struct CodexSettingsEffects {
+    stack: bool,
+    preserve_login: bool,
+    unify_history: bool,
+}
+
+impl CodexSettingsEffects {
+    fn between(
+        previous: &crate::settings::AppSettings,
+        next: &crate::settings::AppSettings,
+    ) -> Self {
+        Self {
+            stack: next.codex_stack_classic_tools != previous.codex_stack_classic_tools
+                || next.codex_stack_subagent_model != previous.codex_stack_subagent_model
+                || next.codex_stack_subagent_reasoning_effort
+                    != previous.codex_stack_subagent_reasoning_effort
+                || next.codex_stack_auto_review_model != previous.codex_stack_auto_review_model,
+            preserve_login: next.preserve_codex_official_auth_on_switch
+                != previous.preserve_codex_official_auth_on_switch,
+            unify_history: next.unify_codex_session_history != previous.unify_codex_session_history,
+        }
+    }
+
+    async fn apply(&self, state: &crate::store::AppState) -> Result<(), String> {
+        let mut failures = Vec::new();
+        if self.stack {
+            if let Err(error) = crate::mode::controller::resync_codex_stack_catalog(state).await {
+                failures.push(format!("Codex Stack: {error}"));
+            }
+        }
+        if self.preserve_login {
+            if let Err(error) =
+                crate::services::provider::reapply_current_codex_third_party_live(state)
+            {
+                failures.push(format!("Codex official login: {error}"));
+            }
+        }
+        if self.unify_history {
+            if let Err(error) =
+                crate::services::provider::reapply_current_codex_official_live(state)
+            {
+                failures.push(format!("Codex unified history: {error}"));
+            }
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn save_settings(
     app: tauri::AppHandle,
     state: tauri::State<'_, crate::store::AppState>,
-    settings: crate::settings::AppSettings,
+    settings: serde_json::Value,
 ) -> Result<bool, String> {
-    let existing = crate::settings::get_settings();
-    let merged = merge_settings_for_save(settings, &existing);
-    let unify_codex_changed =
-        merged.unify_codex_session_history != existing.unify_codex_session_history;
+    static SAVE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _save_guard = SAVE_LOCK.lock().await;
+    let (existing, merged) = crate::settings::update_settings_with(|existing| {
+        let patch = settings.as_object().ok_or_else(|| {
+            crate::error::AppError::InvalidInput("Settings must be an object".into())
+        })?;
+        let mut value = serde_json::to_value(existing)
+            .map_err(|source| crate::error::AppError::JsonSerialize { source })?;
+        value.as_object_mut().unwrap().extend(patch.clone());
+        let incoming = serde_json::from_value(value)
+            .map_err(|error| crate::error::AppError::Config(error.to_string()))?;
+        Ok(merge_settings_for_save(incoming, existing))
+    })
+    .map_err(|error| error.to_string())?;
+    let effects = CodexSettingsEffects::between(&existing, &merged);
     let unify_codex_enabled = merged.unify_codex_session_history;
-    // 经典子 agent 开关、聚合子 agent 模型/强度和聚合自动审批模型都只影响 Stack 模式下
-    // 写给 Codex 的内容。
-    let stack_settings_changed = merged.codex_stack_classic_tools
-        != existing.codex_stack_classic_tools
-        || merged.codex_stack_subagent_model != existing.codex_stack_subagent_model
-        || merged.codex_stack_subagent_reasoning_effort
-            != existing.codex_stack_subagent_reasoning_effort
-        || merged.codex_stack_auto_review_model != existing.codex_stack_auto_review_model;
     let tray_style_changed = merged.native_tray_menu != existing.native_tray_menu;
-    let preserve_login_changed = merged.preserve_codex_official_auth_on_switch
-        != existing.preserve_codex_official_auth_on_switch;
-    crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
 
-    // 原生托盘菜单 / 托盘面板当场切换，不用重启。
+    if let Err(error) = effects.apply(state.inner()).await {
+        let mut failures = vec![format!(
+            "设置未生效 (Settings could not be applied): {error}"
+        )];
+        if let Err(rollback_error) = crate::settings::rollback_settings_changes(&existing, &merged)
+        {
+            failures.push(format!(
+                "设置回滚失败 (Settings rollback failed): {rollback_error}"
+            ));
+        }
+        if let Err(recovery_error) = effects.apply(state.inner()).await {
+            failures.push(format!(
+                "客户端配置恢复失败 (Live configuration recovery failed): {recovery_error}"
+            ));
+        }
+        if tray_style_changed {
+            crate::tray::apply_tray_style(&app);
+        }
+        return Err(failures.join("; "));
+    }
+
     if tray_style_changed {
         crate::tray::apply_tray_style(&app);
     }
-
-    // 立即重写，失败时回滚设置，免得界面显示已改好、客户端还是旧的。
-    if stack_settings_changed {
-        if let Err(err) = crate::mode::controller::resync_codex_stack_catalog(state.inner()).await {
-            log::warn!("Codex 聚合设置变更后重写客户端配置失败，回滚设置: {err}");
-            let mut rollback = crate::settings::get_settings();
-            rollback.codex_stack_classic_tools = existing.codex_stack_classic_tools;
-            rollback.codex_stack_subagent_model = existing.codex_stack_subagent_model.clone();
-            rollback.codex_stack_subagent_reasoning_effort =
-                existing.codex_stack_subagent_reasoning_effort.clone();
-            rollback.codex_stack_auto_review_model = existing.codex_stack_auto_review_model.clone();
-            if let Err(rollback_err) = crate::settings::update_settings(rollback) {
-                log::error!("回滚 Codex 聚合设置失败: {rollback_err}");
-            }
-            return Err(format!(
-                "聚合设置未生效（Codex 配置重写失败） (The aggregation setting did not take effect: rewriting the Codex config failed): {err}"
-            ));
-        }
-    }
-
-
-
-    // 「非接管切换时保留官方登录」只影响直连切到第三方：当前就是直连第三方时立即重写，
-    // 不必先切回官方卡再切回来；失败回滚。
-    if preserve_login_changed {
-        if let Err(err) =
-            crate::services::provider::reapply_current_codex_third_party_live(state.inner())
-        {
-            log::warn!("「非接管切换时保留官方登录」变更后重写 Codex 配置失败，回滚设置: {err}");
-            let mut rollback = crate::settings::get_settings();
-            rollback.preserve_codex_official_auth_on_switch =
-                existing.preserve_codex_official_auth_on_switch;
-            if let Err(rollback_err) = crate::settings::update_settings(rollback) {
-                log::error!("回滚「非接管切换时保留官方登录」设置失败: {rollback_err}");
-            }
-            return Err(format!(
-                "「非接管切换时保留官方登录」未生效（Codex 配置重写失败） (\"Keep official login for direct switches\" did not take effect: rewriting the Codex config failed): {err}"
-            ));
-        }
-    }
-    // 统一会话开关变更时立即重写当前官方 Codex 供应商的 live 配置，
-    // 不必等下一次切换才生效。
-    if unify_codex_changed {
-        // live 重写失败时回滚设置并把保存整体报失败：若设置保持已切换状态，
-        // live 仍跑旧桶，后续的历史迁移/还原会让会话再次分裂（开启=历史
-        // 迁走而新会话仍写 openai 桶；关闭=会话还原而 live 仍写 custom）。
-        // 报错让前端 saved=false 短路还原；回滚是整次保存的事务语义
-        // （本开关的保存只携带开关相关字段）。
-        if let Err(err) =
-            crate::services::provider::reapply_current_codex_official_live(state.inner())
-        {
-            log::warn!("统一 Codex 会话历史开关变更后重写 live 配置失败，回滚设置: {err}");
-            if let Err(rollback_err) = crate::settings::update_settings(existing) {
-                log::error!("回滚统一会话开关设置失败: {rollback_err}");
-            }
-            return Err(format!(
-                "统一 Codex 会话历史开关未生效（live 配置重写失败）: {err}"
-            ));
-        }
-
+    if effects.unify_history {
         if unify_codex_enabled {
             // 后台执行存量迁移（openai 桶 → custom 桶；仅当用户勾选了迁入既有
             // 会话，函数内部自门控）。大会话目录可能要读数秒，不能阻塞设置保存；
@@ -239,6 +254,7 @@ pub async fn get_codex_sessions_disk_usage() -> Result<u64, String> {
         crate::services::codex_session_compression::sessions_disk_usage,
     )
     .await
+    .map_err(|e| e.to_string())?
     .map_err(|e| e.to_string())
 }
 
@@ -425,6 +441,20 @@ pub async fn set_auto_launch(enabled: bool) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     use super::merge_settings_for_save;
+
+    #[test]
+    fn combined_settings_patch_plans_all_affected_live_updates() {
+        let existing = crate::settings::AppSettings::default();
+        let mut changed = existing.clone();
+        changed.codex_stack_classic_tools = !existing.codex_stack_classic_tools;
+        changed.preserve_codex_official_auth_on_switch =
+            !existing.preserve_codex_official_auth_on_switch;
+        changed.unify_codex_session_history = !existing.unify_codex_session_history;
+        let effects = super::CodexSettingsEffects::between(&existing, &changed);
+        assert!(effects.stack && effects.preserve_login && effects.unify_history);
+        let unchanged = super::CodexSettingsEffects::between(&changed, &changed);
+        assert!(!unchanged.stack && !unchanged.preserve_login && !unchanged.unify_history);
+    }
     use crate::settings::{
         AppSettings, CodexOfficialHistoryUnifyMigration, CodexProviderTemplateMigration,
         CodexThirdPartyHistoryProviderBucketMigration, LocalMigrations, S3SyncSettings,
@@ -798,7 +828,6 @@ pub async fn set_optimizer_config(
         .map_err(|e| e.to_string())?;
     Ok(true)
 }
-
 
 #[tauri::command]
 pub async fn get_copilot_optimizer_config(

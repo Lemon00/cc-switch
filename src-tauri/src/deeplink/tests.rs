@@ -30,12 +30,14 @@ impl TestHomeGuard {
         env::set_var("USERPROFILE", dir.path());
         env::set_var("CC_SWITCH_TEST_HOME", dir.path());
 
-        Self {
+        let guard = Self {
             _dir: dir,
             original_home,
             original_userprofile,
             original_test_home,
-        }
+        };
+        crate::settings::reload_settings().expect("load isolated settings");
+        guard
     }
 }
 
@@ -53,6 +55,7 @@ impl Drop for TestHomeGuard {
             Some(value) => env::set_var("HOME", value),
             None => env::remove_var("HOME"),
         }
+        let _ = crate::settings::reload_settings();
     }
 }
 
@@ -1036,7 +1039,7 @@ fn test_import_prompt_allows_space_in_base64_content() {
 
     let prompt_id = import_prompt_from_deeplink(&state, request.clone()).expect("import prompt");
 
-    let prompts = state.db.get_prompts("codex").expect("get prompts");
+    let prompts = state.db.get_prompts(&AppType::Codex).expect("get prompts");
     let prompt = prompts.get(&prompt_id).expect("prompt saved");
 
     assert_eq!(prompt.content, ">>>");
@@ -1783,7 +1786,11 @@ fn test_pi_link_with_the_toggle_off_is_saved_without_touching_models_json() {
 
     let (state, id) = import_pi_link(Some(false));
 
-    assert!(state.db.get_provider_by_id(&id, "pi").unwrap().is_some());
+    assert!(state
+        .db
+        .get_provider_by_id(&id, &AppType::Pi)
+        .unwrap()
+        .is_some());
     assert!(!crate::pi_config::pi_provider_exists(&id).unwrap());
 }
 
@@ -1916,7 +1923,7 @@ fn test_first_switch_mode_provider_stays_inactive_when_the_toggle_is_off() {
 
         assert!(state
             .db
-            .get_provider_by_id(&id, "claude")
+            .get_provider_by_id(&id, &AppType::Claude)
             .unwrap()
             .is_some());
         let current = crate::mode::current::provider_for(
@@ -1989,7 +1996,11 @@ fn test_import_stores_a_valid_custom_icon_and_rejects_a_broken_one() {
     let db = Arc::new(Database::memory().expect("create memory db"));
     let state = AppState::new(db);
     let id = super::import_provider_from_deeplink(&state, request).expect("import provider");
-    let stored = state.db.get_provider_by_id(&id, "claude").unwrap().unwrap();
+    let stored = state
+        .db
+        .get_provider_by_id(&id, &AppType::Claude)
+        .unwrap()
+        .unwrap();
     assert_eq!(stored.icon.as_deref(), Some(icon.as_str()));
 
     // 截断的 PNG：保存校验拒绝
@@ -2177,6 +2188,108 @@ fn agy_deeplink_mcp_import_merges_apps_and_writes_native_config() {
 
 #[test]
 #[serial_test::serial]
+fn deeplink_mcp_reads_existing_servers_after_acquiring_switch_locks() {
+    let _home = TestHomeGuard::new();
+    let state = Arc::new(AppState::new(Arc::new(Database::memory().unwrap())));
+    let config = BASE64_URL_SAFE_NO_PAD.encode(r#"{"mcpServers":{"fixture":{"command":"echo"}}}"#);
+    let request = parse_deeplink_url(&format!(
+        "ccswitch://v1/import?resource=mcp&apps=codex&config={config}"
+    ))
+    .unwrap();
+    super::mcp::import_mcp_from_deeplink(&state, request.clone()).unwrap();
+    let guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app("codex"));
+    let (started_send, started_recv) = std::sync::mpsc::channel();
+    let (finished_send, finished_recv) = std::sync::mpsc::channel();
+    let importing_state = state.clone();
+    let importing = std::thread::spawn(move || {
+        started_send.send(()).unwrap();
+        let result = super::mcp::import_mcp_from_deeplink(&importing_state, request);
+        finished_send.send(result).unwrap();
+    });
+    started_recv
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    assert!(finished_recv
+        .recv_timeout(std::time::Duration::from_millis(100))
+        .is_err());
+    let mut server = state.db.get_all_mcp_servers().unwrap()["fixture"].clone();
+    server.name = "concurrent edit".into();
+    server.apps.gemini = true;
+    state.db.save_mcp_server(&server).unwrap();
+    drop(guard);
+    let result = finished_recv
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap()
+        .unwrap();
+    importing.join().unwrap();
+    assert_eq!(result.imported_count, 1);
+    let rows = state.db.get_all_mcp_servers().unwrap();
+    assert_eq!(rows["fixture"].name, "concurrent edit");
+    assert!(rows["fixture"].apps.gemini);
+}
+
+#[test]
+#[serial_test::serial]
+fn repeated_deeplink_prompts_use_unique_ids_and_second_timestamps() {
+    let _home = TestHomeGuard::new();
+    let state = AppState::new(Arc::new(Database::memory().unwrap()));
+    let content = BASE64_URL_SAFE_NO_PAD.encode("instructions");
+    let request = parse_deeplink_url(&format!(
+        "ccswitch://v1/import?resource=prompt&app=codex&name=Repeated&content={content}"
+    ))
+    .unwrap();
+    let first_id = import_prompt_from_deeplink(&state, request.clone()).unwrap();
+    let second_id = import_prompt_from_deeplink(&state, request).unwrap();
+    assert_ne!(first_id, second_id);
+    let prompts = state.db.get_prompts(&AppType::Codex).unwrap();
+    assert_eq!(prompts.len(), 2);
+    let now = chrono::Utc::now().timestamp();
+    for prompt in prompts.values() {
+        assert_eq!(prompt.content, "instructions");
+        assert!((now - prompt.created_at.unwrap()).abs() < 60);
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn enabled_pi_deeplink_prompt_uses_native_activation() {
+    let _home = TestHomeGuard::new();
+    let _pi = crate::pi_config::test_support::TestAgentDir::new();
+    let state = AppState::new(Arc::new(Database::memory().unwrap()));
+    let content = BASE64_URL_SAFE_NO_PAD.encode("Pi instructions");
+    let request = parse_deeplink_url(&format!(
+        "ccswitch://v1/import?resource=prompt&app=pi&name=Pi&content={content}&enabled=true"
+    ))
+    .unwrap();
+    let id = import_prompt_from_deeplink(&state, request).unwrap();
+    let prompts = crate::services::PromptService::get_prompts(&state, AppType::Pi).unwrap();
+    assert!(prompts[&id].enabled);
+    assert_eq!(
+        crate::services::PromptService::get_current_file_content(AppType::Pi).unwrap(),
+        Some("Pi instructions".into())
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn enabled_deeplink_prompt_failure_does_not_leave_a_disabled_record() {
+    let _home = TestHomeGuard::new();
+    let state = AppState::new(Arc::new(Database::memory().unwrap()));
+    let path = crate::prompt_files::prompt_file_path(&AppType::Codex).unwrap();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, [0xff]).unwrap();
+    let content = BASE64_URL_SAFE_NO_PAD.encode("instructions");
+    let request = parse_deeplink_url(&format!(
+        "ccswitch://v1/import?resource=prompt&app=codex&name=Broken&content={content}&enabled=true"
+    ))
+    .unwrap();
+    assert!(import_prompt_from_deeplink(&state, request).is_err());
+    assert!(state.db.get_prompts(&AppType::Codex).unwrap().is_empty());
+    assert_eq!(std::fs::read(&path).unwrap(), [0xff]);
+}
+
+#[test]
+#[serial_test::serial]
 fn agy_deeplink_prompt_import_respects_activation() {
     let _home = TestHomeGuard::new();
     let state = AppState::new(Arc::new(Database::memory().unwrap()));
@@ -2186,7 +2299,7 @@ fn agy_deeplink_prompt_import_respects_activation() {
         let request = parse_deeplink_url(&format!("ccswitch://v1/import?resource=prompt&app=agy&name=Test-{enabled}&content={content}&enabled={enabled}")).unwrap();
         let id = import_prompt_from_deeplink(&state, request).unwrap();
         assert_eq!(
-            state.db.get_prompts("agy").unwrap()[&id].content,
+            state.db.get_prompts(&AppType::Agy).unwrap()[&id].content,
             "Agy instructions"
         );
         assert_eq!(path.exists(), enabled);
@@ -2217,7 +2330,11 @@ fn agy_deeplink_enabled_key_provider_stays_out_of_live_files() {
     // to agy started from "Open Terminal" with its private profile.
     assert!(!crate::agy_config::settings_path().exists());
     assert!(!crate::config::get_home_dir().join(".gemini/.env").exists());
-    let row = state.db.get_provider_by_id(&id, "agy").unwrap().unwrap();
+    let row = state
+        .db
+        .get_provider_by_id(&id, &AppType::Agy)
+        .unwrap()
+        .unwrap();
     let launch = crate::services::provider::agy_direct::terminal_launch(&row).unwrap();
     assert_eq!(
         launch.env[0],

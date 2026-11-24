@@ -1323,16 +1323,12 @@ function App() {
 
   const handleImportSuccess = async () => {
     try {
-      await queryClient.invalidateQueries({
-        queryKey: ["providers"],
-        refetchType: "all",
-      });
-      await queryClient.refetchQueries({
-        queryKey: ["providers"],
-        type: "all",
-      });
+      // SQL 恢复会替换 providers / skills / MCP / prompts / settings 等；
+      // 不能只刷 providers，否则 staleTime: Infinity 的查询会继续展示导入前数据。
+      await queryClient.invalidateQueries({ refetchType: "all" });
+      await queryClient.refetchQueries({ type: "all" });
     } catch (error) {
-      console.error("[App] Failed to refresh providers after import", error);
+      console.error("[App] Failed to refresh queries after import", error);
       await refetch();
     }
     try {
@@ -1346,9 +1342,7 @@ function App() {
     const visibleCount = Object.values(visibleApps).filter(Boolean).length;
     if (visibleCount <= 1) return;
     try {
-      const current = await settingsApi.get();
       await settingsApi.save({
-        ...current,
         visibleApps: { ...visibleApps, [activeApp]: false },
       });
       await queryClient.invalidateQueries({ queryKey: ["settings"] });

@@ -321,7 +321,7 @@
     "supports1mShort": "1M",
     "directModelListTitle": "Model List",
     "directModelListCollapsedHint": "Native Claude model providers usually do not need this. Claude Desktop will fetch /v1/models automatically.",
-    "directModelListHint": "Configure the Sonnet, Opus, and Haiku models available to Claude Desktop. Leave this empty to let Claude Desktop fetch /v1/models automatically. Checking 1M declares 1M context support.",
+    "directModelListHint": "Configure the Sonnet, Opus, and Haiku models available to Claude Desktop. In direct mode, leave this empty to let Claude Desktop fetch /v1/models automatically; in route mode, an empty list only offers the default Claude model names, so fill it in to use the provider's models. Checking 1M declares 1M context support.",
     "directModelInvalid": "Direct models must use Claude Desktop-recognized Sonnet / Opus / Haiku model IDs",
     "addModel": "Add model",
     "addRoute": "Add model",
@@ -389,6 +389,7 @@
     "openclawModelNotFound": "The selected model no longer exists. Refresh and try again.",
     "backfillWarning": "Switched successfully, but failed to save changes back to the previous provider",
     "codexAuthCleanupFailed": "Switched successfully, but auth.json could not be removed — the official login credentials are still on disk; delete auth.json from the Codex config directory to remove them",
+    "omoVariantCleanupFailed": "Switched successfully, but the other OMO variant's config file (OMO / OMO Slim) could not be removed, so OpenCode may load both; delete it from the OpenCode config directory",
     "windowControlFailed": "Window control failed: {{error}}",
     "officialBlockedByProxy": "Cannot switch to official provider while local routing is active. Using routing with official APIs may cause account bans.",
     "proxyOfficialWarning": "Current provider {{name}} is official. Consider switching to a third-party provider before using local routing."
@@ -962,28 +963,18 @@
         }
       }
     },
-    "configDirectoryOverride": "Configuration Directory Override (Advanced)",
     "configDirectoryDescription": "When using Claude Code or Codex in environments like WSL, you can manually specify the configuration directory to the one in WSL to keep provider data consistent with the main environment.",
     "appConfigDir": "CC Switch Configuration Directory",
     "appConfigDirDescription": "Customize the storage location for CC Switch configuration (point to cloud sync folder to enable config sync)",
     "browsePlaceholderApp": "e.g., C:\\Users\\Administrator\\.cc-switch",
-    "claudeConfigDir": "Claude Code Configuration Directory",
     "claudeConfigDirDescription": "Override Claude configuration directory (settings.json). Custom directories store .claude.json (MCP) inside the directory; the default ~/.claude directory keeps Claude Code's split ~/.claude.json path.",
-    "codexConfigDir": "Codex Configuration Directory",
     "codexConfigDirDescription": "Override Codex configuration directory.",
-    "geminiConfigDir": "Gemini Configuration Directory",
     "geminiConfigDirDescription": "Override Gemini configuration directory (.env).",
-    "grokConfigDir": "Grok Build Configuration Directory",
     "grokConfigDirDescription": "Override Grok Build configuration directory (config.toml).",
-    "opencodeConfigDir": "OpenCode Configuration Directory",
     "opencodeConfigDirDescription": "Override OpenCode configuration directory (opencode.json / opencode.jsonc).",
-    "openclawConfigDir": "OpenClaw Configuration Directory",
     "openclawConfigDirDescription": "Override OpenClaw configuration directory (openclaw.json).",
-    "hermesConfigDir": "Hermes Configuration Directory",
     "hermesConfigDirDescription": "Override Hermes configuration directory (config.yaml).",
-    "piConfigDir": "Pi Configuration Directory",
     "piConfigDirDescription": "Override the Pi configuration directory (models.json, instruction files, prompts, skills, and sessions).",
-    "ompConfigDir": "Oh My Pi Configuration Directory",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
@@ -1798,6 +1789,8 @@
     "requestModelLabel": "Requested model",
     "modelOneMHeader": "Declare 1M",
     "modelOneMLabel": "1M",
+    "copilotOneMUnavailable": "Copilot has no 1M version of this model",
+    "copilotOneMMismatch": "Copilot has no 1M version of {{models}}: requests fall back to the regular model, but Claude Code still plans for a 1M context, so long sessions may exceed the limit. Uncheck 1M.",
     "fallbackModelLabel": "Default fallback model",
     "fallbackModelHelpDirect": "Written to ANTHROPIC_MODEL: the main model Claude Code starts with. Background tasks use the Haiku tier instead.",
     "fallbackModelHelp": "Requests that don't map to the Sonnet, Opus, Fable, or Haiku tier are sent upstream with this model.",
@@ -4499,6 +4492,10 @@
     }
   },
   "routingSettings": {
+    "lanToken": "LAN access token",
+    "lanTokenHelp": "Remote clients must send this token in x-cc-switch-token or as an API key (Authorization: Bearer, x-api-key, or x-goog-api-key). Use x-cc-switch-token when the client also needs its official login credentials. Only TCP loopback peers are exempt; X-Forwarded-For is not trusted. Use a trusted network or TLS tunnel. Resetting immediately revokes the old token. Claude Desktop still uses its separate gateway token.",
+    "loadLanToken": "Load token",
+    "rotateLanToken": "Reset token",
     "service": "Service",
     "serviceName": "Routing service",
     "serviceHelp": "In routing and Aggregation modes, requests go through the routing service on this machine before reaching the provider. It starts automatically when an app enters either mode.",
@@ -4678,7 +4675,7 @@
       "failedTitle": "Some apps couldn't be read",
       "filesTitle": "Which files were read",
       "claudeNote": " (top-level mcpServers)",
-      "dshNote": " (written to every initialized profile: web, desktop, headless, acp)",
+      "dshNote": " (written to every initialized profile: web, desktop, headless, acp. The home-level ~/.dsh/cordis.patch.yml is neither read nor written; manage the MCP servers in it there)",
       "ok": "Got it"
     },
     "templateLabels": {
@@ -5189,5 +5186,11 @@
       "managedHint": "This account is managed in the Auth Center; the card disappears after you sign out."
     },
     "deleteSessionHint": "Delete this session in DeepSeek Harness to keep its history consistent."
+  },
+  "unreadableEntry": {
+    "title": "“{{name}}” can't be read",
+    "hint": "It may have been saved by a newer version of CC Switch. The stored data is kept as is and can't be edited or enabled; upgrading restores it, or you can delete it.",
+    "confirmTitle": "Delete unreadable entry",
+    "confirmMessage": "Delete “{{name}}”? Only this CC Switch record is removed; the apps' own config files are not changed."
   }
 }

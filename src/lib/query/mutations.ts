@@ -483,10 +483,10 @@ export const useSaveSettingsMutation = () => {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (settings: Settings) => {
+    mutationFn: async (settings: Partial<Settings>) => {
       await settingsApi.save(settings);
     },
-    onSuccess: async () => {
+    onSettled: async () => {
       await queryClient.invalidateQueries({ queryKey: ["settings"] });
       await queryClient.invalidateQueries({
         queryKey: ["opencode", "runtime-models"],

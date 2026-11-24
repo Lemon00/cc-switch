@@ -198,9 +198,7 @@ export function WhatsNewNotice() {
     setClosed(true);
     if (!settings || !currentVersion) return;
     try {
-      const { webdavSync: _, ...rest } = settings;
       await settingsApi.save({
-        ...rest,
         whatsNewSeenVersion: markSeen(
           settings.whatsNewSeenVersion,
           currentVersion,

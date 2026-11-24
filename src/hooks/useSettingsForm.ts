@@ -2,8 +2,27 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSettingsQuery } from "@/lib/query";
 import type { Settings } from "@/types";
+import {
+  DIRECTORY_APPS,
+  sanitizeDir,
+  sanitizeDirectoryFields,
+} from "@/config/directoryApps";
 
 type Language = "zh" | "zh-TW" | "en" | "ja" | "tr";
+
+function sameSettingValue(
+  key: keyof Settings,
+  left: unknown,
+  right: unknown,
+): boolean {
+  if (DIRECTORY_APPS.some(({ field }) => field === key)) {
+    return (
+      sanitizeDir(left as string | undefined) ===
+      sanitizeDir(right as string | undefined)
+    );
+  }
+  return JSON.stringify(left) === JSON.stringify(right);
+}
 
 export type SettingsFormState = Omit<Settings, "language"> & {
   language: Language;
@@ -48,12 +67,6 @@ const isSupportedLanguage = (lang?: string | null): boolean => {
   );
 };
 
-const sanitizeDir = (value?: string | null): string | undefined => {
-  if (!value) return undefined;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-};
-
 export interface UseSettingsFormResult {
   settings: SettingsFormState | null;
   isLoading: boolean;
@@ -81,6 +94,8 @@ export function useSettingsForm(): UseSettingsFormResult {
   );
 
   const initialLanguageRef = useRef<Language>("zh");
+  const savedSettingsRef = useRef<SettingsFormState | null>(null);
+  const draftsRef = useRef(new Map<keyof SettingsFormState, unknown>());
 
   const readPersistedLanguage = useCallback((): Language => {
     if (typeof window !== "undefined") {
@@ -123,23 +138,37 @@ export function useSettingsForm(): UseSettingsFormResult {
         data.preserveCodexOfficialAuthOnSwitch ?? false,
       unifyCodexSessionHistory: data.unifyCodexSessionHistory ?? false,
       codexStackClassicTools: data.codexStackClassicTools ?? true,
-      claudeConfigDir: sanitizeDir(data.claudeConfigDir),
-      codexConfigDir: sanitizeDir(data.codexConfigDir),
-      geminiConfigDir: sanitizeDir(data.geminiConfigDir),
-      grokConfigDir: sanitizeDir(data.grokConfigDir),
-      opencodeConfigDir: sanitizeDir(data.opencodeConfigDir),
-      openclawConfigDir: sanitizeDir(data.openclawConfigDir),
-      piConfigDir: sanitizeDir(data.piConfigDir),
+      ...sanitizeDirectoryFields(data),
       language: normalizedLanguage,
     };
 
-    setSettingsState(normalized);
+    for (const [key, value] of draftsRef.current) {
+      if (sameSettingValue(key, value, normalized[key])) {
+        draftsRef.current.delete(key);
+      }
+    }
+    const refreshed = {
+      ...normalized,
+      ...Object.fromEntries(draftsRef.current),
+    };
+    savedSettingsRef.current = normalized;
+    setSettingsState(refreshed);
     initialLanguageRef.current = normalizedLanguage;
-    syncLanguage(normalizedLanguage);
+    syncLanguage(refreshed.language);
   }, [data, readPersistedLanguage, syncLanguage]);
 
   const updateSettings = useCallback(
     (updates: Partial<SettingsFormState>) => {
+      for (const [field, rawValue] of Object.entries(updates)) {
+        const key = field as keyof SettingsFormState;
+        const value =
+          key === "language" ? normalizeLanguage(rawValue as string) : rawValue;
+        if (sameSettingValue(key, value, savedSettingsRef.current?.[key])) {
+          draftsRef.current.delete(key);
+        } else {
+          draftsRef.current.set(key, value);
+        }
+      }
       setSettingsState((prev) => {
         const base =
           prev ??
@@ -193,16 +222,12 @@ export function useSettingsForm(): UseSettingsFormResult {
           serverData.preserveCodexOfficialAuthOnSwitch ?? false,
         unifyCodexSessionHistory: serverData.unifyCodexSessionHistory ?? false,
         codexStackClassicTools: serverData.codexStackClassicTools ?? true,
-        claudeConfigDir: sanitizeDir(serverData.claudeConfigDir),
-        codexConfigDir: sanitizeDir(serverData.codexConfigDir),
-        geminiConfigDir: sanitizeDir(serverData.geminiConfigDir),
-        grokConfigDir: sanitizeDir(serverData.grokConfigDir),
-        opencodeConfigDir: sanitizeDir(serverData.opencodeConfigDir),
-        openclawConfigDir: sanitizeDir(serverData.openclawConfigDir),
-        piConfigDir: sanitizeDir(serverData.piConfigDir),
+        ...sanitizeDirectoryFields(serverData),
         language: normalizedLanguage,
       };
 
+      draftsRef.current.clear();
+      savedSettingsRef.current = normalized;
       setSettingsState(normalized);
       syncLanguage(initialLanguageRef.current);
     },

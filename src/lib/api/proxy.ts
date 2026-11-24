@@ -14,6 +14,9 @@ import type {
 } from "@/types/proxy";
 
 export const proxyApi = {
+  async getLanToken(rotate = false): Promise<string> {
+    return invoke("get_proxy_lan_token", { rotate });
+  },
   // ========== 代理服务器控制 API ==========
 
   // 启动代理服务器

@@ -33,9 +33,8 @@ const EFFORT = "mode.stackSettings.subagentEffort";
 const CLASSIC = "settings.codexStackClassicSubagents";
 const AUTO_REVIEW = "mode.stackSettings.autoReviewModel";
 
-// 真实的 save_settings 整份反序列化：前端不带的键（undefined）就是没设。MSW 默认是合并
-// 写入，这里按真实语义把两个子代理键整体替换，并记下每次保存的请求体。
-let saved: Settings[] = [];
+type SettingsPatch = { [Key in keyof Settings]?: Settings[Key] | null };
+let saved: SettingsPatch[] = [];
 
 function renderSheet(
   settings: Partial<Settings> = {},
@@ -46,16 +45,10 @@ function renderSheet(
   server.use(
     http.post(`${TAURI_ENDPOINT}/save_settings`, async ({ request }) => {
       const { settings: next } = (await request.json()) as {
-        settings: Settings;
+        settings: SettingsPatch;
       };
       saved.push(next);
-      setSettings({
-        ...next,
-        codexStackSubagentModel: next.codexStackSubagentModel,
-        codexStackSubagentReasoningEffort:
-          next.codexStackSubagentReasoningEffort,
-        codexStackAutoReviewModel: next.codexStackAutoReviewModel,
-      });
+      setSettings(next);
       return HttpResponse.json(true);
     }),
   );
@@ -175,10 +168,9 @@ describe("StackSettingsSheet", () => {
       expect(getSettings().codexStackSubagentModel).toBeUndefined(),
     );
     expect(getSettings().codexStackSubagentReasoningEffort).toBeUndefined();
-    // 两个键都不带：后端按缺省（不设）处理
     const last = saved.at(-1)!;
-    expect("codexStackSubagentModel" in last).toBe(false);
-    expect("codexStackSubagentReasoningEffort" in last).toBe(false);
+    expect(last.codexStackSubagentModel).toBeNull();
+    expect(last.codexStackSubagentReasoningEffort).toBeNull();
   });
 
   it("moves the classic sub-agent toggle here and warns when config.toml forces v2", async () => {
@@ -239,7 +231,7 @@ describe("StackSettingsSheet", () => {
         "ccs-deepseek/deepseek-v4-flash",
       ),
     );
-    // 子代理设置原样带着
+    expect(saved.at(-1)).not.toHaveProperty("codexStackSubagentModel");
     expect(getSettings().codexStackSubagentModel).toBe("ccs-kimi/kimi-k3");
 
     await user.click(screen.getByRole("combobox", { name: AUTO_REVIEW }));
@@ -251,7 +243,7 @@ describe("StackSettingsSheet", () => {
     await waitFor(() =>
       expect(getSettings().codexStackAutoReviewModel).toBeUndefined(),
     );
-    expect("codexStackAutoReviewModel" in saved.at(-1)!).toBe(false);
+    expect(saved.at(-1)!.codexStackAutoReviewModel).toBeNull();
   });
 
   it("explains a saved Auto Review model that is no longer aggregated", async () => {

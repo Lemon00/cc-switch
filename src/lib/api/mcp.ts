@@ -5,6 +5,7 @@ import type {
   McpServerSpec,
   McpServersMap,
   McpStatus,
+  UnreadableEntry,
 } from "@/types";
 import type { AppId } from "./types";
 
@@ -115,6 +116,11 @@ export const mcpApi = {
    */
   async getAllServers(): Promise<McpServersMap> {
     return await invoke("get_mcp_servers");
+  },
+
+  /** 库里读不出来的 MCP 服务器：不在 getAllServers 里，只能删除 */
+  async getUnreadableServers(): Promise<UnreadableEntry[]> {
+    return await invoke("get_unreadable_mcp_servers");
   },
 
   /**

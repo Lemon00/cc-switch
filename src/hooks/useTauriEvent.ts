@@ -19,7 +19,16 @@ export function useTauriEvent<P>(
     void (async () => {
       try {
         const off = await listen<P>(eventName, (event) => {
-          void handlerRef.current(event.payload);
+          if (disposed) return;
+          try {
+            void Promise.resolve(handlerRef.current(event.payload)).catch(
+              (error) => {
+                console.error(`Failed to handle ${eventName} event`, error);
+              },
+            );
+          } catch (error) {
+            console.error(`Failed to handle ${eventName} event`, error);
+          }
         });
         if (disposed) {
           off();

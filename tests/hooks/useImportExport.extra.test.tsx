@@ -61,6 +61,35 @@ describe("useImportExport Hook (edge cases)", () => {
     expect(toastErrorMock).not.toHaveBeenCalled();
   });
 
+  it.each([true, false])(
+    "keeps backend warnings visible when later sync succeeds: %s",
+    async (syncSucceeds) => {
+      openFileDialogMock.mockResolvedValue("/config.json");
+      importConfigMock.mockResolvedValue({
+        success: true,
+        warning: "Prompt sync failed",
+      });
+      if (syncSucceeds)
+        syncCurrentProvidersLiveMock.mockResolvedValue(undefined);
+      else
+        syncCurrentProvidersLiveMock.mockRejectedValue(
+          new Error("Provider sync failed"),
+        );
+      const onImportSuccess = vi.fn();
+      const { result } = renderHook(() => useImportExport({ onImportSuccess }));
+      await act(async () => {
+        await result.current.selectImportFile();
+      });
+      await act(async () => {
+        await result.current.importConfig();
+      });
+      expect(result.current.status).toBe("partial-success");
+      expect(toastWarningMock).toHaveBeenCalledWith("Prompt sync failed");
+      expect(toastSuccessMock).not.toHaveBeenCalled();
+      expect(onImportSuccess).toHaveBeenCalledOnce();
+    },
+  );
+
   it("resetStatus clears errors but preserves selected file", async () => {
     openFileDialogMock.mockResolvedValue("/config.json");
     importConfigMock.mockResolvedValue({ success: false, message: "broken" });

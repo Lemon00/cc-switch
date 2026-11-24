@@ -15,6 +15,17 @@ export const hasUnsavedChanges = () => dirtyEditors.size > 0;
 /** 用户确认放弃后清空登记，随后的导航不再重复询问 */
 export const discardUnsavedChanges = () => dirtyEditors.clear();
 
+export function useUnsavedChangesState(dirty: boolean) {
+  const token = useRef({}).current;
+  useEffect(() => {
+    if (dirty) dirtyEditors.add(token);
+    else dirtyEditors.delete(token);
+    return () => {
+      dirtyEditors.delete(token);
+    };
+  }, [dirty, token]);
+}
+
 /**
  * 这些控件被点一下就算改了：勾选、开关、单选、下拉选项、分段按钮。
  * 只切换显示的控件（显示密钥、表单 / JSON）放在 `data-unsaved-ignore` 里排除。

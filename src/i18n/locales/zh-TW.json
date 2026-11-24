@@ -321,7 +321,7 @@
     "supports1mShort": "1M",
     "directModelListTitle": "模型清單",
     "directModelListCollapsedHint": "原生 Claude 模型供應商通常不需填寫，Claude Desktop 會自動讀取 /v1/models。",
-    "directModelListHint": "設定 Claude Desktop 可用的 Sonnet、Opus、Haiku 模型。留空時 Claude Desktop 會自動讀取 /v1/models；勾選 1M 會聲明支援 1M 上下文。",
+    "directModelListHint": "設定 Claude Desktop 可用的 Sonnet、Opus、Haiku 模型。直連時留空，Claude Desktop 會自動讀取 /v1/models；路由模式下留空只提供預設的 Claude 模型名稱，要使用供應商的模型請在這裡填寫。勾選 1M 會聲明支援 1M 上下文。",
     "directModelInvalid": "直連模型必須使用 Claude Desktop 可識別的 Sonnet / Opus / Haiku 模型名稱",
     "addModel": "新增模型",
     "addRoute": "新增模型",
@@ -389,6 +389,7 @@
     "openclawModelNotFound": "所選模型已不存在，請重新整理後再試",
     "backfillWarning": "切換成功，但舊供應商設定回填失敗，您手動修改的設定可能未儲存",
     "codexAuthCleanupFailed": "切換成功，但未能刪除 auth.json，官方登入憑證仍留在磁碟上；如需徹底移除請手動刪除 Codex 設定目錄中的 auth.json",
+    "omoVariantCleanupFailed": "切換成功，但未能刪除另一個 OMO 變體（OMO / OMO Slim）的設定檔，OpenCode 可能同時載入兩者；請在 OpenCode 設定目錄中手動刪除它",
     "windowControlFailed": "視窗控制失敗：{{error}}",
     "officialBlockedByProxy": "本地路由模式下不能切換至官方供應商，使用路由存取官方 API 可能導致帳號被封鎖",
     "proxyOfficialWarning": "目前供應商 {{name}} 是官方供應商，建議切換至第三方供應商後再使用本地路由"
@@ -962,28 +963,18 @@
         }
       }
     },
-    "configDirectoryOverride": "設定目錄覆寫（進階）",
     "configDirectoryDescription": "在 WSL 等環境使用 Claude Code 或 Codex 的時候，可手動指定為 WSL 裡的設定目錄，供應商資料與主環境保持一致。",
     "appConfigDir": "CC Switch 設定目錄",
     "appConfigDirDescription": "自訂 CC Switch 的設定儲存位置（指定至雲端同步資料夾即可雲端同步設定）",
     "browsePlaceholderApp": "例如：C:\\Users\\Administrator\\.cc-switch",
-    "claudeConfigDir": "Claude Code 設定目錄",
     "claudeConfigDirDescription": "覆寫 Claude 設定目錄 (settings.json)。真正自訂目錄會在目錄內存放 Claude MCP 的 .claude.json；預設 ~/.claude 目錄仍使用 Claude 預設的 ~/.claude.json。",
-    "codexConfigDir": "Codex 設定目錄",
     "codexConfigDirDescription": "覆寫 Codex 設定目錄。",
-    "geminiConfigDir": "Gemini 設定目錄",
     "geminiConfigDirDescription": "覆寫 Gemini 設定目錄 (.env)。",
-    "grokConfigDir": "Grok Build 設定目錄",
     "grokConfigDirDescription": "覆寫 Grok Build 設定目錄 (config.toml)。",
-    "opencodeConfigDir": "OpenCode 設定目錄",
     "opencodeConfigDirDescription": "覆寫 OpenCode 設定目錄 (opencode.json / opencode.jsonc)。",
-    "openclawConfigDir": "OpenClaw 設定目錄",
     "openclawConfigDirDescription": "覆寫 OpenClaw 設定目錄 (openclaw.json)。",
-    "hermesConfigDir": "Hermes 設定目錄",
     "hermesConfigDirDescription": "覆寫 Hermes 設定目錄 (config.yaml)。",
-    "piConfigDir": "Pi 設定目錄",
     "piConfigDirDescription": "覆寫 Pi 設定目錄（models.json、指示檔案、提示、Skills 與工作階段）。",
-    "ompConfigDir": "Oh My Pi 設定目錄",
     "browsePlaceholderClaude": "例如：/home/<您的帳號>/.claude",
     "browsePlaceholderCodex": "例如：/home/<您的帳號>/.codex",
     "browsePlaceholderGemini": "例如：/home/<您的帳號>/.gemini",
@@ -1799,6 +1790,8 @@
     "requestModelLabel": "實際請求模型",
     "modelOneMHeader": "聲明支援 1M",
     "modelOneMLabel": "1M",
+    "copilotOneMUnavailable": "Copilot 沒有這個模型的 1M 版本",
+    "copilotOneMMismatch": "Copilot 沒有 {{models}} 的 1M 版本：請求會退回一般版本，但 Claude Code 仍按 1M 規劃上下文，長對話可能超出上限。建議取消勾選 1M。",
     "fallbackModelLabel": "備用模型",
     "fallbackModelHelpDirect": "寫進 ANTHROPIC_MODEL，是 Claude Code 啟動時使用的主模型。背景任務另用 Haiku 那一檔。",
     "fallbackModelHelp": "沒落到 Sonnet、Opus、Fable、Haiku 任一檔的請求，改用這個模型發給上游。",
@@ -4500,6 +4493,10 @@
     }
   },
   "routingSettings": {
+    "lanToken": "區域網路存取權杖",
+    "lanTokenHelp": "遠端用戶端必須透過 x-cc-switch-token 傳送此權杖，也可將其作為 API Key（Authorization: Bearer、x-api-key 或 x-goog-api-key）。需要保留官方登入憑證的用戶端請使用 x-cc-switch-token。僅 TCP 回環連線免驗證；不信任 X-Forwarded-For。請僅在可信任網路或 TLS 通道中使用。重設將立即撤銷舊權杖，Claude Desktop 仍使用其專用權杖。",
+    "loadLanToken": "讀取權杖",
+    "rotateLanToken": "重設權杖",
     "service": "服務",
     "serviceName": "路由服務",
     "serviceHelp": "路由模式和聚合模式下，請求先經過本機的路由服務再轉給供應商。進入這兩種模式時會自動啟動。",
@@ -4679,7 +4676,7 @@
       "failedTitle": "有應用沒有讀到",
       "filesTitle": "讀取了哪些檔案",
       "claudeNote": "（頂層 mcpServers）",
-      "dshNote": "（寫入所有已初始化的 profile：web、desktop、headless、acp）",
+      "dshNote": "（寫入所有已初始化的 profile：web、desktop、headless、acp。home 層級的 ~/.dsh/cordis.patch.yml 不讀取也不改寫，其中的 MCP 請在該檔案裡管理）",
       "ok": "知道了"
     },
     "templateLabels": {
@@ -5190,5 +5187,11 @@
       "managedHint": "帳號在授權中心管理：登出後這張卡會自動消失。"
     },
     "deleteSessionHint": "請在 DeepSeek Harness 中刪除此工作階段，以保持原生歷史記錄一致。"
+  },
+  "unreadableEntry": {
+    "title": "「{{name}}」的資料無法讀取",
+    "hint": "可能由較新版本的 CC Switch 寫入。資料已原樣保留，無法編輯或啟用；升級後即可恢復，也可以刪除。",
+    "confirmTitle": "刪除無法讀取的項目",
+    "confirmMessage": "刪除「{{name}}」？只刪除 CC Switch 中的這筆記錄，不變更各應用自己的設定檔。"
   }
 }

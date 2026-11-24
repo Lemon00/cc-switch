@@ -10,9 +10,8 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{LazyLock, Mutex, OnceLock};
 
-use once_cell::sync::Lazy;
 use serde::Serialize;
 use tauri::image::Image;
 use tauri::menu::{
@@ -74,8 +73,8 @@ const WARN_BELOW_PERCENT: f64 = 20.0;
 
 /// 每个应用行的子菜单句柄，额度更新时就地改标题而不是整菜单重建（整建会关掉 macOS 上
 /// 正开着的菜单）。`create_tray_menu` 每次重建都整表覆盖写入。
-static TRAY_SECTION_SUBMENUS: Lazy<Mutex<HashMap<AppType, Submenu<tauri::Wry>>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+static TRAY_SECTION_SUBMENUS: LazyLock<Mutex<HashMap<AppType, Submenu<tauri::Wry>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 // ─── 文案 ────────────────────────────────────────────────────────────────────
 
@@ -951,8 +950,7 @@ fn tray_usage_source(app_type: &AppType, provider: &Provider) -> Option<TrayUsag
         return Some(TrayUsageSource::Subscription);
     }
     (provider.has_usage_script_enabled()
-        && (provider.category.as_deref() != Some("official")
-            || provider_uses_official_subscription(provider)))
+        && (!provider.has_official_category() || provider_uses_official_subscription(provider)))
     .then_some(TrayUsageSource::Script)
 }
 
@@ -1025,7 +1023,7 @@ const MANAGED_OAUTH_PROVIDER_TYPES: &[&str] = &["github_copilot", "codex_oauth",
 
 /// 官方账号卡（同前端 `isOfficialAccount`）：Codex 早期绑定托管账号的官方卡没有 category，按身份认。
 fn is_official_account(app: &AppType, provider: &Provider) -> bool {
-    provider.category.as_deref() == Some("official")
+    provider.has_official_category()
         || (*app == AppType::Codex && crate::proxy::providers::is_codex_official_provider(provider))
 }
 
@@ -1038,20 +1036,7 @@ fn blocked_from_routing(app: &AppType, provider: &Provider) -> bool {
 /// Codex / Grok Build 配置里当前供应商的 `wire_api`；TOML 读不懂时退回唯一的一条赋值。
 fn codex_wire_api(config_text: &str) -> Option<String> {
     if let Ok(doc) = config_text.parse::<toml::Value>() {
-        if let Some(active) = doc.get("model_provider").and_then(|v| v.as_str()) {
-            if let Some(wire_api) = doc
-                .get("model_providers")
-                .and_then(|providers| providers.get(active))
-                .and_then(|provider| provider.get("wire_api"))
-                .and_then(|v| v.as_str())
-            {
-                return Some(wire_api.to_string());
-            }
-        }
-        return doc
-            .get("wire_api")
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
+        return crate::codex_config::active_provider_str(&doc, "wire_api").map(str::to_string);
     }
     let mut found = config_text.lines().filter_map(|line| {
         let (key, value) = line.split_once('=')?;
@@ -1064,23 +1049,6 @@ fn codex_wire_api(config_text: &str) -> Option<String> {
     });
     let first = found.next()?;
     found.next().is_none().then_some(first)
-}
-
-fn is_chat_or_anthropic_wire_api(value: &str) -> bool {
-    matches!(
-        value.trim().to_ascii_lowercase().as_str(),
-        "chat"
-            | "chat_completions"
-            | "chat-completions"
-            | "openai_chat"
-            | "openai-chat"
-            | "openai_chat_completions"
-            | "anthropic"
-            | "anthropic_messages"
-            | "anthropic-messages"
-            | "messages"
-            | "claude"
-    )
 }
 
 /// 这家在这个应用下必须经过路由服务才能用（直连写进去也用不了）。和前端
@@ -1116,7 +1084,10 @@ pub(crate) fn provider_needs_routing(app: &AppType, provider: &Provider) -> bool
                     .get("config")
                     .and_then(|config| config.as_str())
                     .and_then(codex_wire_api)
-                    .is_some_and(|wire_api| is_chat_or_anthropic_wire_api(&wire_api))
+                    .is_some_and(|wire_api| {
+                        crate::codex_config::is_chat_wire_api(&wire_api)
+                            || crate::codex_config::is_anthropic_wire_api(&wire_api)
+                    })
         }
         _ => false,
     }
@@ -1272,7 +1243,7 @@ fn tray_mode(app_state: &AppState, app: &AppType) -> TrayMode {
     if crate::mode::stack::stack_mode_now(app) {
         return TrayMode::Stack;
     }
-    let (_, auto_failover) = app_state.db.get_proxy_flags_sync(app.as_str());
+    let (_, auto_failover) = app_state.db.get_proxy_flags_sync(app);
     if auto_failover {
         TrayMode::Failover
     } else {
@@ -1288,7 +1259,11 @@ fn collect_app_snapshot(
     service_running: Option<bool>,
     profiles: &[crate::database::Profile],
 ) -> Result<AppSnapshot, AppError> {
-    let rows = app_state.db.get_all_providers(app.as_str())?;
+    // 读不出来的行在托盘里略过（界面里单独列出），不拖累其余供应商。
+    let rows = app_state
+        .db
+        .get_provider_rows(app)?
+        .into_readable("托盘供应商列表");
     let claude_accounts = if *app == AppType::Claude {
         crate::services::claude_account::labels_on_disk(&crate::config::get_app_config_dir())
     } else {
@@ -1310,7 +1285,7 @@ fn collect_app_snapshot(
     let queue = if mode == TrayMode::Failover {
         app_state
             .db
-            .get_failover_queue(app.as_str())?
+            .get_failover_queue(app)?
             .into_iter()
             .map(|item| item.provider_id)
             .filter(|id| rows.contains_key(id))
@@ -1371,7 +1346,7 @@ fn collect_app_snapshot(
 /// 启动流程（接上路由、拉起 Desktop 映射服务）走完之前不报「路由服务没在跑」：那时它本来就还没起来。
 static STARTUP_SETTLED: AtomicBool = AtomicBool::new(false);
 /// 启动时没能接上、已退回直连的应用（托盘自己留一份，界面照样取走它的那份）。
-static ATTACH_FAILURES: Lazy<Mutex<Vec<(AppType, bool)>>> = Lazy::new(|| Mutex::new(Vec::new()));
+static ATTACH_FAILURES: Mutex<Vec<(AppType, bool)>> = Mutex::new(Vec::new());
 
 /// 托盘里切换失败的应用。规格 5.5：处理掉才消失（同一应用之后切换成功、或打开过它的页面），
 /// 不按时间过期。
@@ -1380,9 +1355,10 @@ struct SwitchFailure {
     reason: String,
 }
 
-static SWITCH_FAILURES: Lazy<Mutex<Vec<SwitchFailure>>> = Lazy::new(|| Mutex::new(Vec::new()));
+static SWITCH_FAILURES: Mutex<Vec<SwitchFailure>> = Mutex::new(Vec::new());
 /// 上一次建菜单时菜单上会自己过时的那部分，悬停图标 / 路由服务启停时比一下，变了才重建。
-static LAST_STATUS: Lazy<Mutex<MenuStatus>> = Lazy::new(|| Mutex::new(MenuStatus::default()));
+static LAST_STATUS: LazyLock<Mutex<MenuStatus>> =
+    LazyLock::new(|| Mutex::new(MenuStatus::default()));
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
@@ -1518,7 +1494,7 @@ struct FeedbackRecord {
     seen: bool,
 }
 
-static FEEDBACK: Lazy<Mutex<Option<FeedbackRecord>>> = Lazy::new(|| Mutex::new(None));
+static FEEDBACK: Mutex<Option<FeedbackRecord>> = Mutex::new(None);
 
 /// 切换成功后要不要说一句：客户端只在启动时读配置的才说；Claude Code 直连、路由 / 故障转移
 /// 换一家立即生效，不说。Claude Desktop 换一家都要重启 Desktop（路由那家的模型列表写在配置
@@ -2322,8 +2298,10 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
 
     let mut apps = Vec::with_capacity(snapshots.len());
     for snapshot in &snapshots {
-        let app = snapshot.app.as_str();
-        let providers = app_state.db.get_all_providers(app)?;
+        let providers = app_state
+            .db
+            .get_provider_rows(&snapshot.app)?
+            .into_readable("托盘用量面板");
         let (header, rows) = panel_rows(&app_state.usage_cache, &texts, snapshot, &providers, now);
         let credits = snapshot
             .current_id
@@ -2338,7 +2316,7 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
             .as_ref()
             .map(|view| panel_quota(&texts, view, now, credits));
         apps.push(PanelApp {
-            app: app.to_string(),
+            app: snapshot.app.as_str().to_string(),
             name: app_display_name(&snapshot.app),
             current: snapshot.current().map(|p| p.name.clone()),
             mode: match snapshot.mode {
@@ -2357,7 +2335,7 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
             add_id: snapshot
                 .providers
                 .is_empty()
-                .then(|| format!("nav:add:{app}")),
+                .then(|| format!("nav:add:{}", snapshot.app.as_str())),
             add_text: texts.add_provider.to_string(),
             rows,
         });
@@ -2576,7 +2554,7 @@ fn tray_tooltip(texts: &TrayTexts, problems: &[TrayProblem]) -> String {
 }
 
 /// 现在托盘上的（有没有圆点，悬停提示）；`None` = 托盘图标还没建好，还是建图标时的样子。
-static APPLIED_INDICATOR: Lazy<Mutex<Option<(bool, String)>>> = Lazy::new(|| Mutex::new(None));
+static APPLIED_INDICATOR: Mutex<Option<(bool, String)>> = Mutex::new(None);
 
 /// 问题区有内容时托盘图标加圆点、悬停提示写第一条问题（macOS 不设提示，见
 /// `TRAY_TOOLTIP_ENABLED`）；问题都消失后换回原图标和提示。只在变了时才动（Linux 每次换图标
@@ -2809,7 +2787,7 @@ impl TrayNavigation {
 }
 
 /// 等主界面来取的导航：轻量模式下窗口是新建的，事件发出去时前端可能还没开始监听。
-static PENDING_NAVIGATION: Lazy<Mutex<Option<TrayNavigation>>> = Lazy::new(|| Mutex::new(None));
+static PENDING_NAVIGATION: Mutex<Option<TrayNavigation>> = Mutex::new(None);
 
 /// 解析 `nav:…` 菜单 id：`nav:main`、`nav:settings:<分组>`、`nav:app:<应用>[:…]`、
 /// `nav:add:<应用>`、`nav:needs:<应用>:<供应商 id>`。
@@ -3088,7 +3066,7 @@ fn handle_provider_click(
     }
     let provider = state
         .db
-        .get_provider_by_id(provider_id, app_type.as_str())?
+        .get_provider_by_id(provider_id, app_type)?
         .ok_or_else(|| AppError::Message(format!("供应商 {provider_id} 不存在")))?;
     if mode == TrayMode::Direct && provider_needs_routing(app_type, &provider) {
         return Ok(ClickOutcome::NeedsRoute);
@@ -3104,7 +3082,7 @@ fn emit_switched(app: &tauri::AppHandle, app_type: &AppType, provider_id: &str) 
     let proxy_enabled = crate::mode::current::is_proxy(app_type);
     let auto_failover = app
         .try_state::<AppState>()
-        .map(|state| state.db.get_proxy_flags_sync(app_type.as_str()).1)
+        .map(|state| state.db.get_proxy_flags_sync(app_type).1)
         .unwrap_or(false);
     let event_data = serde_json::json!({
         "appType": app_type.as_str(),
@@ -3262,7 +3240,7 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
         };
         // 只需当前 provider —— by-id 查询避免把整个 app 的 provider 列表加载
         // 进内存（每次悬停的热路径）。
-        let current = match app_state.db.get_provider_by_id(&current_id, app_type_str) {
+        let current = match app_state.db.get_provider_by_id(&current_id, app_type) {
             Ok(Some(p)) => p,
             Ok(None) => continue,
             Err(e) => {
@@ -3323,8 +3301,8 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
 }
 
 /// 托盘面板发起过的脚本额度查询：(应用, 供应商 id) → 上次查询时间。
-static PANEL_SCRIPT_QUERIES: Lazy<Mutex<HashMap<(AppType, String), std::time::Instant>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+static PANEL_SCRIPT_QUERIES: LazyLock<Mutex<HashMap<(AppType, String), std::time::Instant>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// 托盘面板弹出时：子面板里每一家都写额度，不在用的那几家也要有数据。开了自动查询的脚本
 /// 供应商（余额、套餐），缓存里还没有、或距面板上次替它查已超过它自己的自动查询间隔，就在
@@ -3342,7 +3320,11 @@ pub(crate) async fn refresh_panel_provider_usage(app: &tauri::AppHandle) {
         .unwrap_or_default();
     let mut due = Vec::new();
     for app_type in TRAY_APPS.iter().filter(|app| visible_apps.is_visible(app)) {
-        let rows = match app_state.db.get_all_providers(app_type.as_str()) {
+        let rows = match app_state
+            .db
+            .get_provider_rows(&app_type)
+            .map(|rows| rows.into_readable("托盘用量自动查询"))
+        {
             Ok(rows) => rows,
             Err(e) => {
                 log::warn!("[Tray] 读取{}供应商失败: {e}", app_display_name(app_type));

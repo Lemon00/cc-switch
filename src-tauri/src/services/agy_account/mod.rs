@@ -153,6 +153,8 @@ pub struct AgyAccountManager {
     /// 账号表；同时充当所有改动（含写钥匙串）的互斥锁
     store: Mutex<StoreFile>,
     pending: Mutex<HashMap<String, PendingLogin>>,
+    /// 读取/解析 `agy_accounts.json` 失败时禁止 persist，避免空表覆盖原文件。
+    load_failed: bool,
 }
 
 impl AgyAccountManager {
@@ -162,15 +164,24 @@ impl AgyAccountManager {
 
     pub fn with_login_store(data_dir: PathBuf, login: Arc<dyn AgyLoginStore>) -> Self {
         let path = data_dir.join(STORE_FILENAME);
-        let store = match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|error| {
-                log::warn!("[AgyAccount] 账号文件解析失败，按空表处理: {error}");
-                StoreFile::default()
-            }),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => StoreFile::default(),
+        let (store, load_failed) = match std::fs::read(&path) {
+            Ok(bytes) => match serde_json::from_slice(&bytes) {
+                Ok(store) => (store, false),
+                Err(error) => {
+                    log::error!(
+                        "[AgyAccount] 账号文件解析失败，已禁止写入以免覆盖原文件: {error}"
+                    );
+                    (StoreFile::default(), true)
+                }
+            },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                (StoreFile::default(), false)
+            }
             Err(error) => {
-                log::warn!("[AgyAccount] 账号文件读取失败，按空表处理: {error}");
-                StoreFile::default()
+                log::error!(
+                    "[AgyAccount] 账号文件读取失败，已禁止写入以免覆盖原文件: {error}"
+                );
+                (StoreFile::default(), true)
             }
         };
         Self {
@@ -178,6 +189,7 @@ impl AgyAccountManager {
             login,
             store: Mutex::new(store),
             pending: Mutex::new(HashMap::new()),
+            load_failed,
         }
     }
 
@@ -568,6 +580,13 @@ impl AgyAccountManager {
     }
 
     fn persist(&self, store: &StoreFile) -> Result<(), AppError> {
+        if self.load_failed {
+            return Err(AppError::localized(
+                "agy.account.store_unreadable",
+                "账号文件损坏或不可读，已禁止写入以免覆盖原文件。请修复或删除后再试。",
+                "The account file is damaged or unreadable. Writes are blocked to avoid overwriting it. Repair or remove the file, then try again.",
+            ));
+        }
         let snapshot = StoreFile {
             version: 1,
             accounts: store.accounts.clone(),

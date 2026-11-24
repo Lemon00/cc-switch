@@ -49,6 +49,7 @@ mod services;
 pub use cc_switch_core::session_manager;
 pub use cc_switch_core::settings;
 pub use cc_switch_core::store;
+mod sync_utils;
 
 mod tray;
 #[cfg(target_os = "windows")]
@@ -73,8 +74,7 @@ pub use grok_config::get_grok_config_path;
 pub use mcp::{
     import_from_claude, import_from_codex, import_from_gemini, import_from_grokbuild,
     remove_server_from_claude, remove_server_from_codex, remove_server_from_gemini,
-    remove_server_from_grokbuild, sync_enabled_to_claude, sync_enabled_to_codex,
-    sync_enabled_to_gemini, sync_single_server_to_claude, sync_single_server_to_codex,
+    remove_server_from_grokbuild, sync_single_server_to_claude, sync_single_server_to_codex,
     sync_single_server_to_gemini, sync_single_server_to_grokbuild,
 };
 pub use prompt::Prompt;
@@ -939,9 +939,10 @@ pub fn run() {
             {
                 let has_omo = app_state
                     .db
-                    .get_all_providers("opencode")
+                    .get_all_providers(&AppType::OpenCode)
                     .map(|providers| providers.values().any(|p| p.category.as_deref() == Some("omo")))
-                    .unwrap_or(false);
+                    // 读不出 OpenCode 的供应商时不导入：没法确认已有，导入会每次启动都多加一份。
+                    .unwrap_or(true);
                 if !has_omo {
                     match crate::services::OmoService::import_from_local(&app_state, &crate::services::omo::STANDARD) {
                         Ok(provider) => {
@@ -961,13 +962,14 @@ pub fn run() {
             {
                 let has_omo_slim = app_state
                     .db
-                    .get_all_providers("opencode")
+                    .get_all_providers(&AppType::OpenCode)
                     .map(|providers| {
                         providers
                             .values()
                             .any(|p| p.category.as_deref() == Some("omo-slim"))
                     })
-                    .unwrap_or(false);
+                    // 读不出 OpenCode 的供应商时不导入：没法确认已有，导入会每次启动都多加一份。
+                    .unwrap_or(true);
                 if !has_omo_slim {
                     match crate::services::OmoService::import_from_local(&app_state, &crate::services::omo::SLIM) {
                         Ok(provider) => {
@@ -990,52 +992,21 @@ pub fn run() {
             if app_state.db.is_mcp_table_empty().unwrap_or(false) {
                 log::info!("MCP table empty, importing from live configurations...");
 
-                match crate::services::mcp::McpService::import_from_claude(&app_state) {
-                    Ok(count) if count > 0 => {
-                        log::info!("✓ Imported {count} MCP server(s) from Claude");
+                for (app, label) in [
+                    (crate::app_config::AppType::Claude, "Claude"),
+                    (crate::app_config::AppType::Codex, "Codex"),
+                    (crate::app_config::AppType::Gemini, "Gemini"),
+                    (crate::app_config::AppType::GrokBuild, "Grok Build"),
+                    (crate::app_config::AppType::OpenCode, "OpenCode"),
+                    (crate::app_config::AppType::Hermes, "Hermes"),
+                ] {
+                    match crate::services::mcp::McpService::import_from_app(&app_state, &app) {
+                        Ok(count) if count > 0 => {
+                            log::info!("✓ Imported {count} MCP server(s) from {label}");
+                        }
+                        Ok(_) => log::debug!("○ No {label} MCP servers found to import"),
+                        Err(e) => log::warn!("✗ Failed to import {label} MCP: {e}"),
                     }
-                    Ok(_) => log::debug!("○ No Claude MCP servers found to import"),
-                    Err(e) => log::warn!("✗ Failed to import Claude MCP: {e}"),
-                }
-
-                match crate::services::mcp::McpService::import_from_codex(&app_state) {
-                    Ok(count) if count > 0 => {
-                        log::info!("✓ Imported {count} MCP server(s) from Codex");
-                    }
-                    Ok(_) => log::debug!("○ No Codex MCP servers found to import"),
-                    Err(e) => log::warn!("✗ Failed to import Codex MCP: {e}"),
-                }
-
-                match crate::services::mcp::McpService::import_from_gemini(&app_state) {
-                    Ok(count) if count > 0 => {
-                        log::info!("✓ Imported {count} MCP server(s) from Gemini");
-                    }
-                    Ok(_) => log::debug!("○ No Gemini MCP servers found to import"),
-                    Err(e) => log::warn!("✗ Failed to import Gemini MCP: {e}"),
-                }
-
-                match crate::services::mcp::McpService::import_from_grokbuild(&app_state) {
-                    Ok(count) if count > 0 => {
-                        log::info!("✓ Imported {count} MCP server(s) from Grok Build");
-                    }
-                    Ok(_) => log::debug!("○ No Grok Build MCP servers found to import"),
-                    Err(e) => log::warn!("✗ Failed to import Grok Build MCP: {e}"),
-                }
-
-                match crate::services::mcp::McpService::import_from_opencode(&app_state) {
-                    Ok(count) if count > 0 => {
-                        log::info!("✓ Imported {count} MCP server(s) from OpenCode");
-                    }
-                    Ok(_) => log::debug!("○ No OpenCode MCP servers found to import"),
-                    Err(e) => log::warn!("✗ Failed to import OpenCode MCP: {e}"),
-                }
-
-                match crate::services::mcp::McpService::import_from_hermes(&app_state) {
-                    Ok(count) if count > 0 => {
-                        log::info!("✓ Imported {count} MCP server(s) from Hermes");
-                    }
-                    Ok(_) => log::debug!("○ No Hermes MCP servers found to import"),
-                    Err(e) => log::warn!("✗ Failed to import Hermes MCP: {e}"),
                 }
             }
 
@@ -1463,6 +1434,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_providers,
+            commands::get_unreadable_providers,
             commands::get_current_provider,
             commands::add_provider,
             commands::update_provider,
@@ -1550,6 +1522,7 @@ pub fn run() {
             commands::set_mcp_enabled,
             // Unified MCP management
             commands::get_mcp_servers,
+            commands::get_unreadable_mcp_servers,
             commands::start_mcp_connectivity_checks,
             commands::cancel_mcp_connectivity_checks,
             commands::upsert_mcp_server,
@@ -1699,6 +1672,7 @@ pub fn run() {
             commands::get_global_proxy_config,
             commands::update_global_proxy_config,
             commands::get_proxy_client_host,
+            commands::get_proxy_lan_token,
             commands::set_proxy_client_host,
             commands::get_proxy_config_for_app,
             commands::update_proxy_config_for_app,
@@ -2062,6 +2036,90 @@ pub(crate) fn remove_tray_icon_before_exit(app_handle: &tauri::AppHandle) {
     }
 }
 
+fn initialize_common_config_snippets(state: &store::AppState) {
+    // Auto-extract common config snippets from clean live files when snippet is missing.
+    // This must run before proxy mode is re-attached on startup, otherwise we'd read
+    // proxy-placeholder configs instead of the user's actual live settings. A client
+    // still attached from an update restart (no detach on the way out) is skipped too.
+    for app_type in crate::app_config::AppType::all() {
+        if !state
+            .db
+            .should_auto_extract_config_snippet(app_type.as_str())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        if state.proxy_service.live_has_proxy_placeholder(&app_type) {
+            continue;
+        }
+
+        let settings = match crate::services::provider::ProviderService::read_live_settings(
+            app_type.clone(),
+        ) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        match crate::services::provider::ProviderService::extract_common_config_snippet_from_settings(
+            app_type.clone(),
+            &settings,
+        ) {
+            Ok(snippet) if !snippet.is_empty() && snippet != "{}" => {
+                match state.db.set_config_snippet(app_type.as_str(), Some(snippet)) {
+                    Ok(()) => {
+                        let _ = state
+                            .db
+                            .set_config_snippet_cleared(app_type.as_str(), false);
+                        log::info!(
+                            "✓ Auto-extracted common config snippet for {}",
+                            app_type.as_str()
+                        );
+                    }
+                    Err(e) => log::warn!(
+                        "✗ Failed to save config snippet for {}: {e}",
+                        app_type.as_str()
+                    ),
+                }
+            }
+            Ok(_) => log::debug!(
+                "○ Live config for {} has no extractable common fields",
+                app_type.as_str()
+            ),
+            Err(e) => log::warn!(
+                "✗ Failed to extract config snippet for {}: {e}",
+                app_type.as_str()
+            ),
+        }
+    }
+
+    let should_run_legacy_migration = state
+        .db
+        .is_legacy_common_config_migrated()
+        .map(|done| !done)
+        .unwrap_or(true);
+
+    if should_run_legacy_migration {
+        for app_type in [
+            crate::app_config::AppType::Claude,
+            crate::app_config::AppType::Codex,
+            crate::app_config::AppType::Gemini,
+        ] {
+            if let Err(e) = crate::services::provider::ProviderService::migrate_legacy_common_config_usage_if_needed(
+                state,
+                app_type.clone(),
+            ) {
+                log::warn!(
+                    "✗ Failed to migrate legacy common-config usage for {}: {e}",
+                    app_type.as_str()
+                );
+            }
+        }
+
+        if let Err(e) = state.db.set_legacy_common_config_migrated(true) {
+            log::warn!("✗ Failed to persist legacy common-config migration flag: {e}");
+        }
+    }
+}
 
 // ============================================================
 // 迁移错误对话框辅助函数

@@ -10,10 +10,16 @@ import {
   useSaveSettingsMutation,
 } from "@/lib/query";
 import type { Settings } from "@/types";
+import {
+  DIRECTORY_APPS,
+  type DirectoryAppId,
+  type DirectoryField,
+  sanitizeDir,
+  sanitizeDirectoryFields,
+} from "@/config/directoryApps";
 import { useSettingsForm, type SettingsFormState } from "./useSettingsForm";
 import {
   useDirectorySettings,
-  type DirectoryAppId,
   type ResolvedDirectories,
 } from "./useDirectorySettings";
 import { useSettingsMetadata } from "./useSettingsMetadata";
@@ -51,24 +57,6 @@ export interface UseSettingsResult {
 }
 
 export type { SettingsFormState, ResolvedDirectories };
-
-const DIRECTORY_KEYS = [
-  "claudeConfigDir",
-  "codexConfigDir",
-  "geminiConfigDir",
-  "grokConfigDir",
-  "opencodeConfigDir",
-  "openclawConfigDir",
-  "hermesConfigDir",
-  "piConfigDir",
-  "ompConfigDir",
-] as const;
-
-const sanitizeDir = (value?: string | null): string | undefined => {
-  if (!value) return undefined;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-};
 
 /**
  * useSettings - 组合层
@@ -125,17 +113,14 @@ export function useSettings(): UseSettingsResult {
   const resetSettings = useCallback(() => {
     resetForm(data ?? null);
     syncLanguage(initialLanguage);
-    resetAllDirectories({
-      claude: sanitizeDir(data?.claudeConfigDir),
-      codex: sanitizeDir(data?.codexConfigDir),
-      gemini: sanitizeDir(data?.geminiConfigDir),
-      grokbuild: sanitizeDir(data?.grokConfigDir),
-      opencode: sanitizeDir(data?.opencodeConfigDir),
-      openclaw: sanitizeDir(data?.openclawConfigDir),
-      hermes: sanitizeDir(data?.hermesConfigDir),
-      pi: sanitizeDir(data?.piConfigDir),
-      omp: sanitizeDir(data?.ompConfigDir),
-    });
+    resetAllDirectories(
+      Object.fromEntries(
+        DIRECTORY_APPS.map(({ app, field }) => [
+          app,
+          sanitizeDir(data?.[field]),
+        ]),
+      ),
+    );
     setRequiresRestart(false);
   }, [
     data,
@@ -202,47 +187,21 @@ export function useSettings(): UseSettingsResult {
   // 保存基础配置 + 独立的系统 API 调用（开机自启）
   const autoSaveSettings = useCallback(
     async (updates: Partial<SettingsFormState>): Promise<SaveResult | null> => {
-      const mergedSettings = settings ? { ...settings, ...updates } : null;
-      if (!mergedSettings) return null;
-
-      // 目录草稿只由显式「保存」写入，自动保存沿用已确认的值
-      for (const key of DIRECTORY_KEYS) {
-        if (!(key in updates)) mergedSettings[key] = data?.[key];
-      }
+      if (!settings) return null;
 
       try {
-        const sanitizedClaudeDir = sanitizeDir(mergedSettings.claudeConfigDir);
-        const sanitizedCodexDir = sanitizeDir(mergedSettings.codexConfigDir);
-        const sanitizedGeminiDir = sanitizeDir(mergedSettings.geminiConfigDir);
-        const sanitizedGrokDir = sanitizeDir(mergedSettings.grokConfigDir);
-        const sanitizedOpencodeDir = sanitizeDir(
-          mergedSettings.opencodeConfigDir,
-        );
-        const sanitizedOpenclawDir = sanitizeDir(
-          mergedSettings.openclawConfigDir,
-        );
-        const sanitizedHermesDir = sanitizeDir(mergedSettings.hermesConfigDir);
-        const sanitizedPiDir = sanitizeDir(mergedSettings.piConfigDir);
-        const sanitizedOmpDir = sanitizeDir(mergedSettings.ompConfigDir);
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
           ...restSettings
-        } = mergedSettings;
+        } = updates;
 
-        const payload: Settings = {
+        const payload: Partial<Settings> = {
           ...restSettings,
-          claudeConfigDir: sanitizedClaudeDir,
-          codexConfigDir: sanitizedCodexDir,
-          geminiConfigDir: sanitizedGeminiDir,
-          grokConfigDir: sanitizedGrokDir,
-          opencodeConfigDir: sanitizedOpencodeDir,
-          openclawConfigDir: sanitizedOpenclawDir,
-          hermesConfigDir: sanitizedHermesDir,
-          piConfigDir: sanitizedPiDir,
-          ompConfigDir: sanitizedOmpDir,
-          language: mergedSettings.language,
         };
+        for (const { field } of DIRECTORY_APPS) {
+          delete payload[field];
+        }
 
         // 在 mutate 之前从实时缓存捕获上一次持久化的插件集成状态，
         // 避免 closure 里的 data 因 React 尚未 re-render 而滞后
@@ -350,29 +309,7 @@ export function useSettings(): UseSettingsResult {
       if (!mergedSettings) return null;
       try {
         const sanitizedAppDir = sanitizeDir(appConfigDir);
-        const sanitizedClaudeDir = sanitizeDir(mergedSettings.claudeConfigDir);
-        const sanitizedCodexDir = sanitizeDir(mergedSettings.codexConfigDir);
-        const sanitizedGeminiDir = sanitizeDir(mergedSettings.geminiConfigDir);
-        const sanitizedGrokDir = sanitizeDir(mergedSettings.grokConfigDir);
-        const sanitizedOpencodeDir = sanitizeDir(
-          mergedSettings.opencodeConfigDir,
-        );
-        const sanitizedOpenclawDir = sanitizeDir(
-          mergedSettings.openclawConfigDir,
-        );
-        const sanitizedHermesDir = sanitizeDir(mergedSettings.hermesConfigDir);
-        const sanitizedPiDir = sanitizeDir(mergedSettings.piConfigDir);
-        const sanitizedOmpDir = sanitizeDir(mergedSettings.ompConfigDir);
         const previousAppDir = initialAppConfigDir;
-        const previousClaudeDir = sanitizeDir(data?.claudeConfigDir);
-        const previousCodexDir = sanitizeDir(data?.codexConfigDir);
-        const previousGeminiDir = sanitizeDir(data?.geminiConfigDir);
-        const previousGrokDir = sanitizeDir(data?.grokConfigDir);
-        const previousOpencodeDir = sanitizeDir(data?.opencodeConfigDir);
-        const previousOpenclawDir = sanitizeDir(data?.openclawConfigDir);
-        const previousHermesDir = sanitizeDir(data?.hermesConfigDir);
-        const previousPiDir = sanitizeDir(data?.piConfigDir);
-        const previousOmpDir = sanitizeDir(data?.ompConfigDir);
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
@@ -381,17 +318,18 @@ export function useSettings(): UseSettingsResult {
 
         const payload: Settings = {
           ...restSettings,
-          claudeConfigDir: sanitizedClaudeDir,
-          codexConfigDir: sanitizedCodexDir,
-          geminiConfigDir: sanitizedGeminiDir,
-          grokConfigDir: sanitizedGrokDir,
-          opencodeConfigDir: sanitizedOpencodeDir,
-          openclawConfigDir: sanitizedOpenclawDir,
-          hermesConfigDir: sanitizedHermesDir,
-          piConfigDir: sanitizedPiDir,
-          ompConfigDir: sanitizedOmpDir,
+          ...sanitizeDirectoryFields(mergedSettings),
           language: mergedSettings.language,
         };
+        const previousSettings = { ...data, ...sanitizeDirectoryFields(data) };
+        const patch: Partial<Settings> = Object.fromEntries(
+          Object.entries(payload).filter(
+            ([key, value]) =>
+              Object.prototype.hasOwnProperty.call(overrides ?? {}, key) ||
+              JSON.stringify(value) !==
+                JSON.stringify(previousSettings[key as keyof Settings]),
+          ),
+        );
 
         // 在 mutate 之前从实时缓存捕获上一次持久化的插件集成状态，
         // 避免 closure 里的 data 因 React 尚未 re-render 而滞后
@@ -399,7 +337,7 @@ export function useSettings(): UseSettingsResult {
           "settings",
         ])?.enableClaudePluginIntegration;
 
-        await saveMutation.mutateAsync(payload);
+        await saveMutation.mutateAsync(patch);
 
         await settingsApi.setAppConfigDirOverride(sanitizedAppDir ?? null);
         // 基准值换成刚存的：设置页不卸载，下次比较和「需要重启」都只跟真正没保存的改动走
@@ -450,7 +388,7 @@ export function useSettings(): UseSettingsResult {
         }
 
         const pluginSynced = await syncClaudePluginIfChanged(
-          payload.enableClaudePluginIntegration,
+          patch.enableClaudePluginIntegration,
           prevPluginEnabled,
         );
 
@@ -473,24 +411,14 @@ export function useSettings(): UseSettingsResult {
 
         // 任一 app 的目录覆盖发生变化后，立即把当前状态投影到新的 live 目录。
         // 如果插件同步已经执行过 syncCurrentProvidersLiveSafe，则跳过避免重复
-        const claudeDirChanged = sanitizedClaudeDir !== previousClaudeDir;
-        const codexDirChanged = sanitizedCodexDir !== previousCodexDir;
-        const geminiDirChanged = sanitizedGeminiDir !== previousGeminiDir;
-        const grokDirChanged = sanitizedGrokDir !== previousGrokDir;
-        const opencodeDirChanged = sanitizedOpencodeDir !== previousOpencodeDir;
-        const openclawDirChanged = sanitizedOpenclawDir !== previousOpenclawDir;
-        const hermesDirChanged = sanitizedHermesDir !== previousHermesDir;
-        const piDirChanged = sanitizedPiDir !== previousPiDir;
-        const ompDirChanged = sanitizedOmpDir !== previousOmpDir;
+        const previousDirs = sanitizeDirectoryFields(data);
+        const dirChanged = (field: DirectoryField) =>
+          payload[field] !== previousDirs[field];
         if (
           !pluginSynced &&
-          (claudeDirChanged ||
-            codexDirChanged ||
-            geminiDirChanged ||
-            grokDirChanged ||
-            opencodeDirChanged ||
-            openclawDirChanged ||
-            hermesDirChanged)
+          DIRECTORY_APPS.some(
+            ({ field, syncsLive }) => syncsLive && dirChanged(field),
+          )
         ) {
           const syncResult = await syncCurrentProvidersLiveSafe();
           if (!syncResult.ok) {
@@ -500,10 +428,10 @@ export function useSettings(): UseSettingsResult {
             );
           }
         }
-        if (piDirChanged) {
+        if (dirChanged("piConfigDir")) {
           await invalidatePiDirectoryCaches(queryClient);
         }
-        if (ompDirChanged) {
+        if (dirChanged("ompConfigDir")) {
           await invalidatePiDirectoryCaches(queryClient, "omp");
         }
 

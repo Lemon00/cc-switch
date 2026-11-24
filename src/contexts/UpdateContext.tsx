@@ -28,34 +28,48 @@ interface UpdateContextValue {
 
 const UpdateContext = createContext<UpdateContextValue | undefined>(undefined);
 
-export function UpdateProvider({ children }: { children: React.ReactNode }) {
-  const DISMISSED_VERSION_KEY = "ccswitch:update:dismissedVersion";
-  const LEGACY_DISMISSED_KEY = "dismissedUpdateVersion"; // 兼容旧键
+const DISMISSED_VERSION_KEY = "ccswitch:update:dismissedVersion";
+const LEGACY_DISMISSED_KEY = "dismissedUpdateVersion";
 
+function readDismissedVersion(): string | null {
+  let version: string | null = null;
+  try {
+    version = localStorage.getItem(DISMISSED_VERSION_KEY);
+    if (!version) {
+      version = localStorage.getItem(LEGACY_DISMISSED_KEY);
+      if (version) {
+        localStorage.setItem(DISMISSED_VERSION_KEY, version);
+        localStorage.removeItem(LEGACY_DISMISSED_KEY);
+      }
+    }
+  } catch (error) {
+    console.warn("Unable to read update notification preference", error);
+  }
+  return version;
+}
+
+function persistDismissedVersion(version: string | null): void {
+  try {
+    if (version) {
+      localStorage.setItem(DISMISSED_VERSION_KEY, version);
+    } else {
+      localStorage.removeItem(DISMISSED_VERSION_KEY);
+    }
+    localStorage.removeItem(LEGACY_DISMISSED_KEY);
+  } catch (error) {
+    console.warn("Unable to save update notification preference", error);
+  }
+}
+
+export function UpdateProvider({ children }: { children: React.ReactNode }) {
   const [hasUpdate, setHasUpdate] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [isChecking, setIsChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isDismissed, setIsDismissed] = useState(false);
-
-  // 从 localStorage 读取已关闭的版本
-  useEffect(() => {
-    const current = updateInfo?.availableVersion;
-    if (!current) return;
-
-    // 读取新键；若不存在，尝试迁移旧键
-    let dismissedVersion = localStorage.getItem(DISMISSED_VERSION_KEY);
-    if (!dismissedVersion) {
-      const legacy = localStorage.getItem(LEGACY_DISMISSED_KEY);
-      if (legacy) {
-        localStorage.setItem(DISMISSED_VERSION_KEY, legacy);
-        localStorage.removeItem(LEGACY_DISMISSED_KEY);
-        dismissedVersion = legacy;
-      }
-    }
-
-    setIsDismissed(dismissedVersion === current);
-  }, [updateInfo?.availableVersion]);
+  const [dismissedVersion, setDismissedVersion] =
+    useState(readDismissedVersion);
+  const isDismissed =
+    updateInfo !== null && dismissedVersion === updateInfo.availableVersion;
 
   const isCheckingRef = useRef(false);
 
@@ -72,22 +86,10 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
         setHasUpdate(true);
         setUpdateInfo(result.info);
 
-        // 检查是否已经关闭过这个版本的提醒
-        let dismissedVersion = localStorage.getItem(DISMISSED_VERSION_KEY);
-        if (!dismissedVersion) {
-          const legacy = localStorage.getItem(LEGACY_DISMISSED_KEY);
-          if (legacy) {
-            localStorage.setItem(DISMISSED_VERSION_KEY, legacy);
-            localStorage.removeItem(LEGACY_DISMISSED_KEY);
-            dismissedVersion = legacy;
-          }
-        }
-        setIsDismissed(dismissedVersion === result.info.availableVersion);
         return true; // 有更新
       } else {
         setHasUpdate(false);
         setUpdateInfo(null);
-        setIsDismissed(false);
         return false; // 已是最新
       }
     } catch (err) {
@@ -102,18 +104,15 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const dismissUpdate = useCallback(() => {
-    setIsDismissed(true);
     if (updateInfo?.availableVersion) {
-      localStorage.setItem(DISMISSED_VERSION_KEY, updateInfo.availableVersion);
-      // 清理旧键
-      localStorage.removeItem(LEGACY_DISMISSED_KEY);
+      setDismissedVersion(updateInfo.availableVersion);
+      persistDismissedVersion(updateInfo.availableVersion);
     }
   }, [updateInfo?.availableVersion]);
 
   const resetDismiss = useCallback(() => {
-    setIsDismissed(false);
-    localStorage.removeItem(DISMISSED_VERSION_KEY);
-    localStorage.removeItem(LEGACY_DISMISSED_KEY);
+    setDismissedVersion(null);
+    persistDismissedVersion(null);
   }, []);
 
   // 应用启动时自动检查更新

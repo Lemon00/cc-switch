@@ -59,6 +59,9 @@ export const handlers = [
     return success(getProviders(app));
   }),
 
+  http.post(`${TAURI_ENDPOINT}/get_unreadable_providers`, () => success([])),
+  http.post(`${TAURI_ENDPOINT}/get_unreadable_mcp_servers`, () => success([])),
+
   http.post(`${TAURI_ENDPOINT}/get_current_provider`, async ({ request }) => {
     const { app } = await withJson<{ app: AppId }>(request);
     return success(getCurrentProviderId(app));
@@ -288,7 +291,9 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/check_env_conflicts`, () => success([])),
 
   http.post(`${TAURI_ENDPOINT}/save_settings`, async ({ request }) => {
-    const { settings } = await withJson<{ settings: Settings }>(request);
+    const { settings } = await withJson<{
+      settings: { [Key in keyof Settings]?: Settings[Key] | null };
+    }>(request);
     setSettings(settings);
     return success(true);
   }),

@@ -1,4 +1,4 @@
-use futures::future::join_all;
+use futures::StreamExt;
 use reqwest::Url;
 use serde::Serialize;
 use std::time::Instant;
@@ -8,6 +8,7 @@ use crate::error::AppError;
 const DEFAULT_TIMEOUT_SECS: u64 = 8;
 const MAX_TIMEOUT_SECS: u64 = 30;
 const MIN_TIMEOUT_SECS: u64 = 2;
+const MAX_CONCURRENT_ENDPOINTS: usize = 8;
 
 /// 端点测速结果
 #[derive(Debug, Clone, Serialize)]
@@ -48,7 +49,19 @@ impl SpeedtestService {
             }
 
             match Url::parse(&trimmed) {
-                Ok(parsed_url) => valid_targets.push((idx, trimmed, parsed_url)),
+                Ok(parsed_url)
+                    if matches!(parsed_url.scheme(), "http" | "https") && parsed_url.has_host() =>
+                {
+                    valid_targets.push((idx, trimmed, parsed_url))
+                }
+                Ok(_) => {
+                    results[idx] = Some(EndpointLatency {
+                        url: trimmed,
+                        latency: None,
+                        status: None,
+                        error: Some("URL 必须是包含主机名的 HTTP(S) 地址".to_string()),
+                    });
+                }
                 Err(err) => {
                     results[idx] = Some(EndpointLatency {
                         url: trimmed,
@@ -110,7 +123,8 @@ impl SpeedtestService {
             }
         });
 
-        for (idx, latency) in join_all(tasks).await {
+        let mut completed = futures::stream::iter(tasks).buffer_unordered(MAX_CONCURRENT_ENDPOINTS);
+        while let Some((idx, latency)) = completed.next().await {
             results[idx] = Some(latency);
         }
 
@@ -177,5 +191,25 @@ mod tests {
             Some("URL 不能为空"),
             "empty url should report validation error"
         );
+    }
+
+    #[test]
+    fn test_endpoints_rejects_non_http_schemes_without_network_requests() {
+        let result = tauri::async_runtime::block_on(SpeedtestService::test_endpoints(
+            vec![
+                "file:///tmp/config".into(),
+                "ftp://example.com".into(),
+                "data:text/plain,hello".into(),
+            ],
+            None,
+        ))
+        .unwrap();
+        assert_eq!(result.len(), 3);
+        assert!(result.iter().all(|entry| entry.latency.is_none()
+            && entry
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("HTTP(S)"))));
+        assert_eq!(result[0].url, "file:///tmp/config");
     }
 }

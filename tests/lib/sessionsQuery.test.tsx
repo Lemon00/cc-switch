@@ -122,10 +122,25 @@ describe("applyTranscriptChunk", () => {
 });
 
 describe("loadTranscript", () => {
+  it("settles on a terminal chunk even if the command result is delayed", async () => {
+    for (const failure of [false, true]) {
+      api.streamMessages.mockImplementation((_provider, _path, push) => {
+        if (failure) push({ type: "error", message: "channel failure" });
+        else {
+          push({ ...header, total: 0 });
+          push({ type: "done", payloadBytes: 0 });
+        }
+        return new Promise(() => {});
+      });
+      const pending = loadTranscript("claude", "/a");
+      if (failure) await expect(pending).rejects.toThrow("channel failure");
+      else await expect(pending).resolves.toMatchObject({ done: true });
+    }
+  });
   it("逐块回调进度，Done 后返回", async () => {
     api.streamMessages.mockImplementation(
       streamOf([
-        header,
+        { ...header, total: 1 },
         { type: "messages", start: 0, messages: [message("a")] },
         { type: "done", payloadBytes: 1 },
       ]),
@@ -137,13 +152,89 @@ describe("loadTranscript", () => {
     expect(state.messages).toHaveLength(1);
   });
 
-  it("命令返回后迟迟没有 Done：宽限期后按已收到的内容结束", async () => {
+  it("没有 Done 时超时报错，忽略迟到的回调", async () => {
     vi.useFakeTimers();
     try {
-      api.streamMessages.mockImplementation(streamOf([header]));
-      const pending = loadTranscript("claude", "/a");
+      let push!: (chunk: TranscriptChunk) => void;
+      api.streamMessages.mockImplementation(
+        async (_provider, _path, callback) => {
+          push = callback;
+          push(header);
+        },
+      );
+      const progress = vi.fn();
+      const pending = expect(
+        loadTranscript("claude", "/a", progress),
+      ).rejects.toThrow("timed out");
       await vi.advanceTimersByTimeAsync(TRANSCRIPT_DONE_GRACE_MS);
-      await expect(pending).resolves.toMatchObject({ header, done: true });
+      await pending;
+      push({ type: "messages", start: 0, messages: [message("late")] });
+      expect(progress).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects mismatched totals and invalid offsets", async () => {
+    for (const chunk of [
+      { type: "done" },
+      { type: "messages", start: 1, messages: [message("gap")] },
+      { type: "messages", start: -1, messages: [] },
+      {
+        type: "messages",
+        start: 0,
+        messages: [message("a"), message("b"), message("c")],
+      },
+    ] as TranscriptChunk[]) {
+      api.streamMessages.mockImplementation(streamOf([header, chunk]));
+      await expect(loadTranscript("claude", "/a")).rejects.toThrow();
+    }
+    expect(api.getMessages).not.toHaveBeenCalled();
+  });
+
+  it("accepts an empty transcript and ignores chunks after Done", async () => {
+    api.streamMessages.mockImplementation(
+      streamOf([
+        { ...header, total: 0 },
+        { type: "done", payloadBytes: 0 },
+        { type: "error", message: "late" },
+      ]),
+    );
+    const progress = vi.fn();
+    await expect(
+      loadTranscript("claude", "/a", progress),
+    ).resolves.toMatchObject({ done: true, messages: [] });
+    expect(progress).toHaveBeenCalledTimes(2);
+  });
+
+  it("cancels a pending command without fallback or late progress", async () => {
+    let push!: (chunk: TranscriptChunk) => void;
+    api.streamMessages.mockImplementation((_provider, _path, callback) => {
+      push = callback;
+      return new Promise(() => {});
+    });
+    const controller = new AbortController();
+    const progress = vi.fn();
+    const pending = loadTranscript("claude", "/a", progress, controller.signal);
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    push(header);
+    expect(progress).not.toHaveBeenCalled();
+    expect(api.getMessages).not.toHaveBeenCalled();
+  });
+
+  it("accepts Done delivered after the command resolves", async () => {
+    vi.useFakeTimers();
+    try {
+      api.streamMessages.mockImplementation(async (_provider, _path, push) => {
+        setTimeout(() => {
+          push({ ...header, total: 0 });
+          push({ type: "done", payloadBytes: 0 });
+        }, 100);
+      });
+      const pending = loadTranscript("claude", "/a");
+      await vi.advanceTimersByTimeAsync(100);
+      await expect(pending).resolves.toMatchObject({ done: true });
     } finally {
       vi.useRealTimers();
     }
@@ -212,6 +303,7 @@ describe("useSessionTranscript", () => {
     });
 
     act(() => {
+      push({ type: "messages", start: 1, messages: [message("b")] });
       push({ type: "done", payloadBytes: 1 });
       finish();
     });
@@ -483,5 +575,36 @@ describe("useSessionImage", () => {
     });
     expect(ok.result.current).toMatchObject({ url: null, isLoading: true });
     expect(bad.result.current.error).toBeNull();
+  });
+
+  it("clearSessionImageCache 后在途请求返回不会创建孤儿 Blob URL", async () => {
+    let resolveStale: (value: ArrayBuffer) => void = () => {};
+    api.getImage.mockImplementationOnce(
+      () => new Promise<ArrayBuffer>((ok) => (resolveStale = ok)),
+    );
+    const first = renderHook(() =>
+      useSessionImage("codex", "/a", image("/stale.png")),
+    );
+    first.unmount();
+    clearSessionImageCache();
+
+    // 清空后同一张图重新发起加载
+    const second = renderHook(() =>
+      useSessionImage("codex", "/a", image("/stale.png")),
+    );
+    await waitFor(() => expect(second.result.current.url).toBeTruthy());
+    const activeUrl = second.result.current.url;
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+
+    // 旧请求迟到返回：不应创建新 Blob URL 或覆盖现有缓存项
+    await act(async () => {
+      resolveStale(new ArrayBuffer(4));
+    });
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+
+    second.unmount();
+    clearSessionImageCache();
+    expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith(activeUrl);
   });
 });

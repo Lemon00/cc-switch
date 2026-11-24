@@ -64,7 +64,7 @@ fn patch(enabled: bool) -> TomlPatch {
 }
 
 /// Codex 会话目录（`sessions/` + `archived_sessions/`）当前占用的字节数。
-pub fn sessions_disk_usage() -> u64 {
+pub fn sessions_disk_usage() -> Result<u64, crate::error::AppError> {
     session_roots()
         .iter()
         .map(|root| crate::services::backup_storage::path_size(root))

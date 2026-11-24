@@ -22,8 +22,16 @@ export const workspaceApi = {
     return invoke<string | null>("read_workspace_file", { filename });
   },
 
-  async writeFile(filename: string, content: string): Promise<void> {
-    return invoke<void>("write_workspace_file", { filename, content });
+  async writeFile(
+    filename: string,
+    content: string,
+    expectedContent: string | null,
+  ): Promise<void> {
+    return invoke<void>("write_workspace_file", {
+      filename,
+      content,
+      expected: { content: expectedContent },
+    });
   },
 
   async listDailyMemoryFiles(): Promise<DailyMemoryFileInfo[]> {
@@ -34,8 +42,16 @@ export const workspaceApi = {
     return invoke<string | null>("read_daily_memory_file", { filename });
   },
 
-  async writeDailyMemoryFile(filename: string, content: string): Promise<void> {
-    return invoke<void>("write_daily_memory_file", { filename, content });
+  async writeDailyMemoryFile(
+    filename: string,
+    content: string,
+    expectedContent: string | null,
+  ): Promise<void> {
+    return invoke<void>("write_daily_memory_file", {
+      filename,
+      content,
+      expected: { content: expectedContent },
+    });
   },
 
   async deleteDailyMemoryFile(filename: string): Promise<void> {

@@ -84,13 +84,32 @@ export const applyTranscriptChunk = (
 ): TranscriptState => {
   switch (chunk.type) {
     case "header":
+      if (
+        state.header ||
+        !Number.isSafeInteger(chunk.total) ||
+        chunk.total < 0
+      ) {
+        throw new Error("Invalid transcript header");
+      }
       return { ...state, header: chunk };
     case "messages": {
+      if (
+        !state.header ||
+        !Number.isSafeInteger(chunk.start) ||
+        chunk.start < 0 ||
+        chunk.start > state.messages.length ||
+        chunk.start + chunk.messages.length > state.header.total
+      ) {
+        throw new Error("Invalid transcript message offset or count");
+      }
       const messages = state.messages.slice(0, chunk.start);
       messages.push(...chunk.messages);
       return { ...state, messages };
     }
     case "done":
+      if (!state.header || state.messages.length !== state.header.total) {
+        throw new Error("Incomplete transcript");
+      }
       return { ...state, done: true, payloadBytes: chunk.payloadBytes };
     case "error":
       throw new Error(chunk.message);
@@ -127,43 +146,75 @@ export const loadTranscript = async (
   providerId: string,
   sourcePath: string,
   onProgress?: (state: TranscriptState) => void,
+  signal?: AbortSignal,
 ): Promise<TranscriptState> => {
+  signal?.throwIfAborted();
   let state = EMPTY_TRANSCRIPT;
   let received = false;
+  let active = true;
   let failure: unknown;
   let settle: () => void = () => {};
   const finished = new Promise<void>((resolve) => {
     settle = resolve;
   });
 
-  try {
-    await sessionsApi.streamMessages(providerId, sourcePath, (chunk) => {
-      received = true;
-      try {
-        state = applyTranscriptChunk(state, chunk);
-      } catch (error) {
-        failure = error;
-        settle();
-        return;
-      }
-      onProgress?.(state);
-      if (state.done) settle();
-    });
-  } catch (error) {
-    if (!received) return loadTranscriptOnce(providerId, sourcePath);
-    throw error;
-  }
-
   let timer: ReturnType<typeof setTimeout> | undefined;
-  await Promise.race([
-    finished,
-    new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, TRANSCRIPT_DONE_GRACE_MS);
-    }),
-  ]);
-  clearTimeout(timer);
-  if (failure) throw failure;
-  return { ...state, done: true };
+  let abort = () => {};
+  const aborted = new Promise<never>((_, reject) => {
+    abort = () => {
+      active = false;
+      reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+  });
+  try {
+    try {
+      await Promise.race([
+        sessionsApi.streamMessages(providerId, sourcePath, (chunk) => {
+          if (!active) return;
+          received = true;
+          try {
+            state = applyTranscriptChunk(state, chunk);
+            onProgress?.(state);
+            if (state.done) {
+              active = false;
+              settle();
+            }
+          } catch (error) {
+            active = false;
+            failure = error;
+            settle();
+          }
+        }),
+        aborted,
+        finished,
+      ]);
+    } catch (error) {
+      active = false;
+      if (!received && !signal?.aborted) {
+        return await Promise.race([
+          loadTranscriptOnce(providerId, sourcePath),
+          aborted,
+        ]);
+      }
+      throw error;
+    }
+    await Promise.race([
+      finished,
+      aborted,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, TRANSCRIPT_DONE_GRACE_MS);
+      }),
+    ]);
+    if (failure) throw failure;
+    if (!state.done)
+      throw new Error("Transcript stream timed out before completion");
+    return state;
+  } finally {
+    active = false;
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
+  }
 };
 
 export interface SessionTranscriptResult {
@@ -190,12 +241,18 @@ export const useSessionTranscript = (
   const queryKey = sessionKeys.transcript(providerId, sourcePath);
   const query = useQuery<TranscriptState>({
     queryKey,
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const previous = queryClient.getQueryData<TranscriptState>(queryKey);
       const live = !previous?.done;
-      return loadTranscript(providerId!, sourcePath!, (state) => {
-        if (live) queryClient.setQueryData(queryKey, state);
-      });
+      return loadTranscript(
+        providerId!,
+        sourcePath!,
+        (state) => {
+          if (live && !signal.aborted)
+            queryClient.setQueryData(queryKey, state);
+        },
+        signal,
+      );
     },
     enabled: Boolean(providerId && sourcePath),
     staleTime: 30 * 1000,
@@ -294,6 +351,8 @@ const imageCache = new Map<string, CachedImage>();
 const imageLoads = new Map<string, Promise<string>>();
 /** 每张图还在等加载结果、尚未占用的等待方个数；有等待方的图不淘汰 */
 const imageWaiters = new Map<string, number>();
+/** 每次 clearSessionImageCache 递增，防止在途请求完成后把过期 Blob URL 回写进缓存 */
+let imageCacheGeneration = 0;
 
 const startWaiting = (key: string) =>
   imageWaiters.set(key, (imageWaiters.get(key) ?? 0) + 1);
@@ -325,9 +384,13 @@ const loadImageUrl = (
 ) => {
   let pending = imageLoads.get(key);
   if (!pending) {
-    pending = sessionsApi
+    const gen = imageCacheGeneration;
+    const req = sessionsApi
       .getImage(providerId, sourcePath, image)
       .then((bytes) => {
+        if (gen !== imageCacheGeneration) return "";
+        const existing = imageCache.get(key);
+        if (existing) return existing.url;
         const url = URL.createObjectURL(
           new Blob([bytes], { type: image.mediaType }),
         );
@@ -335,7 +398,12 @@ const loadImageUrl = (
         evictImages();
         return url;
       })
-      .finally(() => imageLoads.delete(key));
+      .finally(() => {
+        if (imageLoads.get(key) === req) {
+          imageLoads.delete(key);
+        }
+      });
+    pending = req;
     imageLoads.set(key, pending);
   }
   return pending;
@@ -358,6 +426,7 @@ const releaseImage = (key: string) => {
 
 /** 清空图片缓存并 revoke 全部 Blob URL（离开阅读页、测试用） */
 export const clearSessionImageCache = () => {
+  imageCacheGeneration += 1;
   imageCache.forEach((entry) => URL.revokeObjectURL(entry.url));
   imageCache.clear();
   imageLoads.clear();

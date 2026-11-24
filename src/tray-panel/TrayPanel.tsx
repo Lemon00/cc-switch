@@ -647,19 +647,31 @@ export function TrayPanel() {
     let disposed = false;
     const offs: Array<() => void> = [];
     void (async () => {
-      const offShow = await listen<PanelPlacement>(SHOW_EVENT, (event) => {
-        void begin(event.payload);
-      });
-      const offChanged = await listen(CHANGED_EVENT, () => void load());
-      if (disposed) {
-        offShow();
-        offChanged();
-        return;
+      try {
+        const offShow = await listen<PanelPlacement>(SHOW_EVENT, (event) => {
+          void begin(event.payload);
+        });
+        if (disposed) {
+          offShow();
+          return;
+        }
+        offs.push(offShow);
+
+        const offChanged = await listen(CHANGED_EVENT, () => void load());
+        if (disposed) {
+          offChanged();
+          return;
+        }
+        offs.push(offChanged);
+
+        // 第一次弹出时窗口是新建的，事件可能早于这里开始监听
+        const pending = await trayPanelApi.placement();
+        if (pending && !disposed) void begin(pending);
+      } catch (error) {
+        console.error("[TrayPanel] failed to register listeners", error);
+        if (disposed) return;
+        // 第二个 listen 失败时，已登记的第一个仍由 cleanup 释放。
       }
-      offs.push(offShow, offChanged);
-      // 第一次弹出时窗口是新建的，事件可能早于这里开始监听
-      const pending = await trayPanelApi.placement();
-      if (pending && !disposed) void begin(pending);
     })();
     return () => {
       disposed = true;

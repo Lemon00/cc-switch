@@ -6,7 +6,7 @@ authors = ["Jason Young"]
 license = "MIT"
 repository = "https://github.com/Lemon00/cc-switch"
 edition = "2021"
-rust-version = "1.85.0"
+rust-version = "1.90.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -25,7 +25,8 @@ test-hooks = []
 session-monitor = ["cc-switch-core/session-monitor"]
 
 [build-dependencies]
-tauri-build = { version = "2.4.0", features = [] }
+tauri-build = { version = "2.7.6", features = [] }
+embed-resource = "3"
 
 [dependencies]
 # 后端核心：数据库、供应商、代理、live、mode 等。默认 feature 由本 crate
@@ -35,7 +36,7 @@ serde_json = { version = "1.0", features = ["preserve_order"] }
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
-tauri = { version = "2.8.2", features = ["tray-icon", "protocol-asset", "image-png", "macos-private-api"] }
+tauri = { version = "2.12.7", features = ["tray-icon", "protocol-asset", "image-png", "macos-private-api"] }
 tauri-plugin-log = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-process = "2"
@@ -67,7 +68,6 @@ zip = "2.2"
 tempfile = "3"
 url = "2.5"
 auto-launch = "0.5"
-once_cell = "1.21.3"
 base64 = "0.22"
 # 校验自定义供应商图标；tauri 经 image 已依赖同一版本，不增加编译量
 png = "0.18"
@@ -91,8 +91,8 @@ libc = "0.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = "0.52"
-webview2-com = "0.38"
-windows = "0.61"
+webview2-com = "0.39"
+windows = "0.62"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Globalization",
@@ -137,5 +137,5 @@ cc-switch-core = { path = "../crates/cc-switch-core", default-features = false, 
 serial_test = "3"
 # 只被 src-tauri/tests 的 yaml 断言用到，业务代码不再直接依赖（解析已搬到 core）。
 serde_yaml = "0.9"
-tauri = { version = "2.8.2", features = ["test"] }
+tauri = { version = "2.12.7", features = ["test"] }
 tokio = { version = "1", features = ["test-util"] }

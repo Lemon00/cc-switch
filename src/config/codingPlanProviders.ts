@@ -2,8 +2,7 @@
  * Coding Plan 供应商的 base_url 路由表。
  *
  * 与后端 `crates/cc-switch-core/src/services/coding_plan.rs::detect_provider` 保持一致：
- * 后端靠 `url.contains(...)` 做子串判断（MiniMax 例外，按 host 标签匹配），
- * 前端这里用 RegExp 做同效匹配。
+ * 先解析 HTTP(S) URL，再按主机名与路径段边界匹配，忽略凭据、端口、查询与片段。
  * 新增供应商时改这一处即可（UsageScriptModal 下拉 + useProviderActions
  * 新建自动注入 + 托盘识别全部复用）。
  */
@@ -11,6 +10,7 @@ import { createUsageScript } from "@/types";
 import { TEMPLATE_TYPES } from "@/config/constants";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 import { extractGrokBuildBaseUrl } from "@/utils/grokBuildConfig";
+import { parseUsageProviderUrl } from "@/lib/usageProviderUrl";
 
 export interface CodingPlanProviderEntry {
   /** 与后端 QuotaTier 的 `codingPlanProvider` 取值对齐 */
@@ -25,48 +25,48 @@ export interface CodingPlanProviderEntry {
     | "command_code";
   /** UsageScriptModal 下拉显示用 */
   label: string;
-  /** base_url 匹配规则 */
-  pattern: RegExp;
+  /** hostname + pathname 匹配规则；null 表示只能由用户手动选择 */
+  pattern: RegExp | null;
 }
 
 export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
-  { id: "kimi", label: "Kimi For Coding", pattern: /api\.kimi\.com\/coding/i },
+  {
+    id: "kimi",
+    label: "Kimi For Coding",
+    pattern: /^api\.kimi\.com\/coding(?:\/|$)/i,
+  },
   {
     id: "zhipu",
     label: "Zhipu GLM (智谱)",
-    pattern: /bigmodel\.cn|api\.z\.ai/i,
+    pattern: /^(?:(?:[\w-]+\.)*bigmodel\.cn|api\.z\.ai)\//i,
   },
   {
     // 智谱团队套餐（Team Plan）。base_url 与个人版智谱（open.bigmodel.cn）相同，
-    // 无法靠 base_url 自动区分——靠显式 codingPlanProvider === "zhipu_team" 路由。
-    // 个人版 zhipu 排在前面，detectCodingPlanProvider 首匹配仍命中个人版，
-    // 故团队版永不被 injectCodingPlanUsageScript 自动注入（必须用户手动选）。
-    // pattern 仅占位（下拉展示用），实际不参与自动检测。
+    // 无法靠 base_url 自动区分——靠显式 codingPlanProvider === "zhipu_team" 路由，
+    // 只能由用户手动选择。
     id: "zhipu_team",
     label: "Zhipu GLM Team (智谱团队)",
-    pattern: /bigmodel\.cn/i,
+    pattern: null,
   },
   {
     // 按 host 标签边界匹配（同后端 codex_url_host_matches_any），不认
     // api.minimax.cn.example.com 这类伪造后缀或出现在路径里的域名
     id: "minimax",
     label: "MiniMax",
-    pattern:
-      /^(?:https?:\/\/)?(?:[^/?#@]*@)?(?:[\w-]+\.)*api\.(?:minimaxi\.com|minimax\.(?:io|cn))(?=[:/?#]|$)/i,
+    pattern: /^(?:[\w-]+\.)*api\.(?:minimaxi\.com|minimax\.(?:io|cn))\//i,
   },
   {
     id: "zenmux",
     label: "ZenMux",
-    pattern: /zenmux\./i,
+    pattern: /^(?:[\w-]+\.)*zenmux\.ai\//i,
   },
   {
     // 火山方舟 Agent Plan / Coding Plan。base_url 形如
     // ark.cn-beijing.volces.com/api/plan[/v3]（Agent Plan）或
-    // /api/coding[/v3]（Coding Plan）；与后端 detect_provider 的
-    // `volces.com/api/plan` / `volces.com/api/coding` 子串判断同效。
+    // /api/coding[/v3]（Coding Plan）；与后端 detect_provider 的主机名与路径段匹配同效。
     id: "volcengine",
     label: "火山方舟 (Volcengine)",
-    pattern: /volces\.com\/api\/(plan|coding)/i,
+    pattern: /^(?:[\w-]+\.)*volces\.com\/api\/(?:plan|coding)(?:\/|$)/i,
   },
   {
     // OpenCode Go（$10/月订阅，三时间窗口美元额度）。用量端点
@@ -78,14 +78,14 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     // Zen 按量版（/zen/v1）没有用量 API，刻意不命中。
     id: "opencode_go",
     label: "OpenCode Go",
-    pattern: /opencode\.ai\/(?:zen|inference)\/go/i,
+    pattern: /^opencode\.ai\/(?:zen|inference)\/go(?:\/|$)/i,
   },
   {
     // Command Code 的余额与窗口接口由官方 CLI 使用，当前未公开文档化。
     // Claude 使用 /provider，Codex 使用 /provider/v1。
     id: "command_code",
     label: "Command Code",
-    pattern: /api\.commandcode\.ai\/provider(?:[/?#]|$)/i,
+    pattern: /^api\.commandcode\.ai\/provider(?:\/|$)/i,
   },
 ] as const;
 
@@ -93,9 +93,11 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
 export function detectCodingPlanProvider(
   baseUrl: string | undefined | null,
 ): CodingPlanProviderEntry["id"] | null {
-  if (!baseUrl) return null;
+  const parsed = parseUsageProviderUrl(baseUrl);
+  if (!parsed) return null;
+  const target = `${parsed.hostname.replace(/\.$/, "")}${parsed.pathname}`;
   for (const cp of CODING_PLAN_PROVIDERS) {
-    if (cp.pattern.test(baseUrl)) return cp.id;
+    if (cp.pattern?.test(target)) return cp.id;
   }
   return null;
 }

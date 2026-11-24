@@ -469,11 +469,11 @@ fn import_default_config_claude_persists_provider() {
     // 验证内存状态
     let providers = state
         .db
-        .get_all_providers(AppType::Claude.as_str())
+        .get_all_providers(&AppType::Claude)
         .expect("get all providers");
     let current_id = state
         .db
-        .get_current_provider(AppType::Claude.as_str())
+        .get_current_provider(&AppType::Claude)
         .expect("get current provider");
     assert_eq!(current_id.as_deref(), Some("default"));
     let default_provider = providers.get("default").expect("default provider");
@@ -525,7 +525,7 @@ context_window = 500000
 
     let providers = state
         .db
-        .get_all_providers(AppType::GrokBuild.as_str())
+        .get_all_providers(&AppType::GrokBuild)
         .expect("get all providers");
     assert!(
         providers.get("default").is_some(),
@@ -542,7 +542,7 @@ context_window = 500000
     // 激活的仍是导入的原配置，官方入口只是备选
     let current_id = state
         .db
-        .get_current_provider(AppType::GrokBuild.as_str())
+        .get_current_provider(&AppType::GrokBuild)
         .expect("get current provider");
     assert_eq!(current_id.as_deref(), Some("default"));
 }
@@ -572,7 +572,7 @@ fn import_default_config_grokbuild_official_live_imports_official_as_current() {
 
     let providers = state
         .db
-        .get_all_providers(AppType::GrokBuild.as_str())
+        .get_all_providers(&AppType::GrokBuild)
         .expect("get all providers");
     let official = providers
         .get("grokbuild-official")
@@ -585,7 +585,7 @@ fn import_default_config_grokbuild_official_live_imports_official_as_current() {
 
     let current_id = state
         .db
-        .get_current_provider(AppType::GrokBuild.as_str())
+        .get_current_provider(&AppType::GrokBuild)
         .expect("get current provider");
     assert_eq!(
         current_id.as_deref(),
@@ -619,7 +619,7 @@ fn startup_import_grokbuild_official_live_does_not_resurrect_official() {
 
     let providers = state
         .db
-        .get_all_providers(AppType::GrokBuild.as_str())
+        .get_all_providers(&AppType::GrokBuild)
         .expect("get all providers");
     assert!(
         providers.is_empty(),
@@ -651,7 +651,7 @@ fn import_default_config_grokbuild_broken_custom_live_still_errors() {
 
     let providers = state
         .db
-        .get_all_providers(AppType::GrokBuild.as_str())
+        .get_all_providers(&AppType::GrokBuild)
         .expect("get all providers");
     assert!(
         providers.get("grokbuild-official").is_some(),
@@ -660,7 +660,7 @@ fn import_default_config_grokbuild_broken_custom_live_still_errors() {
     assert!(providers.get("default").is_none(), "nothing was imported");
     let current_id = state
         .db
-        .get_current_provider(AppType::GrokBuild.as_str())
+        .get_current_provider(&AppType::GrokBuild)
         .expect("get current provider");
     assert_ne!(
         current_id.as_deref(),
@@ -697,7 +697,7 @@ fn import_default_config_without_live_file_returns_error() {
     // 失败的导入不应该向数据库写入任何供应商
     let providers = state
         .db
-        .get_all_providers(AppType::Claude.as_str())
+        .get_all_providers(&AppType::Claude)
         .expect("get all providers");
     assert!(
         providers.is_empty(),
@@ -729,7 +729,8 @@ fn import_mcp_from_claude_creates_config_and_enables_servers() {
     let config = MultiAppConfig::default();
     let state = create_test_state_with_config(&config).expect("create test state");
 
-    let changed = McpService::import_from_claude(&state).expect("import mcp from claude succeeds");
+    let changed = McpService::import_from_app(&state, &AppType::Claude)
+        .expect("import mcp from claude succeeds");
     assert!(
         changed > 0,
         "import should report inserted or normalized entries"
@@ -775,7 +776,7 @@ command = "echo"
     fs::write(&config_path, original).expect("seed codex config");
 
     let state = create_test_state().expect("create test state");
-    let changed = McpService::import_from_codex(&state).expect("import from codex");
+    let changed = McpService::import_from_app(&state, &AppType::Codex).expect("import from codex");
     assert!(changed > 0, "should import servers from Codex config");
 
     let after = fs::read_to_string(&config_path).expect("read codex config");
@@ -802,7 +803,7 @@ fn import_mcp_from_codex_infers_http_from_url_without_type() {
     .expect("seed codex config");
 
     let state = create_test_state().expect("create test state");
-    let changed = McpService::import_from_codex(&state).expect("import from codex");
+    let changed = McpService::import_from_app(&state, &AppType::Codex).expect("import from codex");
     assert!(changed > 0, "should import the url-only server");
 
     let servers = state.db.get_all_mcp_servers().expect("get all mcp servers");
@@ -888,7 +889,8 @@ command = "echo"
         })
         .expect("seed existing mcp server");
 
-    let changed = McpService::import_from_claude(&state).expect("import from claude");
+    let changed =
+        McpService::import_from_app(&state, &AppType::Claude).expect("import from claude");
     assert_eq!(changed, 0, "existing server should not count as new");
 
     let after = fs::read_to_string(&codex_config_path).expect("read codex config");
@@ -920,8 +922,8 @@ fn import_mcp_from_claude_invalid_json_preserves_state() {
 
     let state = create_test_state().expect("create test state");
 
-    let err =
-        McpService::import_from_claude(&state).expect_err("invalid json should bubble up error");
+    let err = McpService::import_from_app(&state, &AppType::Claude)
+        .expect_err("invalid json should bubble up error");
     match err {
         AppError::McpValidation(msg) => assert!(
             msg.contains("解析 ~/.claude.json 失败"),
@@ -1296,8 +1298,8 @@ command = "echo"
 
     let state = support::create_test_state().expect("create test state");
 
-    McpService::import_from_claude(&state).expect("import from claude");
-    McpService::import_from_codex(&state).expect("import from codex");
+    McpService::import_from_app(&state, &AppType::Claude).expect("import from claude");
+    McpService::import_from_app(&state, &AppType::Codex).expect("import from codex");
 
     let servers = state.db.get_all_mcp_servers().expect("get all mcp servers");
     let entry = servers.get("shared").expect("shared server exists");
@@ -1331,7 +1333,8 @@ fn import_mcp_from_gemini_sse_url_only_is_valid() {
     .expect("seed ~/.gemini/settings.json");
 
     let state = support::create_test_state().expect("create test state");
-    let changed = McpService::import_from_gemini(&state).expect("import from gemini");
+    let changed =
+        McpService::import_from_app(&state, &AppType::Gemini).expect("import from gemini");
     assert!(changed > 0, "should import at least 1 server");
 
     let servers = state.db.get_all_mcp_servers().expect("get all mcp servers");
@@ -1960,7 +1963,10 @@ fn omp_mcp_disable_reenable_preserves_options_and_suppresses_discovered_sources(
     let (state, path) = omp_test_state();
     let native = json!({"mcpServers":{"demo":{"command":"node","args":["mcp.js"],"enabled":false,"timeout":0,"requestIdFormat":"string","instructions":false}},"disabledServers":["demo","other"],"enabledServers":["other"]});
     fs::write(&path, native.to_string()).unwrap();
-    assert_eq!(McpService::import_from_omp(&state).unwrap(), 1);
+    assert_eq!(
+        McpService::import_from_app(&state, &AppType::Omp).unwrap(),
+        1
+    );
     assert!(!state.db.get_all_mcp_servers().unwrap()["demo"].apps.omp);
     McpService::toggle_app(&state, "demo", AppType::Omp, true).unwrap();
     let read =
@@ -2013,7 +2019,7 @@ fn omp_mcp_resync_and_conflicting_enable_preserve_native_configuration() {
     assert_eq!(fs::read_to_string(&path).unwrap(), native.to_string());
     assert!(McpService::toggle_app(&state, &server.id, AppType::Omp, true).is_err());
     assert!(!state.db.get_all_mcp_servers().unwrap()[&server.id].apps.omp);
-    assert!(McpService::import_from_omp(&state)
+    assert!(McpService::import_from_app(&state, &AppType::Omp)
         .unwrap_err()
         .to_string()
         .contains("context7"));
