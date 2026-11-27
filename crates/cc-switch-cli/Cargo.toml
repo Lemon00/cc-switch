@@ -1,8 +1,8 @@
 [package]
 name = "cc-switch-cli"
-version = "4.0.28"
+version = "1.0.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.86"
 
 [[bin]]
 name = "cc-switch-cli"
@@ -20,6 +20,13 @@ log = "0.4"
 # 其他平台不调用，依赖本身跨平台。
 libc = "0.2"
 tokio = { version = "1", features = ["rt-multi-thread", "signal", "sync", "macros"] }
+ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
+crossterm = "0.29"
+toml_edit = "0.22"
+unicode-width = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
 
 [profile.release]
 # 与 GUI 主 crate 保持一致：体积优先，thin LTO + strip。

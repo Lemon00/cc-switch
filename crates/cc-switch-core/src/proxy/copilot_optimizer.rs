@@ -410,36 +410,38 @@ fn detect_subagent(body: &Value) -> bool {
 /// 与 copilot-api 的 `sanitizeOrphanToolResults` 对齐。
 pub fn sanitize_orphan_tool_results(mut body: Value) -> Value {
     let messages = match body.get_mut("messages").and_then(|m| m.as_array_mut()) {
-        Some(msgs) if msgs.len() >= 2 => msgs,
+        Some(msgs) if !msgs.is_empty() => msgs,
         _ => return body,
     };
 
     // Anthropic 协议要求 tool_result 紧跟其对应 tool_use 所在的 assistant turn。
     // 只检查 messages[i-1]（紧邻上一条 assistant）来判定是否 orphan，
-    // 与参考实现 sanitizeOrphanToolResults 对齐。
-    for i in 1..messages.len() {
+    // 与参考实现 sanitizeOrphanToolResults 对齐。messages[0] 若本身是
+    // tool_result（截断后仅剩尾帧）也必须清理。
+    for i in 0..messages.len() {
         if messages[i].get("role").and_then(|r| r.as_str()) != Some("user") {
             continue;
         }
 
         // 收集紧邻上一条 assistant 的 tool_use id
-        let prev_tool_use_ids: HashSet<String> =
-            if messages[i - 1].get("role").and_then(|r| r.as_str()) == Some("assistant") {
-                messages[i - 1]
-                    .get("content")
-                    .and_then(|c| c.as_array())
-                    .map(|blocks| {
-                        blocks
-                            .iter()
-                            .filter(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_use"))
-                            .filter_map(|b| b.get("id").and_then(|i| i.as_str()).map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            } else {
-                // 上一条不是 assistant → 这条 user 中的所有 tool_result 都是 orphan
-                HashSet::new()
-            };
+        let prev_tool_use_ids: HashSet<String> = if i > 0
+            && messages[i - 1].get("role").and_then(|r| r.as_str()) == Some("assistant")
+        {
+            messages[i - 1]
+                .get("content")
+                .and_then(|c| c.as_array())
+                .map(|blocks| {
+                    blocks
+                        .iter()
+                        .filter(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_use"))
+                        .filter_map(|b| b.get("id").and_then(|i| i.as_str()).map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            // 无上一条 / 上一条不是 assistant → 所有 tool_result 都是 orphan
+            HashSet::new()
+        };
 
         let content = match messages[i]
             .get_mut("content")

@@ -3,15 +3,12 @@ export function parseFiniteNumber(value: unknown): number | null {
   if (typeof value === "number") {
     return Number.isFinite(value) ? value : null;
   }
-
   if (typeof value === "string") {
     const parsed = Number.parseFloat(value);
     return Number.isFinite(parsed) ? parsed : null;
   }
-
   return null;
 }
-
 export function fmtInt(
   value: unknown,
   locale?: string,
@@ -21,7 +18,6 @@ export function fmtInt(
   if (num == null) return fallback;
   return new Intl.NumberFormat(locale).format(Math.trunc(num));
 }
-
 /** 用量金额的显示币种。库里一律存美元，只在显示时按 `rate`（1 美元折多少）换算。 */
 /** 界面语言各自的币种（en→USD、zh→CNY、ja→JPY、zh-TW→TWD、tr→TRY），外加欧元 */
 export const DISPLAY_CURRENCIES = [
@@ -32,9 +28,7 @@ export const DISPLAY_CURRENCIES = [
   "TWD",
   "TRY",
 ] as const;
-
 export type DisplayCurrency = (typeof DISPLAY_CURRENCIES)[number];
-
 /**
  * 用户没填汇率、也还没自动取到时用的起点，按 2026-07~09 的报价取整。
  * 改这里只影响手填和自动都没值的用户。
@@ -43,15 +37,11 @@ export const DEFAULT_EXCHANGE_RATES: Record<
   Exclude<DisplayCurrency, "USD">,
   number
 > = { CNY: 6.8, EUR: 0.87, JPY: 158, TWD: 32, TRY: 48 };
-
 /** 汇率来源：自动获取（每日更新）或手动填写 */
 export const RATE_SOURCES = ["auto", "manual"] as const;
-
 export type RateSource = (typeof RATE_SOURCES)[number];
-
 /** 自动获取的汇率多久算旧：两个源都每天更新一次，半天刷一次足够跟上 */
 export const AUTO_RATE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
-
 /**
  * 汇率来源：显式设置优先，没设置过一律按手动。
  * 用量页本来不联网，升级后不能一进页面就向第三方发请求；用户主动选「自动获取」才联网。
@@ -63,7 +53,6 @@ export function resolveRateSource(
     RATE_SOURCES.find((source) => source === settings?.rateSource) ?? "manual"
   );
 }
-
 /**
  * 自动汇率的实际数据源：open.er-api.com 按它的免费条款必须署名 ExchangeRate-API；
  * 主源失败退到 floatrates.com 时署它自己的名字。没有记录（旧缓存）按主源处理。
@@ -76,7 +65,6 @@ export function resolveRateProvider(source: string | undefined): {
     ? { name: "FloatRates", url: "https://www.floatrates.com/" }
     : { name: "ExchangeRate-API", url: "https://www.exchangerate-api.com/" };
 }
-
 /** 该不该去取新汇率：自动模式且没取过、或缓存已超过半天 */
 export function shouldRefreshRates(
   settings: UsageDisplaySettings | undefined,
@@ -87,10 +75,10 @@ export function shouldRefreshRates(
   return (
     typeof fetchedAt !== "number" ||
     !Number.isFinite(fetchedAt) ||
+    fetchedAt > nowMs ||
     nowMs - fetchedAt >= AUTO_RATE_MAX_AGE_MS
   );
 }
-
 /** 侧栏「今日」可选的项，顺序即菜单和侧栏上的顺序 */
 export const SIDEBAR_TODAY_ITEMS = [
   "cost",
@@ -98,16 +86,11 @@ export const SIDEBAR_TODAY_ITEMS = [
   "requests",
   "hitRate",
 ] as const;
-
 export type SidebarTodayItem = (typeof SIDEBAR_TODAY_ITEMS)[number];
-
 /** 侧栏那一格窄，两项已经是上下两行 */
 export const SIDEBAR_TODAY_MAX_ITEMS = 2;
-
 export const TREND_CHART_TYPES = ["bar", "area"] as const;
-
 export type TrendChartType = (typeof TREND_CHART_TYPES)[number];
-
 /** 趋势图样式：没设置或认不出的值按柱形图 */
 export function resolveTrendChartType(
   settings: UsageDisplaySettings | undefined,
@@ -115,7 +98,6 @@ export function resolveTrendChartType(
   const saved = settings?.trendChartType;
   return TREND_CHART_TYPES.find((type) => type === saved) ?? "bar";
 }
-
 /**
  * 侧栏「今日」要显示的项：没设置过只显示金额；空列表＝不显示。
  * 认不出的项忽略，按菜单顺序排，最多两项（手改设置文件多写了也只取前两项）。
@@ -130,20 +112,16 @@ export function resolveSidebarToday(
     SIDEBAR_TODAY_MAX_ITEMS,
   );
 }
-
 /** 命中率百分比：`98.6%`；四舍五入到 100.0 的写成 `100%` */
 export function formatHitRatePercent(rate: number): string {
   const percent = Math.max(0, Math.min(100, rate * 100));
   return `${percent.toFixed(percent >= 99.95 ? 0 : 1)}%`;
 }
-
 export interface MoneyDisplay {
   currency: DisplayCurrency;
   rate: number;
 }
-
 export const USD_DISPLAY: MoneyDisplay = { currency: "USD", rate: 1 };
-
 // 人民币和日元都写 ¥，两国各自就是这么写的；选的是哪种在设置里看得到
 const CURRENCY_SYMBOL: Record<DisplayCurrency, string> = {
   USD: "$",
@@ -153,10 +131,8 @@ const CURRENCY_SYMBOL: Record<DisplayCurrency, string> = {
   TWD: "NT$",
   TRY: "₺",
 };
-
 /** 日元面额大（1 美元约 158 日元），同一处少显示两位小数：$0.0012 → ¥0.19 */
 const FEWER_DIGITS: Partial<Record<DisplayCurrency, number>> = { JPY: 2 };
-
 /**
  * 换算出来的金额是按手填汇率估的，再多位数也不更准：最多两位小数（日元再少两位）。
  * 美元按调用方给的位数。
@@ -168,18 +144,15 @@ function shownDigits(display: MoneyDisplay, digits: number): number {
     Math.min(digits - (FEWER_DIGITS[display.currency] ?? 0), 2),
   );
 }
-
 /** 整数部分加千位分隔：换成日元、里拉后动辄七位数 */
 function groupThousands(fixed: string): string {
   const [whole, frac] = fixed.split(".");
   const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   return frac == null ? grouped : `${grouped}.${frac}`;
 }
-
 export function isValidExchangeRate(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
-
 /**
  * 把设置文件里的值收成能用的显示方式：不认得的币种回落 USD，汇率不合法用下一个来源。
  * 自动模式优先用自动取到的汇率，没取到才用手填值；手动模式只看手填值。
@@ -198,7 +171,6 @@ export function resolveMoneyDisplay(
     candidates.find(isValidExchangeRate) ?? DEFAULT_EXCHANGE_RATES[currency];
   return { currency, rate };
 }
-
 /** 固定小数位：`$1.23` / `¥8.36`。组件里用 `useMoneyFormat()`，别直接传 display。 */
 export function formatMoney(
   usd: unknown,
@@ -218,7 +190,6 @@ export function formatMoney(
   }
   return `${symbol}${groupThousands(fixed)}`;
 }
-
 /** 按大小取位数并去掉末尾的 0：`$0.0081` / `$0.012` / `$1.25` */
 export function formatMoneyCompact(usd: number, display: MoneyDisplay): string {
   const value = usd * display.rate;
@@ -227,14 +198,12 @@ export function formatMoneyCompact(usd: number, display: MoneyDisplay): string {
   if (value < 1) return `${prefix}${Number(value.toFixed(3))}`;
   return `${prefix}${groupThousands(value.toFixed(2))}`;
 }
-
 /** 侧栏这类窄处：100 以上不带小数（`¥280`），免得把旁边的标签挤成省略号。 */
 export function formatMoneyShort(usd: unknown, display: MoneyDisplay): string {
   const num = parseFiniteNumber(usd);
   if (num == null) return "--";
   return formatMoney(num, Math.abs(num * display.rate) >= 100 ? 0 : 2, display);
 }
-
 /**
  * 坐标轴刻度：画图前就把数据换算成显示币种（刻度才会是 ¥50 这种整数），
  * 所以这里拿到的已是显示币种的值，只加符号，不定小数位。
@@ -243,17 +212,14 @@ export function formatMoneyTick(value: unknown, display: MoneyDisplay): string {
   const num = parseFiniteNumber(value) ?? 0;
   return `${CURRENCY_SYMBOL[display.currency]}${groupThousands(String(num))}`;
 }
-
 /** 输出少于这个数的请求（工具调用这类）不算速度：0.1 秒回 15 个 token 会算出离谱的数。 */
 export const SPEED_MIN_OUTPUT_TOKENS = 100;
-
 interface OutputTokensPerSecondInput {
   outputTokens: unknown;
   latencyMs: unknown;
   firstTokenMs?: unknown;
   dataSource?: unknown;
 }
-
 /**
  * 一条请求的生成时间（毫秒）= 耗时 − 首字。缺耗时或首字、或差值不大于 0 时返回 null。
  * 只算路由服务记的请求：会话日志的耗时和首字都是按时间戳估的，不算精确速度
@@ -269,11 +235,9 @@ export function getGenerationMs(
   const generationMs = latencyMs - firstTokenMs;
   return generationMs > 0 ? generationMs : null;
 }
-
 // 生成窗口短于此值时不算速度：中转站缓冲后一次性吐出、或短回复整段落在
 // 同一个网络包里，窗口只剩几毫秒，算出来的是传输突发而不是生成速度。
 export const SPEED_MIN_GENERATION_MS = 100;
-
 /** 这条请求能不能算速度：输出不少于 100 token，且生成时间不短于 100 毫秒。 */
 export function isSpeedEligible(log: OutputTokensPerSecondInput): boolean {
   const outputTokens = parseFiniteNumber(log.outputTokens);
@@ -285,7 +249,6 @@ export function isSpeedEligible(log: OutputTokensPerSecondInput): boolean {
     generationMs >= SPEED_MIN_GENERATION_MS
   );
 }
-
 /** 单条速度（tok/s）= 输出 token ÷ ((耗时 − 首字) / 1000)；不满足条件返回 null。 */
 export function getOutputTokensPerSecond(
   log: OutputTokensPerSecondInput,
@@ -296,16 +259,13 @@ export function getOutputTokensPerSecond(
   const tps = outputTokens / (generationMs / 1000);
   return Number.isFinite(tps) && tps > 0 ? tps : null;
 }
-
 /**
  * 估算速度的输出门槛。会话日志导入的请求没有首字计时，耗时是按日志时间戳估的、
  * 含首字等待；输出越少首字占比越大、算出来越偏低，所以门槛比精确口径高。
  */
 export const SPEED_ESTIMATE_MIN_OUTPUT_TOKENS = 200;
-
 /** 估算耗时短于此值时不估速度：输出 200 token 以上却不到 1 秒，多半是起点取晚了。 */
 export const SPEED_ESTIMATE_MIN_DURATION_MS = 1000;
-
 /** 这条请求是不是从会话日志导入的（不是路由服务记的）。 */
 export function isSessionLogRequest(log: { dataSource?: unknown }): boolean {
   return (
@@ -314,7 +274,6 @@ export function isSessionLogRequest(log: { dataSource?: unknown }): boolean {
     log.dataSource !== "proxy"
   );
 }
-
 /**
  * 这条请求能不能估速度（和后端 `speed_estimate_eligible_sql` 同口径）：会话日志导入、
  * 输出不少于 200 token、估算耗时不短于 1 秒。推出了首字的也照样按整段耗时算。
@@ -332,7 +291,6 @@ export function isSpeedEstimateEligible(
     latencyMs >= SPEED_ESTIMATE_MIN_DURATION_MS
   );
 }
-
 /** 单条估算速度（tok/s）= 输出 token ÷ (估算耗时 / 1000)，含首字等待；不满足条件返回 null。 */
 export function getEstimatedTokensPerSecond(
   log: OutputTokensPerSecondInput,
@@ -343,7 +301,6 @@ export function getEstimatedTokensPerSecond(
   const tps = outputTokens / (latencyMs / 1000);
   return Number.isFinite(tps) && tps > 0 ? tps : null;
 }
-
 /**
  * 汇总速度 = Σ输出 ÷ Σ生成时间（只算满足条件的请求），不是逐条平均——
  * 逐条平均会被短请求带歪。分子分母都来自后端汇总（或 [sumSpeedTotals]）。
@@ -358,7 +315,6 @@ export function getAggregateTokensPerSecond(
   const tps = output / (ms / 1000);
   return Number.isFinite(tps) && tps > 0 ? tps : null;
 }
-
 /** 前端已有明细时的汇总：只累加满足条件的请求。 */
 export function sumSpeedTotals(logs: readonly OutputTokensPerSecondInput[]): {
   outputTokens: number;
@@ -373,32 +329,27 @@ export function sumSpeedTotals(logs: readonly OutputTokensPerSecondInput[]): {
   }
   return { outputTokens, generationMs };
 }
-
 /** tok/s 的显示：≥ 1 取整，否则一位小数；null 原样返回（界面显示「—」）。 */
 export function formatTokensPerSecond(tps: number | null): string | null {
   if (tps == null) return null;
   return tps >= 1 ? Math.round(tps).toString() : tps.toFixed(1);
 }
-
 /** 首字时间的显示：毫秒换成秒、一位小数；没有值返回 null（界面显示「—」）。 */
 export function formatFirstTokenSeconds(ms: unknown): string | null {
   const value = parseFiniteNumber(ms);
   if (value == null || value < 0) return null;
   return `${(value / 1000).toFixed(1)}s`;
 }
-
 export function formatOutputTokensPerSecond(
   log: OutputTokensPerSecondInput,
 ): string | null {
   return formatTokensPerSecond(getOutputTokensPerSecond(log));
 }
-
 export function formatEstimatedTokensPerSecond(
   log: OutputTokensPerSecondInput,
 ): string | null {
   return formatTokensPerSecond(getEstimatedTokensPerSecond(log));
 }
-
 /**
  * 表格和指标卡里的 Token 数：1 万以下写全（带千分位），以上压成最多 3 位有效数字
  * （48.2K、189K、18.2M），精确值放进 title。四种语言都用 K/M/B，和画板一致。
@@ -407,7 +358,7 @@ export function formatTokensCompact(value: unknown, locale?: string): string {
   const num = parseFiniteNumber(value);
   if (num == null) return "--";
   const abs = Math.abs(num);
-  if (abs < 10_000) {
+  if (abs < 10000) {
     return new Intl.NumberFormat(locale).format(Math.round(num));
   }
   const units: Array<[number, string]> = [
@@ -429,11 +380,9 @@ export function formatTokensCompact(value: unknown, locale?: string): string {
   }
   return String(num);
 }
-
 function normalizeLanguageTag(language: string): string {
   return language.toLowerCase().replace(/_/g, "-");
 }
-
 function isTraditionalChineseLanguage(normalizedLanguage: string): boolean {
   return (
     normalizedLanguage === "zh-tw" ||
@@ -442,7 +391,6 @@ function isTraditionalChineseLanguage(normalizedLanguage: string): boolean {
     normalizedLanguage.startsWith("zh-mo")
   );
 }
-
 export function getLocaleFromLanguage(language: string): string {
   if (!language) return "en-US";
   const normalized = normalizeLanguageTag(language);
@@ -455,31 +403,25 @@ export function getLocaleFromLanguage(language: string): string {
   if (normalized.startsWith("tr")) return "tr-TR";
   return "en-US";
 }
-
 interface I18nLike {
   resolvedLanguage?: string;
   language?: string;
 }
-
 export function getResolvedLang(i18n: I18nLike): string {
   return i18n.resolvedLanguage || i18n.language || "en";
 }
-
 function isCjkLanguage(lang: string): boolean {
   const normalized = normalizeLanguageTag(lang);
   return normalized.startsWith("zh") || normalized.startsWith("ja");
 }
-
 /** 并列的名字：中日文用「、」，其他语言用逗号。 */
 export function joinNames(items: readonly string[], lang: string): string {
   return items.join(isCjkLanguage(lang) ? "、" : ", ");
 }
-
 /** 并列的分句：中日文用「；」，其他语言用分号。 */
 export function joinClauses(items: readonly string[], lang: string): string {
   return items.join(isCjkLanguage(lang) ? "；" : "; ");
 }
-
 /**
  * Token 数量的紧凑显示。
  *
@@ -510,14 +452,18 @@ export function formatTokensShort(
   if (value >= 1e3) return `${(value / 1e3).toFixed(decimals)}K`;
   return value.toLocaleString();
 }
-
 /** 「刚刚」「N 分钟前」「N 小时前」「N 天前」 */
 export function formatRelativeTime(
   timestampMs: number,
-  t: (key: string, options?: { count?: number }) => string,
+  t: (
+    key: string,
+    options?: {
+      count?: number;
+    },
+  ) => string,
   nowMs: number = Date.now(),
 ): string {
-  const diffMinutes = Math.max(0, Math.floor((nowMs - timestampMs) / 60_000));
+  const diffMinutes = Math.max(0, Math.floor((nowMs - timestampMs) / 60000));
   if (diffMinutes < 1) return t("usage.justNow");
   if (diffMinutes < 60) return t("usage.minutesAgo", { count: diffMinutes });
   const hours = Math.floor(diffMinutes / 60);

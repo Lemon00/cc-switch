@@ -1,26 +1,40 @@
-import { useState, useCallback, useRef, useEffect } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useTranslation } from "react-i18next";
-import { toast } from "@/lib/toast";
+import type {
+  ManagedAuthDeviceCodeResponse,
+  ManagedAuthProvider,
+  ManagedAuthStatus,
+} from "@/lib/api";
 import { authApi } from "@/lib/api";
-import { CODEX_OAUTH_DUPLICATE_ACCOUNT_ERROR } from "@/lib/api/auth";
 import type { CodexLoginMethod, ManagedLoginMethod } from "@/lib/api/auth";
+import { CODEX_OAUTH_DUPLICATE_ACCOUNT_ERROR } from "@/lib/api/auth";
 import { deliverLoginLink, readAuthOpenBrowser } from "@/lib/authLoginLink";
 import { copyText } from "@/lib/clipboard";
 import { subscriptionKeys } from "@/lib/query/subscription";
-import type {
-  ManagedAuthProvider,
-  ManagedAuthStatus,
-  ManagedAuthDeviceCodeResponse,
-} from "@/lib/api";
-
+import { toast } from "@/lib/toast";
+import { extractErrorMessage } from "@/utils/errorUtils";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+/** Codex 凭据已清、供应商解绑失败时的稳定前缀（见 codex_oauth_switch）。 */
+const CREDENTIALS_CLEARED_PREFIX = "CREDENTIALS_CLEARED:";
+type AccountMutationResult =
+  | {
+      kind: "ok";
+    }
+  | {
+      kind: "partial";
+      message: string;
+    };
+function parseCredentialsClearedError(error: unknown): string | null {
+  const message = extractErrorMessage(error);
+  if (!message.startsWith(CREDENTIALS_CLEARED_PREFIX)) return null;
+  return message.slice(CREDENTIALS_CLEARED_PREFIX.length).trim() || message;
+}
 type PollingState = "idle" | "polling" | "success" | "error";
 type LoginRequest = {
   targetAccountId?: string;
   generation: number;
   loginMethod?: ManagedLoginMethod;
 };
-
 export function useManagedAuth(
   authProvider: ManagedAuthProvider,
   githubDomain?: string,
@@ -29,12 +43,10 @@ export function useManagedAuth(
   const queryClient = useQueryClient();
   const { t } = useTranslation();
   const queryKey = ["managed-auth-status", authProvider];
-
   const [pollingState, setPollingState] = useState<PollingState>("idle");
   const [deviceCode, setDeviceCode] =
     useState<ManagedAuthDeviceCodeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-
   const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
     null,
   );
@@ -43,7 +55,6 @@ export function useManagedAuth(
   const activeDeviceCodeRef = useRef<string | null>(null);
   const retryTargetAccountIdRef = useRef<string | undefined>(undefined);
   const flowTransitionRef = useRef<Promise<void>>(Promise.resolve());
-
   const {
     data: authStatus,
     isLoading: isLoadingStatus,
@@ -57,9 +68,8 @@ export function useManagedAuth(
     // A rejected xAI refresh token is persisted as `requires_reauth` by the
     // proxy hot path. Periodically refresh local status so an already-open Auth
     // Center stops showing the account as logged in without requiring a reload.
-    refetchInterval: authProvider === "xai_oauth" ? 15_000 : false,
+    refetchInterval: authProvider === "xai_oauth" ? 15000 : false,
   });
-
   const stopPolling = useCallback(() => {
     if (pollingIntervalRef.current) {
       clearInterval(pollingIntervalRef.current);
@@ -70,18 +80,10 @@ export function useManagedAuth(
       pollingTimeoutRef.current = null;
     }
   }, []);
-
   const cancelBackendFlow = useCallback(
     async (deviceCode: string | null): Promise<boolean> => {
-      // Codex（设备码）、Antigravity（本机回调服务）和 Claude 官方账号（后台的 claude 进程）
-      // 在后端占着资源，要通知取消
-      if (
-        (authProvider !== "codex_oauth" &&
-          authProvider !== "agy_oauth" &&
-          authProvider !== "claude_official") ||
-        !deviceCode
-      )
-        return true;
+      // Every provider must invalidate an in-flight token exchange on cancel.
+      if (!deviceCode) return true;
       try {
         const cancelled = await authApi.authCancelLogin(
           authProvider,
@@ -103,7 +105,6 @@ export function useManagedAuth(
     },
     [authProvider, queryClient],
   );
-
   const queueBackendCancellation = useCallback(
     (deviceCode: string | null) => {
       const transition = flowTransitionRef.current.then(async () => {
@@ -114,7 +115,6 @@ export function useManagedAuth(
     },
     [cancelBackendFlow],
   );
-
   useEffect(() => {
     return () => {
       flowGenerationRef.current += 1;
@@ -123,7 +123,6 @@ export function useManagedAuth(
       stopPolling();
     };
   }, [cancelBackendFlow, stopPolling]);
-
   const startLoginMutation = useMutation({
     mutationFn: ({ targetAccountId, loginMethod: method }: LoginRequest) =>
       method
@@ -143,13 +142,11 @@ export function useManagedAuth(
       setDeviceCode(response);
       setPollingState("polling");
       setError(null);
-
       // 按授权中心的偏好打开浏览器，或只复制登录链接
       const linkOnly = response.browser_opened
         ? false
         : (await deliverLoginLink(response.verification_uri, t)).linkOnly;
       if (request.generation !== flowGenerationRef.current) return;
-
       // Browser login has no verification code; leave the clipboard untouched.
       // 只复制了链接时也不复制验证码，免得盖掉剪贴板里的链接（等待块里有复制按钮）
       const browserFlow = !response.user_code;
@@ -161,7 +158,6 @@ export function useManagedAuth(
         }
       }
       if (request.generation !== flowGenerationRef.current) return;
-
       // Add a small buffer on top of GitHub's suggested interval to avoid
       // hitting slow_down responses too aggressively during device polling.
       // The browser flow only checks a local result, so it can poll quickly.
@@ -170,7 +166,6 @@ export function useManagedAuth(
         : Math.max((response.interval || 5) + 3, 8) * 1000;
       let pollInFlight = false;
       const expiresAt = Date.now() + response.expires_in * 1000;
-
       const pollOnce = async () => {
         if (request.generation !== flowGenerationRef.current) return;
         if (pollInFlight) return;
@@ -187,7 +182,6 @@ export function useManagedAuth(
           );
           return;
         }
-
         try {
           pollInFlight = true;
           const newAccount = await authApi.authPollForAccount(
@@ -233,7 +227,6 @@ export function useManagedAuth(
           pollInFlight = false;
         }
       };
-
       pollingIntervalRef.current = setInterval(pollOnce, interval);
       pollingTimeoutRef.current = setTimeout(() => {
         if (request.generation !== flowGenerationRef.current) return;
@@ -256,10 +249,18 @@ export function useManagedAuth(
       setError(e instanceof Error ? e.message : String(e));
     },
   });
-
   const logoutMutation = useMutation({
-    mutationFn: () => authApi.authLogout(authProvider),
-    onSuccess: async () => {
+    mutationFn: async (): Promise<AccountMutationResult> => {
+      try {
+        await authApi.authLogout(authProvider);
+        return { kind: "ok" };
+      } catch (error) {
+        const partial = parseCredentialsClearedError(error);
+        if (partial) return { kind: "partial", message: partial };
+        throw error;
+      }
+    },
+    onSuccess: async (result) => {
       setPollingState("idle");
       setDeviceCode(null);
       setError(null);
@@ -269,11 +270,27 @@ export function useManagedAuth(
         default_account_id: null,
         accounts: [],
       });
+      if (result.kind === "partial") {
+        toast.warning(result.message);
+      } else {
+        toast.success(
+          t("managedAuth.loggedOut", {
+            defaultValue: "已登出全部账号",
+          }),
+        );
+      }
       await queryClient.invalidateQueries({ queryKey });
     },
     onError: async (e) => {
       console.error("[ManagedAuth] Failed to logout:", e);
-      setError(e instanceof Error ? e.message : String(e));
+      const detail = extractErrorMessage(e) || t("common.unknown");
+      setError(detail);
+      toast.error(
+        t("managedAuth.logoutFailed", {
+          defaultValue: "登出失败: {{error}}",
+          error: detail,
+        }),
+      );
       await refetchStatus();
     },
     onSettled: async () => {
@@ -284,27 +301,44 @@ export function useManagedAuth(
       }
     },
   });
-
   const removeAccountMutation = useMutation({
-    mutationFn: (accountId: string) =>
-      authApi.authRemoveAccount(authProvider, accountId),
-    onSuccess: async () => {
+    mutationFn: async (accountId: string): Promise<AccountMutationResult> => {
+      try {
+        await authApi.authRemoveAccount(authProvider, accountId);
+        return { kind: "ok" };
+      } catch (error) {
+        const partial = parseCredentialsClearedError(error);
+        if (partial) return { kind: "partial", message: partial };
+        throw error;
+      }
+    },
+    onSuccess: async (result) => {
       setPollingState("idle");
       setDeviceCode(null);
       setError(null);
-      toast.success(
-        t("managedAuth.accountRemoved", {
-          defaultValue: "账号已移除",
-        }),
-      );
+      if (result.kind === "partial") {
+        toast.warning(result.message);
+      } else {
+        toast.success(
+          t("managedAuth.accountRemoved", {
+            defaultValue: "账号已移除",
+          }),
+        );
+      }
       await refetchStatus();
       await queryClient.invalidateQueries({ queryKey });
     },
     onError: async (e) => {
       console.error("[ManagedAuth] Failed to remove account:", e);
-      setError(e instanceof Error ? e.message : String(e));
-      // Account removal can succeed before provider unbinding fails.
-      if (authProvider === "codex_oauth") await refetchStatus();
+      const detail = extractErrorMessage(e) || t("common.unknown");
+      setError(detail);
+      toast.error(
+        t("managedAuth.removeFailed", {
+          defaultValue: "删除账号失败: {{error}}",
+          error: detail,
+        }),
+      );
+      await refetchStatus();
     },
     onSettled: async () => {
       if (authProvider === "codex_oauth") {
@@ -314,7 +348,6 @@ export function useManagedAuth(
       }
     },
   });
-
   const setDefaultAccountMutation = useMutation({
     mutationFn: (accountId: string) =>
       authApi.authSetDefaultAccount(authProvider, accountId),
@@ -348,10 +381,16 @@ export function useManagedAuth(
     },
     onError: (e) => {
       console.error("[ManagedAuth] Failed to set default account:", e);
-      setError(e instanceof Error ? e.message : String(e));
+      const detail = extractErrorMessage(e) || t("common.unknown");
+      setError(detail);
+      toast.error(
+        t("managedAuth.setDefaultFailed", {
+          defaultValue: "设为默认失败: {{error}}",
+          error: detail,
+        }),
+      );
     },
   });
-
   const beginLogin = useCallback(
     (targetAccountId?: string) => {
       const previousDeviceCode = activeDeviceCodeRef.current;
@@ -385,21 +424,17 @@ export function useManagedAuth(
       loginMethod,
     ],
   );
-
   const startAuth = useCallback(() => beginLogin(), [beginLogin]);
-
   const reauthAccount = useCallback(
     (accountId: string) => {
       beginLogin(accountId);
     },
     [beginLogin],
   );
-
   const retryAuth = useCallback(
     () => beginLogin(retryTargetAccountIdRef.current),
     [beginLogin],
   );
-
   const cancelAuth = useCallback(() => {
     flowGenerationRef.current += 1;
     const previousDeviceCode = activeDeviceCodeRef.current;
@@ -411,27 +446,26 @@ export function useManagedAuth(
     setError(null);
     void queueBackendCancellation(previousDeviceCode);
   }, [queueBackendCancellation, stopPolling]);
-
-  const logout = useCallback(() => {
-    logoutMutation.mutate();
-  }, [logoutMutation]);
-
+  const logout = useCallback(async () => {
+    cancelAuth();
+    await flowTransitionRef.current;
+    return logoutMutation.mutateAsync();
+  }, [cancelAuth, logoutMutation]);
   const removeAccount = useCallback(
-    (accountId: string) => {
-      removeAccountMutation.mutate(accountId);
+    async (accountId: string) => {
+      cancelAuth();
+      await flowTransitionRef.current;
+      return removeAccountMutation.mutateAsync(accountId);
     },
-    [removeAccountMutation],
+    [cancelAuth, removeAccountMutation],
   );
-
   const setDefaultAccount = useCallback(
     (accountId: string) => {
       setDefaultAccountMutation.mutate(accountId);
     },
     [setDefaultAccountMutation],
   );
-
   const accounts = authStatus?.accounts ?? [];
-
   return {
     authStatus,
     isLoadingStatus,
@@ -449,7 +483,9 @@ export function useManagedAuth(
     error,
     isPolling: pollingState === "polling",
     isAddingAccount: startLoginMutation.isPending || pollingState === "polling",
-    isRemovingAccount: removeAccountMutation.isPending,
+    isRemovingAccount:
+      removeAccountMutation.isPending || logoutMutation.isPending,
+    isLoggingOut: logoutMutation.isPending,
     isSettingDefaultAccount: setDefaultAccountMutation.isPending,
     startAuth,
     addAccount: startAuth,

@@ -1,6 +1,6 @@
-import { useTranslation } from "react-i18next";
-import { useState } from "react";
-import type { ReactNode } from "react";
+import { FullScreenPanel } from "@/components/common/FullScreenPanel";
+import { IconPicker } from "@/components/IconPicker";
+import { ProviderIconBox } from "@/components/ProviderIconBox";
 import {
   FormControl,
   FormField,
@@ -8,34 +8,30 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
-import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { HoverTip } from "@/components/ui/hover-tip";
-import { FullScreenPanel } from "@/components/common/FullScreenPanel";
-import { ProviderIconBox } from "@/components/ProviderIconBox";
-import { IconPicker } from "@/components/IconPicker";
+import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { getIconMetadata } from "@/icons/extracted/metadata";
-import { useWatch, type UseFormReturn } from "react-hook-form";
 import type { ProviderFormData } from "@/lib/schemas/provider";
-
+import type { ReactNode } from "react";
+import { useState } from "react";
+import { useWatch, type UseFormReturn } from "react-hook-form";
+import { useTranslation } from "react-i18next";
 /**
  * 必填标签：红色「*」画在伪元素里（不进标签文字），输入框另带 aria-required 给读屏。
  */
 export const REQUIRED_LABEL =
   "after:ms-0.5 after:text-danger-text after:content-['*']";
-
 interface BasicFormFieldsProps {
   form: UseFormReturn<ProviderFormData>;
   /** Slot to render content between icon and name fields */
   beforeNameSlot?: ReactNode;
 }
-
 export function BasicFormFields({
   form,
   beforeNameSlot,
 }: BasicFormFieldsProps) {
   const { t } = useTranslation();
   const [iconDialogOpen, setIconDialogOpen] = useState(false);
-
   // useWatch 只让这里重渲染；form.watch 会让整张表单（ProviderForm）跟着每次按键重渲染
   const [currentIcon, currentIconColor, watchedName] = useWatch({
     control: form.control,
@@ -45,7 +41,6 @@ export function BasicFormFields({
   const effectiveIconColor =
     currentIconColor ||
     (currentIcon ? getIconMetadata(currentIcon)?.defaultColor : undefined);
-
   const handleIconSelect = (icon: string) => {
     const meta = getIconMetadata(icon);
     form.setValue("icon", icon);
@@ -53,7 +48,6 @@ export function BasicFormFields({
     // 单选：点了就是选好了，不用再找「完成」
     setIconDialogOpen(false);
   };
-
   const iconButton = (
     <>
       <HoverTip
@@ -97,7 +91,6 @@ export function BasicFormFields({
       </FullScreenPanel>
     </>
   );
-
   return (
     <>
       {/* Slot for additional fields between icon and name */}

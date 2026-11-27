@@ -1,8 +1,7 @@
-import * as React from "react";
+import { cn } from "@/lib/utils";
 import { Command as CommandPrimitive } from "cmdk";
 import { Search } from "lucide-react";
-import { cn } from "@/lib/utils";
-
+import * as React from "react";
 const Command = React.forwardRef<
   React.ComponentRef<typeof CommandPrimitive>,
   React.ComponentPropsWithoutRef<typeof CommandPrimitive>
@@ -17,7 +16,6 @@ const Command = React.forwardRef<
   />
 ));
 Command.displayName = CommandPrimitive.displayName;
-
 const CommandInput = React.forwardRef<
   React.ComponentRef<typeof CommandPrimitive.Input>,
   React.ComponentPropsWithoutRef<typeof CommandPrimitive.Input>
@@ -38,7 +36,6 @@ const CommandInput = React.forwardRef<
   </div>
 ));
 CommandInput.displayName = CommandPrimitive.Input.displayName;
-
 const CommandList = React.forwardRef<
   React.ComponentRef<typeof CommandPrimitive.List>,
   React.ComponentPropsWithoutRef<typeof CommandPrimitive.List>
@@ -50,7 +47,6 @@ const CommandList = React.forwardRef<
   />
 ));
 CommandList.displayName = CommandPrimitive.List.displayName;
-
 const CommandEmpty = React.forwardRef<
   React.ComponentRef<typeof CommandPrimitive.Empty>,
   React.ComponentPropsWithoutRef<typeof CommandPrimitive.Empty>
@@ -62,7 +58,6 @@ const CommandEmpty = React.forwardRef<
   />
 ));
 CommandEmpty.displayName = CommandPrimitive.Empty.displayName;
-
 const CommandGroup = React.forwardRef<
   React.ComponentRef<typeof CommandPrimitive.Group>,
   React.ComponentPropsWithoutRef<typeof CommandPrimitive.Group>
@@ -77,7 +72,6 @@ const CommandGroup = React.forwardRef<
   />
 ));
 CommandGroup.displayName = CommandPrimitive.Group.displayName;
-
 const CommandItem = React.forwardRef<
   React.ComponentRef<typeof CommandPrimitive.Item>,
   React.ComponentPropsWithoutRef<typeof CommandPrimitive.Item>
@@ -92,12 +86,11 @@ const CommandItem = React.forwardRef<
   />
 ));
 CommandItem.displayName = CommandPrimitive.Item.displayName;
-
 export {
   Command,
-  CommandInput,
-  CommandList,
   CommandEmpty,
   CommandGroup,
+  CommandInput,
   CommandItem,
+  CommandList,
 };

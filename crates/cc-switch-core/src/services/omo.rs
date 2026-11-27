@@ -1,3 +1,4 @@
+use crate::app_config::AppType;
 #[cfg(windows)]
 use crate::config::derive_wsl_home_dir;
 use crate::config::{atomic_write, get_home_dir, write_json_file_with_contents};
@@ -364,6 +365,14 @@ impl OmoService {
         v: &OmoVariant,
         profile_data: Option<&OmoProfileData>,
     ) -> Result<(), AppError> {
+        Self::write_profile_config_with_commit(v, profile_data, || Ok(()))
+    }
+
+    fn write_profile_config_with_commit(
+        v: &OmoVariant,
+        profile_data: Option<&OmoProfileData>,
+        commit: impl FnOnce() -> Result<(), AppError>,
+    ) -> Result<(), AppError> {
         let _operation_guard = omo_operation_lock().lock()?;
         let plugin_config_path = crate::opencode_config::get_opencode_config_path()?;
         let legacy_dir = plugin_config_path.parent().ok_or_else(|| {
@@ -397,18 +406,16 @@ impl OmoService {
                 (previous_contents, expected_contents)
             }
         };
-        if let Err(err) = crate::opencode_config::add_plugin(v.plugin_name) {
+        if let Err(err) = crate::opencode_config::add_plugin_with_commit(v.plugin_name, commit) {
             if expected_contents.is_some() {
                 if let Err(rollback_err) = Self::restore_config_file_if_unchanged(
                     &config_path,
                     expected_contents.as_deref(),
                     previous_contents.as_deref(),
                 ) {
-                    log::warn!(
-                        "Failed to roll back {} config after plugin sync error: {}",
-                        v.label,
-                        rollback_err
-                    );
+                    return Err(AppError::Config(format!(
+                        "{err}; rollback failed: {rollback_err}"
+                    )));
                 }
             }
             return Err(err);
@@ -422,6 +429,36 @@ impl OmoService {
     // ── Public API (variant-parameterized) ─────────────────
 
     pub fn delete_config_file(v: &OmoVariant) -> Result<(), AppError> {
+        Self::delete_config_file_with_commit(v, || Ok(()))
+    }
+
+    pub fn disable_current(state: &AppState, variant: &OmoVariant) -> Result<(), AppError> {
+        let _switch_guard =
+            futures::executor::block_on(state.operations.lock_for_app(AppType::OpenCode.as_str()));
+        Self::delete_config_file_with_commit(variant, || {
+            state
+                .db
+                .clear_omo_category_current(&AppType::OpenCode, variant.category)
+        })
+    }
+
+    pub(crate) fn activate_provider_locked(
+        state: &AppState,
+        provider: &Provider,
+        variant: &OmoVariant,
+    ) -> Result<(), AppError> {
+        let profile = Self::profile_data_from_provider(provider, variant);
+        Self::write_profile_config_with_commit(variant, Some(&profile), || {
+            state
+                .db
+                .set_omo_provider_current(&AppType::OpenCode, &provider.id, variant.category)
+        })
+    }
+
+    pub(crate) fn delete_config_file_with_commit(
+        v: &OmoVariant,
+        commit: impl FnOnce() -> Result<(), AppError>,
+    ) -> Result<(), AppError> {
         let _operation_guard = omo_operation_lock().lock()?;
         let plugin_config_path = crate::opencode_config::get_opencode_config_path()?;
         let base_dir = plugin_config_path
@@ -458,21 +495,29 @@ impl OmoService {
                 std::fs::remove_file(path).map_err(|e| AppError::io(path, e))?;
                 applied_changes.push((path.clone(), snapshot, None));
             }
-            crate::opencode_config::remove_plugins_by_prefixes(v.plugin_prefixes)?;
+            crate::opencode_config::remove_plugins_by_prefixes_with_commit(
+                v.plugin_prefixes,
+                commit,
+            )?;
             Ok(())
         })();
 
         if let Err(err) = result {
+            let mut rollback_errors = Vec::new();
             for (path, snapshot, expected_contents) in applied_changes.iter().rev() {
                 if let Err(rollback_err) = Self::restore_config_file_if_unchanged(
                     path,
                     expected_contents.as_deref(),
                     snapshot.as_deref(),
                 ) {
-                    log::warn!(
-                        "Failed to roll back OMO disable change at {path:?}: {rollback_err}"
-                    );
+                    rollback_errors.push(format!("{path:?}: {rollback_err}"));
                 }
+            }
+            if !rollback_errors.is_empty() {
+                return Err(AppError::Config(format!(
+                    "{err}; rollback failed: {}",
+                    rollback_errors.join("; ")
+                )));
             }
             return Err(err);
         }
@@ -491,7 +536,9 @@ impl OmoService {
     }
 
     pub fn write_config_to_file(state: &AppState, v: &OmoVariant) -> Result<(), AppError> {
-        let current_omo = state.db.get_current_omo_provider("opencode", v.category)?;
+        let current_omo = state
+            .db
+            .get_current_omo_provider(&AppType::OpenCode, v.category)?;
         let profile_data = current_omo
             .as_ref()
             .map(|provider| Self::profile_data_from_provider(provider, v));
@@ -522,6 +569,7 @@ impl OmoService {
         state: &AppState,
         v: &OmoVariant,
     ) -> Result<crate::provider::Provider, AppError> {
+        let _guard = futures::executor::block_on(state.operations.lock_for_app("opencode"));
         let location = Self::resolve_local_config_location(v)?;
         let obj = Self::read_config_object(&location)?;
 
@@ -564,11 +612,15 @@ impl OmoService {
             in_failover_queue: false,
         };
 
-        state.db.save_provider("opencode", &provider)?;
-        state
-            .db
-            .set_omo_provider_current("opencode", &provider.id, v.category)?;
-        Self::write_config_to_file(state, v)?;
+        state.db.save_provider(&AppType::OpenCode, &provider)?;
+        if let Err(error) = Self::activate_provider_locked(state, &provider, v) {
+            if let Err(rollback) = state.db.delete_provider(&AppType::OpenCode, &provider.id) {
+                return Err(AppError::Message(format!(
+                    "{error}; import rollback failed: {rollback}"
+                )));
+            }
+            return Err(error);
+        }
         Ok(provider)
     }
 
@@ -623,6 +675,101 @@ impl OmoService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[serial_test::serial]
+    fn disable_is_atomic_across_files_and_database_for_both_variants() {
+        struct RestoreHome(Option<std::ffi::OsString>, crate::settings::AppSettings);
+        impl Drop for RestoreHome {
+            fn drop(&mut self) {
+                crate::settings::update_settings(self.1.clone()).unwrap();
+                match self.0.take() {
+                    Some(previous) => std::env::set_var("CC_SWITCH_TEST_HOME", previous),
+                    None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+                }
+            }
+        }
+        let home = tempfile::tempdir().unwrap();
+        let previous = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", home.path());
+        let _restore = RestoreHome(previous, crate::settings::get_settings());
+        crate::settings::update_settings(Default::default()).unwrap();
+        let directory = get_opencode_dir();
+        std::fs::create_dir_all(&directory).unwrap();
+        let plugin_path = directory.join("opencode.json");
+        for variant in [&STANDARD, &SLIM] {
+            let db = std::sync::Arc::new(crate::database::Database::memory().unwrap());
+            let mut provider = Provider::with_id(
+                "selected".into(),
+                "Selected".into(),
+                serde_json::json!({}),
+                None,
+            );
+            provider.category = Some(variant.category.to_string());
+            db.save_provider(&AppType::OpenCode, &provider).unwrap();
+            db.set_omo_provider_current(&AppType::OpenCode, &provider.id, variant.category)
+                .unwrap();
+            let state = AppState::new(db.clone());
+            let config_path = directory.join(variant.preferred_filename);
+            let config = b"{\"agents\":{}}";
+            std::fs::write(&config_path, config).unwrap();
+            std::fs::write(&plugin_path, "{broken").unwrap();
+            assert!(OmoService::disable_current(&state, variant).is_err());
+            assert!(db
+                .is_omo_provider_current(&AppType::OpenCode, &provider.id, variant.category)
+                .unwrap());
+            assert_eq!(std::fs::read(&config_path).unwrap(), config);
+
+            let plugins =
+                serde_json::json!({"plugin": [variant.plugin_name, "unrelated"]}).to_string();
+            std::fs::write(&plugin_path, &plugins).unwrap();
+            db.conn.lock().unwrap().execute_batch(
+                "CREATE TRIGGER reject_disable BEFORE UPDATE OF is_current ON providers BEGIN SELECT RAISE(ABORT, 'injected database failure'); END;"
+            ).unwrap();
+            assert!(OmoService::disable_current(&state, variant).is_err());
+            assert_eq!(std::fs::read_to_string(&plugin_path).unwrap(), plugins);
+            assert_eq!(std::fs::read(&config_path).unwrap(), config);
+            assert!(db
+                .is_omo_provider_current(&AppType::OpenCode, &provider.id, variant.category)
+                .unwrap());
+            db.conn
+                .lock()
+                .unwrap()
+                .execute_batch("DROP TRIGGER reject_disable;")
+                .unwrap();
+
+            let mut replacement = provider.clone();
+            replacement.id = "replacement".to_string();
+            replacement.settings_config = serde_json::json!({"agents":{"new":{"model":"test"}}});
+            db.save_provider(&AppType::OpenCode, &replacement).unwrap();
+            std::fs::write(&plugin_path, "{broken").unwrap();
+            assert!(OmoService::activate_provider_locked(&state, &replacement, variant).is_err());
+            assert!(db
+                .is_omo_provider_current(&AppType::OpenCode, &provider.id, variant.category)
+                .unwrap());
+            assert_eq!(std::fs::read(&config_path).unwrap(), config);
+            std::fs::write(&plugin_path, &plugins).unwrap();
+            db.conn.lock().unwrap().execute_batch("CREATE TRIGGER reject_activate BEFORE UPDATE OF is_current ON providers BEGIN SELECT RAISE(ABORT, 'injected activation failure'); END;").unwrap();
+            assert!(OmoService::activate_provider_locked(&state, &replacement, variant).is_err());
+            assert_eq!(std::fs::read_to_string(&plugin_path).unwrap(), plugins);
+            assert_eq!(std::fs::read(&config_path).unwrap(), config);
+            db.conn
+                .lock()
+                .unwrap()
+                .execute_batch("DROP TRIGGER reject_activate;")
+                .unwrap();
+
+            OmoService::disable_current(&state, variant).unwrap();
+            assert!(!config_path.exists());
+            assert!(!db
+                .is_omo_provider_current(&AppType::OpenCode, &provider.id, variant.category)
+                .unwrap());
+            assert_eq!(
+                crate::opencode_config::read_opencode_config().unwrap()["plugin"],
+                serde_json::json!(["unrelated"])
+            );
+        }
+    }
 
     #[test]
     fn test_read_jsonc_object_supports_comments_and_trailing_commas() {

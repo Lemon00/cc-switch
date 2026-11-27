@@ -1,31 +1,27 @@
-import { useRef } from "react";
+import { PROVIDER_TYPES } from "@/config/constants";
+import type { ManagedAuthStatus } from "@/lib/api/auth";
+import { subscriptionApi } from "@/lib/api/subscription";
+import type { AppId } from "@/lib/api/types";
+import { resolveManagedAccountId } from "@/lib/authBinding";
+import type { ProviderMeta } from "@/types";
+import type {
+  ClaudeAccountPlan,
+  SubscriptionQuota,
+} from "@/types/subscription";
+import { extractErrorMessage } from "@/utils/errorUtils";
 import {
   useQuery,
   useQueryClient,
   type QueryClient,
   type UseQueryResult,
 } from "@tanstack/react-query";
-import { subscriptionApi } from "@/lib/api/subscription";
-import { kimiOAuthApi } from "@/lib/api/kimiOAuth";
-import type { AppId } from "@/lib/api/types";
-import type { ProviderMeta } from "@/types";
-import type {
-  ClaudeAccountPlan,
-  SubscriptionQuota,
-} from "@/types/subscription";
-import type { ManagedAuthStatus } from "@/lib/api/auth";
-import { resolveManagedAccountId } from "@/lib/authBinding";
-import { PROVIDER_TYPES } from "@/config/constants";
+import { useEffect, useRef } from "react";
 import { resolveDisplayUsage, type LastGoodSnapshot } from "./queries";
-import { extractErrorMessage } from "@/utils/errorUtils";
-
 const REFETCH_INTERVAL = 5 * 60 * 1000; // 5 minutes
-
 export const subscriptionKeys = {
   all: ["subscription"] as const,
   quota: (appId: AppId) => [...subscriptionKeys.all, "quota", appId] as const,
 };
-
 /**
  * reject 且无可展示值时的失败占位：首次查询就失败（data 为 undefined），或
  * react-query 保留的旧成功已超出 keep-last-good 窗口——合成一个失败结果，让
@@ -41,7 +37,6 @@ const QUERY_REJECTED_PLACEHOLDER: SubscriptionQuota = {
   error: null,
   queriedAt: null,
 };
-
 /**
  * Keep-last-good：与 useUsageQuery 同一策略（resolveDisplayUsage）。
  *
@@ -85,44 +80,52 @@ function useQuotaKeepLastGood(
         : undefined),
   };
 }
-
+/**
+ * 开了自动查询时按 `minutes` 分钟轮询（至少 1 分钟），后台和窗口聚焦时也重取；没开或间隔为 0 时都不重取。
+ */
+function autoRefetch(
+  autoQuery: boolean,
+  minutes: number,
+): {
+  refetchInterval: number | false;
+  refetchIntervalInBackground: boolean;
+  refetchOnWindowFocus: boolean;
+} {
+  const refetchInterval =
+    autoQuery && minutes > 0 ? Math.max(minutes, 1) * 60 * 1000 : false;
+  return {
+    refetchInterval,
+    refetchIntervalInBackground: Boolean(refetchInterval),
+    refetchOnWindowFocus: Boolean(refetchInterval),
+  };
+}
 export function useSubscriptionQuota(
   appId: AppId,
   enabled: boolean,
   autoQuery = false,
   autoQueryIntervalMinutes = 5,
 ) {
-  const refetchInterval =
-    autoQuery && autoQueryIntervalMinutes > 0
-      ? Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000
-      : false;
-
   const query = useQuery({
     queryKey: subscriptionKeys.quota(appId),
     queryFn: () => subscriptionApi.getQuota(appId),
     enabled:
       enabled &&
       ["claude", "codex", "gemini", "grokbuild", "agy"].includes(appId),
-    refetchInterval,
-    refetchIntervalInBackground: Boolean(refetchInterval),
-    refetchOnWindowFocus: Boolean(refetchInterval),
+    ...autoRefetch(autoQuery, autoQueryIntervalMinutes),
     staleTime:
       autoQueryIntervalMinutes > 0
         ? Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000
         : REFETCH_INTERVAL,
     retry: 1,
   });
-
   return useQuotaKeepLastGood(query, appId);
 }
-
 export interface UseCodexOauthQuotaOptions {
   enabled?: boolean;
   /** 是否启用自动轮询与窗口 focus 重取 */
   autoQuery?: boolean;
   autoQueryIntervalMinutes?: number;
 }
-
 /**
  * Codex OAuth 订阅额度查询 hook（按账号 ID）
  *
@@ -140,27 +143,19 @@ export function useCodexOauthQuotaByAccountId(
     autoQuery = false,
     autoQueryIntervalMinutes = 5,
   } = options;
-  const refetchInterval =
-    autoQuery && autoQueryIntervalMinutes > 0
-      ? Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000
-      : false;
   const query = useQuery({
     queryKey: ["codex_oauth", "quota", accountId ?? "default"],
     queryFn: () => subscriptionApi.getCodexOauthQuota(accountId),
     enabled,
-    refetchInterval,
-    refetchIntervalInBackground: Boolean(refetchInterval),
-    refetchOnWindowFocus: Boolean(refetchInterval),
+    ...autoRefetch(autoQuery, autoQueryIntervalMinutes),
     staleTime:
       autoQueryIntervalMinutes > 0
         ? Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000
         : REFETCH_INTERVAL,
     retry: 1,
   });
-
   return useQuotaKeepLastGood(query, accountId ?? "default");
 }
-
 /**
  * Codex OAuth (ChatGPT Plus/Pro 反代) 订阅额度查询 hook
  *
@@ -175,7 +170,6 @@ export function useCodexOauthQuota(
   const accountId = resolveManagedAccountId(meta, PROVIDER_TYPES.CODEX_OAUTH);
   return useCodexOauthQuotaByAccountId(accountId, options);
 }
-
 /**
  * xAI OAuth (SuperGrok 反代) 订阅额度查询 hook
  *
@@ -190,7 +184,6 @@ export function useXaiOauthQuota(
   const accountId = resolveManagedAccountId(meta, PROVIDER_TYPES.XAI_OAUTH);
   return useXaiOauthQuotaByAccountId(accountId, options);
 }
-
 /**
  * xAI OAuth 订阅额度（按账号 ID）：授权中心逐个账号显示额度时用。
  * Query key 与 `useXaiOauthQuota` 一致，绑定同一账号的供应商卡片共用缓存。
@@ -199,21 +192,24 @@ export function useXaiOauthQuotaByAccountId(
   accountId: string | null,
   options: UseCodexOauthQuotaOptions = {},
 ) {
-  const { enabled = true, autoQuery = false } = options;
+  const {
+    enabled = true,
+    autoQuery = false,
+    autoQueryIntervalMinutes = 5,
+  } = options;
   const query = useQuery({
     queryKey: ["xai_oauth", "quota", accountId ?? "default"],
     queryFn: () => subscriptionApi.getXaiOauthQuota(accountId),
     enabled,
-    refetchInterval: autoQuery ? REFETCH_INTERVAL : false,
-    refetchIntervalInBackground: autoQuery,
-    refetchOnWindowFocus: autoQuery,
-    staleTime: REFETCH_INTERVAL,
+    ...autoRefetch(autoQuery, autoQueryIntervalMinutes),
+    staleTime:
+      autoQueryIntervalMinutes > 0
+        ? Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000
+        : REFETCH_INTERVAL,
     retry: 1,
   });
-
   return useQuotaKeepLastGood(query, accountId ?? "default");
 }
-
 /**
  * Antigravity 账号的剩余额度（按账号 ID，用该账号自己的令牌直接查，不用先切号）。
  * 授权中心逐个账号、以及绑了这个账号的官方卡共用同一份缓存。
@@ -227,55 +223,16 @@ export function useAgyAccountQuota(
     autoQuery = false,
     autoQueryIntervalMinutes = 5,
   } = options;
-  const refetchInterval =
-    autoQuery && autoQueryIntervalMinutes > 0
-      ? Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000
-      : false;
   const query = useQuery({
     queryKey: ["agy_oauth", "quota", accountId],
     queryFn: () => subscriptionApi.getAgyAccountQuota(accountId),
     enabled,
-    refetchInterval,
-    refetchIntervalInBackground: Boolean(refetchInterval),
-    refetchOnWindowFocus: Boolean(refetchInterval),
+    ...autoRefetch(autoQuery, autoQueryIntervalMinutes),
     staleTime: REFETCH_INTERVAL,
     retry: 1,
   });
-
   return useQuotaKeepLastGood(query, accountId);
 }
-
-/**
- * Kimi 官方账号的剩余额度（按授权中心账号 ID，也就是它的供应商 ID）。
- * 令牌快过期时后端会拿 Kimi 同款文件锁续期；授权中心那一行和官方卡共用同一份缓存。
- */
-export function useKimiAccountQuota(
-  accountId: string,
-  options: UseCodexOauthQuotaOptions = {},
-) {
-  const {
-    enabled = true,
-    autoQuery = false,
-    autoQueryIntervalMinutes = 5,
-  } = options;
-  const refetchInterval =
-    autoQuery && autoQueryIntervalMinutes > 0
-      ? Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000
-      : false;
-  const query = useQuery({
-    queryKey: ["kimi_oauth", "quota", accountId],
-    queryFn: () => kimiOAuthApi.quota(accountId),
-    enabled,
-    refetchInterval,
-    refetchIntervalInBackground: Boolean(refetchInterval),
-    refetchOnWindowFocus: Boolean(refetchInterval),
-    staleTime: REFETCH_INTERVAL,
-    retry: 1,
-  });
-
-  return useQuotaKeepLastGood(query, accountId);
-}
-
 /**
  * 绑了账号的 Claude 官方卡额度（按账号查）：在用的号读默认登录，没在用的读它自己的账号目录。
  * 令牌过期时后端会在那个目录里跑一次 `claude -p /usage`（Claude Code 自己刷新），可能要几秒。
@@ -289,29 +246,28 @@ export function useClaudeAccountQuota(
     autoQuery = false,
     autoQueryIntervalMinutes = 5,
   } = options;
-  const refetchInterval =
-    autoQuery && autoQueryIntervalMinutes > 0
-      ? Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000
-      : false;
   const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: ["claude_official", "quota", accountId],
-    queryFn: async () => {
-      const quota = await subscriptionApi.getClaudeAccountQuota(accountId);
-      refreshAccountsOnPlanChange(queryClient, accountId, quota.plan);
-      return quota;
-    },
+    queryFn: () => subscriptionApi.getClaudeAccountQuota(accountId),
     enabled,
-    refetchInterval,
-    refetchIntervalInBackground: Boolean(refetchInterval),
-    refetchOnWindowFocus: Boolean(refetchInterval),
+    ...autoRefetch(autoQuery, autoQueryIntervalMinutes),
     staleTime: REFETCH_INTERVAL,
     retry: 1,
   });
-
+  // 套餐变化时的账号列表失效放到 settled 之后，避免 queryFn 内写缓存副作用
+  useEffect(() => {
+    if (!query.isSuccess || !query.data) return;
+    refreshAccountsOnPlanChange(queryClient, accountId, query.data.plan);
+  }, [
+    accountId,
+    queryClient,
+    query.data,
+    query.dataUpdatedAt,
+    query.isSuccess,
+  ]);
   return useQuotaKeepLastGood(query, accountId);
 }
-
 /**
  * 查额度时后端顺手把凭据里的套餐记进了账号；和账号列表里的不一样（升级 / 降级过）时重新拉
  * 列表，卡片副标题和授权中心显示的套餐就跟着变。
@@ -334,7 +290,6 @@ function refreshAccountsOnPlanChange(
     void queryClient.invalidateQueries({ queryKey: statusKey });
   }
 }
-
 /**
  * Claude Code 默认登录的套餐（没绑账号的官方卡显示）。默认登录会随切卡、在 Claude Code 里
  * 重新登录而变，所以不久存，回到窗口时重读。

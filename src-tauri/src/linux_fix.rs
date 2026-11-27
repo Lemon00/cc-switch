@@ -43,11 +43,23 @@ use tauri::{LogicalSize, PhysicalSize, WebviewWindow};
 pub(crate) fn configure_webview(view: &tauri::Webview) {
     let label = view.label().to_owned();
     if let Err(error) = view.with_webview(move |webview| {
-        use webkit2gtk::{HardwareAccelerationPolicy, SettingsExt, WebViewExt};
+        use webkit2gtk::{
+            CacheModel, HardwareAccelerationPolicy, SettingsExt, WebContextExt, WebViewExt,
+        };
 
-        if let Some(settings) = WebViewExt::settings(&webview.inner()) {
+        let inner = webview.inner();
+        if let Some(context) = WebViewExt::context(&inner) {
+            // 单页桌面界面不需要浏览器的历史资源缓存池，切换到 DocumentViewer 以降低
+            // WebKitWebProcess / WebKitNetworkProcess 常驻内存。
+            context.set_cache_model(CacheModel::DocumentViewer);
+        }
+        if let Some(settings) = WebViewExt::settings(&inner) {
             settings.set_hardware_acceleration_policy(HardwareAccelerationPolicy::Never);
-            log::info!("Linux: disabled WebKitGTK hardware acceleration for {label}");
+            // wry 默认打开 page cache；关闭后不在内存中保留整页前后跳转快照。
+            settings.set_enable_page_cache(false);
+            settings.set_enable_webgl(false);
+            settings.set_enable_webaudio(false);
+            log::info!("Linux: configured low-memory WebKitGTK settings for {label}");
         } else {
             log::warn!("Linux: WebKitGTK settings unavailable for {label}");
         }

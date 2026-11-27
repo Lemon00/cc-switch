@@ -1,16 +1,4 @@
-import React from "react";
-import type { TFunction } from "i18next";
-import { useTranslation } from "react-i18next";
-import { type AppId } from "@/lib/api";
-import { useUsageQuery } from "@/lib/query/queries";
-import { UsageData, Provider } from "@/types";
-import {
-  tierLabel,
-  tierShortLabel,
-} from "@/components/SubscriptionQuotaFooter";
-import type { QuotaTier } from "@/types/subscription";
 import { QuotaBars, QuotaLines } from "@/components/quota/QuotaLines";
-import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
 import {
   balanceLine,
   expiredLine,
@@ -18,7 +6,18 @@ import {
   tierLine,
   type QuotaLine,
 } from "@/components/quota/quotaRules";
-
+import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
+import {
+  tierLabel,
+  tierShortLabel,
+} from "@/components/SubscriptionQuotaFooter";
+import { type AppId } from "@/lib/api";
+import { useUsageQuery } from "@/lib/query/queries";
+import { Provider, UsageData } from "@/types";
+import type { QuotaTier } from "@/types/subscription";
+import type { TFunction } from "i18next";
+import React from "react";
+import { useTranslation } from "react-i18next";
 interface UsageFooterProps {
   provider: Provider;
   providerId: string;
@@ -26,7 +25,6 @@ interface UsageFooterProps {
   usageEnabled: boolean; // 是否启用了用量查询
   inline?: boolean; // 是否内联显示（在按钮左侧）
 }
-
 /** UsageData → QuotaTier 转换（Token Plan 使用） */
 function toQuotaTier(data: UsageData): QuotaTier {
   const extra = data.extra;
@@ -51,7 +49,6 @@ function toQuotaTier(data: UsageData): QuotaTier {
     resetsAt: extra || null,
   };
 }
-
 /** 脚本用量的一个套餐 → 一行（名字和明细进悬停说明） */
 function planLine(
   t: TFunction,
@@ -69,7 +66,6 @@ function planLine(
   ]
     .filter(Boolean)
     .join(" · ");
-
   if (data.isValid === false) {
     return expiredLine(t, data.invalidMessage || detail || undefined, key);
   }
@@ -93,7 +89,6 @@ function planLine(
   }
   return null;
 }
-
 const UsageFooter: React.FC<UsageFooterProps> = ({
   provider,
   providerId,
@@ -105,10 +100,8 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
   const display = useQuotaDisplay();
   const isTokenPlan =
     provider.meta?.usage_script?.templateType === "token_plan";
-
   // 按用户配置自动查询，未启用的供应商也可能在其他客户端产生用量。
   const autoQueryInterval = provider.meta?.usage_script?.autoQueryInterval ?? 0;
-
   const {
     data: usage,
     isFetching: loading,
@@ -120,12 +113,10 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
     autoQueryInterval,
   });
   const refresh = () => refetch();
-
   // 只在启用用量查询且有数据时显示。后端把瞬时传输失败转成了 reject：有缓存
   // 成功值时 react-query 保留 data 照常展示；首次查询就失败则 data 为空——
   // 此时（isError）仍要渲染失败态给出重试入口，否则 footer 整体消失、无从重查。
   if (!usageEnabled || (!usage && !isError)) return null;
-
   // 错误状态（业务失败，或无缓存成功值的 reject）
   if (!usage || !usage.success) {
     const reason = usage?.error || t("usage.queryFailed");
@@ -157,10 +148,8 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
       />
     );
   }
-
   const usageDataList = usage.data || [];
   if (usageDataList.length === 0) return null;
-
   // Token Plan：按档写剩余（或已用）百分比。智谱按量账户没有套餐时后端回落成
   // 账户余额（单位是币种不是 %），走下面的余额样式。
   if (isTokenPlan && usageDataList.every((d) => d.unit === "%")) {
@@ -199,12 +188,10 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
       />
     );
   }
-
   const lines = usageDataList
     .map((data, index) => planLine(t, data, index))
     .filter((line): line is QuotaLine => line !== null);
   if (lines.length === 0) return null;
-
   if (inline) {
     return (
       <QuotaLines
@@ -215,7 +202,6 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
       />
     );
   }
-
   return (
     <QuotaBars
       className="mt-3"
@@ -238,5 +224,4 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
     />
   );
 };
-
 export default UsageFooter;

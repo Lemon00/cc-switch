@@ -1,14 +1,13 @@
-import type { TFunction } from "i18next";
+import { isOAuthProviderType } from "@/config/constants";
 import type { AppId } from "@/lib/api";
 import type { Provider } from "@/types";
-import { isOAuthProviderType } from "@/config/constants";
+import { providerNeedsRouting } from "@/utils/providerCapabilities";
 import {
   extractCodexWireApi,
   isCodexAnthropicWireApi,
   isCodexChatWireApi,
 } from "@/utils/providerConfigUtils";
-import { providerNeedsRouting } from "@/utils/providerCapabilities";
-
+import type { TFunction } from "i18next";
 /**
  * 这家为什么需要路由（「需要路由」徽标的说明、直连切换时的提示、对话框 F 的正文都用它）。
  * 不需要路由时返回 null。
@@ -21,7 +20,7 @@ export function getRoutingReason(
   const isCopilotProvider =
     app === "claude" && provider.meta?.providerType === "github_copilot";
   const isCodexChatFormat =
-    (app === "codex" || app === "grokbuild") &&
+    app === "codex" &&
     (provider.meta?.apiFormat === "openai_chat" ||
       (typeof (provider.settingsConfig as Record<string, any>)?.config ===
         "string" &&
@@ -31,7 +30,7 @@ export function getRoutingReason(
           ),
         )));
   const isCodexAnthropicFormat =
-    (app === "codex" || app === "grokbuild") &&
+    app === "codex" &&
     (provider.meta?.apiFormat === "anthropic" ||
       (typeof (provider.settingsConfig as Record<string, any>)?.config ===
         "string" &&
@@ -40,7 +39,6 @@ export function getRoutingReason(
             (provider.settingsConfig as Record<string, any>).config,
           ),
         )));
-
   // Determine why this provider requires the proxy.
   let proxyRequiredReason: string | null = null;
   if (providerNeedsRouting(app, provider)) {
@@ -56,6 +54,8 @@ export function getRoutingReason(
       proxyRequiredReason = t("notifications.proxyReasonManagedOAuth", {
         defaultValue: "使用托管 OAuth 登录（令牌由本地路由注入）",
       });
+    } else if (provider.meta?.apiFormat === "gemini_native") {
+      proxyRequiredReason = "使用 Gemini 原生接口格式，需要本地路由转换";
     } else if (provider.meta?.apiFormat === "openai_chat" && app === "claude") {
       proxyRequiredReason = t("notifications.proxyReasonOpenAIChat", {
         defaultValue: "使用 OpenAI Chat 接口格式",
@@ -76,15 +76,8 @@ export function getRoutingReason(
         defaultValue: "使用 Anthropic Messages 接口格式",
       });
     } else if (
-      app === "claude-desktop" &&
-      provider.meta?.claudeDesktopMode === "proxy"
-    ) {
-      proxyRequiredReason = t("notifications.proxyReasonDesktopMapping", {
-        defaultValue: "使用模型映射（Claude Desktop 只认 Claude 模型名）",
-      });
-    } else if (
       provider.meta?.isFullUrl &&
-      (app === "claude" || app === "codex" || app === "grokbuild")
+      (app === "claude" || app === "codex")
     ) {
       proxyRequiredReason = t("notifications.proxyReasonFullUrl", {
         defaultValue: "开启了完整 URL 连接模式",

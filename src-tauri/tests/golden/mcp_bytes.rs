@@ -1,6 +1,6 @@
 //! ① MCP 投影的字节。
 //!
-//! MCP 和供应商配置住在同一个文件里（Codex 的 config.toml、Gemini 的 settings.json），
+//! MCP 和供应商配置住在同一个文件里（Codex 的 config.toml），
 //! Claude Code 的在 `~/.claude.json`。重构只改供应商那部分的写法，MCP 这一段的字节
 //! 必须不变：投影本身的输出、以及切换供应商前后这一段都锁住。
 
@@ -10,16 +10,15 @@ use cc_switch_lib::{AppType, McpService, ProviderService};
 
 use crate::support::{create_test_state, reset_test_fs, test_mutex};
 use crate::util::{
-    assert_golden, mcp_server, provider, read_home_file, read_home_json, seed_providers,
-    sort_objects, stable_json_file, toml_section, write_home_file,
+    assert_golden, mcp_server, provider, read_home_file, seed_providers, stable_json_file,
+    toml_section, write_home_file,
 };
 
 const CLAUDE_JSON: &str = ".claude.json";
 const CODEX_CONFIG: &str = ".codex/config.toml";
-const GEMINI_SETTINGS: &str = ".gemini/settings.json";
 
 fn seed_mcp_servers(state: &cc_switch_lib::AppState) {
-    let all = [AppType::Claude, AppType::Codex, AppType::Gemini];
+    let all = [AppType::Claude, AppType::Codex];
     for server in [
         mcp_server(
             "stdio-server",
@@ -43,7 +42,7 @@ fn seed_mcp_servers(state: &cc_switch_lib::AppState) {
         mcp_server(
             "sse-server",
             json!({ "type": "sse", "url": "https://mcp.example.com/sse" }),
-            &[AppType::Claude, AppType::Gemini],
+            &[AppType::Claude],
         ),
         mcp_server(
             "disabled-server",
@@ -120,43 +119,6 @@ command = "external"
     assert_golden("mcp/codex-config.toml", &read_home_file(CODEX_CONFIG));
 }
 
-#[test]
-fn gemini_settings_mcp_projection_bytes() {
-    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
-    reset_test_fs();
-    write_home_file(
-        GEMINI_SETTINGS,
-        r#"{
-  "security": {
-    "auth": {
-      "selectedType": "gemini-api-key"
-    }
-  },
-  "model": {
-    "name": "gemini-2.5-pro",
-    "compressionThreshold": 0.5
-  },
-  "ui": {
-    "theme": "GitHub"
-  },
-  "mcpServers": {
-    "external-only": {
-      "command": "external"
-    }
-  }
-}"#,
-    );
-    let state = create_test_state().expect("create test state");
-    seed_mcp_servers(&state);
-
-    McpService::sync_all_enabled(&state).expect("sync mcp");
-
-    assert_golden(
-        "mcp/gemini-settings.json",
-        &stable_json_file(GEMINI_SETTINGS, &["/mcpServers"]),
-    );
-}
-
 fn codex_third_party(id: &str, base_url: &str, key: &str) -> cc_switch_lib::Provider {
     provider(
         id,
@@ -201,54 +163,6 @@ fn codex_switch_keeps_mcp_section_bytes() {
         before, on_a,
         "switching back must not change the MCP section"
     );
-}
-
-/// 切换供应商前后，Gemini settings.json 的 `mcpServers` 不变（条目顺序除外，见 `sort_objects`）。
-#[test]
-fn gemini_switch_keeps_mcp_servers() {
-    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
-    reset_test_fs();
-    write_home_file(
-        ".gemini/.env",
-        "GEMINI_API_KEY=g-a\nGOOGLE_GEMINI_BASE_URL=https://a.example\n",
-    );
-    write_home_file(GEMINI_SETTINGS, "{}");
-    let state = create_test_state().expect("create test state");
-    seed_mcp_servers(&state);
-    let gemini = |id: &str, url: &str, key: &str| {
-        provider(
-            id,
-            json!({
-                "env": { "GEMINI_API_KEY": key, "GOOGLE_GEMINI_BASE_URL": url },
-                "config": {}
-            }),
-            None,
-        )
-    };
-    seed_providers(
-        &state,
-        &AppType::Gemini,
-        &[
-            gemini("a", "https://a.example", "g-a"),
-            gemini("b", "https://b.example", "g-b"),
-        ],
-        "a",
-    );
-    McpService::sync_all_enabled(&state).expect("sync mcp");
-    let mcp_servers = || {
-        let mut settings = read_home_json(GEMINI_SETTINGS);
-        sort_objects(&mut settings, &["/mcpServers"]);
-        serde_json::to_string_pretty(&settings["mcpServers"]).expect("serialize mcpServers")
-    };
-    let before = mcp_servers();
-    assert_ne!(before, "null", "MCP servers should have been projected");
-
-    ProviderService::switch(&state, AppType::Gemini, "b").expect("switch to b");
-    let on_b = mcp_servers();
-    ProviderService::switch(&state, AppType::Gemini, "a").expect("switch back to a");
-    let on_a = mcp_servers();
-    assert_eq!(before, on_b, "switching must not change mcpServers");
-    assert_eq!(before, on_a, "switching back must not change mcpServers");
 }
 
 /// Claude Code 切换供应商不改 `~/.claude.json`（`mcpServers` 的顺序除外，见 `sort_objects`）。

@@ -1,13 +1,12 @@
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { formatBytes } from "@/components/settings/BackupStorageSection";
+import { SettingsSwitchRow } from "@/components/settings/SettingsLayout";
+import type { SettingsFormState } from "@/hooks/useSettings";
+import { settingsApi } from "@/lib/api";
+import { toast } from "@/lib/toast";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "@/lib/toast";
-import type { SettingsFormState } from "@/hooks/useSettings";
-import { SettingsSwitchRow } from "@/components/settings/SettingsLayout";
-import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { settingsApi } from "@/lib/api";
-import { formatBytes } from "@/components/settings/BackupStorageSection";
 import { CodexQuotaProtectionSettings } from "./CodexQuotaProtectionSettings";
-
 interface CodexAuthSettingsProps {
   settings: SettingsFormState;
   /** 返回 false（或 resolve 为 false）表示保存失败；其余返回值视为成功 */
@@ -17,7 +16,6 @@ interface CodexAuthSettingsProps {
   /** 已保存的 Codex 配置目录覆盖（不是输入框里的草稿）：变了就重读会话压缩状态 */
   codexConfigDir?: string;
 }
-
 export function CodexAuthSettings({
   settings,
   onChange,
@@ -32,7 +30,6 @@ export function CodexAuthSettings({
   const [sessionCompressionSaving, setSessionCompressionSaving] =
     useState(false);
   const [sessionsBytes, setSessionsBytes] = useState<number | null>(null);
-
   // 后端按已保存的目录读写 config.toml，同页保存新目录后要跟着重读
   useEffect(() => {
     let cancelled = false;
@@ -53,7 +50,6 @@ export function CodexAuthSettings({
       cancelled = true;
     };
   }, [codexConfigDir]);
-
   const handleSessionCompressionChange = async (checked: boolean) => {
     setSessionCompressionSaving(true);
     try {
@@ -67,7 +63,6 @@ export function CodexAuthSettings({
       setSessionCompressionSaving(false);
     }
   };
-
   const handleUnifyHistoryChange = (checked: boolean) => {
     if (checked) {
       setShowEnableConfirm(true);
@@ -82,7 +77,6 @@ export function CodexAuthSettings({
         setShowDisableConfirm(true);
       });
   };
-
   const handleEnableConfirm = (migrateExisting: boolean) => {
     setShowEnableConfirm(false);
     void onChange({
@@ -90,13 +84,11 @@ export function CodexAuthSettings({
       unifyCodexMigrateExisting: migrateExisting,
     });
   };
-
   // 备份探测可能落后于正在后台进行的迁移（刚勾选迁入就立刻关闭时，
   // 备份尚未产出）。只要本轮勾选过"迁入既有会话"，就必须提供恢复入口；
   // 真正有没有账本交给后端 restore 的 skippedReason 判定。
   const showRestoreOption =
     hasUnifyBackup || (settings.unifyCodexMigrateExisting ?? false);
-
   const handleDisableConfirm = async (restoreBackup: boolean) => {
     setShowDisableConfirm(false);
     const saved = await onChange({
@@ -131,7 +123,6 @@ export function CodexAuthSettings({
       toast.error(t("settings.unifyCodexHistoryRestoreFailed"));
     }
   };
-
   // 设置 → 应用配置 → Codex 卡片里的认证、额度与会话设置
   // 经典子 agent 开关在 Codex 聚合页签的「聚合设置」里。
   return (

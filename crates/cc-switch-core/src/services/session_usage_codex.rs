@@ -18,8 +18,9 @@ use crate::codex_config::get_codex_config_dir;
 use crate::codex_rollout_file;
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
-use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
+use crate::proxy::usage::calculator::ModelPricing;
 use crate::proxy::usage::parser::TokenUsage;
+use crate::services::session_common::cost_columns;
 use crate::services::session_common::{
     estimated_first_token_ms, estimated_latency_ms, metadata_modified_nanos,
     parse_timestamp_millis, update_sync_state, update_sync_state_on_conn, EstimatedTiming,
@@ -71,7 +72,7 @@ struct DeltaTokens {
 
 impl DeltaTokens {
     fn is_zero(&self) -> bool {
-        self.input == 0 && self.cached_input == 0 && self.output == 0
+        self.input == 0 && self.cached_input == 0 && self.cache_write_input == 0 && self.output == 0
     }
 }
 
@@ -543,112 +544,8 @@ pub fn clear_codex_replay_caches() {
     replay_caches().clear_poison();
 }
 
-fn is_rollout_filename(file_name: &str) -> bool {
-    let file_name = codex_rollout_file::logical_file_name(file_name);
-    if !file_name.starts_with("rollout-") || !file_name.ends_with(".jsonl") {
-        return false;
-    }
-    let stem = file_name.trim_end_matches(".jsonl");
-    stem.get(stem.len().saturating_sub(36)..)
-        .is_some_and(|candidate| uuid::Uuid::parse_str(candidate).is_ok())
-}
-
-fn is_codex_cursor_path(file_path: &str, codex_dir: &Path) -> bool {
-    let path = Path::new(file_path);
-    let file_name = file_path.rsplit(['/', '\\']).next().unwrap_or_default();
-    if !is_rollout_filename(file_name) {
-        return false;
-    }
-
-    if path.starts_with(codex_dir.join("sessions"))
-        || path.starts_with(codex_dir.join("archived_sessions"))
-    {
-        return true;
-    }
-
-    // 兼容用户改过 CODEX_HOME 后遗留、且源文件已不存在的 cursor。只接受
-    // 明确目录段 + Codex rollout UUID 文件名，避免宽 codex_dir 误删其他 importer。
-    file_path
-        .replace('\\', "/")
-        .split('/')
-        .any(|segment| matches!(segment, "sessions" | "archived_sessions"))
-}
-
-fn sqlite_table_exists(conn: &rusqlite::Connection, table: &str) -> Result<bool, AppError> {
-    conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
-        [table],
-        |row| row.get(0),
-    )
-    .map_err(|error| AppError::Database(format!("查询表 {table} 失败: {error}")))
-}
-
-fn sqlite_column_exists(
-    conn: &rusqlite::Connection,
-    table: &str,
-    column: &str,
-) -> Result<bool, AppError> {
-    conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2)",
-        rusqlite::params![table, column],
-        |row| row.get(0),
-    )
-    .map_err(|error| AppError::Database(format!("查询列 {table}.{column} 失败: {error}")))
-}
-
-pub fn reset_codex_usage_on_conn(
-    conn: &rusqlite::Connection,
-    codex_dir: &Path,
-) -> Result<(), AppError> {
-    if sqlite_table_exists(conn, "proxy_request_logs")?
-        && sqlite_column_exists(conn, "proxy_request_logs", "data_source")?
-    {
-        conn.execute(
-            "DELETE FROM proxy_request_logs WHERE data_source = 'codex_session'",
-            [],
-        )
-        .map_err(|error| AppError::Database(format!("清理 Codex 会话明细失败: {error}")))?;
-    }
-    if sqlite_table_exists(conn, "usage_daily_rollups")?
-        && sqlite_column_exists(conn, "usage_daily_rollups", "provider_id")?
-    {
-        conn.execute(
-            "DELETE FROM usage_daily_rollups WHERE provider_id = '_codex_session'",
-            [],
-        )
-        .map_err(|error| AppError::Database(format!("清理 Codex 用量汇总失败: {error}")))?;
-    }
-    if sqlite_table_exists(conn, "session_log_sync")?
-        && sqlite_column_exists(conn, "session_log_sync", "file_path")?
-    {
-        let paths = {
-            let mut statement = conn
-                .prepare("SELECT file_path FROM session_log_sync")
-                .map_err(|error| {
-                    AppError::Database(format!("读取会话同步 cursor 失败: {error}"))
-                })?;
-            let paths = statement
-                .query_map([], |row| row.get::<_, String>(0))
-                .map_err(|error| AppError::Database(format!("查询会话同步 cursor 失败: {error}")))?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|error| {
-                    AppError::Database(format!("解析会话同步 cursor 失败: {error}"))
-                })?;
-            paths
-        };
-        for file_path in paths
-            .into_iter()
-            .filter(|path| is_codex_cursor_path(path, codex_dir))
-        {
-            conn.execute(
-                "DELETE FROM session_log_sync WHERE file_path = ?1",
-                [file_path],
-            )
-            .map_err(|error| AppError::Database(format!("清理 Codex 同步 cursor 失败: {error}")))?;
-        }
-    }
-    Ok(())
-}
+use crate::database::codex_usage_reset::is_rollout_filename;
+pub use crate::database::codex_usage_reset::reset_codex_usage_on_conn;
 
 impl Database {
     pub fn reset_codex_usage(&self) -> Result<(), AppError> {
@@ -915,20 +812,23 @@ fn normalize_codex_model(raw: &str) -> String {
 
 /// 计算两次累计值之间的 delta
 fn compute_delta(prev: &Option<CumulativeTokens>, current: &CumulativeTokens) -> DeltaTokens {
+    let clamp = |value: u64| value.min(u32::MAX as u64) as u32;
     match prev {
         None => DeltaTokens {
-            input: current.input as u32,
-            cached_input: current.cached_input as u32,
-            cache_write_input: current.cache_write_input as u32,
-            output: current.output as u32,
+            input: clamp(current.input),
+            cached_input: clamp(current.cached_input),
+            cache_write_input: clamp(current.cache_write_input),
+            output: clamp(current.output),
         },
         Some(p) => DeltaTokens {
-            input: current.input.saturating_sub(p.input) as u32,
-            cached_input: current.cached_input.saturating_sub(p.cached_input) as u32,
-            cache_write_input: current
-                .cache_write_input
-                .saturating_sub(p.cache_write_input) as u32,
-            output: current.output.saturating_sub(p.output) as u32,
+            input: clamp(current.input.saturating_sub(p.input)),
+            cached_input: clamp(current.cached_input.saturating_sub(p.cached_input)),
+            cache_write_input: clamp(
+                current
+                    .cache_write_input
+                    .saturating_sub(p.cache_write_input),
+            ),
+            output: clamp(current.output.saturating_sub(p.output)),
         },
     }
 }
@@ -1541,12 +1441,7 @@ fn parse_codex_file_with_index(
                     // Codex provides the exact per-request usage. Prefer it to
                     // subtracting cumulative snapshots, which may come from
                     // multiple independently advancing rate-limit lanes.
-                    DeltaTokens {
-                        input: last.input as u32,
-                        cached_input: last.cached_input as u32,
-                        cache_write_input: last.cache_write_input as u32,
-                        output: last.output as u32,
-                    }
+                    compute_delta(&None, &last)
                 } else if let Some(total) = total.as_ref() {
                     if is_continuation && total_high_water.is_none() {
                         let meta_id = meta_thread_id.as_deref().unwrap_or_default();
@@ -2686,27 +2581,8 @@ fn insert_codex_session_entry_on_conn(
     let pricing = pricing_cache
         .entry(model.to_string())
         .or_insert_with(|| find_codex_pricing(conn, model));
-    let multiplier = Decimal::from(1);
-    let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) = match pricing
-    {
-        Some(p) => {
-            let cost = CostCalculator::calculate_for_app("codex", &usage, p, multiplier);
-            (
-                cost.input_cost.to_string(),
-                cost.output_cost.to_string(),
-                cost.cache_read_cost.to_string(),
-                cost.cache_creation_cost.to_string(),
-                cost.total_cost.to_string(),
-            )
-        }
-        None => (
-            "0".to_string(),
-            "0".to_string(),
-            "0".to_string(),
-            "0".to_string(),
-            "0".to_string(),
-        ),
-    };
+    let [input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost] =
+        cost_columns("codex", &usage, pricing.as_ref(), Decimal::ONE);
 
     let inserted_rows = conn
         .prepare_cached(
@@ -2759,6 +2635,24 @@ fn find_codex_pricing(conn: &rusqlite::Connection, model_id: &str) -> Option<Mod
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cumulative_delta_saturates_large_counters() {
+        let huge = u64::from(u32::MAX) + 1;
+        let usage = CumulativeTokens {
+            input: huge,
+            output: huge,
+            cached_input: 10,
+            cache_write_input: 5,
+        };
+        for previous in [None, Some(CumulativeTokens::default())] {
+            let delta = compute_delta(&previous, &usage);
+            assert_eq!(delta.input, u32::MAX);
+            assert_eq!(delta.output, u32::MAX);
+            assert_eq!(delta.cached_input, 10);
+            assert_eq!(delta.cache_write_input, 5);
+        }
+    }
     // `session_usage` 被 session-monitor feature 门控；只有门控内的测试用它。
     #[cfg(feature = "session-monitor")]
     use crate::services::session_usage::get_sync_state;
@@ -4006,6 +3900,43 @@ mod tests {
         assert_eq!(delta.cached_input, 0);
         assert_eq!(delta.output, 0);
         assert!(delta.is_zero());
+    }
+
+    #[test]
+    fn test_exact_request_usage_saturates_all_token_dimensions() -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        let oversized = u64::from(u32::MAX) + 1;
+        for cached in [0, oversized] {
+            let event = serde_json::json!({
+                "timestamp": "2026-07-10T03:00:02Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "last_token_usage": {
+                            "input_tokens": oversized,
+                            "cached_input_tokens": cached,
+                            "cache_write_input_tokens": oversized,
+                            "output_tokens": oversized
+                        }
+                    }
+                }
+            });
+            write_jsonl(&file, &[session_meta(PARENT_ID), turn_context(), event]);
+            let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
+            assert_eq!(parsed.token_events.len(), 1);
+            let delta = &parsed.token_events[0].delta;
+            assert_eq!(delta.input, u32::MAX);
+            assert_eq!(delta.cached_input, if cached == 0 { 0 } else { u32::MAX });
+            assert_eq!(
+                delta.cache_write_input,
+                if cached == 0 { u32::MAX } else { 0 }
+            );
+            assert_eq!(delta.output, u32::MAX);
+            assert!(!delta.is_zero());
+        }
+        Ok(())
     }
 
     #[test]

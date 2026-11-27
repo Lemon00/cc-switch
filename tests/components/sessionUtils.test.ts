@@ -1,16 +1,52 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCdResumeCommand,
+  canDeleteSession,
   getSessionLastText,
   getSessionTimeBucket,
   groupSessionsByProject,
   groupSessionsByTime,
   isArchivedSession,
   formatMessageTime,
+  nativeDeleteHintKey,
 } from "@/components/sessions/utils";
 import type { SessionMeta } from "@/types";
-
 describe("session utils", () => {
+  it("lets Antigravity CLI sessions be deleted but keeps IDE, ACP, and index-only ones native", () => {
+    const agy = (sourcePath?: string): SessionMeta => ({
+      providerId: "agy",
+      sessionId: "aaa-1",
+      sourcePath,
+    });
+    const log = ".system_generated/logs/transcript_full.jsonl";
+    const cli = agy(`/home/u/.gemini/antigravity-cli/brain/aaa-1/${log}`);
+    const keyCard = agy(
+      `C:\\Users\\u\\.cc-switch\\agy\\p\\antigravity-cli\\brain\\aaa-1\\${log}`,
+    );
+    const ide = agy(`/home/u/.gemini/antigravity/brain/aaa-1/${log}`);
+    const acp = agy(`/home/u/.gemini/antigravity-acp/brain/aaa-1/${log}`);
+    const t3Acp = agy(
+      `/home/u/.t3/userdata/providers/antigravity/abc123/antigravity-acp/brain/aaa-1/${log}`,
+    );
+    const t3AcpWin = agy(
+      `C:\\Users\\u\\.t3\\userdata\\providers\\antigravity\\abc123\\antigravity-acp\\brain\\aaa-1\\${log}`,
+    );
+    const indexOnly = agy();
+    expect(canDeleteSession(cli)).toBe(true);
+    expect(canDeleteSession(keyCard)).toBe(true);
+    expect(nativeDeleteHintKey(cli)).toBeUndefined();
+    for (const session of [ide, acp, t3Acp, t3AcpWin, indexOnly]) {
+      expect(canDeleteSession(session)).toBe(false);
+      expect(nativeDeleteHintKey(session)).toBe("sessionManager.agyDeleteHint");
+    }
+    expect(
+      canDeleteSession({
+        providerId: "copilot",
+        sessionId: "s",
+        sourcePath: "/x",
+      }),
+    ).toBe(false);
+  });
   it("groups sessions by project directory, newest group first and unknown last", () => {
     const sessions: SessionMeta[] = [
       {
@@ -38,9 +74,7 @@ describe("session utils", () => {
         lastActiveAt: 10,
       },
     ];
-
     const groups = groupSessionsByProject(sessions, "未知目录");
-
     expect(groups.map((group) => group.label)).toEqual([
       "docs",
       "app",
@@ -52,7 +86,6 @@ describe("session utils", () => {
     ]);
     expect(groups[2].projectDir).toBeNull();
   });
-
   it("merges Windows project dirs that differ only in case or separators", () => {
     const sessions: SessionMeta[] = [
       {
@@ -92,9 +125,7 @@ describe("session utils", () => {
         lastActiveAt: 3,
       },
     ];
-
     const groups = groupSessionsByProject(sessions, "未知目录");
-
     expect(
       groups.map((group) => [
         group.projectDir,
@@ -106,7 +137,6 @@ describe("session utils", () => {
       ["/work/app/", ["posix-b", "posix-c"]],
     ]);
   });
-
   it("buckets sessions into today / yesterday / this week / earlier", () => {
     // 2026-10-01 is a Thursday; the week starts on Monday 2026-09-28
     const now = new Date(2026, 9, 1, 8, 15).getTime();
@@ -118,7 +148,6 @@ describe("session utils", () => {
       { providerId: "claude", sessionId: "c", lastActiveAt: at(28, 9) },
       { providerId: "claude", sessionId: "d", lastActiveAt: at(27) },
     ];
-
     expect(getSessionTimeBucket(at(28, 0), now)).toBe("thisWeek");
     expect(
       groupSessionsByTime(sessions, now).map((group) => [
@@ -132,7 +161,6 @@ describe("session utils", () => {
       ["earlier", ["d"]],
     ]);
   });
-
   it("hides the summary when it repeats the title and marks archived sessions", () => {
     expect(
       getSessionLastText({
@@ -157,18 +185,15 @@ describe("session utils", () => {
       }),
     ).toBe(false);
   });
-
   it("quotes the project directory in the cd-and-resume command", () => {
     expect(buildCdResumeCommand("/tmp/it's", "claude --resume x")).toBe(
       "cd '/tmp/it'\\''s' && claude --resume x",
     );
   });
-
   it("formats message times with the date, adding the year only for past years", () => {
     const thisYear = new Date().getFullYear();
     const recent = new Date(thisYear, 0, 15, 9, 5).getTime();
     const older = new Date(thisYear - 1, 11, 30, 23, 10).getTime();
-
     expect(formatMessageTime(undefined)).toBe("");
     // 今年：带月日和时分，不带年份
     expect(formatMessageTime(recent)).toMatch(/15/);

@@ -8,12 +8,10 @@ import {
   createClaudeStackModelRow,
 } from "@/components/providers/forms/ClaudeStackModelsField";
 import { Form } from "@/components/ui/form";
-
 const FormShell = ({ children }: PropsWithChildren) => {
   const form = useForm();
   return <Form {...form}>{children}</Form>;
 };
-
 describe("ClaudeStackModelsField model picker", () => {
   it("keeps checked rows untouched, removes unchecked ones and appends new picks", () => {
     const first = createClaudeStackModelRow({
@@ -38,7 +36,6 @@ describe("ClaudeStackModelsField model picker", () => {
         />
       </FormShell>,
     );
-
     fireEvent.click(
       screen.getByRole("button", { name: "providerForm.modelPicker.title" }),
     );
@@ -56,7 +53,6 @@ describe("ClaudeStackModelsField model picker", () => {
         name: "providerForm.modelPicker.apply",
       }),
     );
-
     expect(onRowsChange).toHaveBeenCalledTimes(1);
     const [rows] = onRowsChange.mock.calls[0];
     expect(rows.slice(0, 2)).toEqual([first, draft]);

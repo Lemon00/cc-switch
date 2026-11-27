@@ -1,23 +1,20 @@
 import {
+  DRAG_REGION_ATTR,
+  DRAG_REGION_ENABLED,
+  DRAG_REGION_STYLE,
+} from "@/lib/platform";
+import { cn } from "@/lib/utils";
+import {
   createContext,
   useContext,
   useLayoutEffect,
   useState,
   type ReactNode,
 } from "react";
-import {
-  DRAG_REGION_ATTR,
-  DRAG_REGION_ENABLED,
-  DRAG_REGION_STYLE,
-} from "@/lib/platform";
-import { cn } from "@/lib/utils";
-
 /** 由外壳提供：Linux 自绘窗口按钮要接在每一屏页头的最右端。 */
 export const WindowControlsContext = createContext<ReactNode>(null);
-
 const NO_DRAG = { WebkitAppRegion: "no-drag" } as React.CSSProperties;
 const PAGE_HEADER_HEIGHT = 52;
-
 interface AppPageHeaderProps {
   /** 标题前的可操作元素（二级页的返回按钮）；和 icon 二选一 */
   leading?: ReactNode;
@@ -35,7 +32,6 @@ interface AppPageHeaderProps {
   truncateTitle?: boolean;
   className?: string;
 }
-
 /**
  * 内容区页头：高 52，整条可拖动窗口，左边是图标 + 标题，右边是操作。
  */
@@ -123,7 +119,6 @@ export function AppPageHeader({
     </header>
   );
 }
-
 /**
  * 页头下沿离窗口顶部多远。页头上方可能有环境变量警告条，得量实际位置，
  * 遮罩上复刻的窗口按钮才能和页头里的对齐。
@@ -137,7 +132,6 @@ export function usePageHeaderBottom() {
   }, []);
   return bottom;
 }
-
 /**
  * 模态遮罩的子元素：遮罩盖住了页头，这一条铺到页头下沿，弹窗打开时照样能拖窗口，
  * 页头最右端的窗口按钮也在这里再放一份。

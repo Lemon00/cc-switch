@@ -1,19 +1,17 @@
-import React from "react";
-import { useTranslation } from "react-i18next";
-import { useCodexOauthQuotaByAccountId } from "@/lib/query/subscription";
+import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
 import {
   AccountQuotaColumn,
   subscriptionQuotaState,
 } from "@/components/settings/auth/AccountQuota";
-import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
-
+import { useCodexOauthQuotaByAccountId } from "@/lib/query/subscription";
+import React from "react";
+import { useTranslation } from "react-i18next";
 interface CodexOauthAccountQuotaProps {
   /** cc-switch 自管的 ChatGPT 账号 ID */
   accountId: string;
   /** 账号名，拼进刷新按钮的无障碍名字 */
   login?: string;
 }
-
 /**
  * 授权中心里单个 ChatGPT (Codex OAuth) 账号的额度：账号行右侧的额度条 + 「x 分钟前 ↻」。
  *
@@ -34,7 +32,6 @@ const CodexOauthAccountQuota: React.FC<CodexOauthAccountQuotaProps> = ({
     enabled: true,
     autoQuery: false,
   });
-
   return (
     <AccountQuotaColumn
       login={login}
@@ -45,5 +42,4 @@ const CodexOauthAccountQuota: React.FC<CodexOauthAccountQuotaProps> = ({
     />
   );
 };
-
 export default CodexOauthAccountQuota;

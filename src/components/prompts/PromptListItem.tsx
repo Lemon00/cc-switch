@@ -1,6 +1,3 @@
-import React from "react";
-import { useTranslation } from "react-i18next";
-import { MoreHorizontal, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -12,8 +9,10 @@ import {
 import { HoverTip } from "@/components/ui/hover-tip";
 import type { Prompt } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { MoreHorizontal, Pencil } from "lucide-react";
+import React from "react";
+import { useTranslation } from "react-i18next";
 import { promptMenuContentClass, promptMenuItemClass } from "./PromptPageFrame";
-
 interface PromptListItemProps {
   id: string;
   prompt: Prompt;
@@ -31,7 +30,6 @@ interface PromptListItemProps {
   /** 删除不能用时的原因（启用中的不能删） */
   deleteBlockedReason?: string;
 }
-
 /** 提示库的一行（高 60）：点行打开编辑抽屉，右边是启用 / 停用、编辑、⋯。 */
 const PromptListItem: React.FC<PromptListItemProps> = ({
   id,
@@ -48,7 +46,6 @@ const PromptListItem: React.FC<PromptListItemProps> = ({
   deleteBlockedReason,
 }) => {
   const { t } = useTranslation();
-
   return (
     <li
       data-testid={`prompt-row-${id}`}
@@ -177,5 +174,4 @@ const PromptListItem: React.FC<PromptListItemProps> = ({
     </li>
   );
 };
-
 export default PromptListItem;

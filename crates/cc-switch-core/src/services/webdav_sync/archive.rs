@@ -21,6 +21,12 @@ use crate::services::sync_protocol::{
 /// 否则技能装得上、同步却恢复不了。字节上限 `MAX_SYNC_ARTIFACT_BYTES` 仍然兜底。
 const MAX_EXTRACT_ENTRIES: usize = 30_000;
 
+#[derive(Default)]
+struct ArchiveBudget {
+    entries: usize,
+    bytes: u64,
+}
+
 pub struct SkillsBackup {
     temporary_dir: Option<TempDir>,
     backup_dir: PathBuf,
@@ -56,6 +62,7 @@ pub fn zip_skills_ssot(dest_path: &Path) -> Result<(), AppError> {
             &mut writer,
             options,
             &mut visited,
+            &mut ArchiveBudget::default(),
         )?;
     }
 
@@ -116,9 +123,14 @@ pub fn restore_skills_zip(raw: &[u8]) -> Result<(), AppError> {
                 format!("Failed to read ZIP entry: {e}"),
             )
         })?;
-        let Some(safe_name) = entry.enclosed_name() else {
-            continue;
-        };
+        let safe_name = entry.enclosed_name().ok_or_else(|| {
+            AppError::InvalidInput("skills.zip contains an unsafe path; restore cancelled".into())
+        })?;
+        if entry.is_symlink() {
+            return Err(AppError::InvalidInput(
+                "skills.zip contains a symbolic link; restore cancelled".into(),
+            ));
+        }
         let out_path = extracted.join(safe_name);
         if entry.is_dir() {
             fs::create_dir_all(&out_path).map_err(|e| AppError::io(&out_path, e))?;
@@ -344,6 +356,7 @@ fn zip_dir_recursive(
     writer: &mut zip::ZipWriter<fs::File>,
     options: SimpleFileOptions,
     visited: &mut HashSet<PathBuf>,
+    budget: &mut ArchiveBudget,
 ) -> Result<(), AppError> {
     let mut entries: Vec<_> = fs::read_dir(current)
         .map_err(|e| AppError::io(current, e))?
@@ -369,6 +382,16 @@ fn zip_dir_recursive(
                 );
                 continue;
             }
+            // A link that does not resolve (dangling, or a target this process may not
+            // open) cannot be archived. Falling through would open it as a file, and one
+            // such entry would fail the whole upload, db.sql included (#9615).
+            Err(error) if is_link(&path) => {
+                log::warn!(
+                    "[WebDAV] Skipping unresolvable link in skills: {}: {error}",
+                    path.display()
+                );
+                continue;
+            }
             Err(_) => path.clone(),
         };
 
@@ -384,6 +407,13 @@ fn zip_dir_recursive(
             )
         })?;
         let rel_str = rel.to_string_lossy().replace('\\', "/");
+
+        budget.entries += 1;
+        if budget.entries > MAX_EXTRACT_ENTRIES || rel.components().count() > 128 {
+            return Err(AppError::InvalidInput(
+                "Skills archive has too many entries or excessive directory depth".into(),
+            ));
+        }
 
         if is_dir {
             if !mark_visited_dir(&real_path, visited)? {
@@ -402,7 +432,7 @@ fn zip_dir_recursive(
                         format!("Failed to write ZIP directory entry: {e}"),
                     )
                 })?;
-            zip_dir_recursive(root, &real_path, writer, options, visited)?;
+            zip_dir_recursive(root, &real_path, writer, options, visited, budget)?;
         } else {
             writer.start_file(&rel_str, options).map_err(|e| {
                 localized(
@@ -412,16 +442,13 @@ fn zip_dir_recursive(
                 )
             })?;
             let mut file = fs::File::open(&real_path).map_err(|e| AppError::io(&real_path, e))?;
-            let mut buf = Vec::new();
-            file.read_to_end(&mut buf)
-                .map_err(|e| AppError::io(&real_path, e))?;
-            writer.write_all(&buf).map_err(|e| {
-                localized(
-                    "webdav.sync.zip_write_file_failed",
-                    format!("写入 ZIP 文件内容失败: {e}"),
-                    format!("Failed to write ZIP file content: {e}"),
-                )
-            })?;
+            copy_entry_with_total_limit(
+                &mut file,
+                writer,
+                &mut budget.bytes,
+                MAX_SYNC_ARTIFACT_BYTES,
+                &real_path,
+            )?;
         }
     }
     Ok(())
@@ -452,6 +479,17 @@ fn copy_dir_recursive_inner(
         let entry = entry.map_err(|e| AppError::io(src, e))?;
         let path = entry.path();
         let dest_path = dest.join(entry.file_name());
+        // Same entries zip_dir_recursive leaves out: there is nothing to copy, and
+        // failing here would fail every download at the pre-import backup.
+        if is_link(&path) {
+            if let Err(error) = fs::canonicalize(&path) {
+                log::warn!(
+                    "[WebDAV] Skipping unresolvable link in skills: {}: {error}",
+                    path.display()
+                );
+                continue;
+            }
+        }
         if path.is_dir() {
             copy_dir_recursive_inner(&path, &dest_path, visited)?;
         } else {
@@ -459,6 +497,14 @@ fn copy_dir_recursive_inner(
         }
     }
     Ok(())
+}
+
+/// Whether the entry itself is a link: a symlink, or on Windows also a directory
+/// junction (std reports both as symlinks).
+fn is_link(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
 }
 
 fn mark_visited_dir(path: &Path, visited: &mut HashSet<PathBuf>) -> Result<bool, AppError> {
@@ -509,6 +555,57 @@ mod tests {
     use std::path::Path;
     use tempfile::tempdir;
 
+    #[test]
+    fn unsafe_or_symbolic_archive_entries_abort_before_replacing_skills() {
+        use std::io::Write;
+        for symlink in [false, true] {
+            let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+            if symlink {
+                zip.add_symlink("link", "outside", zip::write::SimpleFileOptions::default())
+                    .unwrap();
+            } else {
+                zip.start_file("../outside", zip::write::SimpleFileOptions::default())
+                    .unwrap();
+                zip.write_all(b"bad").unwrap();
+            }
+            let raw = zip.finish().unwrap().into_inner();
+            assert!(super::restore_skills_zip(&raw).is_err());
+        }
+    }
+
+    #[test]
+    fn zip_builder_enforces_upload_entry_and_byte_budgets() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("skills");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("SKILL.md"), b"payload").unwrap();
+        let root = std::fs::canonicalize(root).unwrap();
+        for budget in [
+            super::ArchiveBudget {
+                entries: super::MAX_EXTRACT_ENTRIES,
+                bytes: 0,
+            },
+            super::ArchiveBudget {
+                entries: 0,
+                bytes: super::MAX_SYNC_ARTIFACT_BYTES,
+            },
+        ] {
+            let mut budget = budget;
+            let mut writer = zip::ZipWriter::new(
+                std::fs::File::create(temp.path().join("archive.zip")).unwrap(),
+            );
+            assert!(super::zip_dir_recursive(
+                &root,
+                &root,
+                &mut writer,
+                zip::write::SimpleFileOptions::default(),
+                &mut HashSet::new(),
+                &mut budget
+            )
+            .is_err());
+        }
+    }
+
     #[cfg(unix)]
     mod zip_symlinks {
         use super::super::zip_dir_recursive;
@@ -526,7 +623,15 @@ mod tests {
                 .last_modified_time(zip::DateTime::default());
             let mut visited = HashSet::new();
             mark_visited_dir(&root, &mut visited).unwrap();
-            zip_dir_recursive(&root, &root, &mut writer, options, &mut visited).unwrap();
+            zip_dir_recursive(
+                &root,
+                &root,
+                &mut writer,
+                options,
+                &mut visited,
+                &mut super::super::ArchiveBudget::default(),
+            )
+            .unwrap();
             writer.finish().unwrap();
             zip::ZipArchive::new(fs::File::open(destination).unwrap()).unwrap()
         }
@@ -588,6 +693,47 @@ mod tests {
                 .read_to_string(&mut content)
                 .unwrap();
             assert_eq!(content, "instructions");
+        }
+
+        /// #9615: a link that does not resolve used to be opened as a file, and that
+        /// one error failed the whole upload.
+        #[test]
+        fn zip_skips_links_that_do_not_resolve() {
+            let temp = tempdir().unwrap();
+            let source = temp.path().join("skills");
+            let skill = source.join("example");
+            fs::create_dir_all(&skill).unwrap();
+            fs::write(skill.join("SKILL.md"), "kept").unwrap();
+            // One at the top level (a skill installed as a link), one inside a skill.
+            symlink("../missing-skill", source.join("broken")).unwrap();
+            symlink("missing.md", skill.join("gone.md")).unwrap();
+
+            let mut archive = archive_dir(&source, &temp.path().join("skills.zip"));
+            let names: Vec<String> = (0..archive.len())
+                .map(|index| archive.by_index(index).unwrap().name().to_string())
+                .collect();
+            assert_eq!(names, ["example/", "example/SKILL.md"]);
+        }
+
+        #[test]
+        fn copy_skips_links_that_do_not_resolve() {
+            let temp = tempdir().unwrap();
+            let source = temp.path().join("skills");
+            let skill = source.join("example");
+            fs::create_dir_all(&skill).unwrap();
+            fs::write(skill.join("SKILL.md"), "kept").unwrap();
+            symlink("../missing-skill", source.join("broken")).unwrap();
+            symlink("missing.md", skill.join("gone.md")).unwrap();
+
+            let backup = temp.path().join("backup");
+            super::super::copy_dir_recursive(&source, &backup).unwrap();
+
+            assert_eq!(
+                fs::read_to_string(backup.join("example/SKILL.md")).unwrap(),
+                "kept"
+            );
+            assert!(fs::symlink_metadata(backup.join("broken")).is_err());
+            assert!(fs::symlink_metadata(backup.join("example/gone.md")).is_err());
         }
     }
 

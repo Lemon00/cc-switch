@@ -1,4 +1,3 @@
-import * as React from "react";
 import {
   Tooltip,
   TooltipContent,
@@ -6,7 +5,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { isKeyboardModality } from "@/lib/inputModality";
-
+import * as React from "react";
 export interface HoverTipProps {
   /** 提示内容：说这个按钮做什么，一句短话。为空时原样渲染子元素。 */
   content?: React.ReactNode;
@@ -17,19 +16,16 @@ export interface HoverTipProps {
   /** 鼠标离开触发元素后关闭，提示本身不接收指针事件。 */
   disableHoverableContent?: boolean;
 }
-
 /** 文案末尾的「…」是菜单项「会弹出对话框」的约定，放进提示里像被截断，去掉。 */
 function stripEllipsis(content: React.ReactNode): React.ReactNode {
   return typeof content === "string"
     ? content.replace(/\s*(…|\.{3})$/, "")
     : content;
 }
-
 /** Radix 的 onFocus 会在 defaultPrevented 时跳过打开（composeEventHandlers） */
 function keepClosedUnlessKeyboard(event: React.FocusEvent) {
   if (!isKeyboardModality()) event.preventDefault();
 }
-
 /**
  * 全局悬停提示：移上去立即显示深色胶囊。自带 0 延迟的 Provider，放在哪里都能用。
  * 纯图标按钮一律用它报操作内容；按钮自己仍要有 aria-label。

@@ -19,18 +19,15 @@ import { codexProviderPresets } from "@/config/codexProviderPresets";
 import type { CodexCopilotApiFormat, ProviderMeta } from "@/types";
 import { server } from "../msw/server";
 import { createTestQueryClient } from "../utils/testQueryClient";
-
 const copilotAuthState = vi.hoisted(() => ({
   isAuthenticated: true,
   isStatusSuccess: true,
   isStatusError: false,
 }));
 const toastError = vi.hoisted(() => vi.fn());
-
 vi.mock("sonner", () => ({
   toast: { error: toastError, success: vi.fn() },
 }));
-
 vi.mock("@/components/providers/forms/CopilotAuthSection", () => ({
   CopilotAuthSection: ({
     selectedAccountId,
@@ -92,7 +89,6 @@ vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
     useXaiOauth: () => ({ isAuthenticated: false, accounts: [] }),
   };
 });
-
 function getCopilotPreset() {
   const preset = codexProviderPresets.find(
     (item) => item.providerType === "github_copilot",
@@ -100,15 +96,16 @@ function getCopilotPreset() {
   if (!preset) throw new Error("Missing Codex Copilot preset");
   return preset;
 }
-
 interface DraftProjectionRequest {
   app: string;
-  settingsConfig: { auth: Record<string, unknown>; config: string };
+  settingsConfig: {
+    auth: Record<string, unknown>;
+    config: string;
+  };
   category?: string;
   providerId?: string;
   meta?: ProviderMeta;
 }
-
 function captureDraftProjections(liveToml = "") {
   const requests: DraftProjectionRequest[] = [];
   server.use(
@@ -129,7 +126,6 @@ function captureDraftProjections(liveToml = "") {
   );
   return requests;
 }
-
 function renderForm(
   meta?: ProviderMeta,
   onEditorBaseChange?: ProviderFormProps["onEditorBaseChange"],
@@ -162,24 +158,20 @@ function renderForm(
   }
   return onSubmit;
 }
-
 function formatControl() {
   return screen.getByRole("combobox", { name: "上游格式" });
 }
-
 const formatLabels = {
   auto: "codexConfig.upstreamFormatAuto",
   openai_chat: "Chat Completions（需转换）",
   openai_responses: "codexConfig.upstreamFormatCopilotResponses",
 };
-
 async function selectFormat(format: CodexCopilotApiFormat) {
   fireEvent.keyDown(formatControl(), { key: "ArrowDown" });
   fireEvent.click(
     await screen.findByRole("option", { name: formatLabels[format] }),
   );
 }
-
 describe("Codex Copilot provider form", () => {
   beforeEach(() => {
     copilotAuthState.isAuthenticated = true;
@@ -187,7 +179,6 @@ describe("Codex Copilot provider form", () => {
     copilotAuthState.isStatusError = false;
     toastError.mockReset();
   });
-
   const scrollIntoViewDescriptor = Object.getOwnPropertyDescriptor(
     HTMLElement.prototype,
     "scrollIntoView",
@@ -209,7 +200,6 @@ describe("Codex Copilot provider form", () => {
       Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
     }
   });
-
   it("defaults to GPT-6 Astra and shows all five preset model mappings", () => {
     renderForm();
     // 有模型列表时第一行就是默认模型，没有单独的默认模型框。
@@ -228,7 +218,6 @@ describe("Codex Copilot provider form", () => {
     expect(formatControl()).toHaveTextContent(formatLabels.auto);
     expect(screen.getByText("模型列表")).toBeVisible();
   });
-
   it.each<CodexCopilotApiFormat>(["auto", "openai_chat", "openai_responses"])(
     "persists %s without changing the Codex client wire protocol",
     async (format) => {
@@ -249,7 +238,6 @@ describe("Codex Copilot provider form", () => {
       );
     },
   );
-
   it("preserves account, protocol and model edits when saving a live-projected Copilot draft", async () => {
     const liveToml = '\n[ui]\ntheme = "dark"\n';
     const requests = captureDraftProjections(liveToml);
@@ -274,7 +262,6 @@ describe("Codex Copilot provider form", () => {
           .map((node) => (node as HTMLTextAreaElement).value),
       ).toContain(base.config),
     );
-
     fireEvent.click(
       screen.getByRole("button", { name: "select-copilot-account" }),
     );
@@ -286,7 +273,6 @@ describe("Codex Copilot provider form", () => {
       target: { value: "524288" },
     });
     fireEvent.click(screen.getByRole("button", { name: "save" }));
-
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     const saved = onSubmit.mock.calls[0][0];
     expect(saved.meta).toEqual(
@@ -318,7 +304,6 @@ describe("Codex Copilot provider form", () => {
     expect(onEditorBaseChange).toHaveBeenLastCalledWith(base, draft);
     expect(screen.queryByText("仍要保存")).not.toBeInTheDocument();
   });
-
   it("projects each preset with its own identity instead of stale Copilot metadata", async () => {
     const requests = captureDraftProjections();
     const onEditorBaseChange = vi.fn();
@@ -328,7 +313,6 @@ describe("Codex Copilot provider form", () => {
       (preset) => preset.name === "DeepSeek",
     );
     if (!otherPreset) throw new Error("Missing DeepSeek preset");
-
     const waitForPreset = async (preset: typeof copilot) => {
       const draft = { auth: preset.auth, config: preset.config };
       await waitFor(() =>
@@ -340,19 +324,16 @@ describe("Codex Copilot provider form", () => {
       providerType: "github_copilot",
     });
     await selectFormat("openai_responses");
-
     fireEvent.click(screen.getByRole("button", { name: /DeepSeek/ }));
     await waitForPreset(otherPreset);
     expect(requests.at(-1)).not.toHaveProperty("meta");
     expect(requests.at(-1)).not.toHaveProperty("providerId");
-
     fireEvent.click(screen.getByRole("button", { name: /GitHub Copilot/ }));
     await waitForPreset(copilot);
     expect(formatControl()).toHaveTextContent(formatLabels.auto);
     expect(requests.at(-1)?.meta).toEqual({
       providerType: "github_copilot",
     });
-
     const previousRequests = requests.length;
     fireEvent.click(
       screen.getByRole("button", { name: "providerPreset.custom" }),
@@ -364,8 +345,11 @@ describe("Codex Copilot provider form", () => {
     expect(requests.at(-1)).not.toHaveProperty("meta");
     expect(requests.at(-1)).not.toHaveProperty("providerId");
   });
-
-  it.each<{ name: string; meta: ProviderMeta; accountId: string | null }>([
+  it.each<{
+    name: string;
+    meta: ProviderMeta;
+    accountId: string | null;
+  }>([
     {
       name: "a non-default managed account",
       meta: {
@@ -420,7 +404,6 @@ describe("Codex Copilot provider form", () => {
       target: { value: "gpt-5.6-luna" },
     });
     fireEvent.click(screen.getByRole("button", { name: "save" }));
-
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     const saved = onSubmit.mock.calls[0][0];
     expect(saved.meta?.authBinding).toEqual({
@@ -436,7 +419,6 @@ describe("Codex Copilot provider form", () => {
     expect(settings.config).toContain('wire_api = "responses"');
     expect(settings.config).toContain('model = "gpt-5.6-luna"');
   });
-
   it.each([
     {
       name: "loading",
@@ -456,7 +438,6 @@ describe("Codex Copilot provider form", () => {
       githubAccountId: "copilot-secondary",
     });
     fireEvent.click(screen.getByRole("button", { name: "save" }));
-
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith(status.message),
     );
@@ -465,7 +446,6 @@ describe("Codex Copilot provider form", () => {
       "copilot-secondary",
     );
   });
-
   // The mocked section retains the ID so this exercises only the form's guard,
   // not the real account selector's cleanup when an account disappears.
   it("blocks submission while the form still holds an unavailable account ID", async () => {
@@ -478,7 +458,6 @@ describe("Codex Copilot provider form", () => {
       },
     });
     fireEvent.click(screen.getByRole("button", { name: "save" }));
-
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith(
         "已绑定账号不存在，请重新选择账号",
@@ -486,13 +465,11 @@ describe("Codex Copilot provider form", () => {
     );
     expect(onSubmit).not.toHaveBeenCalled();
   });
-
   it("keeps legacy cards automatic and shows mapping even with an empty catalog", () => {
     renderForm({ providerType: "github_copilot", apiFormat: "openai_chat" });
     expect(formatControl()).toHaveTextContent(formatLabels.auto);
     expect(screen.getByText("模型列表")).toBeVisible();
   });
-
   it("repairs an enabled reasoning effort configuration whose parameter is none", async () => {
     const onSubmit = renderForm({
       providerType: "github_copilot",
@@ -507,10 +484,8 @@ describe("Codex Copilot provider form", () => {
         outputFormat: "auto",
       },
     });
-
     fireEvent.click(screen.getByRole("button", { name: "save" }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-
     expect(onSubmit.mock.calls[0][0].meta?.codexChatReasoning).toEqual({
       supportsThinking: true,
       supportsEffort: true,
@@ -520,7 +495,6 @@ describe("Codex Copilot provider form", () => {
       outputFormat: "auto",
     });
   });
-
   it("does not offer preset switching while editing an existing Copilot card", () => {
     renderForm({ providerType: "github_copilot", apiFormat: "openai_chat" });
     expect(
@@ -531,7 +505,6 @@ describe("Codex Copilot provider form", () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByText("providerPreset.label")).not.toBeInTheDocument();
   });
-
   it("keeps a self-hosted copilot-api URL as an ordinary Codex provider", async () => {
     copilotAuthState.isAuthenticated = false;
     const onSubmit = vi.fn<(values: ProviderFormValues) => void>();
@@ -562,7 +535,6 @@ requires_openai_auth = true`;
         />
       </QueryClientProvider>,
     );
-
     expect(screen.getByDisplayValue("sk-self-hosted")).toBeVisible();
     expect(
       screen.getByDisplayValue("https://copilot-api.example.com"),
@@ -570,13 +542,11 @@ requires_openai_auth = true`;
     expect(
       screen.queryByTestId("selected-copilot-account"),
     ).not.toBeInTheDocument();
-
     // 普通 Responses 卡的高级区默认折叠，上游格式在里面。
     fireEvent.click(screen.getByRole("button", { name: /高级选项/ }));
     await selectFormat("openai_chat");
     fireEvent.click(screen.getByRole("button", { name: "save" }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-
     const saved = onSubmit.mock.calls[0][0];
     expect(saved.meta?.providerType).toBeUndefined();
     expect(saved.meta?.authBinding).toBeUndefined();
@@ -586,7 +556,6 @@ requires_openai_auth = true`;
       OPENAI_API_KEY: "sk-self-hosted",
     });
   });
-
   it("loads a saved explicit protocol and can return it to automatic", async () => {
     const onSubmit = renderForm({
       providerType: "github_copilot",
@@ -601,7 +570,6 @@ requires_openai_auth = true`;
       onSubmit.mock.calls[0][0].meta?.codexCopilotApiFormat,
     ).toBeUndefined();
   });
-
   it("excludes Messages only for Copilot and resets the override on preset changes", async () => {
     renderForm();
     fireEvent.keyDown(formatControl(), { key: "ArrowDown" });

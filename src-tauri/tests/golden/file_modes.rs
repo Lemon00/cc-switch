@@ -85,47 +85,13 @@ fn seed_all_providers(state: &cc_switch_lib::AppState) {
         ],
         "codex-official",
     );
-    seed_providers(
-        state,
-        &AppType::Gemini,
-        &[
-            provider(
-                "relay",
-                json!({
-                    "env": {
-                        "GEMINI_API_KEY": "g-relay",
-                        "GOOGLE_GEMINI_BASE_URL": "https://relay.example"
-                    },
-                    "config": {}
-                }),
-                None,
-            ),
-            official("gemini-official", json!({ "env": {}, "config": {} })),
-        ],
-        "gemini-official",
-    );
-    seed_providers(
-        state,
-        &AppType::GrokBuild,
-        &[provider(
-            "relay",
-            json!({ "config": "[models]\ndefault = \"grok-4.5\"\n\n[model.\"grok-4.5\"]\nmodel = \"grok-4.5\"\nbase_url = \"https://relay.example/v1\"\nname = \"Relay\"\napi_key = \"xai-relay\"\napi_backend = \"responses\"\ncontext_window = 500000\n" }),
-            None,
-        )],
-        "relay",
-    );
 }
 
 /// 官方 Codex（带 Key，auth.json 由它整份写入），再把四个应用都切到第三方。
 fn switch_everything(state: &cc_switch_lib::AppState) -> (String, String) {
     ProviderService::switch(state, AppType::Codex, "codex-official").expect("codex official");
     let after_official = inventory();
-    for app in [
-        AppType::Claude,
-        AppType::Codex,
-        AppType::Gemini,
-        AppType::GrokBuild,
-    ] {
+    for app in [AppType::Claude, AppType::Codex] {
         ProviderService::switch(state, app, "relay").expect("switch to relay");
     }
     (after_official, inventory())

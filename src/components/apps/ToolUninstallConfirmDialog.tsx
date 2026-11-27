@@ -1,12 +1,5 @@
-import { useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { Loader2 } from "lucide-react";
-import { settingsApi } from "@/lib/api";
-import type {
-  ToolUninstallCandidate,
-  ToolUninstallPlan,
-} from "@/lib/api/settings";
-import { extractErrorMessage } from "@/utils/errorUtils";
+import { RADIO_CLASS } from "@/components/mcp/formBits";
+import { ToolInstallRow } from "@/components/settings/ToolInstallRow";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -16,15 +9,20 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { RADIO_CLASS } from "@/components/mcp/formBits";
-import { ToolInstallRow } from "@/components/settings/ToolInstallRow";
+import { settingsApi } from "@/lib/api";
+import type {
+  ToolUninstallCandidate,
+  ToolUninstallPlan,
+} from "@/lib/api/settings";
+import { extractErrorMessage } from "@/utils/errorUtils";
+import { Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
-  hermesUninstallMayLeaveFiles,
   toolDisplayName,
   type ToolName,
   type WslShellPreference,
 } from "./useToolManagement";
-
 export function ToolUninstallConfirmDialog({
   tool,
   wslShellByTool,
@@ -44,7 +42,6 @@ export function ToolUninstallConfirmDialog({
   );
   const [error, setError] = useState<string | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-
   useEffect(() => {
     let cancelled = false;
     setCandidates(null);
@@ -67,14 +64,12 @@ export function ToolUninstallConfirmDialog({
       cancelled = true;
     };
   }, [tool, wslShellByTool]);
-
   const plan =
     candidates?.find((candidate) => candidate.path === selectedPath)?.plan ??
     null;
   const anyPlan = Boolean(candidates?.some((candidate) => candidate.plan));
   const needsManual =
     error !== null || Boolean(candidates?.some((candidate) => !candidate.plan));
-
   return (
     <Dialog open onOpenChange={(open) => !open && onCancel()}>
       <DialogContent className="max-w-2xl" zIndex="alert">
@@ -155,11 +150,6 @@ export function ToolUninstallConfirmDialog({
                   {plan.native && (
                     <p className="text-caption text-fg-2">
                       {t("settings.toolUninstallNativeHint")}
-                    </p>
-                  )}
-                  {hermesUninstallMayLeaveFiles(plan) && (
-                    <p role="note" className="text-caption text-fg-2">
-                      {t("settings.toolUninstallHermesWindowsHint")}
                     </p>
                   )}
                 </>

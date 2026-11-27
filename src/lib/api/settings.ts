@@ -1,167 +1,154 @@
-import { invoke } from "@tauri-apps/api/core";
 import type {
+  RemoteSnapshotInfo,
+  S3SyncSettings,
   Settings,
   WebDavSyncSettings,
-  S3SyncSettings,
-  RemoteSnapshotInfo,
 } from "@/types";
+import { invoke } from "@tauri-apps/api/core";
 import type { AppId } from "./types";
-
 export interface ConfigTransferResult {
   success: boolean;
   message: string;
   filePath?: string;
   backupId?: string;
+  /** 数据已导入，但后置同步（live/prompts/价格/设置缓存等）部分失败 */
+  warning?: string;
 }
-
 export interface WebDavTestResult {
   success: boolean;
   message?: string;
 }
-
 export interface CodexUnifyHistoryRestoreResult {
   restoredJsonlFiles: number;
   restoredStateRows: number;
   /** 还原被跳过的原因（如当前目录没有账本）；存在时不应报成功 */
   skippedReason?: string;
 }
-
 export interface WebDavSyncResult {
   status: string;
+  /** 下载成功但后置同步部分失败时由后端附带 */
+  warning?: string;
 }
-
+const clearableSettings = new Set<keyof Settings>([
+  "claudeConfigDir",
+  "codexConfigDir",
+  "opencodeConfigDir",
+  "codexStackSubagentModel",
+  "codexStackSubagentReasoningEffort",
+  "codexStackAutoReviewModel",
+  "preferredTerminal",
+]);
 export const settingsApi = {
   async get(): Promise<Settings> {
-    return await invoke("get_settings");
+    return await invoke<Settings>("get_settings");
   },
-
-  async save(settings: Settings): Promise<boolean> {
-    return await invoke("save_settings", { settings });
+  async save(settings: Partial<Settings>): Promise<boolean> {
+    return await invoke("save_settings", {
+      settings: Object.fromEntries(
+        Object.entries(settings)
+          .filter(
+            ([key, value]) =>
+              value !== undefined ||
+              clearableSettings.has(key as keyof Settings),
+          )
+          .map(([key, value]) => [key, value ?? null]),
+      ),
+    });
   },
-
   /** 是否存在统一 Codex 会话历史的迁移备份（关闭弹窗据此显示"恢复备份"勾选） */
   async hasCodexUnifyHistoryBackup(): Promise<boolean> {
     return await invoke("has_codex_unify_history_backup");
   },
-
   /** Codex 的 config.toml 是否用 [features] multi_agent_v2 强制了新版子 agent 工具 */
   async codexForcesMultiAgentV2(): Promise<boolean> {
     return await invoke("codex_forces_multi_agent_v2");
   },
-
   /** Codex 会话压缩开关（config.toml 的 [features] local_thread_store_compression） */
   async getCodexSessionCompression(): Promise<boolean> {
     return await invoke("get_codex_session_compression");
   },
-
   /** 开关 Codex 会话压缩，返回写入后的状态 */
   async setCodexSessionCompression(enabled: boolean): Promise<boolean> {
     return await invoke("set_codex_session_compression", { enabled });
   },
-
   /** Codex 会话目录当前占用的字节数 */
   async getCodexSessionsDiskUsage(): Promise<number> {
     return await invoke("get_codex_sessions_disk_usage");
   },
-
   /** 按迁移备份账本把当时迁入共享桶的官方会话还原回 openai 桶（幂等） */
   async restoreCodexUnifiedHistory(): Promise<CodexUnifyHistoryRestoreResult> {
     return await invoke("restore_codex_unified_history");
   },
-
   async restart(): Promise<boolean> {
     return await invoke("restart_app");
   },
-
   async installUpdateAndRestart(): Promise<boolean> {
     return await invoke("install_update_and_restart");
   },
-
   async checkUpdates(): Promise<void> {
     await invoke("check_for_updates");
   },
-
   async openPortableUpdateDownload(version: string): Promise<void> {
     await invoke("open_portable_update_download", { version });
   },
-
   async isPortable(): Promise<boolean> {
     return await invoke("is_portable_mode");
   },
-
   async getConfigDir(appId: AppId): Promise<string> {
     return await invoke("get_config_dir", { app: appId });
   },
-
   async openConfigFolder(appId: AppId): Promise<void> {
     await invoke("open_config_folder", { app: appId });
   },
-
   async pickDirectory(defaultPath?: string): Promise<string | null> {
     return await invoke("pick_directory", { defaultPath });
   },
-
   async selectConfigDirectory(defaultPath?: string): Promise<string | null> {
     return await invoke("pick_directory", { defaultPath });
   },
-
   async getClaudeCodeConfigPath(): Promise<string> {
     return await invoke("get_claude_code_config_path");
   },
-
   async getAppConfigPath(): Promise<string> {
     return await invoke("get_app_config_path");
   },
-
   async openAppConfigFolder(): Promise<void> {
     await invoke("open_app_config_folder");
   },
-
   async revealAppLogFile(): Promise<void> {
     await invoke("reveal_app_log_file");
   },
-
   async getAppConfigDirOverride(): Promise<string | null> {
     return await invoke("get_app_config_dir_override");
   },
-
   async setAppConfigDirOverride(path: string | null): Promise<boolean> {
     return await invoke("set_app_config_dir_override", { path });
   },
-
   async applyClaudePluginConfig(options: {
     official: boolean;
   }): Promise<boolean> {
     const { official } = options;
     return await invoke("apply_claude_plugin_config", { official });
   },
-
   async applyClaudeOnboardingSkip(): Promise<boolean> {
     return await invoke("apply_claude_onboarding_skip");
   },
-
   async clearClaudeOnboardingSkip(): Promise<boolean> {
     return await invoke("clear_claude_onboarding_skip");
   },
-
   async saveFileDialog(defaultName: string): Promise<string | null> {
     return await invoke("save_file_dialog", { defaultName });
   },
-
   async openFileDialog(): Promise<string | null> {
     return await invoke("open_file_dialog");
   },
-
   async exportConfigToFile(filePath: string): Promise<ConfigTransferResult> {
     return await invoke("export_config_to_file", { filePath });
   },
-
   async importConfigFromFile(filePath: string): Promise<ConfigTransferResult> {
     return await invoke("import_config_from_file", { filePath });
   },
-
   // ─── WebDAV sync ──────────────────────────────────────────
-
   async webdavTestConnection(
     settings: WebDavSyncSettings,
     preserveEmptyPassword = true,
@@ -171,37 +158,37 @@ export const settingsApi = {
       preserveEmptyPassword,
     });
   },
-
   async webdavSyncUpload(): Promise<WebDavSyncResult> {
     return await invoke("webdav_sync_upload");
   },
-
   async webdavSyncDownload(): Promise<WebDavSyncResult> {
     return await invoke("webdav_sync_download");
   },
-
   async webdavSyncSaveSettings(
     settings: WebDavSyncSettings,
     passwordTouched = false,
-  ): Promise<{ success: boolean }> {
+  ): Promise<{
+    success: boolean;
+  }> {
     return await invoke("webdav_sync_save_settings", {
       settings,
       passwordTouched,
     });
   },
-
-  async webdavSyncClearSettings(): Promise<{ success: boolean }> {
+  async webdavSyncClearSettings(): Promise<{
+    success: boolean;
+  }> {
     return await invoke("webdav_sync_clear_settings");
   },
-
   async webdavSyncFetchRemoteInfo(): Promise<
-    RemoteSnapshotInfo | { empty: true }
+    | RemoteSnapshotInfo
+    | {
+        empty: true;
+      }
   > {
     return await invoke("webdav_sync_fetch_remote_info");
   },
-
   // ===== S3 Sync API =====
-
   async s3TestConnection(
     settings: S3SyncSettings,
     preserveEmptyPassword = true,
@@ -211,29 +198,31 @@ export const settingsApi = {
       preserveEmptyPassword,
     });
   },
-
   async s3SyncUpload(): Promise<WebDavSyncResult> {
     return await invoke("s3_sync_upload");
   },
-
   async s3SyncDownload(): Promise<WebDavSyncResult> {
     return await invoke("s3_sync_download");
   },
-
   async s3SyncSaveSettings(
     settings: S3SyncSettings,
     passwordTouched: boolean,
-  ): Promise<{ success: boolean }> {
+  ): Promise<{
+    success: boolean;
+  }> {
     return await invoke("s3_sync_save_settings", {
       settings,
       passwordTouched,
     });
   },
-
-  async s3SyncFetchRemoteInfo(): Promise<RemoteSnapshotInfo | { empty: true }> {
+  async s3SyncFetchRemoteInfo(): Promise<
+    | RemoteSnapshotInfo
+    | {
+        empty: true;
+      }
+  > {
     return await invoke("s3_sync_fetch_remote_info");
   },
-
   async syncCurrentProvidersLive(): Promise<void> {
     const result = (await invoke("sync_current_providers_live")) as {
       success?: boolean;
@@ -243,7 +232,6 @@ export const settingsApi = {
       throw new Error(result?.message || "Sync current providers failed");
     }
   },
-
   async openExternal(url: string): Promise<void> {
     try {
       const u = new URL(url);
@@ -256,20 +244,20 @@ export const settingsApi = {
     }
     await invoke("open_external", { url });
   },
-
   async setAutoLaunch(enabled: boolean): Promise<boolean> {
     return await invoke("set_auto_launch", { enabled });
   },
-
   async getAutoLaunchStatus(): Promise<boolean> {
     return await invoke("get_auto_launch_status");
   },
-
   async getToolVersions(
     tools?: string[],
     wslShellByTool?: Record<
       string,
-      { wslShell?: string | null; wslShellFlag?: string | null }
+      {
+        wslShell?: string | null;
+        wslShellFlag?: string | null;
+      }
     >,
   ): Promise<
     Array<{
@@ -285,13 +273,15 @@ export const settingsApi = {
   > {
     return await invoke("get_tool_versions", { tools, wslShellByTool });
   },
-
   async runToolLifecycleAction(
     tools: string[],
     action: "install" | "update" | "uninstall",
     wslShellByTool?: Record<
       string,
-      { wslShell?: string | null; wslShellFlag?: string | null }
+      {
+        wslShell?: string | null;
+        wslShellFlag?: string | null;
+      }
     >,
     uninstallPlan?: ToolUninstallPlan,
   ): Promise<void> {
@@ -302,18 +292,19 @@ export const settingsApi = {
       uninstallPlan,
     });
   },
-
   /** List every installation with its read-only uninstall preview; execution checks the chosen one is still current. */
   async prepareToolUninstall(
     tool: string,
     wslShellByTool?: Record<
       string,
-      { wslShell?: string | null; wslShellFlag?: string | null }
+      {
+        wslShell?: string | null;
+        wslShellFlag?: string | null;
+      }
     >,
   ): Promise<ToolUninstallCandidate[]> {
     return await invoke("prepare_tool_uninstall", { tool, wslShellByTool });
   },
-
   /** 探测各工具安装分布：枚举所有安装、标记冲突、生成锚定升级命令。
    *  诊断按钮、升级前确认、升级后补诊共用此命令，各取所需字段。 */
   async probeToolInstallations(
@@ -321,39 +312,31 @@ export const settingsApi = {
   ): Promise<ToolInstallationReport[]> {
     return await invoke("probe_tool_installations", { tools });
   },
-
   /** 「应用」页展示路径、来源和多处安装（和升级前的预检分开调用）。 */
   async listToolInstallations(
     tools: string[],
   ): Promise<ToolInstallationReport[]> {
     return await invoke("list_tool_installations", { tools });
   },
-
   async getRectifierConfig(): Promise<RectifierConfig> {
     return await invoke("get_rectifier_config");
   },
-
   async setRectifierConfig(config: RectifierConfig): Promise<boolean> {
     return await invoke("set_rectifier_config", { config });
   },
-
   async getOptimizerConfig(): Promise<OptimizerConfig> {
     return await invoke("get_optimizer_config");
   },
-
   async setOptimizerConfig(config: OptimizerConfig): Promise<boolean> {
     return await invoke("set_optimizer_config", { config });
   },
-
   async getLogConfig(): Promise<LogConfig> {
     return await invoke("get_log_config");
   },
-
   async setLogConfig(config: LogConfig): Promise<boolean> {
     return await invoke("set_log_config", { config });
   },
 };
-
 export interface ToolUninstallPlan {
   tool: string;
   path: string;
@@ -362,7 +345,6 @@ export interface ToolUninstallPlan {
   native: boolean;
   wsl_distro: string | null;
 }
-
 /** 单处工具安装的诊断信息（多处安装冲突检测）。字段对应后端 ToolInstallation。 */
 export interface ToolInstallation {
   path: string;
@@ -372,21 +354,18 @@ export interface ToolInstallation {
   source: string;
   is_path_default: boolean;
 }
-
 /** 卸载对话框里的一处安装：能自动卸载就带 plan，否则给出原因。对应后端 ToolUninstallCandidate。 */
 /** 新版本要求的 Node（`engines.node` 原文）与这处安装用的 Node 版本。 */
 export interface NodeRequirementGap {
   required: string;
   current: string;
 }
-
 export interface ToolUninstallCandidate extends ToolInstallation {
   plan: ToolUninstallPlan | null;
   unavailable_reason: string | null;
   /** 工具自己的更新程序会把这份装回来（Grok 的 npm 模式），单独删掉只是暂时的。 */
   reinstalled_by_updater: boolean;
 }
-
 /** 一次"探测工具安装分布"的结果。字段对应后端 ToolInstallationReport。 */
 export interface ToolInstallationReport {
   tool: string;
@@ -398,7 +377,6 @@ export interface ToolInstallationReport {
   /** 默认那处是认不出安装渠道的原生可执行文件：不执行升级，command 为空。 */
   unmanaged: boolean;
 }
-
 export interface RectifierConfig {
   enabled: boolean;
   requestThinkingSignature: boolean;
@@ -406,24 +384,24 @@ export interface RectifierConfig {
   requestMediaFallback: boolean;
   requestMediaHeuristic: boolean;
 }
-
 export interface OptimizerConfig {
   enabled: boolean;
   thinkingOptimizer: boolean;
   cacheInjection: boolean;
 }
-
 export interface LogConfig {
   enabled: boolean;
   level: "error" | "warn" | "info" | "debug" | "trace";
 }
-
 export interface BackupEntry {
   filename: string;
   sizeBytes: number;
   createdAt: string;
 }
-
+export interface BackupRestoreResult {
+  backupId: string;
+  warning?: string;
+}
 export interface BackupLocation {
   id: string;
   path: string;
@@ -432,37 +410,33 @@ export interface BackupLocation {
   lastModified?: string | null;
   deletable: boolean;
 }
-
 export const backupsApi = {
   async createDbBackup(): Promise<string> {
     return await invoke("create_db_backup");
   },
-
   async listDbBackups(): Promise<BackupEntry[]> {
     return await invoke("list_db_backups");
   },
-
-  async restoreDbBackup(filename: string): Promise<string> {
-    return await invoke("restore_db_backup", { filename });
+  async restoreDbBackup(filename: string): Promise<BackupRestoreResult> {
+    const result = await invoke<BackupRestoreResult | string>(
+      "restore_db_backup",
+      { filename },
+    );
+    return typeof result === "string" ? { backupId: result } : result;
   },
-
   async renameDbBackup(oldFilename: string, newName: string): Promise<string> {
     return await invoke("rename_db_backup", { oldFilename, newName });
   },
-
   async deleteDbBackup(filename: string): Promise<void> {
     await invoke("delete_db_backup", { filename });
   },
-
   async listBackupLocations(): Promise<BackupLocation[]> {
     return await invoke("list_backup_locations");
   },
-
   /** 删除一类备份，返回释放的字节数 */
   async deleteBackupLocation(id: string): Promise<number> {
     return await invoke("delete_backup_location", { id });
   },
-
   async revealBackupLocation(id: string): Promise<boolean> {
     return await invoke("reveal_backup_location", { id });
   },

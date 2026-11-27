@@ -2,11 +2,15 @@
 //!
 //! Aggregates proxy_request_logs into daily rollups and prunes old detail rows.
 
+use crate::database::sql_helpers::{fresh_input_sql, INPUT_TOKEN_SEMANTICS_FRESH};
+use crate::database::usage::effective_usage_log_filter;
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
-use crate::services::sql_helpers::{fresh_input_sql, INPUT_TOKEN_SEMANTICS_FRESH};
-use crate::services::usage_stats::effective_usage_log_filter;
 use chrono::{Duration, Local, TimeZone};
+use rusqlite::params;
+use rust_decimal::Decimal;
+use std::collections::HashMap;
+use std::str::FromStr;
 
 /// Compute the rollup/prune cutoff aligned to a local-day boundary.
 ///
@@ -21,8 +25,13 @@ fn compute_local_midnight_cutoff(
     now: chrono::DateTime<Local>,
     retain_days: i64,
 ) -> Result<i64, AppError> {
+    let retention = Duration::try_days(retain_days)
+        .filter(|_| retain_days > 0)
+        .ok_or_else(|| {
+            AppError::Database("retain_days must be a positive supported duration".to_string())
+        })?;
     let target_day = now
-        .checked_sub_signed(Duration::days(retain_days))
+        .checked_sub_signed(retention)
         .ok_or_else(|| AppError::Database("rollup cutoff overflow".to_string()))?
         .date_naive();
 
@@ -55,6 +64,100 @@ fn compute_local_midnight_cutoff(
     Ok(local_dt.timestamp())
 }
 
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct RollupCostKey {
+    date: String,
+    app_type: String,
+    provider_id: String,
+    model: String,
+    request_model: String,
+    pricing_model: String,
+}
+
+fn parse_cost_text(value: Option<&str>) -> Decimal {
+    value
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .and_then(|s| Decimal::from_str(s).ok())
+        .unwrap_or(Decimal::ZERO)
+}
+
+fn merge_rollup_costs(
+    conn: &rusqlite::Connection,
+    cutoff: i64,
+    effective_filter: &str,
+) -> Result<(), AppError> {
+    let detail_sql = format!(
+        "SELECT date(l.created_at, 'unixepoch', 'localtime'),
+                l.app_type, l.provider_id, l.model,
+                COALESCE(l.request_model, ''), COALESCE(l.pricing_model, ''),
+                l.total_cost_usd
+         FROM proxy_request_logs l
+         WHERE l.created_at < ?1 AND {effective_filter}"
+    );
+    let mut stmt = conn
+        .prepare(&detail_sql)
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let rows = stmt
+        .query_map([cutoff], |row| {
+            Ok((
+                RollupCostKey {
+                    date: row.get(0)?,
+                    app_type: row.get(1)?,
+                    provider_id: row.get(2)?,
+                    model: row.get(3)?,
+                    request_model: row.get(4)?,
+                    pricing_model: row.get(5)?,
+                },
+                row.get::<_, Option<String>>(6)?,
+            ))
+        })
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+    let mut new_costs: HashMap<RollupCostKey, Decimal> = HashMap::new();
+    for row in rows {
+        let (key, cost_text) = row.map_err(|e| AppError::Database(e.to_string()))?;
+        *new_costs.entry(key).or_insert(Decimal::ZERO) += parse_cost_text(cost_text.as_deref());
+    }
+
+    for (key, new_sum) in new_costs {
+        let existing: String = conn
+            .query_row(
+                "SELECT total_cost_usd FROM usage_daily_rollups
+                 WHERE date = ?1 AND app_type = ?2 AND provider_id = ?3 AND model = ?4
+                   AND request_model = ?5 AND pricing_model = ?6",
+                params![
+                    key.date,
+                    key.app_type,
+                    key.provider_id,
+                    key.model,
+                    key.request_model,
+                    key.pricing_model,
+                ],
+                |row| row.get(0),
+            )
+            .unwrap_or_else(|_| "0".to_string());
+        let merged = parse_cost_text(Some(&existing)) + new_sum;
+        conn.execute(
+            "UPDATE usage_daily_rollups SET total_cost_usd = ?7
+             WHERE date = ?1 AND app_type = ?2 AND provider_id = ?3 AND model = ?4
+               AND request_model = ?5 AND pricing_model = ?6",
+            params![
+                key.date,
+                key.app_type,
+                key.provider_id,
+                key.model,
+                key.request_model,
+                key.pricing_model,
+                merged.normalize().to_string(),
+            ],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    }
+
+    Ok(())
+}
+
 impl Database {
     /// Aggregate proxy_request_logs older than `retain_days` into usage_daily_rollups,
     /// then delete the aggregated detail rows.
@@ -85,32 +188,16 @@ impl Database {
             log::warn!("Pre-prune cost backfill failed, pruning anyway: {e}");
         }
 
-        // Use a savepoint for atomicity
-        conn.execute("SAVEPOINT rollup_prune;", [])
-            .map_err(|e| AppError::Database(e.to_string()))?;
-
-        let result = Self::do_rollup_and_prune(&conn, cutoff);
-
-        match result {
-            Ok(deleted) => {
-                conn.execute("RELEASE rollup_prune;", [])
-                    .map_err(|e| AppError::Database(e.to_string()))?;
-                if deleted > 0 {
-                    log::info!(
-                        "Rolled up and pruned {deleted} proxy_request_logs (retain={retain_days}d)"
-                    );
-                    // 归档触发了表结构变化，前端 30 天前的统计可能跟着变，
-                    // 通知一次让 UsageDashboard 重拉数据
-                    crate::usage_events::notify_log_recorded();
-                }
-                Ok(deleted)
-            }
-            Err(e) => {
-                conn.execute("ROLLBACK TO rollup_prune;", []).ok();
-                conn.execute("RELEASE rollup_prune;", []).ok();
-                Err(e)
-            }
+        let deleted = Self::in_savepoint(&conn, "rollup_prune", || {
+            Self::do_rollup_and_prune(&conn, cutoff)
+        })?;
+        if deleted > 0 {
+            log::info!("Rolled up and pruned {deleted} proxy_request_logs (retain={retain_days}d)");
+            // 归档触发了表结构变化，前端 30 天前的统计可能跟着变，
+            // 通知一次让 UsageDashboard 重拉数据
+            crate::usage_events::notify_log_recorded();
         }
+        Ok(deleted)
     }
 
     fn do_rollup_and_prune(conn: &rusqlite::Connection, cutoff: i64) -> Result<u64, AppError> {
@@ -137,7 +224,7 @@ impl Database {
                 COALESCE(old.cache_read_tokens, 0) + new_cr,
                 COALESCE(old.cache_creation_tokens, 0) + new_cc,
                 {INPUT_TOKEN_SEMANTICS_FRESH},
-                CAST(COALESCE(CAST(old.total_cost_usd AS REAL), 0) + new_cost AS TEXT),
+                COALESCE(old.total_cost_usd, '0'),
                 CASE WHEN COALESCE(old.request_count, 0) + new_req > 0
                     THEN (COALESCE(old.avg_latency_ms, 0) * COALESCE(old.request_count, 0)
                           + new_lat * new_req)
@@ -155,7 +242,6 @@ impl Database {
                     COALESCE(SUM(l.output_tokens), 0) as new_out,
                     COALESCE(SUM(l.cache_read_tokens), 0) as new_cr,
                     COALESCE(SUM(l.cache_creation_tokens), 0) as new_cc,
-                    COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as new_cost,
                     COALESCE(AVG(l.latency_ms), 0) as new_lat
                 FROM proxy_request_logs l
                 WHERE l.created_at < ?1 AND {effective_filter}
@@ -169,6 +255,22 @@ impl Database {
 
         conn.execute(&aggregation_sql, [cutoff])
             .map_err(|e| AppError::Database(format!("Rollup aggregation failed: {e}")))?;
+        merge_rollup_costs(conn, cutoff, &effective_filter)?;
+
+        // Keep identities in the same transaction as the rollup and deletion.
+        // Mutable session files are reread in full; detail-only deduplication
+        // would otherwise count their archived messages again.
+        conn.execute(
+            "INSERT OR IGNORE INTO session_usage_dedup
+                (data_source, request_id, semantic_id, has_entry_id)
+             SELECT CASE WHEN COALESCE(data_source, 'proxy') = 'proxy' THEN 'session_log' ELSE data_source END,
+                    request_id, request_id, 1 FROM proxy_request_logs
+             WHERE created_at < ?1
+               AND (data_source IN ('session_log', 'gemini_session', 'opencode_session', 'codex_session')
+                    OR (COALESCE(data_source, 'proxy') = 'proxy' AND app_type IN ('claude', 'claude-desktop')
+                        AND request_id LIKE 'session:%'))",
+            [cutoff],
+        )?;
 
         // INSERT uses the effective-log filter to exclude duplicate session rows.
         // DELETE intentionally prunes all old details so those duplicates are discarded.
@@ -186,9 +288,78 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::compute_local_midnight_cutoff;
-    use crate::database::Database;
+    use crate::database::{lock_conn, Database};
     use crate::error::AppError;
     use chrono::{Local, TimeZone};
+
+    #[test]
+    fn invalid_retention_never_panics_or_prunes_current_data() {
+        for days in [0, -1, i64::MIN, i64::MAX] {
+            assert!(super::compute_local_midnight_cutoff(chrono::Local::now(), days).is_err());
+        }
+    }
+    #[test]
+    fn archive_receipts_and_rollup_are_committed_atomically() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            for source in [
+                "session_log",
+                "gemini_session",
+                "opencode_session",
+                "codex_session",
+            ] {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs
+                    (request_id, provider_id, app_type, model, input_tokens, output_tokens,
+                     latency_ms, status_code, created_at, data_source)
+                    VALUES (?1, 'p', 'claude', 'm', 10, 2, 0, 200, 1, ?1)",
+                    [source],
+                )?;
+            }
+            conn.execute_batch(
+                "CREATE TRIGGER fail_prune BEFORE DELETE ON proxy_request_logs
+                BEGIN SELECT RAISE(ABORT, 'injected prune failure'); END;",
+            )?;
+        }
+        assert!(db.rollup_and_prune(30).is_err());
+        {
+            let conn = lock_conn!(db.conn);
+            let receipts: i64 =
+                conn.query_row("SELECT COUNT(*) FROM session_usage_dedup", [], |row| {
+                    row.get(0)
+                })?;
+            assert_eq!(receipts, 0);
+            conn.execute_batch("DROP TRIGGER fail_prune")?;
+        }
+        assert_eq!(db.rollup_and_prune(30)?, 4);
+        let conn = lock_conn!(db.conn);
+        for source in [
+            "session_log",
+            "gemini_session",
+            "opencode_session",
+            "codex_session",
+        ] {
+            assert!(crate::database::usage::archived_session_request_exists(
+                &conn, source, source
+            )?);
+        }
+        crate::database::codex_usage_reset::reset_codex_usage_on_conn(
+            &conn,
+            std::path::Path::new("unused"),
+        )?;
+        assert!(!crate::database::usage::archived_session_request_exists(
+            &conn,
+            "codex_session",
+            "codex_session"
+        )?);
+        assert!(crate::database::usage::archived_session_request_exists(
+            &conn,
+            "gemini_session",
+            "gemini_session"
+        )?);
+        Ok(())
+    }
 
     fn local_dt(
         year: i32,

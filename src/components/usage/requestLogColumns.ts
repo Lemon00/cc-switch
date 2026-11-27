@@ -53,23 +53,18 @@ export const REQUEST_LOG_COLUMNS = [
   locked?: boolean;
   groupStart?: boolean;
 }[];
-
 export type RequestLogColumnId = (typeof REQUEST_LOG_COLUMNS)[number]["id"];
-
 const isLocked = (column: (typeof REQUEST_LOG_COLUMNS)[number]) =>
   "locked" in column && column.locked;
-
 export const REQUEST_LOG_COLUMN_LABEL_KEYS = Object.fromEntries(
   REQUEST_LOG_COLUMNS.map((column) => [column.id, column.labelKey]),
 ) as Record<RequestLogColumnId, string>;
-
 const COLUMN_GROUP = new Map<RequestLogColumnId, number>();
 REQUEST_LOG_COLUMNS.reduce((group, column) => {
   const next = "groupStart" in column && column.groupStart ? group + 1 : group;
   COLUMN_GROUP.set(column.id, next);
   return next;
 }, 0);
-
 /** 显示的列里，换组处的那一列（前面多留间距）；某组第一列被关掉时由同组下一列接上 */
 export function requestLogGroupBreaks(
   columns: RequestLogColumnId[],
@@ -82,12 +77,10 @@ export function requestLogGroupBreaks(
     ),
   );
 }
-
 const PINNABLE_LEADING: ReadonlySet<RequestLogColumnId> = new Set([
   "time",
   "app",
 ]);
-
 /**
  * 横向滚动时固定在左侧的列：前两列里是时间或应用的那几列，从第一列起连续地算
  * （时间、应用都在前两位就两列都固定；应用被关掉时只固定时间）。
@@ -102,12 +95,10 @@ export function requestLogPinnedStart(
   }
   return pinned;
 }
-
 /** 菜单里能开关的列（不含时间列） */
 export const TOGGLEABLE_REQUEST_LOG_COLUMNS = REQUEST_LOG_COLUMNS.filter(
   (column) => !isLocked(column),
 );
-
 /** 按表格顺序列出要显示的列；认不出的 id（旧版或手改的）忽略 */
 export function resolveRequestLogColumns(
   overrides: Record<string, boolean> | undefined,
@@ -118,7 +109,6 @@ export function resolveRequestLogColumns(
     return typeof override === "boolean" ? override : column.defaultVisible;
   }).map((column) => column.id);
 }
-
 /** 改一列：和默认值相同就把这条覆盖删掉，设置里只留真正改过的 */
 export function setRequestLogColumn(
   overrides: Record<string, boolean> | undefined,

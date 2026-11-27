@@ -1,7 +1,6 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-
 import { SkillsPage } from "@/components/skills/SkillsPage";
 import type {
   DiscoverableSkill,
@@ -13,7 +12,6 @@ import type {
 } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
 import { settingsApi } from "@/lib/api";
-
 const m = vi.hoisted(() => ({
   install: vi.fn(),
   addRepo: vi.fn(),
@@ -23,7 +21,6 @@ const m = vi.hoisted(() => ({
   installed: [] as InstalledSkill[],
   repos: [] as SkillRepo[],
 }));
-
 // 同一个 query 返回同一个对象，否则 useEffect([skillsShResult]) 会无限 setState
 const searchCache = new Map<
   string,
@@ -36,7 +33,6 @@ const searchCache = new Map<
     refetch?: () => void;
   }
 >();
-
 const setSearchResult = (
   query: string,
   offset: number,
@@ -55,7 +51,6 @@ const setSearchResult = (
     ...state,
   });
 };
-
 // jsdom 没有布局，虚拟列表量不出可视高度：全部渲染
 vi.mock("@tanstack/react-virtual", () => ({
   useVirtualizer: ({ count }: { count: number }) => ({
@@ -68,11 +63,9 @@ vi.mock("@tanstack/react-virtual", () => ({
       })),
   }),
 }));
-
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
-
 vi.mock("@/hooks/useSkills", () => ({
   useDiscoverableSkills: () => ({
     data: m.discoverable,
@@ -94,7 +87,6 @@ vi.mock("@/hooks/useSkills", () => ({
       isFetching: false,
     },
 }));
-
 const makeSkillsSh = (
   overrides: Partial<SkillsShDiscoverableSkill> = {},
 ): SkillsShDiscoverableSkill => ({
@@ -108,7 +100,6 @@ const makeSkillsSh = (
   readmeUrl: "https://example.com/a",
   ...overrides,
 });
-
 const makeDiscoverable = (
   overrides: Partial<DiscoverableSkill> = {},
 ): DiscoverableSkill => ({
@@ -121,7 +112,6 @@ const makeDiscoverable = (
   repoBranch: "main",
   ...overrides,
 });
-
 const makeRepo = (overrides: Partial<SkillRepo> = {}): SkillRepo => ({
   owner: "owner-a",
   name: "repo-a",
@@ -129,12 +119,17 @@ const makeRepo = (overrides: Partial<SkillRepo> = {}): SkillRepo => ({
   enabled: true,
   ...overrides,
 });
-
 function renderPage(
   overrides: Partial<React.ComponentProps<typeof SkillsPage>> = {},
 ) {
   const installTo = vi.fn(
-    async (install: (first: AppId) => Promise<Array<{ id: string }>>) => ({
+    async (
+      install: (first: AppId) => Promise<
+        Array<{
+          id: string;
+        }>
+      >,
+    ) => ({
       installed: await install("codex"),
       failures: [],
     }),
@@ -143,10 +138,12 @@ function renderPage(
   render(
     <SkillsPage
       renderViewTabs={(trailing) => trailing}
-      visibleAppIds={["claude", "codex", "pi"]}
+      visibleAppIds={["claude", "codex"]}
       installTargets={["codex", "claude"]}
       onInstallTargetsChange={vi.fn()}
       installTo={installTo as never}
+      tryBeginWrite={() => true}
+      endWrite={vi.fn()}
       onShowInstalled={onShowInstalled}
       onOpenRepoManager={vi.fn()}
       onEnableFailures={vi.fn()}
@@ -155,7 +152,6 @@ function renderPage(
   );
   return { installTo, onShowInstalled };
 }
-
 describe("SkillsPage (Discover)", () => {
   beforeEach(() => {
     m.install.mockReset().mockImplementation(async ({ skill }) => ({
@@ -169,7 +165,6 @@ describe("SkillsPage (Discover)", () => {
     m.repos = [];
     searchCache.clear();
   });
-
   it("installs the chosen skills.sh result into the first install-to app", async () => {
     setSearchResult("agent", 0, {
       skills: [
@@ -191,7 +186,6 @@ describe("SkillsPage (Discover)", () => {
     });
     await userEvent.type(input, "agent{Enter}");
     await screen.findByText("Agent Browser B");
-
     const rows = screen.getAllByRole("listitem");
     await userEvent.click(
       within(rows[1]).getByRole("button", {
@@ -205,7 +199,6 @@ describe("SkillsPage (Discover)", () => {
     expect(args.skill.repoOwner).toBe("owner-b");
     expect(args.skill.name).toBe("Agent Browser B");
   });
-
   it("keeps skills.sh results when the same query is submitted again", async () => {
     setSearchResult("figma", 0, {
       skills: [makeSkillsSh({ key: "f", name: "figma-use" })],
@@ -221,7 +214,32 @@ describe("SkillsPage (Discover)", () => {
     await userEvent.type(input, "{Enter}");
     expect(screen.getByText("figma-use")).toBeInTheDocument();
   });
-
+  it("deduplicates overlapping skills.sh pages", async () => {
+    setSearchResult("agent", 0, {
+      skills: [makeSkillsSh({ key: "a", name: "First" })],
+      totalCount: 30,
+      query: "agent",
+    });
+    setSearchResult("agent", 20, {
+      skills: [
+        makeSkillsSh({ key: "a", name: "First" }),
+        makeSkillsSh({ key: "b", name: "Second" }),
+      ],
+      totalCount: 30,
+      query: "agent",
+    });
+    renderPage();
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "skillsPage.discover.skillsShAria" }),
+      "agent{Enter}",
+    );
+    await screen.findByText("First");
+    await userEvent.click(
+      screen.getByRole("button", { name: "skills.skillssh.loadMore" }),
+    );
+    await screen.findByText("Second");
+    expect(screen.getAllByText("First")).toHaveLength(1);
+  });
   it("refetches the first skills.sh page when retrying after a failure", async () => {
     const refetch = vi.fn();
     setSearchResult("boom", 0, undefined, { isError: true, refetch });
@@ -235,7 +253,6 @@ describe("SkillsPage (Discover)", () => {
     await userEvent.click(screen.getByRole("button", { name: "common.retry" }));
     expect(refetch).toHaveBeenCalledTimes(1);
   });
-
   it("shows the loading state while a skills.sh query is fetching", async () => {
     setSearchResult("x1", 0, undefined, { isLoading: true, isFetching: true });
     renderPage();
@@ -245,7 +262,6 @@ describe("SkillsPage (Discover)", () => {
     );
     expect(screen.getByText("skills.skillssh.loading")).toBeInTheDocument();
   });
-
   it("stays on repositories when they return no skills, so a retry is possible", () => {
     m.repos = [makeRepo()];
     renderPage();
@@ -256,7 +272,6 @@ describe("SkillsPage (Discover)", () => {
       screen.getByText("skillsPage.discover.noneRead"),
     ).toBeInTheDocument();
   });
-
   it("says which repositories could not be read when only some failed", async () => {
     m.repos = [makeRepo(), makeRepo({ owner: "composio", name: "awesome" })];
     m.discoverable = [makeDiscoverable()];
@@ -273,7 +288,6 @@ describe("SkillsPage (Discover)", () => {
       },
     ];
     renderPage();
-
     // 读到的照常列出，横幅说哪些没读到
     expect(screen.getByText("repo-skill")).toBeInTheDocument();
     expect(screen.getByText("skillsPage.repoFail.title")).toBeInTheDocument();
@@ -282,7 +296,6 @@ describe("SkillsPage (Discover)", () => {
     ).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "common.retry" }));
     expect(m.refetchDiscoverable).toHaveBeenCalled();
-
     // 仓库弹层里那一行写「读取失败」
     await userEvent.click(
       screen.getByRole("button", { name: /skillsPage.repos.buttonAll/ }),
@@ -291,7 +304,6 @@ describe("SkillsPage (Discover)", () => {
       await screen.findByText("skillsPage.repos.readFailed"),
     ).toBeInTheDocument();
   });
-
   it("calls it a read failure, not an empty repository, when every repository failed", () => {
     m.repos = [makeRepo()];
     m.failures = [
@@ -309,7 +321,6 @@ describe("SkillsPage (Discover)", () => {
       screen.queryByText("skillsPage.repoFail.discoverBody"),
     ).not.toBeInTheDocument();
   });
-
   it("links an installed result to its row instead of offering uninstall", async () => {
     m.repos = [makeRepo()];
     m.discoverable = [
@@ -330,11 +341,7 @@ describe("SkillsPage (Discover)", () => {
         apps: {
           claude: true,
           codex: true,
-          gemini: false,
           opencode: false,
-          openclaw: false,
-          hermes: false,
-          pi: false,
         },
         installedAt: 1,
         updatedAt: 1,
@@ -346,7 +353,6 @@ describe("SkillsPage (Discover)", () => {
     );
     expect(onShowInstalled).toHaveBeenCalledWith("owner-a/repo-a:repo-skill");
     expect(screen.queryByText("skills.uninstall")).not.toBeInTheDocument();
-
     // 「只看未安装」是页内筛选：复选框，不是第二层分段控件
     expect(
       screen.queryByRole("button", { name: "skills.filter.uninstalled" }),
@@ -359,7 +365,6 @@ describe("SkillsPage (Discover)", () => {
     expect(screen.getAllByRole("listitem")).toHaveLength(1);
     expect(screen.getByText("other-skill")).toBeInTheDocument();
   });
-
   it("shows an install failure on the row and lets the user retry", async () => {
     m.repos = [makeRepo()];
     m.discoverable = [makeDiscoverable()];
@@ -377,7 +382,6 @@ describe("SkillsPage (Discover)", () => {
       screen.getByRole("button", { name: "skillsPage.discover.retryAria" }),
     ).toBeInTheDocument();
   });
-
   it("opens a discovered skill's docs in the browser", async () => {
     const open = vi
       .spyOn(settingsApi, "openExternal")
@@ -397,7 +401,6 @@ describe("SkillsPage (Discover)", () => {
     );
     open.mockRestore();
   });
-
   it("turns a repository off through add_skill_repo with enabled=false", async () => {
     m.repos = [makeRepo(), makeRepo({ owner: "b", name: "c" })];
     m.discoverable = [makeDiscoverable()];

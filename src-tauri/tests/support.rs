@@ -50,6 +50,11 @@ pub fn reset_test_fs() {
         ".config",
         ".openclaw",
         ".pi",
+        ".omp",
+        ".minimax",
+        ".kimi-code",
+        ".dsh",
+        ".hermes",
         "profiles",
     ] {
         let path = home.join(sub);

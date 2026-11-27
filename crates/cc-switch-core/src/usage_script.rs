@@ -29,7 +29,8 @@ pub async fn execute_usage_script(
         validate_base_url(base_url)?;
     }
 
-    // 3. 在独立作用域中提取 request 配置（确保 Runtime/Context 在 await 前释放）
+    // 3. 在 blocking worker 中提取 request 配置。QuickJS 的时间中断限制单次
+    // 执行，但解释器不能占住 Tokio worker，否则并发查询会阻塞代理 I/O。
     // 用量脚本允许的最长执行时间（秒）。脚本来自不可信来源（deeplink、同步导入），
     // 必须限制其 CPU / 内存 / 栈占用，防止一个恶意/ buggy 脚本挂死整个后端。
     const USAGE_SCRIPT_TIMEOUT_SECS: u64 = 5;
@@ -66,7 +67,8 @@ pub async fn execute_usage_script(
         Ok(runtime)
     }
 
-    let request_config = {
+    let request_script = script_with_vars.clone();
+    let request_config = tokio::task::spawn_blocking(move || {
         let runtime = create_script_runtime()?;
         let context = Context::full(&runtime).map_err(|e| {
             AppError::localized(
@@ -78,7 +80,7 @@ pub async fn execute_usage_script(
 
         context.with(|ctx| {
             // 执行用户代码，获取配置对象
-            let config: rquickjs::Object = ctx.eval(script_with_vars.clone()).map_err(|e| {
+            let config: rquickjs::Object = ctx.eval(request_script).map_err(|e| {
                 AppError::localized(
                     "usage_script.config_parse_failed",
                     format!("解析配置失败: {e}"),
@@ -122,8 +124,10 @@ pub async fn execute_usage_script(
                 })?;
 
             Ok::<_, AppError>(request_json)
-        })?
-    }; // Runtime 和 Context 在这里被 drop
+        })
+    })
+    .await
+    .map_err(|error| AppError::Message(format!("Usage script worker failed: {error}")))??;
 
     // 4. 解析 request 配置
     let request: RequestConfig = serde_json::from_str(&request_config).map_err(|e| {
@@ -140,8 +144,8 @@ pub async fn execute_usage_script(
     // 6. 发送 HTTP 请求
     let response_data = send_http_request(&request, timeout_secs).await?;
 
-    // 7. 在独立作用域中执行 extractor（确保 Runtime/Context 在函数结束前释放）
-    let result: Value = {
+    // 7. extractor 同样在 blocking worker 执行，Runtime/Context 不跨线程移动。
+    let result: Value = tokio::task::spawn_blocking(move || {
         let runtime = create_script_runtime()?;
         let context = Context::full(&runtime).map_err(|e| {
             AppError::localized(
@@ -153,7 +157,7 @@ pub async fn execute_usage_script(
 
         context.with(|ctx| {
             // 重新 eval 获取配置对象
-            let config: rquickjs::Object = ctx.eval(script_with_vars.clone()).map_err(|e| {
+            let config: rquickjs::Object = ctx.eval(script_with_vars).map_err(|e| {
                 AppError::localized(
                     "usage_script.config_reparse_failed",
                     format!("重新解析配置失败: {e}"),
@@ -223,8 +227,10 @@ pub async fn execute_usage_script(
                     format!("JSON parse failed: {e}"),
                 )
             })
-        })?
-    }; // Runtime 和 Context 在这里被 drop
+        })
+    })
+    .await
+    .map_err(|error| AppError::Message(format!("Usage script worker failed: {error}")))??;
 
     // 8. 验证返回值格式
     validate_result(&result)?;
@@ -245,8 +251,14 @@ struct RequestConfig {
 
 /// 发送 HTTP 请求
 async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<String, AppError> {
-    // 使用全局 HTTP 客户端（已包含代理配置）
-    let client = crate::proxy::http_client::get();
+    // 用量脚本常带自定义认证头：禁止自动重定向，避免跨源带走凭据。
+    let client = crate::proxy::http_client::no_redirect().map_err(|e| {
+        AppError::localized(
+            "usage_script.client_build_failed",
+            format!("创建 HTTP 客户端失败: {e}"),
+            format!("Failed to build HTTP client: {e}"),
+        )
+    })?;
     // 约束超时范围，防止异常配置导致长时间阻塞（最小 2 秒，最大 30 秒）
     let request_timeout = std::time::Duration::from_secs(timeout_secs.clamp(2, 30));
 
@@ -283,13 +295,17 @@ async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<
     })?;
 
     let status = resp.status();
-    let text = resp.text().await.map_err(|e| {
-        AppError::localized(
-            "usage_script.read_response_failed",
-            format!("读取响应失败: {e}"),
-            format!("Failed to read response: {e}"),
-        )
-    })?;
+    const MAX_USAGE_SCRIPT_BYTES: usize = 2 * 1024 * 1024;
+    let text = crate::proxy::http_client::read_body_with_limit(resp, MAX_USAGE_SCRIPT_BYTES)
+        .await
+        .map_err(|e| {
+            AppError::localized(
+                "usage_script.read_response_failed",
+                format!("读取响应失败: {e}"),
+                format!("Failed to read response: {e}"),
+            )
+        })
+        .map(|b| String::from_utf8_lossy(&b).into_owned())?;
 
     if !status.is_success() {
         let preview = if text.len() > 200 {
@@ -429,18 +445,28 @@ fn build_script_with_vars(
     access_token: Option<&str>,
     user_id: Option<&str>,
 ) -> String {
-    let mut replaced = script_code
-        .replace("{{apiKey}}", api_key)
-        .replace("{{baseUrl}}", base_url);
-
-    if let Some(token) = access_token {
-        replaced = replaced.replace("{{accessToken}}", token);
-    }
-    if let Some(uid) = user_id {
-        replaced = replaced.replace("{{userId}}", uid);
-    }
-
-    replaced
+    static VARIABLES: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"\{\{(apiKey|baseUrl|accessToken|userId)\}\}").unwrap()
+    });
+    VARIABLES
+        .replace_all(script_code, |captures: &regex::Captures<'_>| {
+            let value = match &captures[1] {
+                "apiKey" => Some(api_key),
+                "baseUrl" => Some(base_url),
+                "accessToken" => access_token,
+                "userId" => user_id,
+                _ => None,
+            };
+            value
+                .map(|value| {
+                    value
+                        .encode_utf16()
+                        .map(|unit| format!("\\u{unit:04x}"))
+                        .collect::<String>()
+                })
+                .unwrap_or_else(|| captures[0].to_string())
+        })
+        .into_owned()
 }
 
 /// 验证 base_url 的基本安全性
@@ -599,6 +625,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn variables_remain_data_in_all_javascript_string_quotes() {
+        let value = "'\"`\\\n${globalThis.injected = true}{{baseUrl}}😀";
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+        for quote in ["'", "\"", "`"] {
+            let source = format!("({quote}{{{{apiKey}}}}{quote})");
+            let source = build_script_with_vars(&source, value, "unexpected", None, None);
+            context.with(|ctx| {
+                let actual: String = ctx.eval(source).unwrap();
+                assert_eq!(actual, value);
+                assert!(!ctx.eval::<bool, _>("globalThis.injected === true").unwrap());
+            });
+        }
+    }
+
+    #[test]
     fn test_https_bypass_prevention() {
         // 非本地域名的 HTTP 应该被拒绝
         let result = validate_base_url("http://127.0.0.1.evil.com/api");
@@ -704,15 +746,27 @@ mod tests {
             .enable_time()
             .build()
             .expect("tokio runtime for test")
-            .block_on(execute_usage_script(
-                script,
-                "sk-test",
-                "https://api.example.com",
-                30,
-                None,
-                None,
-                None,
-            ));
+            .block_on(async {
+                let script_task = tokio::spawn(async move {
+                    execute_usage_script(
+                        script,
+                        "sk-test",
+                        "https://api.example.com",
+                        30,
+                        None,
+                        None,
+                        None,
+                    )
+                    .await
+                });
+                // On a single-thread runtime an inline eval would block this timer
+                // until the 5-second script deadline and finish the task first.
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                let responsive = !script_task.is_finished();
+                let result = script_task.await.unwrap();
+                assert!(responsive, "usage script blocked the async runtime");
+                result
+            });
         let elapsed = start.elapsed();
 
         assert!(

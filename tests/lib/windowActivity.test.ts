@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
 const native = vi.hoisted(() => ({
   isTauri: vi.fn(() => true),
   isFocused: vi.fn(),
@@ -17,11 +16,9 @@ const native = vi.hoisted(() => ({
 }));
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: native.isTauri }));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => native }));
-
 describe("window activity", () => {
   let focusManager: (typeof import("@tanstack/react-query"))["focusManager"];
   let initialize: (typeof import("@/lib/windowActivity"))["initializeWindowActivity"];
-
   beforeEach(async () => {
     vi.resetModules();
     vi.useFakeTimers();
@@ -55,14 +52,12 @@ describe("window activity", () => {
       "@/lib/windowActivity"
     ));
   });
-
   afterEach(() => {
     focusManager.setEventListener(() => () => {});
     focusManager.setFocused(undefined);
     vi.restoreAllMocks();
     vi.useRealTimers();
   });
-
   it("keeps queries active when a visible native window loses focus", async () => {
     initialize();
     initialize();
@@ -70,20 +65,18 @@ describe("window activity", () => {
     expect(native.onFocusChanged).toHaveBeenCalledTimes(1);
     expect(focusManager.isFocused()).toBe(true);
     await vi.advanceTimersByTimeAsync(3000);
-    expect(document.documentElement.dataset.statusHeartbeat).toBe("true");
+    expect(vi.getTimerCount()).toBe(0);
     native.listener?.({ payload: false });
     await vi.advanceTimersByTimeAsync(0);
     expect(focusManager.isFocused()).toBe(true);
-    expect(document.documentElement.dataset.windowActive).toBe("false");
     expect(vi.getTimerCount()).toBe(0);
     native.listener?.({ payload: true });
     expect(focusManager.isFocused()).toBe(true);
-    expect(vi.getTimerCount()).toBe(1);
-    // Duplicate DOM/native focus notifications do not restart the timer.
+    expect(vi.getTimerCount()).toBe(0);
+    // Focus notifications must not schedule decorative timers.
     window.dispatchEvent(new Event("focus"));
-    expect(vi.getTimerCount()).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
-
   it("keeps a visible browser window refreshing after blur", () => {
     native.isTauri.mockReturnValue(false);
     initialize();
@@ -96,38 +89,8 @@ describe("window activity", () => {
     expect(focusManager.isFocused()).toBe(false);
     expect(vi.getTimerCount()).toBe(0);
   });
-
-  it("reads native focus when the window was focused before listener registration", async () => {
-    vi.spyOn(document, "hasFocus").mockReturnValue(false);
-    initialize();
-    expect(focusManager.isFocused()).toBe(true);
-    expect(document.documentElement.dataset.windowActive).toBe("false");
-    await vi.advanceTimersByTimeAsync(0);
-    expect(focusManager.isFocused()).toBe(true);
-    expect(document.documentElement.dataset.windowActive).toBe("true");
-  });
-
-  it("does not overwrite a newer focus event with a delayed initial snapshot", async () => {
-    let resolve!: (focused: boolean) => void;
-    native.isFocused.mockReturnValueOnce(
-      new Promise((done) => {
-        resolve = done;
-      }),
-    );
-    initialize();
-    await vi.advanceTimersByTimeAsync(0);
-    native.listener?.({ payload: false });
-    resolve(true);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(focusManager.isFocused()).toBe(true);
-    expect(document.documentElement.dataset.windowActive).toBe("false");
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
-  it("captures focus changes while native listener registration is pending", async () => {
+  it("reads visibility after asynchronous listener registration", async () => {
     let register!: () => void;
-    let nativeFocused = true;
-    native.isFocused.mockImplementation(async () => nativeFocused);
     native.onFocusChanged.mockImplementationOnce(
       (listener) =>
         new Promise((resolve) => {
@@ -139,15 +102,13 @@ describe("window activity", () => {
     );
     initialize();
     await vi.advanceTimersByTimeAsync(0);
-    // The native focus transition happens before our listener can observe it.
-    nativeFocused = false;
+    native.isVisible.mockResolvedValue(false);
     register();
     await vi.advanceTimersByTimeAsync(0);
-    expect(focusManager.isFocused()).toBe(true);
-    expect(document.documentElement.dataset.windowActive).toBe("false");
+    expect(focusManager.isFocused()).toBe(false);
+    expect(native.isFocused).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   });
-
   it("cleans up a native subscription that resolves after teardown", async () => {
     let resolve!: (off: () => void) => void;
     native.onFocusChanged.mockReturnValueOnce(
@@ -166,7 +127,6 @@ describe("window activity", () => {
     expect(native.isVisible).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   });
-
   it.each([
     { visible: false, minimized: false },
     { visible: true, minimized: true },
@@ -180,16 +140,13 @@ describe("window activity", () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(focusManager.isFocused()).toBe(false);
       expect(vi.getTimerCount()).toBe(0);
-
       native.isVisible.mockResolvedValue(true);
       native.isMinimized.mockResolvedValue(false);
       native.resizeListener?.();
       await vi.advanceTimersByTimeAsync(0);
       expect(focusManager.isFocused()).toBe(true);
-      expect(document.documentElement.dataset.windowActive).toBe("false");
     },
   );
-
   it("observes hide/show without a focus or resize event", async () => {
     native.isFocused.mockResolvedValue(false);
     initialize();
@@ -205,7 +162,6 @@ describe("window activity", () => {
     expect(focusManager.isFocused()).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
   });
-
   it("ignores a stale visibility response after a newer window transition", async () => {
     let resolve!: (visible: boolean) => void;
     native.isVisible.mockReturnValueOnce(
@@ -224,7 +180,6 @@ describe("window activity", () => {
     expect(focusManager.isFocused()).toBe(false);
     expect(vi.getTimerCount()).toBe(0);
   });
-
   it("keeps real Query polling on blur and pauses it only while hidden", async () => {
     const { QueryClient, QueryObserver } = await import(
       "@tanstack/react-query"

@@ -1,27 +1,27 @@
+import {
+  DIRECTORY_APPS,
+  sanitizeDir,
+  sanitizeDirectoryFields,
+  type DirectoryAppId,
+  type DirectoryField,
+} from "@/config/directoryApps";
+import { providersApi, settingsApi } from "@/lib/api";
+import { useSaveSettingsMutation, useSettingsQuery } from "@/lib/query";
+import { toast } from "@/lib/toast";
+import type { Settings } from "@/types";
+import { syncCurrentProvidersLiveSafe } from "@/utils/postChangeSync";
+import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "@/lib/toast";
-import { useQueryClient } from "@tanstack/react-query";
-import { providersApi, settingsApi } from "@/lib/api";
-import { syncCurrentProvidersLiveSafe } from "@/utils/postChangeSync";
-import {
-  invalidatePiDirectoryCaches,
-  useSettingsQuery,
-  useSaveSettingsMutation,
-} from "@/lib/query";
-import type { Settings } from "@/types";
-import { useSettingsForm, type SettingsFormState } from "./useSettingsForm";
 import {
   useDirectorySettings,
-  type DirectoryAppId,
   type ResolvedDirectories,
 } from "./useDirectorySettings";
+import { useSettingsForm, type SettingsFormState } from "./useSettingsForm";
 import { useSettingsMetadata } from "./useSettingsMetadata";
-
 interface SaveResult {
   requiresRestart: boolean;
 }
-
 export interface UseSettingsResult {
   settings: SettingsFormState | null;
   isLoading: boolean;
@@ -41,7 +41,9 @@ export interface UseSettingsResult {
   resetAppConfigDir: () => Promise<void>;
   saveSettings: (
     overrides?: Partial<SettingsFormState>,
-    options?: { silent?: boolean },
+    options?: {
+      silent?: boolean;
+    },
   ) => Promise<SaveResult | null>;
   autoSaveSettings: (
     updates: Partial<SettingsFormState>,
@@ -49,27 +51,7 @@ export interface UseSettingsResult {
   resetSettings: () => void;
   acknowledgeRestart: () => void;
 }
-
-export type { SettingsFormState, ResolvedDirectories };
-
-const DIRECTORY_KEYS = [
-  "claudeConfigDir",
-  "codexConfigDir",
-  "geminiConfigDir",
-  "grokConfigDir",
-  "opencodeConfigDir",
-  "openclawConfigDir",
-  "hermesConfigDir",
-  "piConfigDir",
-  "ompConfigDir",
-] as const;
-
-const sanitizeDir = (value?: string | null): string | undefined => {
-  if (!value) return undefined;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-};
-
+export type { ResolvedDirectories, SettingsFormState };
 /**
  * useSettings - 组合层
  * 负责：
@@ -82,7 +64,6 @@ export function useSettings(): UseSettingsResult {
   const { data } = useSettingsQuery();
   const saveMutation = useSaveSettingsMutation();
   const queryClient = useQueryClient();
-
   // 1️⃣ 表单状态管理
   const {
     settings,
@@ -92,7 +73,6 @@ export function useSettings(): UseSettingsResult {
     resetSettings: resetForm,
     syncLanguage,
   } = useSettingsForm();
-
   // 2️⃣ 目录管理
   const {
     appConfigDir,
@@ -111,7 +91,6 @@ export function useSettings(): UseSettingsResult {
     settings,
     onUpdateSettings: updateSettings,
   });
-
   // 3️⃣ 元数据管理
   const {
     isPortable,
@@ -120,22 +99,18 @@ export function useSettings(): UseSettingsResult {
     acknowledgeRestart,
     setRequiresRestart,
   } = useSettingsMetadata();
-
   // 重置设置
   const resetSettings = useCallback(() => {
     resetForm(data ?? null);
     syncLanguage(initialLanguage);
-    resetAllDirectories({
-      claude: sanitizeDir(data?.claudeConfigDir),
-      codex: sanitizeDir(data?.codexConfigDir),
-      gemini: sanitizeDir(data?.geminiConfigDir),
-      grokbuild: sanitizeDir(data?.grokConfigDir),
-      opencode: sanitizeDir(data?.opencodeConfigDir),
-      openclaw: sanitizeDir(data?.openclawConfigDir),
-      hermes: sanitizeDir(data?.hermesConfigDir),
-      pi: sanitizeDir(data?.piConfigDir),
-      omp: sanitizeDir(data?.ompConfigDir),
-    });
+    resetAllDirectories(
+      Object.fromEntries(
+        DIRECTORY_APPS.map(({ app, field }) => [
+          app,
+          sanitizeDir(data?.[field]),
+        ]),
+      ),
+    );
     setRequiresRestart(false);
   }, [
     data,
@@ -145,7 +120,6 @@ export function useSettings(): UseSettingsResult {
     resetAllDirectories,
     setRequiresRestart,
   ]);
-
   // 同步 Claude 插件集成配置到 ~/.claude/settings.json
   // 返回 true 表示已执行过 syncCurrentProvidersLiveSafe，调用方可跳过重复同步
   // prevEnabled 必须由调用方在 saveMutation 之前从实时缓存（queryClient.getQueryData）捕获，
@@ -168,7 +142,6 @@ export function useSettings(): UseSettingsResult {
         } else {
           await settingsApi.applyClaudePluginConfig({ official: true });
         }
-
         const syncResult = await syncCurrentProvidersLiveSafe();
         if (!syncResult.ok) {
           console.warn(
@@ -197,62 +170,30 @@ export function useSettings(): UseSettingsResult {
     },
     [t],
   );
-
   // 即时保存设置（用于 General 标签页的实时更新）
   // 保存基础配置 + 独立的系统 API 调用（开机自启）
   const autoSaveSettings = useCallback(
     async (updates: Partial<SettingsFormState>): Promise<SaveResult | null> => {
-      const mergedSettings = settings ? { ...settings, ...updates } : null;
-      if (!mergedSettings) return null;
-
-      // 目录草稿只由显式「保存」写入，自动保存沿用已确认的值
-      for (const key of DIRECTORY_KEYS) {
-        if (!(key in updates)) mergedSettings[key] = data?.[key];
-      }
-
+      if (!settings) return null;
       try {
-        const sanitizedClaudeDir = sanitizeDir(mergedSettings.claudeConfigDir);
-        const sanitizedCodexDir = sanitizeDir(mergedSettings.codexConfigDir);
-        const sanitizedGeminiDir = sanitizeDir(mergedSettings.geminiConfigDir);
-        const sanitizedGrokDir = sanitizeDir(mergedSettings.grokConfigDir);
-        const sanitizedOpencodeDir = sanitizeDir(
-          mergedSettings.opencodeConfigDir,
-        );
-        const sanitizedOpenclawDir = sanitizeDir(
-          mergedSettings.openclawConfigDir,
-        );
-        const sanitizedHermesDir = sanitizeDir(mergedSettings.hermesConfigDir);
-        const sanitizedPiDir = sanitizeDir(mergedSettings.piConfigDir);
-        const sanitizedOmpDir = sanitizeDir(mergedSettings.ompConfigDir);
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
           ...restSettings
-        } = mergedSettings;
-
-        const payload: Settings = {
+        } = updates;
+        const payload: Partial<Settings> = {
           ...restSettings,
-          claudeConfigDir: sanitizedClaudeDir,
-          codexConfigDir: sanitizedCodexDir,
-          geminiConfigDir: sanitizedGeminiDir,
-          grokConfigDir: sanitizedGrokDir,
-          opencodeConfigDir: sanitizedOpencodeDir,
-          openclawConfigDir: sanitizedOpenclawDir,
-          hermesConfigDir: sanitizedHermesDir,
-          piConfigDir: sanitizedPiDir,
-          ompConfigDir: sanitizedOmpDir,
-          language: mergedSettings.language,
         };
-
+        for (const { field } of DIRECTORY_APPS) {
+          delete payload[field];
+        }
         // 在 mutate 之前从实时缓存捕获上一次持久化的插件集成状态，
         // 避免 closure 里的 data 因 React 尚未 re-render 而滞后
         const prevPluginEnabled = queryClient.getQueryData<Settings>([
           "settings",
         ])?.enableClaudePluginIntegration;
-
         // 保存到配置文件
         await saveMutation.mutateAsync(payload);
-
         // 如果开机自启状态改变，调用系统 API
         if (
           payload.launchOnStartup !== undefined &&
@@ -269,7 +210,6 @@ export function useSettings(): UseSettingsResult {
             );
           }
         }
-
         // Claude Code 初次安装确认：开=写入 hasCompletedOnboarding=true；关=删除该字段
         // 仅在本次更新包含 skipClaudeOnboarding 时触发，避免其它自动保存误触发
         const nextSkipClaudeOnboarding = updates.skipClaudeOnboarding;
@@ -299,12 +239,10 @@ export function useSettings(): UseSettingsResult {
             );
           }
         }
-
         await syncClaudePluginIfChanged(
           payload.enableClaudePluginIntegration,
           prevPluginEnabled,
         );
-
         // 持久化语言偏好
         try {
           if (typeof window !== "undefined" && updates.language) {
@@ -316,14 +254,12 @@ export function useSettings(): UseSettingsResult {
             error,
           );
         }
-
         // 更新托盘菜单
         try {
           await providersApi.updateTrayMenu();
         } catch (error) {
           console.warn("[useSettings] Failed to refresh tray menu", error);
         }
-
         return { requiresRestart: false };
       } catch (error) {
         console.error("[useSettings] Failed to auto-save settings", error);
@@ -338,73 +274,50 @@ export function useSettings(): UseSettingsResult {
     },
     [data, queryClient, saveMutation, settings, syncClaudePluginIfChanged, t],
   );
-
   // 完整保存设置（用于 Advanced 标签页的手动保存）
   // 包含所有系统 API 调用和完整的验证流程
   const saveSettings = useCallback(
     async (
       overrides?: Partial<SettingsFormState>,
-      options?: { silent?: boolean },
+      options?: {
+        silent?: boolean;
+      },
     ): Promise<SaveResult | null> => {
       const mergedSettings = settings ? { ...settings, ...overrides } : null;
       if (!mergedSettings) return null;
       try {
         const sanitizedAppDir = sanitizeDir(appConfigDir);
-        const sanitizedClaudeDir = sanitizeDir(mergedSettings.claudeConfigDir);
-        const sanitizedCodexDir = sanitizeDir(mergedSettings.codexConfigDir);
-        const sanitizedGeminiDir = sanitizeDir(mergedSettings.geminiConfigDir);
-        const sanitizedGrokDir = sanitizeDir(mergedSettings.grokConfigDir);
-        const sanitizedOpencodeDir = sanitizeDir(
-          mergedSettings.opencodeConfigDir,
-        );
-        const sanitizedOpenclawDir = sanitizeDir(
-          mergedSettings.openclawConfigDir,
-        );
-        const sanitizedHermesDir = sanitizeDir(mergedSettings.hermesConfigDir);
-        const sanitizedPiDir = sanitizeDir(mergedSettings.piConfigDir);
-        const sanitizedOmpDir = sanitizeDir(mergedSettings.ompConfigDir);
         const previousAppDir = initialAppConfigDir;
-        const previousClaudeDir = sanitizeDir(data?.claudeConfigDir);
-        const previousCodexDir = sanitizeDir(data?.codexConfigDir);
-        const previousGeminiDir = sanitizeDir(data?.geminiConfigDir);
-        const previousGrokDir = sanitizeDir(data?.grokConfigDir);
-        const previousOpencodeDir = sanitizeDir(data?.opencodeConfigDir);
-        const previousOpenclawDir = sanitizeDir(data?.openclawConfigDir);
-        const previousHermesDir = sanitizeDir(data?.hermesConfigDir);
-        const previousPiDir = sanitizeDir(data?.piConfigDir);
-        const previousOmpDir = sanitizeDir(data?.ompConfigDir);
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
           ...restSettings
         } = mergedSettings;
-
         const payload: Settings = {
           ...restSettings,
-          claudeConfigDir: sanitizedClaudeDir,
-          codexConfigDir: sanitizedCodexDir,
-          geminiConfigDir: sanitizedGeminiDir,
-          grokConfigDir: sanitizedGrokDir,
-          opencodeConfigDir: sanitizedOpencodeDir,
-          openclawConfigDir: sanitizedOpenclawDir,
-          hermesConfigDir: sanitizedHermesDir,
-          piConfigDir: sanitizedPiDir,
-          ompConfigDir: sanitizedOmpDir,
+          ...sanitizeDirectoryFields(mergedSettings),
           language: mergedSettings.language,
         };
-
+        const previousSettings = { ...data, ...sanitizeDirectoryFields(data) };
+        const patch: Partial<Settings> = Object.fromEntries(
+          Object.entries(payload).filter(
+            ([key, value]) =>
+              Object.prototype.hasOwnProperty.call(overrides ?? {}, key) ||
+              JSON.stringify(value) !==
+                JSON.stringify(previousSettings[key as keyof Settings]),
+          ),
+        );
         // 在 mutate 之前从实时缓存捕获上一次持久化的插件集成状态，
         // 避免 closure 里的 data 因 React 尚未 re-render 而滞后
         const prevPluginEnabled = queryClient.getQueryData<Settings>([
           "settings",
         ])?.enableClaudePluginIntegration;
-
-        await saveMutation.mutateAsync(payload);
-
-        await settingsApi.setAppConfigDirOverride(sanitizedAppDir ?? null);
-        // 基准值换成刚存的：设置页不卸载，下次比较和「需要重启」都只跟真正没保存的改动走
-        commitAppConfigDir(sanitizedAppDir);
-
+        await saveMutation.mutateAsync(patch);
+        const appDirChanged = sanitizedAppDir !== (previousAppDir ?? undefined);
+        if (appDirChanged) {
+          await settingsApi.setAppConfigDirOverride(sanitizedAppDir ?? null);
+          commitAppConfigDir(sanitizedAppDir);
+        }
         // 只在开机自启状态真正改变时调用系统 API
         if (
           payload.launchOnStartup !== undefined &&
@@ -421,7 +334,6 @@ export function useSettings(): UseSettingsResult {
             );
           }
         }
-
         // Claude Code 初次安装确认：开=写入 hasCompletedOnboarding=true；关=删除该字段
         const prevSkipClaudeOnboarding = data?.skipClaudeOnboarding ?? false;
         const nextSkipClaudeOnboarding = payload.skipClaudeOnboarding ?? false;
@@ -448,12 +360,10 @@ export function useSettings(): UseSettingsResult {
             );
           }
         }
-
         const pluginSynced = await syncClaudePluginIfChanged(
-          payload.enableClaudePluginIntegration,
+          patch.enableClaudePluginIntegration,
           prevPluginEnabled,
         );
-
         try {
           if (typeof window !== "undefined" && payload.language) {
             window.localStorage.setItem("language", payload.language);
@@ -464,33 +374,21 @@ export function useSettings(): UseSettingsResult {
             error,
           );
         }
-
         try {
           await providersApi.updateTrayMenu();
         } catch (error) {
           console.warn("[useSettings] Failed to refresh tray menu", error);
         }
-
         // 任一 app 的目录覆盖发生变化后，立即把当前状态投影到新的 live 目录。
         // 如果插件同步已经执行过 syncCurrentProvidersLiveSafe，则跳过避免重复
-        const claudeDirChanged = sanitizedClaudeDir !== previousClaudeDir;
-        const codexDirChanged = sanitizedCodexDir !== previousCodexDir;
-        const geminiDirChanged = sanitizedGeminiDir !== previousGeminiDir;
-        const grokDirChanged = sanitizedGrokDir !== previousGrokDir;
-        const opencodeDirChanged = sanitizedOpencodeDir !== previousOpencodeDir;
-        const openclawDirChanged = sanitizedOpenclawDir !== previousOpenclawDir;
-        const hermesDirChanged = sanitizedHermesDir !== previousHermesDir;
-        const piDirChanged = sanitizedPiDir !== previousPiDir;
-        const ompDirChanged = sanitizedOmpDir !== previousOmpDir;
+        const previousDirs = sanitizeDirectoryFields(data);
+        const dirChanged = (field: DirectoryField) =>
+          payload[field] !== previousDirs[field];
         if (
           !pluginSynced &&
-          (claudeDirChanged ||
-            codexDirChanged ||
-            geminiDirChanged ||
-            grokDirChanged ||
-            opencodeDirChanged ||
-            openclawDirChanged ||
-            hermesDirChanged)
+          DIRECTORY_APPS.some(
+            ({ field, syncsLive }) => syncsLive && dirChanged(field),
+          )
         ) {
           const syncResult = await syncCurrentProvidersLiveSafe();
           if (!syncResult.ok) {
@@ -500,16 +398,7 @@ export function useSettings(): UseSettingsResult {
             );
           }
         }
-        if (piDirChanged) {
-          await invalidatePiDirectoryCaches(queryClient);
-        }
-        if (ompDirChanged) {
-          await invalidatePiDirectoryCaches(queryClient, "omp");
-        }
-
-        const appDirChanged = sanitizedAppDir !== (previousAppDir ?? undefined);
         setRequiresRestart(appDirChanged);
-
         if (!options?.silent) {
           toast.success(
             t("notifications.settingsSaved", {
@@ -518,7 +407,6 @@ export function useSettings(): UseSettingsResult {
             { closeButton: true },
           );
         }
-
         return { requiresRestart: appDirChanged };
       } catch (error) {
         console.error("[useSettings] Failed to save settings", error);
@@ -544,12 +432,10 @@ export function useSettings(): UseSettingsResult {
       t,
     ],
   );
-
   const isLoading = useMemo(
     () => isFormLoading || isDirectoryLoading || isMetadataLoading,
     [isFormLoading, isDirectoryLoading, isMetadataLoading],
   );
-
   return {
     settings,
     isLoading,

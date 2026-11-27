@@ -1,9 +1,6 @@
-import * as React from "react";
-
 import { cn } from "@/lib/utils";
-
+import * as React from "react";
 type CheckedState = boolean | "indeterminate";
-
 interface CheckboxProps
   extends Omit<
     React.InputHTMLAttributes<HTMLInputElement>,
@@ -12,7 +9,6 @@ interface CheckboxProps
   checked?: CheckedState;
   onCheckedChange?: (checked: boolean) => void;
 }
-
 const Checkbox = React.forwardRef<HTMLInputElement, CheckboxProps>(
   (
     {
@@ -27,15 +23,12 @@ const Checkbox = React.forwardRef<HTMLInputElement, CheckboxProps>(
   ) => {
     const inputRef = React.useRef<HTMLInputElement>(null);
     const isIndeterminate = checked === "indeterminate";
-
     React.useImperativeHandle(ref, () => inputRef.current as HTMLInputElement);
-
     React.useLayoutEffect(() => {
       if (inputRef.current) {
         inputRef.current.indeterminate = isIndeterminate;
       }
     });
-
     return (
       <input
         {...props}
@@ -52,8 +45,6 @@ const Checkbox = React.forwardRef<HTMLInputElement, CheckboxProps>(
     );
   },
 );
-
 Checkbox.displayName = "Checkbox";
-
 export { Checkbox };
 export type { CheckboxProps, CheckedState };

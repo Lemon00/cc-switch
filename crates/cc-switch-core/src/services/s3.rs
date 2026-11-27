@@ -32,9 +32,16 @@ pub struct S3Credentials {
 
 // ─── URL construction ────────────────────────────────────────
 
-/// Returns `true` for AWS official endpoints (empty or contains `amazonaws.com`).
+/// Classify the hostname, never arbitrary substrings in a custom endpoint.
 fn is_aws_endpoint(endpoint: &str) -> bool {
-    endpoint.is_empty() || endpoint.contains("amazonaws.com")
+    if endpoint.is_empty() {
+        return true;
+    }
+    let (scheme, host) = split_scheme_host(endpoint);
+    Url::parse(&format!("{scheme}://{host}"))
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
+        .is_some_and(|host| host == "amazonaws.com" || host.ends_with(".amazonaws.com"))
 }
 
 /// Split an endpoint into its scheme and host-with-port parts.
@@ -102,7 +109,11 @@ fn bucket_base_url(creds: &S3Credentials) -> String {
 
 /// Build the full URL for an S3 object.
 fn build_object_url(creds: &S3Credentials, key: &str) -> String {
-    format!("{}/{}", bucket_base_url(creds), key.trim_start_matches('/'))
+    format!(
+        "{}/{}",
+        bucket_base_url(creds),
+        uri_encode(key.trim_start_matches('/'), false)
+    )
 }
 
 /// Build the bucket-level URL (for HEAD bucket / test connection).
@@ -156,7 +167,7 @@ fn sign_request(
     body_hash: &str,
     creds: &S3Credentials,
     now: chrono::DateTime<chrono::Utc>,
-) {
+) -> Result<(), AppError> {
     let timestamp = now.format("%Y%m%dT%H%M%SZ").to_string();
     let datestamp = now.format("%Y%m%d").to_string();
 
@@ -165,7 +176,12 @@ fn sign_request(
         Some(port) => format!("{}:{}", url.host_str().unwrap_or_default(), port),
         None => url.host_str().unwrap_or_default().to_string(),
     };
-    headers.insert("host", host_value.parse().unwrap());
+    headers.insert(
+        "host",
+        host_value
+            .parse()
+            .map_err(|_| AppError::InvalidInput("Invalid S3 host header".into()))?,
+    );
     headers.insert("x-amz-date", timestamp.parse().unwrap());
     headers.insert("x-amz-content-sha256", body_hash.parse().unwrap());
 
@@ -246,7 +262,13 @@ fn sign_request(
         "AWS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
         creds.access_key_id, scope, signed_headers, signature
     );
-    headers.insert("authorization", authorization.parse().unwrap());
+    headers.insert(
+        "authorization",
+        authorization
+            .parse()
+            .map_err(|_| AppError::InvalidInput("Invalid S3 credentials or region".into()))?,
+    );
+    Ok(())
 }
 
 // ─── Error helpers ───────────────────────────────────────────
@@ -276,22 +298,28 @@ fn s3_transport_error(
     op_en: &str,
     err: reqwest::Error,
 ) -> AppError {
+    let retryable = err.is_timeout() || err.is_connect() || err.is_body() || err.is_request();
     let (zh_reason, en_reason) = transport_failure_reason(err);
 
-    AppError::localized(
+    let error = AppError::localized(
         key,
         format!("S3 {op_zh}失败（{zh_reason}）"),
         format!("S3 {op_en} failed ({en_reason})"),
-    )
+    );
+    if retryable {
+        AppError::RetryableSync(Box::new(error))
+    } else {
+        error
+    }
 }
 
 fn s3_stalled_error(key: &'static str, op_zh: &str, op_en: &str) -> AppError {
     let secs = TRANSFER_IDLE_TIMEOUT.as_secs();
-    AppError::localized(
+    AppError::RetryableSync(Box::new(AppError::localized(
         key,
         format!("S3 {op_zh}失败（{secs} 秒未收到数据）"),
         format!("S3 {op_en} failed (no data received for {secs}s)"),
-    )
+    )))
 }
 
 fn s3_status_error(op: &str, status: StatusCode, url: &str) -> AppError {
@@ -307,7 +335,12 @@ fn s3_status_error(op: &str, status: StatusCode, url: &str) -> AppError {
         en.push_str(". Please check the bucket name and region.");
     }
 
-    AppError::localized("s3.http.status", zh, en)
+    let error = AppError::localized("s3.http.status", zh, en);
+    if status.is_server_error() || matches!(status.as_u16(), 408 | 429) {
+        AppError::RetryableSync(Box::new(error))
+    } else {
+        error
+    }
 }
 
 fn response_too_large_error(url: &str, max_bytes: usize) -> AppError {
@@ -356,7 +389,7 @@ pub async fn test_connection(creds: &S3Credentials) -> Result<(), AppError> {
         )
     })?;
 
-    let client = http_client::get();
+    let client = http_client::no_redirect().map_err(AppError::Message)?;
     let body_hash = sha256_hex(b"");
     let mut headers = reqwest::header::HeaderMap::new();
     sign_request(
@@ -366,7 +399,7 @@ pub async fn test_connection(creds: &S3Credentials) -> Result<(), AppError> {
         &body_hash,
         creds,
         chrono::Utc::now(),
-    );
+    )?;
 
     let resp = client
         .head(url.as_str())
@@ -389,6 +422,16 @@ pub async fn put_object(
     bytes: Vec<u8>,
     content_type: &str,
 ) -> Result<(), AppError> {
+    put_object_conditional(creds, key, bytes, content_type, &super::sync_protocol::PublishCondition::Overwrite).await.map(|_| ())
+}
+
+pub async fn put_object_conditional(
+    creds: &S3Credentials,
+    key: &str,
+    bytes: Vec<u8>,
+    content_type: &str,
+    condition: &super::sync_protocol::PublishCondition,
+) -> Result<Option<String>, AppError> {
     let url_str = build_object_url(creds, key);
     let url = Url::parse(&url_str).map_err(|e| {
         AppError::localized(
@@ -398,10 +441,16 @@ pub async fn put_object(
         )
     })?;
 
-    let client = http_client::get();
+    let client = http_client::no_redirect().map_err(AppError::Message)?;
     let body_hash = sha256_hex(&bytes);
     let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert("content-type", content_type.parse().unwrap());
+    condition.apply(&mut headers)?;
+    headers.insert(
+        "content-type",
+        content_type
+            .parse()
+            .map_err(|_| AppError::InvalidInput("Invalid S3 content type".into()))?,
+    );
     sign_request(
         "PUT",
         &url,
@@ -409,7 +458,7 @@ pub async fn put_object(
         &body_hash,
         creds,
         chrono::Utc::now(),
-    );
+    )?;
 
     let resp = client
         .put(url.as_str())
@@ -421,7 +470,10 @@ pub async fn put_object(
         .map_err(|e| s3_transport_error("s3.put_failed", "PUT 请求", "PUT request", e))?;
 
     if resp.status().is_success() {
-        return Ok(());
+        return Ok(resp.headers().get(reqwest::header::ETAG).and_then(|v| v.to_str().ok()).map(str::to_string));
+    }
+    if matches!(resp.status().as_u16(), 409 | 412) {
+        return Err(super::sync_protocol::publication_conflict());
     }
     Err(s3_status_error("PUT", resp.status(), &url_str))
 }
@@ -443,7 +495,7 @@ pub async fn get_object(
         )
     })?;
 
-    let client = http_client::get();
+    let client = http_client::no_redirect().map_err(AppError::Message)?;
     let body_hash = sha256_hex(b"");
     let mut headers = reqwest::header::HeaderMap::new();
     sign_request(
@@ -453,7 +505,7 @@ pub async fn get_object(
         &body_hash,
         creds,
         chrono::Utc::now(),
-    );
+    )?;
 
     let request = client
         .get(url.as_str())
@@ -486,11 +538,7 @@ pub async fn get_object(
         .map_err(|_| s3_stalled_error("s3.response_read_failed", "读取响应", "response read"))?
     {
         let chunk = chunk.map_err(|e| {
-            AppError::localized(
-                "s3.response_read_failed",
-                format!("读取 S3 响应失败: {e}"),
-                format!("Failed to read S3 response: {e}"),
-            )
+            s3_transport_error("s3.response_read_failed", "读取响应", "response read", e)
         })?;
         if bytes.len().saturating_add(chunk.len()) > max_bytes {
             return Err(response_too_large_error(&url_str, max_bytes));
@@ -511,7 +559,7 @@ pub async fn head_object(creds: &S3Credentials, key: &str) -> Result<Option<Stri
         )
     })?;
 
-    let client = http_client::get();
+    let client = http_client::no_redirect().map_err(AppError::Message)?;
     let body_hash = sha256_hex(b"");
     let mut headers = reqwest::header::HeaderMap::new();
     sign_request(
@@ -521,7 +569,7 @@ pub async fn head_object(creds: &S3Credentials, key: &str) -> Result<Option<Stri
         &body_hash,
         creds,
         chrono::Utc::now(),
-    );
+    )?;
 
     let resp = client
         .head(url.as_str())
@@ -549,6 +597,58 @@ pub async fn head_object(creds: &S3Credentials, key: &str) -> Result<Option<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn object_keys_encode_reserved_characters_without_changing_identity() {
+        let creds = S3Credentials {
+            access_key_id: "AKID".into(),
+            secret_access_key: "secret".into(),
+            region: "auto".into(),
+            bucket: "bucket".into(),
+            endpoint: "http://localhost:9000".into(),
+        };
+        let url = Url::parse(&build_object_url(&creds, "root/a#b?c%20/中文 file.sql")).unwrap();
+        assert_eq!(url.query(), None);
+        assert_eq!(url.fragment(), None);
+        assert_eq!(
+            url.path(),
+            "/bucket/root/a%23b%3Fc%2520/%E4%B8%AD%E6%96%87%20file.sql"
+        );
+        assert!(!is_aws_endpoint("amazonaws.com.example.net"));
+        assert!(!is_aws_endpoint("https://example.net/amazonaws.com"));
+    }
+
+    #[test]
+    fn malformed_signing_credentials_return_errors_without_panicking() {
+        let mut creds = S3Credentials {
+            access_key_id: "AKID\nInjected: yes".into(),
+            secret_access_key: "secret".into(),
+            region: "auto".into(),
+            bucket: "bucket".into(),
+            endpoint: String::new(),
+        };
+        let url = Url::parse("https://example.com/bucket/key").unwrap();
+        assert!(sign_request(
+            "GET",
+            &url,
+            &mut Default::default(),
+            &sha256_hex(b""),
+            &creds,
+            chrono::Utc::now()
+        )
+        .is_err());
+        creds.access_key_id = "AKID".into();
+        creds.region = "region\r\n".into();
+        assert!(sign_request(
+            "GET",
+            &url,
+            &mut Default::default(),
+            &sha256_hex(b""),
+            &creds,
+            chrono::Utc::now()
+        )
+        .is_err());
+    }
     use chrono::TimeZone;
 
     // ── Crypto helpers ──
@@ -842,7 +942,7 @@ mod tests {
         let body_hash = sha256_hex(b"");
 
         let mut headers = reqwest::header::HeaderMap::new();
-        sign_request("GET", &url, &mut headers, &body_hash, &creds, now);
+        sign_request("GET", &url, &mut headers, &body_hash, &creds, now).unwrap();
 
         let auth = headers.get("authorization").unwrap().to_str().unwrap();
 
@@ -883,7 +983,7 @@ mod tests {
 
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert("content-type", "application/json".parse().unwrap());
-        sign_request("PUT", &url, &mut headers, &body_hash, &creds, now);
+        sign_request("PUT", &url, &mut headers, &body_hash, &creds, now).unwrap();
 
         let auth = headers.get("authorization").unwrap().to_str().unwrap();
         // content-type must appear in the signed headers

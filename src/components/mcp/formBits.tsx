@@ -1,6 +1,3 @@
-import * as React from "react";
-import { useTranslation } from "react-i18next";
-import { ChevronDown, ChevronRight, CircleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -8,13 +5,15 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { fieldClass } from "@/components/ui/input";
 import {
   SegmentThumb,
   useSlidingIndicator,
 } from "@/components/ui/sliding-indicator";
-import { fieldClass } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-
+import { ChevronDown, ChevronRight, CircleAlert } from "lucide-react";
+import * as React from "react";
+import { useTranslation } from "react-i18next";
 /** v7 对话框外壳：宽 480（或传入）、padding 24、圆角 14。 */
 export function V7Dialog({
   open,
@@ -50,7 +49,6 @@ export function V7Dialog({
     </Dialog>
   );
 }
-
 /** 确认框：后果写在正文里，取消默认聚焦；不可撤销的操作（danger）确认键用红底，可恢复的传 danger={false}。
  *  details 放在正文下面（正文是 <p>，列表这类块级内容放这里）。 */
 export function V7ConfirmDialog({
@@ -115,23 +113,17 @@ export function V7ConfirmDialog({
     </V7Dialog>
   );
 }
-
 /** MCP / Skills 抽屉和对话框里共用的小件（v7 表单字段：高 32、圆角 8、出错描边 --danger）。 */
-
 /** 和 Input 同一套外观（ui/input.tsx 的 fieldClass），只读时换浅底 */
 export const FIELD_CLASS = cn(
   fieldClass,
   "h-8 min-w-0 read-only:bg-subtle read-only:text-fg-2 dark:[color-scheme:dark]",
 );
-
 export const MONO_FIELD_CLASS = cn(FIELD_CLASS, "font-mono text-caption");
-
 /** 原生勾选框 / 单选框的统一外观（index.css 的 ui-checkbox / ui-radio） */
 export const CHECKBOX_CLASS = "ui-checkbox";
 export const RADIO_CLASS = "ui-radio";
-
 export const LABEL_CLASS = "text-body font-medium text-fg-1";
-
 export function FieldError({
   id,
   children,
@@ -153,7 +145,6 @@ export function FieldError({
     </span>
   );
 }
-
 export function RequiredMark({ srText }: { srText: string }) {
   return (
     <>
@@ -164,7 +155,6 @@ export function RequiredMark({ srText }: { srText: string }) {
     </>
   );
 }
-
 /** 折叠区的展开按钮（R 展开写法：aria-expanded + aria-controls） */
 export function DisclosureButton({
   open,
@@ -196,7 +186,6 @@ export function DisclosureButton({
     </button>
   );
 }
-
 /** 小号分段（高 28，用在批量粘贴的「跳过 / 覆盖」） */
 export function MiniSegmented<T extends string>({
   items,
@@ -204,7 +193,10 @@ export function MiniSegmented<T extends string>({
   onValueChange,
   label,
 }: {
-  items: Array<{ value: T; label: string }>;
+  items: Array<{
+    value: T;
+    label: string;
+  }>;
   value: T;
   onValueChange: (value: T) => void;
   label: string;

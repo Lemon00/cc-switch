@@ -1,17 +1,14 @@
-import { useTranslation } from "react-i18next";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
 import type { AuthCenterTarget } from "@/lib/api";
-
+import { useTranslation } from "react-i18next";
 interface AuthSettingsPanelProps {
   target: AuthCenterTarget | null;
   onClose: () => void;
 }
-
 export function AuthSettingsPanel({ target, onClose }: AuthSettingsPanelProps) {
   const { t } = useTranslation();
   const isOpen = target !== null;
-
   return (
     <FullScreenPanel
       isOpen={isOpen}

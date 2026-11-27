@@ -22,12 +22,12 @@ import {
   showFetchModelsError,
   type FetchedModel,
 } from "@/lib/api/model-fetch";
-
 vi.mock("@/lib/api/copilot", () => ({
   copilotGetModels: vi.fn(),
   copilotGetModelsForAccount: vi.fn(),
 }));
-vi.mock("@/lib/api/model-fetch", () => ({
+vi.mock("@/lib/api/model-fetch", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api/model-fetch")>()),
   fetchModelsForConfig: vi.fn(),
   fetchXaiOauthModels: vi.fn(),
   modelFetchRequestHeaders: vi.fn(),
@@ -56,10 +56,8 @@ vi.mock("@/components/providers/forms/shared", async (importOriginal) => {
     ),
   };
 });
-
 type Props = ComponentProps<typeof CodexFormFields>;
 type ProviderKind = "copilot" | "xai" | "config";
-
 function pendingModels() {
   let resolve!: (models: Array<CopilotModel & FetchedModel>) => void;
   let reject!: (reason: Error) => void;
@@ -71,7 +69,6 @@ function pendingModels() {
   );
   return { promise, resolve, reject };
 }
-
 function advertisedModel(id = "model-1"): CopilotModel & FetchedModel {
   return {
     id,
@@ -80,10 +77,9 @@ function advertisedModel(id = "model-1"): CopilotModel & FetchedModel {
     ownedBy: "vendor",
     model_picker_enabled: true,
     supported_endpoints: ["/responses"],
-    context_window: 400_000,
+    context_window: 400000,
   };
 }
-
 function makeProps(kind: ProviderKind): Props {
   return {
     isCopilotPreset: kind === "copilot",
@@ -129,7 +125,6 @@ function makeProps(kind: ProviderKind): Props {
     onLocalProxyBodyOverrideChange: vi.fn(),
   };
 }
-
 function Harness(props: Props) {
   const form = useForm();
   return (
@@ -138,14 +133,12 @@ function Harness(props: Props) {
     </FormProvider>
   );
 }
-
 const fetchMockFor = (kind: ProviderKind) =>
   kind === "copilot"
     ? vi.mocked(copilotGetModelsForAccount)
     : kind === "xai"
       ? vi.mocked(fetchXaiOauthModels)
       : vi.mocked(fetchModelsForConfig);
-
 // 拉到列表后按钮改叫「选择模型」并自动打开选择弹窗（弹窗外的元素被设为 aria-hidden）。
 const fetchButton = () =>
   screen.getAllByRole("button", {
@@ -153,7 +146,6 @@ const fetchButton = () =>
     hidden: true,
   })[0];
 const providerKinds: ProviderKind[] = ["copilot", "xai", "config"];
-
 describe("Codex model-fetch lifecycle", () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -162,7 +154,6 @@ describe("Codex model-fetch lifecycle", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
-
   it("fetches only models supporting the selected Copilot protocol", async () => {
     const responsesModel = advertisedModel("responses-model");
     const chatModel = {
@@ -189,7 +180,6 @@ describe("Codex model-fetch lifecycle", () => {
       expect.objectContaining({ model: "chat-model" }),
     ]);
   });
-
   it("discards a pending model list after the Copilot protocol changes", async () => {
     const pending = pendingModels();
     vi.mocked(copilotGetModelsForAccount).mockReturnValue(pending.promise);
@@ -202,7 +192,6 @@ describe("Codex model-fetch lifecycle", () => {
     expect(props.onModelChange).not.toHaveBeenCalled();
     expect(toast.success).not.toHaveBeenCalled();
   });
-
   it.each(["gpt-6-astra", "claude-model"])(
     "prefers an available GPT model without replacing a valid selection (%s)",
     async (currentModel) => {
@@ -221,7 +210,6 @@ describe("Codex model-fetch lifecycle", () => {
       }
     },
   );
-
   it.each(providerKinds)(
     "loads %s models through the existing provider route",
     async (kind) => {
@@ -229,7 +217,6 @@ describe("Codex model-fetch lifecycle", () => {
       fetchMockFor(kind).mockReturnValue(pending.promise);
       const props = makeProps(kind);
       render(<Harness {...props} />);
-
       fireEvent.click(fetchButton());
       expect(fetchButton()).toBeDisabled();
       expect(fetchMockFor(kind)).toHaveBeenCalledTimes(1);
@@ -249,7 +236,6 @@ describe("Codex model-fetch lifecycle", () => {
           { requestHeaders: undefined },
         );
       }
-
       await act(async () => pending.resolve([advertisedModel()]));
       await waitFor(() => expect(fetchButton()).toBeEnabled());
       expect(screen.getByTestId("model-options")).toHaveTextContent("model-1");
@@ -262,7 +248,7 @@ describe("Codex model-fetch lifecycle", () => {
           {
             model: "model-1",
             displayName: "Model One",
-            contextWindow: 400_000,
+            contextWindow: 400000,
             supportsParallelToolCalls: false,
             inputModalities: ["text"],
           },
@@ -272,14 +258,12 @@ describe("Codex model-fetch lifecycle", () => {
       }
     },
   );
-
   it.each(providerKinds.filter((kind) => kind !== "copilot"))(
     "keeps the empty-list notification for %s",
     async (kind) => {
       fetchMockFor(kind).mockResolvedValue([]);
       render(<Harness {...makeProps(kind)} />);
       fireEvent.click(fetchButton());
-
       await waitFor(() =>
         expect(toast.info).toHaveBeenCalledWith(
           "providerForm.fetchModelsEmpty",
@@ -289,18 +273,15 @@ describe("Codex model-fetch lifecycle", () => {
       expect(toast.success).not.toHaveBeenCalled();
     },
   );
-
   it("explains an account without picker-enabled Copilot models", async () => {
     vi.mocked(copilotGetModelsForAccount).mockResolvedValue([]);
     render(<Harness {...makeProps("copilot")} />);
     fireEvent.click(fetchButton());
-
     await waitFor(() =>
       expect(toast.info).toHaveBeenCalledWith("copilot.noPickerModels"),
     );
     expect(toast.success).not.toHaveBeenCalled();
   });
-
   it("explains Copilot models that do not support the selected format", async () => {
     vi.mocked(copilotGetModelsForAccount).mockResolvedValue([
       advertisedModel("responses-model"),
@@ -312,13 +293,11 @@ describe("Codex model-fetch lifecycle", () => {
       />,
     );
     fireEvent.click(fetchButton());
-
     await waitFor(() =>
       expect(toast.info).toHaveBeenCalledWith("copilot.noModelsForApiFormat"),
     );
     expect(toast.success).not.toHaveBeenCalled();
   });
-
   it.each(providerKinds)(
     "reports %s failures and releases loading state",
     async (kind) => {
@@ -326,7 +305,6 @@ describe("Codex model-fetch lifecycle", () => {
       fetchMockFor(kind).mockRejectedValue(error);
       render(<Harness {...makeProps(kind)} />);
       fireEvent.click(fetchButton());
-
       await waitFor(() =>
         expect(showFetchModelsError).toHaveBeenCalledWith(
           error,
@@ -345,7 +323,6 @@ describe("Codex model-fetch lifecycle", () => {
       );
     },
   );
-
   it.each(providerKinds)(
     "ignores stale %s results after the request identity changes",
     async (kind) => {
@@ -362,7 +339,6 @@ describe("Codex model-fetch lifecycle", () => {
           codexBaseUrl="https://other.example/v1"
         />,
       );
-
       await act(async () => pending.resolve([advertisedModel()]));
       await waitFor(() => expect(fetchButton()).toBeEnabled());
       expect(screen.queryByTestId("model-options")).not.toBeInTheDocument();
@@ -370,7 +346,6 @@ describe("Codex model-fetch lifecycle", () => {
       expect(toast.success).not.toHaveBeenCalled();
     },
   );
-
   it("keeps Copilot filtering, applies reported prompt limits and selects a default model", async () => {
     vi.mocked(copilotGetModels).mockResolvedValue([
       advertisedModel(),
@@ -383,29 +358,27 @@ describe("Codex model-fetch lifecycle", () => {
       ...makeProps("copilot"),
       selectedGitHubAccountId: null,
       codexModel: "unavailable",
-      catalogModels: [{ model: "model-1", contextWindow: 200_000 }],
+      catalogModels: [{ model: "model-1", contextWindow: 200000 }],
     };
     render(<Harness {...props} />);
     fireEvent.click(fetchButton());
-
     await waitFor(() =>
       expect(props.onModelChange).toHaveBeenCalledWith("model-1"),
     );
     expect(copilotGetModels).toHaveBeenCalledTimes(1);
     expect(copilotGetModelsForAccount).not.toHaveBeenCalled();
     expect(props.onCatalogModelsChange).toHaveBeenCalledWith([
-      expect.objectContaining({ model: "model-1", contextWindow: 400_000 }),
+      expect.objectContaining({ model: "model-1", contextWindow: 400000 }),
     ]);
     expect(screen.getAllByTestId("model-options")[0]).not.toHaveTextContent(
       "messages-only",
     );
   });
-
   it("overrides stale managed metadata with live Copilot capabilities", async () => {
     vi.mocked(copilotGetModelsForAccount).mockResolvedValue([
       {
         ...advertisedModel(),
-        context_window: 922_000,
+        context_window: 922000,
         supports_parallel_tool_calls: true,
         reasoning_effort: ["none", "low", "medium", "high", "xhigh"],
       },
@@ -415,7 +388,7 @@ describe("Codex model-fetch lifecycle", () => {
       catalogModels: [
         {
           model: "model-1",
-          contextWindow: 1_048_576,
+          contextWindow: 1048576,
           supportsParallelToolCalls: false,
           reasoningLevels: ["max"],
           baseInstructions: "Keep me",
@@ -424,12 +397,11 @@ describe("Codex model-fetch lifecycle", () => {
     };
     render(<Harness {...props} />);
     fireEvent.click(fetchButton());
-
     await waitFor(() =>
       expect(props.onCatalogModelsChange).toHaveBeenCalledWith([
         expect.objectContaining({
           model: "model-1",
-          contextWindow: 922_000,
+          contextWindow: 922000,
           supportsParallelToolCalls: true,
           reasoningLevels: ["none", "low", "medium", "high", "xhigh"],
           baseInstructions: "Keep me",
@@ -437,7 +409,6 @@ describe("Codex model-fetch lifecycle", () => {
       ]),
     );
   });
-
   it("preserves existing managed metadata when Copilot omits it", async () => {
     vi.mocked(copilotGetModelsForAccount).mockResolvedValue([
       {
@@ -450,7 +421,7 @@ describe("Codex model-fetch lifecycle", () => {
       catalogModels: [
         {
           model: "model-1",
-          contextWindow: 222_000,
+          contextWindow: 222000,
           supportsParallelToolCalls: true,
           reasoningLevels: ["high", "max"],
         },
@@ -458,19 +429,17 @@ describe("Codex model-fetch lifecycle", () => {
     };
     render(<Harness {...props} />);
     fireEvent.click(fetchButton());
-
     await waitFor(() =>
       expect(props.onCatalogModelsChange).toHaveBeenCalledWith([
         expect.objectContaining({
           model: "model-1",
-          contextWindow: 222_000,
+          contextWindow: 222000,
           supportsParallelToolCalls: true,
           reasoningLevels: ["high", "max"],
         }),
       ]),
     );
   });
-
   it("clears stale reasoning levels when Copilot explicitly reports none", async () => {
     vi.mocked(copilotGetModelsForAccount).mockResolvedValue([
       {
@@ -489,7 +458,6 @@ describe("Codex model-fetch lifecycle", () => {
     };
     render(<Harness {...props} />);
     fireEvent.click(fetchButton());
-
     await waitFor(() =>
       expect(props.onCatalogModelsChange).toHaveBeenCalledWith([
         expect.objectContaining({
@@ -499,7 +467,6 @@ describe("Codex model-fetch lifecycle", () => {
       ]),
     );
   });
-
   it.each(providerKinds)("preserves %s preflight validation", (kind) => {
     render(
       <Harness
@@ -511,7 +478,6 @@ describe("Codex model-fetch lifecycle", () => {
       />,
     );
     fireEvent.click(fetchButton());
-
     expect(fetchMockFor(kind)).not.toHaveBeenCalled();
     expect(fetchButton()).toBeEnabled();
     if (kind === "config") {
@@ -533,13 +499,12 @@ describe("Codex model-fetch lifecycle", () => {
       ...makeProps("config"),
       codexModel: "model-1",
       catalogModels: [
-        { model: "model-1", contextWindow: 200_000 },
-        { model: "model-2", contextWindow: 128_000 },
+        { model: "model-1", contextWindow: 200000 },
+        { model: "model-2", contextWindow: 128000 },
       ],
     };
     render(<Harness {...props} />);
     fireEvent.click(fetchButton());
-
     const dialog = await screen.findByRole("dialog");
     fireEvent.click(within(dialog).getByRole("checkbox", { name: "model-1" }));
     fireEvent.click(
@@ -547,11 +512,10 @@ describe("Codex model-fetch lifecycle", () => {
         name: "providerForm.modelPicker.apply",
       }),
     );
-
     expect(props.onModelChange).toHaveBeenCalledWith("model-2");
     await waitFor(() =>
       expect(props.onCatalogModelsChange).toHaveBeenLastCalledWith([
-        expect.objectContaining({ model: "model-2", contextWindow: 128_000 }),
+        expect.objectContaining({ model: "model-2", contextWindow: 128000 }),
       ]),
     );
   });
@@ -561,7 +525,6 @@ describe("Codex model-fetch lifecycle", () => {
       <Harness {...makeProps("config")} onCatalogModelsChange={undefined} />,
     );
     fireEvent.click(fetchButton());
-
     await waitFor(() =>
       expect(toast.success).toHaveBeenCalledWith(
         "providerForm.fetchModelsSuccess",

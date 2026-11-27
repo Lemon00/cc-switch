@@ -19,6 +19,10 @@ use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
+const MAX_RESPONSE_STATE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_RESPONSE_WIRE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_RESPONSE_TOOLS: usize = 256;
+
 #[derive(Debug, Default)]
 struct TextItemState {
     output_index: Option<u32>,
@@ -47,6 +51,7 @@ struct ToolCallState {
     reasoning_content: String,
     /// 上游 tool call 的 `extra_content`（Gemini thought signature），完成时原样挂回。
     extra_content: Option<Value>,
+    extra_content_bytes: usize,
     added: bool,
     done: bool,
 }
@@ -104,6 +109,15 @@ impl ChatToResponsesState {
     }
 
     fn handle_chat_chunk(&mut self, chunk: &Value) -> Vec<Bytes> {
+        if self.completed {
+            return Vec::new();
+        }
+        if !self.chunk_within_budget(chunk, MAX_RESPONSE_STATE_BYTES, MAX_RESPONSE_TOOLS) {
+            return vec![self.failed_event(
+                "Upstream response exceeded the streaming state limit".to_string(),
+                Some("response_limit_exceeded".to_string()),
+            )];
+        }
         let mut events = Vec::new();
 
         if let Some(id) = chunk.get("id").and_then(|v| v.as_str()) {
@@ -152,6 +166,9 @@ impl ChatToResponsesState {
                     events.extend(
                         self.push_tool_call_delta(tool_call, reasoning_for_tool_call.as_deref()),
                     );
+                    if self.completed {
+                        return events;
+                    }
                 }
             }
         }
@@ -161,6 +178,60 @@ impl ChatToResponsesState {
         }
 
         events
+    }
+
+    fn chunk_within_budget(&self, chunk: &Value, max_bytes: usize, max_tools: usize) -> bool {
+        let chunk_bytes = serde_json::to_vec(chunk).map_or(usize::MAX, |bytes| bytes.len());
+        let tools = chunk
+            .pointer("/choices/0/delta/tool_calls")
+            .and_then(Value::as_array);
+        let incoming_tools = tools.map_or(0, Vec::len);
+        let existing_bytes = self
+            .text
+            .text
+            .len()
+            .saturating_add(self.reasoning.text.len())
+            .saturating_add(
+                self.tools
+                    .values()
+                    .map(|tool| {
+                        tool.arguments
+                            .len()
+                            .saturating_add(tool.reasoning_content.len())
+                            .saturating_add(tool.call_id.len())
+                            .saturating_add(tool.name.len())
+                            .saturating_add(tool.extra_content_bytes)
+                    })
+                    .fold(0usize, usize::saturating_add),
+            );
+        let projected = existing_bytes
+            .saturating_add(
+                chunk_bytes.saturating_mul(
+                    self.tools
+                        .len()
+                        .saturating_add(incoming_tools)
+                        .saturating_add(2),
+                ),
+            )
+            .saturating_add(self.reasoning.text.len().saturating_mul(incoming_tools));
+        if projected > max_bytes || incoming_tools > max_tools {
+            return false;
+        }
+        let mut indexes: std::collections::BTreeSet<_> = self.tools.keys().copied().collect();
+        if let Some(tools) = tools {
+            for tool in tools {
+                let index = tool
+                    .get("index")
+                    .and_then(Value::as_u64)
+                    .and_then(|index| usize::try_from(index).ok())
+                    .unwrap_or_else(|| self.resolve_tool_key_without_index(tool));
+                indexes.insert(index);
+                if indexes.len() > max_tools {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     fn push_content_delta(&mut self, delta: &str) -> Vec<Bytes> {
@@ -295,6 +366,12 @@ impl ChatToResponsesState {
             Some(index) => index as usize,
             None => self.resolve_tool_key_without_index(tool_call),
         };
+        if !self.tools.contains_key(&chat_index) && self.tools.len() >= MAX_RESPONSE_TOOLS {
+            return vec![self.failed_event(
+                "Upstream response exceeded the tool count limit".to_string(),
+                Some("response_limit_exceeded".to_string()),
+            )];
+        }
         let id_delta = tool_call
             .get("id")
             .and_then(|v| v.as_str())
@@ -330,6 +407,7 @@ impl ChatToResponsesState {
                 state.arguments.push_str(&args_delta);
             }
             if let Some(extra) = tool_call_extra_content(tool_call) {
+                state.extra_content_bytes = extra.to_string().len();
                 state.extra_content = Some(extra.clone());
             }
             if state.reasoning_content.is_empty() {
@@ -751,14 +829,6 @@ fn chat_delta_reasoning_text(delta: &Value) -> Option<String> {
     extract_reasoning_field_text(delta)
 }
 
-/// Create a stream that converts Chat Completions SSE chunks into Responses SSE events.
-#[allow(dead_code)]
-pub fn create_responses_sse_stream_from_chat<E: std::error::Error + Send + 'static>(
-    stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
-) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
-    create_responses_sse_stream_from_chat_with_context(stream, CodexToolContext::default())
-}
-
 /// Create a stream that converts Chat Completions SSE chunks into Responses SSE
 /// events while restoring Codex tool namespace/custom/tool_search metadata.
 pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error + Send + 'static>(
@@ -769,13 +839,19 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
         let mut sse = SseBuffer::new();
         let mut state = ChatToResponsesState::with_tool_context(tool_context);
         let mut stream_failed = false;
+        let mut wire_bytes = 0usize;
 
         tokio::pin!(stream);
 
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    sse.push_bytes(&bytes);
+                    wire_bytes = wire_bytes.saturating_add(bytes.len());
+                    if wire_bytes > MAX_RESPONSE_WIRE_BYTES {
+                        yield Ok(state.failed_event("Upstream stream exceeded the total byte limit".to_string(), Some("response_limit_exceeded".to_string())));
+                        return;
+                    }
+                    sse.push_bytes(&bytes)?;
 
                     while let Some(block) = sse.next_block() {
                         if block.trim().is_empty() {
@@ -821,6 +897,7 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
                         for event in state.handle_chat_chunk(&chunk) {
                             yield Ok(event);
                         }
+                        if state.completed { return; }
                     }
 
                     if stream_failed {
@@ -862,6 +939,35 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
 mod tests {
     use super::*;
     use futures::{stream, StreamExt};
+
+    #[test]
+    fn cumulative_state_and_tool_fanout_are_bounded() {
+        let mut state = ChatToResponsesState::default();
+        let chunk = json!({"choices":[{"delta":{"content":"small frame"}}]});
+        for _ in 0..20 {
+            state.handle_chat_chunk(&chunk);
+        }
+        assert!(!state.chunk_within_budget(&chunk, 200, 256));
+        assert!(state.chunk_within_budget(&chunk, 4096, 256));
+        state.reasoning.text = "reasoning".repeat(100);
+        let tools =
+            json!({"choices":[{"delta":{"tool_calls":[{"index":0},{"index":1},{"index":2}]}}]});
+        assert!(!state.chunk_within_budget(&tools, 3000, 256));
+        assert!(!state.chunk_within_budget(&tools, 10000, 2));
+    }
+
+    #[tokio::test]
+    async fn excessive_tool_count_fails_without_success_event() {
+        let tools: Vec<_> = (0..=MAX_RESPONSE_TOOLS).map(|index| json!({"index":index,"id":format!("call_{index}"),"function":{"name":"tool","arguments":"{}"}})).collect();
+        let chunk = format!(
+            "data: {}\n\n",
+            json!({"choices":[{"delta":{"tool_calls":tools},"finish_reason":"tool_calls"}]})
+        );
+        let output = collect(vec![&chunk, "data: [DONE]\n\n"]).await;
+        assert!(output.contains("response.failed"));
+        assert!(output.contains("response_limit_exceeded"));
+        assert!(!output.contains("response.completed"));
+    }
 
     async fn collect(chunks: Vec<&str>) -> String {
         collect_with_context(chunks, CodexToolContext::default()).await
@@ -1458,7 +1564,10 @@ mod tests {
         let upstream = stream::iter(vec![Err::<Bytes, std::io::Error>(std::io::Error::other(
             "boom",
         ))]);
-        let converted = create_responses_sse_stream_from_chat(upstream);
+        let converted = create_responses_sse_stream_from_chat_with_context(
+            upstream,
+            CodexToolContext::default(),
+        );
         let bytes: Vec<Bytes> = converted.map(|item| item.unwrap()).collect().await;
         let output = String::from_utf8(bytes.concat()).unwrap();
 
@@ -1663,11 +1772,14 @@ mod tests {
             Some(data) => chunks.push(Ok(Bytes::from(data.to_owned()))),
             None => {}
         }
-        create_responses_sse_stream_from_chat(futures::stream::iter(chunks))
-            .map(|chunk| String::from_utf8(chunk.unwrap().to_vec()).unwrap())
-            .collect::<Vec<_>>()
-            .await
-            .concat()
+        create_responses_sse_stream_from_chat_with_context(
+            futures::stream::iter(chunks),
+            CodexToolContext::default(),
+        )
+        .map(|chunk| String::from_utf8(chunk.unwrap().to_vec()).unwrap())
+        .collect::<Vec<_>>()
+        .await
+        .concat()
     }
 
     #[tokio::test]
@@ -1714,7 +1826,11 @@ mod tests {
         .chain(futures::stream::pending());
         tokio::time::timeout(
             std::time::Duration::from_secs(1),
-            create_responses_sse_stream_from_chat(upstream).collect::<Vec<_>>(),
+            create_responses_sse_stream_from_chat_with_context(
+                upstream,
+                CodexToolContext::default(),
+            )
+            .collect::<Vec<_>>(),
         )
         .await
         .expect("a terminal response must not await another upstream chunk");

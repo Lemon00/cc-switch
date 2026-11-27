@@ -1,26 +1,23 @@
-import * as React from "react";
-import { useTranslation } from "react-i18next";
-import type { TFunction } from "i18next";
-import { AlertTriangle, BookOpen, Check } from "lucide-react";
-import { toast } from "@/lib/toast";
-import { settingsApi } from "@/lib/api";
-import * as PopoverPrimitive from "@radix-ui/react-popover";
-import type { AppId } from "@/lib/api/types";
+import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
 import { HoverTip } from "@/components/ui/hover-tip";
-import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { SearchField } from "@/components/ui/search-field";
+import { settingsApi } from "@/lib/api";
+import type { AppId } from "@/lib/api/types";
+import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
-
+import * as PopoverPrimitive from "@radix-ui/react-popover";
+import type { TFunction } from "i18next";
+import { AlertTriangle, BookOpen, Check } from "lucide-react";
+import * as React from "react";
+import { useTranslation } from "react-i18next";
 /**
  * MCP 与 Skills 共用的「应用矩阵」：行 = 服务器 / Skill，列 = 应用。
  * 中性勾选（不用绿色），写入失败显示 ⚠ 可重试；列头点开是批量弹层，批量后给撤销 toast。
  */
-
 // ─── 批量作用范围（只在这里决定） ─────────────────────────────────────────
 export type BulkScopeKind = "all" | "search" | "filter";
-
 /**
  * 批量操作实际作用的行，以及弹层里怎么描述这个范围。
  * 列头批量只作用于当前搜索 / 筛选出的行（画板 McpBulk 的写法，有意改变旧版
@@ -30,13 +27,15 @@ export function resolveBulkScope<T>(
   allRows: readonly T[],
   visibleRows: readonly T[],
   narrowedBy: "search" | "filter" | null,
-): { rows: readonly T[]; kind: BulkScopeKind } {
+): {
+  rows: readonly T[];
+  kind: BulkScopeKind;
+} {
   if (!narrowedBy) {
     return { rows: allRows, kind: "all" };
   }
   return { rows: visibleRows, kind: narrowedBy };
 }
-
 // ─── 列高亮（悬停 / 键盘焦点落在某一列时，列头跟着亮） ─────────────────────
 /**
  * 只有列头订阅当前列；单元格只拿稳定的 setter，悬停时整张表不会重渲染。
@@ -45,7 +44,6 @@ const MatrixColumnSetterContext = React.createContext<
   (app: AppId, active: boolean) => void
 >(() => {});
 const MatrixActiveColumnContext = React.createContext<AppId | null>(null);
-
 export function MatrixColumnHighlight({
   children,
 }: {
@@ -63,7 +61,6 @@ export function MatrixColumnHighlight({
     </MatrixColumnSetterContext.Provider>
   );
 }
-
 /** 只认键盘焦点：鼠标点开批量弹层再关上时，焦点回到列头不该冒出名字 */
 function isKeyboardFocus(element: Element) {
   try {
@@ -72,7 +69,6 @@ function isKeyboardFocus(element: Element) {
     return true;
   }
 }
-
 function useColumnTracking(app: AppId | undefined) {
   const setColumn = React.useContext(MatrixColumnSetterContext);
   return React.useMemo(() => {
@@ -87,10 +83,8 @@ function useColumnTracking(app: AppId | undefined) {
     };
   }, [app, setColumn]);
 }
-
 // ─── 单元格 ─────────────────────────────────────────────────────────────
 export type MatrixCellState = "on" | "off" | "fail";
-
 interface MatrixCellProps {
   state: MatrixCellState;
   /** 所在列：悬停 / 聚焦时高亮这一列的列头 */
@@ -100,7 +94,6 @@ interface MatrixCellProps {
   onClick: () => void;
   disabled?: boolean;
 }
-
 /**
  * 勾选框：开、关、写入失败三种状态是同一个 16px 圆角方框、同一个 28px 点击区，
  * 只换填充和里面的符号（关 = 淡描边空框，开 = 操作色实心 + 勾，失败 = 警告描边 + ⚠）。
@@ -158,20 +151,18 @@ export function MatrixCell({
     </span>
   );
 }
-
 // ─── 列头 + 批量弹层 ─────────────────────────────────────────────────────
 const OMP_DISCOVERY_DOCS_URL =
   "https://github.com/can1357/oh-my-pi/blob/main/docs/context-files.md#disabling-discovery-providers";
-
 /**
  * Oh My Pi 列的说明：它还会从其他 Agent 的目录发现 MCP、技能等，实际加载的可能比这里勾的多。
  * MCP 和 Skills 两个矩阵都展开到 Oh My Pi 的列头上；别的列返回空对象，不覆盖已有的 `help`。
  */
 export function ompDiscoveryColumnNote(
-  app: AppId,
   t: TFunction,
+  _t: TFunction,
 ): Pick<MatrixColumnHeaderProps, "help" | "docsLink"> {
-  if (app !== "omp") return {};
+  return {};
   return {
     help: {
       title: t("appMatrix.ompDiscovery.title"),
@@ -183,7 +174,6 @@ export function ompDiscoveryColumnNote(
     },
   };
 }
-
 interface MatrixColumnHeaderProps {
   app: AppId;
   /** 列头上的数字：全部行里启用了几个 */
@@ -199,16 +189,24 @@ interface MatrixColumnHeaderProps {
   onEnableRest: () => void;
   onDisableAll: () => void;
   /** 弹层里额外的文字按钮（Skills：「只看在 Codex 启用的」） */
-  extraAction?: { label: string; onClick: () => void };
+  extraAction?: {
+    label: string;
+    onClick: () => void;
+  };
   /** 标题旁的「?」（Pi：怎么算启用） */
-  help?: { title: string; body: React.ReactNode };
+  help?: {
+    title: string;
+    body: React.ReactNode;
+  };
   /** 弹层底部的外部文档链接（Oh My Pi：怎样关掉对其他 Agent 目录的发现） */
-  docsLink?: { label: string; url: string };
+  docsLink?: {
+    label: string;
+    url: string;
+  };
   /** 列头的 title（Pi 说明按目录判断） */
   title?: string;
   disabled?: boolean;
 }
-
 export function MatrixColumnHeader({
   app,
   enabledCount,
@@ -234,18 +232,15 @@ export function MatrixColumnHeader({
   const rest = scopeTotal - scopeEnabled;
   const allOn = scopeTotal > 0 && rest === 0;
   const noneOn = scopeEnabled === 0;
-
   const tracking = useColumnTracking(app);
   const activeColumn = React.useContext(MatrixActiveColumnContext);
   // 悬停 / 键盘聚焦在这一列时亮起；应用名只跟随列头悬停，弹层开着时隐藏。
   const highlighted = activeColumn === app || open;
   const showName = !open && headerHovered;
-
   const run = (action: () => void) => {
     setOpen(false);
     action();
   };
-
   return (
     <PopoverPrimitive.Root open={open} onOpenChange={setOpen}>
       <span
@@ -392,7 +387,6 @@ export function MatrixColumnHeader({
     </PopoverPrimitive.Root>
   );
 }
-
 // ─── 搜索框 ─────────────────────────────────────────────────────────────
 interface MatrixSearchProps {
   value: string;
@@ -405,7 +399,6 @@ interface MatrixSearchProps {
   onEnter?: () => void;
   inputId?: string;
 }
-
 export function MatrixSearch({
   value,
   onValueChange,
@@ -441,7 +434,6 @@ export function MatrixSearch({
     </>
   );
 }
-
 // ─── 小徽标 ─────────────────────────────────────────────────────────────
 export function NeutralBadge({
   children,
@@ -464,7 +456,6 @@ export function NeutralBadge({
     </span>
   );
 }
-
 // ─── 可撤销的批量 toast ───────────────────────────────────────────────────
 export function showUndoToast(
   text: string,

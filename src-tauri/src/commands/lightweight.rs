@@ -1,11 +1,15 @@
 #[tauri::command]
-pub fn enter_lightweight_mode(app: tauri::AppHandle) -> Result<(), String> {
-    crate::lightweight::enter_lightweight_mode(&app)
+pub async fn enter_lightweight_mode(app: tauri::AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || crate::lightweight::enter_lightweight_mode(&app))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub fn exit_lightweight_mode(app: tauri::AppHandle) -> Result<(), String> {
-    crate::lightweight::exit_lightweight_mode(&app)
+pub async fn exit_lightweight_mode(app: tauri::AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || crate::lightweight::exit_lightweight_mode(&app))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]

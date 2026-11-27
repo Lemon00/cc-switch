@@ -1,30 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
-import {
-  Link2,
-  UploadCloud,
-  DownloadCloud,
-  Loader2,
-  Save,
-  Check,
-  Info,
-  AlertTriangle,
-  Trash2,
-} from "lucide-react";
-import type { LucideIcon } from "lucide-react";
-import { useTranslation } from "react-i18next";
-import { useQueryClient } from "@tanstack/react-query";
-import { toast } from "@/lib/toast";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -33,17 +8,41 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { settingsApi } from "@/lib/api";
-import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import type { SettingsFormState } from "@/hooks/useSettings";
+import { settingsApi } from "@/lib/api";
+import { invalidateQueriesAfterChange } from "@/lib/query/invalidation";
+import { toast } from "@/lib/toast";
 import type {
   RemoteSnapshotInfo,
   S3SyncSettings,
   WebDavSyncSettings,
 } from "@/types";
-
+import { useQueryClient } from "@tanstack/react-query";
+import type { LucideIcon } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  DownloadCloud,
+  Info,
+  Link2,
+  Loader2,
+  Save,
+  Trash2,
+  UploadCloud,
+} from "lucide-react";
+import type { ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 // ─── WebDAV service presets ─────────────────────────────────
-
 interface WebDavPreset {
   id: string;
   label: string;
@@ -51,7 +50,6 @@ interface WebDavPreset {
   hint: string;
   matchPattern?: string; // substring match on URL
 }
-
 const WEBDAV_PRESETS: WebDavPreset[] = [
   {
     id: "jianguoyun",
@@ -81,7 +79,6 @@ const WEBDAV_PRESETS: WebDavPreset[] = [
     hint: "",
   },
 ];
-
 /** Match a URL to one of the preset providers, or "custom". */
 function detectPreset(url: string): string {
   if (!url) return "custom";
@@ -92,7 +89,6 @@ function detectPreset(url: string): string {
   }
   return "custom";
 }
-
 /** Match an S3 endpoint to one of the preset providers, or "custom". */
 function detectS3Preset(endpoint?: string | null): string {
   const value = endpoint?.trim().toLowerCase() ?? "";
@@ -105,9 +101,7 @@ function detectS3Preset(endpoint?: string | null): string {
   if (value.includes("amazonaws.com")) return "aws-s3";
   return "s3-custom";
 }
-
 // ─── S3 service presets ──────────────────────────────────────
-
 interface S3Preset {
   id: string;
   label: string;
@@ -115,7 +109,6 @@ interface S3Preset {
   defaultEndpoint?: string;
   regionPlaceholder?: string;
 }
-
 const S3_PRESETS: S3Preset[] = [
   {
     id: "aws-s3",
@@ -160,7 +153,6 @@ const S3_PRESETS: S3Preset[] = [
     regionPlaceholder: "us-east-1",
   },
 ];
-
 /** Restore the saved preset, ignoring ids this build does not know. */
 function resolveS3Preset(config?: S3SyncSettings): string {
   const saved = config?.preset;
@@ -168,17 +160,14 @@ function resolveS3Preset(config?: S3SyncSettings): string {
     ? saved
     : detectS3Preset(config?.endpoint);
 }
-
 /** Format an RFC 3339 date string for display; falls back to raw string. */
 function formatDate(rfc3339: string): string {
   const d = new Date(rfc3339);
   return Number.isNaN(d.getTime()) ? rfc3339 : d.toLocaleString();
 }
-
 function formatDbCompatVersion(version?: number | null): string | null {
   return typeof version === "number" ? `db-v${version}` : null;
 }
-
 function buildPasswordPreservationKey(values: {
   baseUrl?: string | null;
   username?: string | null;
@@ -192,9 +181,7 @@ function buildPasswordPreservationKey(values: {
     profile: values.profile ?? "default",
   });
 }
-
 // ─── Types ──────────────────────────────────────────────────
-
 type ActionState =
   | "idle"
   | "testing"
@@ -203,20 +190,15 @@ type ActionState =
   | "downloading"
   | "fetching_remote"
   | "clearing";
-
 type SyncType = "webdav" | "s3";
-
 type DialogType = "upload" | "download" | "mutual_exclusion" | null;
-
 interface WebdavSyncSectionProps {
   config?: WebDavSyncSettings;
   s3Config?: S3SyncSettings;
   settings?: SettingsFormState;
   onAutoSave?: (updates: Partial<SettingsFormState>) => Promise<unknown>;
 }
-
 // ─── ActionButton ───────────────────────────────────────────
-
 /** Reusable button with loading spinner. */
 function ActionButton({
   actionState,
@@ -251,9 +233,7 @@ function ActionButton({
     </Button>
   );
 }
-
 // ─── Main component ─────────────────────────────────────────
-
 export function WebdavSyncSection({
   config,
   s3Config,
@@ -271,20 +251,17 @@ export function WebdavSyncSection({
     key: string;
     password: string;
   } | null>(null);
-
   // ─── Sync type selector ────────────────────────────────────
   const [syncType, setSyncType] = useState<SyncType>(() =>
     s3Config?.enabled ? "s3" : "webdav",
   );
   const [pendingSyncType, setPendingSyncType] = useState<SyncType | null>(null);
-
   // Sync the selector when settings load asynchronously
   useEffect(() => {
     if (s3Config?.enabled) {
       setSyncType("s3");
     }
   }, [s3Config?.enabled]);
-
   // Local form state — credentials are only persisted on explicit "Save".
   const [form, setForm] = useState(() => ({
     baseUrl: config?.baseUrl ?? "",
@@ -294,7 +271,6 @@ export function WebdavSyncSection({
     profile: config?.profile ?? "default",
     autoSync: config?.autoSync ?? false,
   }));
-
   // ─── S3 form state ─────────────────────────────────────────
   // Keep the saved preset id so an explicit choice (MinIO, whose endpoint cannot
   // be inferred) survives reopening the page; fall back to the endpoint for
@@ -326,35 +302,29 @@ export function WebdavSyncSection({
   const [s3RemoteInfo, setS3RemoteInfo] = useState<RemoteSnapshotInfo | null>(
     null,
   );
-
   const activeS3Preset = S3_PRESETS.find((p) => p.id === s3Preset);
-
   // Preset selector — derived from initial URL, updated on user selection
   const [presetId, setPresetId] = useState(() =>
     detectPreset(config?.baseUrl ?? ""),
   );
-
   const activePreset = WEBDAV_PRESETS.find((p) => p.id === presetId);
-
   // Confirmation dialog state
   const [dialogType, setDialogType] = useState<DialogType>(null);
   const [remoteInfo, setRemoteInfo] = useState<RemoteSnapshotInfo | null>(null);
-  const [showAutoSyncConfirm, setShowAutoSyncConfirm] = useState(false);
+  const [autoSyncConfirmation, setAutoSyncConfirmation] =
+    useState<SyncType | null>(null);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   // Set while a cleared config is still on its way down from the parent, so
   // the sync effect below does not refill the form from the stale `config`.
   const awaitingClearedConfigRef = useRef(false);
-
   const closeDialog = useCallback(() => {
     setDialogType(null);
     setRemoteInfo(null);
   }, []);
-
   const closeS3Dialog = useCallback(() => {
     setS3DialogType(null);
     setS3RemoteInfo(null);
   }, []);
-
   // Cleanup justSaved timer on unmount
   useEffect(() => {
     return () => {
@@ -363,7 +333,6 @@ export function WebdavSyncSection({
         clearTimeout(s3JustSavedTimerRef.current);
     };
   }, []);
-
   // Sync form when config is loaded/updated from backend, but not while user is editing
   useEffect(() => {
     if (!config) {
@@ -386,13 +355,10 @@ export function WebdavSyncSection({
         !config.password &&
         pendingPasswordPreservationRef.current?.key === nextKey &&
         !!pendingPasswordPreservationRef.current.password;
-
       const nextPassword = shouldPreserveRedactedPassword
         ? pendingPasswordPreservationRef.current!.password
         : (config.password ?? "");
-
       pendingPasswordPreservationRef.current = null;
-
       return {
         baseUrl: nextBaseUrl,
         username: nextUsername,
@@ -405,7 +371,6 @@ export function WebdavSyncSection({
     setPasswordTouched(false);
     setPresetId(detectPreset(config.baseUrl ?? ""));
   }, [config, dirty]);
-
   // Sync S3 form when s3Config is loaded/updated from backend
   useEffect(() => {
     if (!s3Config || s3Dirty) return;
@@ -421,7 +386,6 @@ export function WebdavSyncSection({
     setS3Enabled(s3Config.enabled ?? false);
     setS3SecretTouched(false);
   }, [s3Config, s3Dirty]);
-
   const updateField = useCallback((field: keyof typeof form, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
     if (field === "password") {
@@ -434,7 +398,6 @@ export function WebdavSyncSection({
       justSavedTimerRef.current = null;
     }
   }, []);
-
   const handlePresetChange = useCallback((id: string) => {
     setPresetId(id);
     const preset = WEBDAV_PRESETS.find((p) => p.id === id);
@@ -448,7 +411,6 @@ export function WebdavSyncSection({
       }
     }
   }, []);
-
   // When user edits the URL, check if it still matches the current preset on blur
   const handleBaseUrlBlur = useCallback(() => {
     if (presetId === "custom") return;
@@ -457,11 +419,10 @@ export function WebdavSyncSection({
       setPresetId("custom");
     }
   }, [form.baseUrl, presetId]);
-
   const handleAutoSyncChange = useCallback(
     (checked: boolean) => {
       if (checked && !settings?.autoSyncConfirmed) {
-        setShowAutoSyncConfirm(true);
+        setAutoSyncConfirmation("webdav");
         return;
       }
       setForm((prev) => ({ ...prev, autoSync: checked }));
@@ -474,19 +435,33 @@ export function WebdavSyncSection({
     },
     [settings?.autoSyncConfirmed],
   );
-
   const handleAutoSyncConfirm = useCallback(async () => {
-    setShowAutoSyncConfirm(false);
-    await onAutoSave?.({ autoSyncConfirmed: true });
-    setForm((prev) => ({ ...prev, autoSync: true }));
-    setDirty(true);
-    setJustSaved(false);
-    if (justSavedTimerRef.current) {
-      clearTimeout(justSavedTimerRef.current);
-      justSavedTimerRef.current = null;
+    const target = autoSyncConfirmation;
+    setAutoSyncConfirmation(null);
+    try {
+      if (
+        !target ||
+        (await onAutoSave?.({ autoSyncConfirmed: true })) === false
+      )
+        return;
+      if (target === "s3") {
+        setS3AutoSync(true);
+        setS3Dirty(true);
+        setS3JustSaved(false);
+        if (s3JustSavedTimerRef.current)
+          clearTimeout(s3JustSavedTimerRef.current);
+      } else {
+        setForm((prev) => ({ ...prev, autoSync: true }));
+        setDirty(true);
+        setJustSaved(false);
+        if (justSavedTimerRef.current) clearTimeout(justSavedTimerRef.current);
+      }
+    } catch (error) {
+      toast.error(
+        t("settings.saveFailedGeneric", { defaultValue: "保存失败，请重试" }),
+      );
     }
-  }, [onAutoSave]);
-
+  }, [autoSyncConfirmation, onAutoSave, t]);
   const buildSettings = useCallback((): WebDavSyncSettings | null => {
     const baseUrl = form.baseUrl.trim();
     if (!baseUrl) return null;
@@ -501,9 +476,7 @@ export function WebdavSyncSection({
       autoSync: form.autoSync,
     };
   }, [form, passwordTouched]);
-
   // ─── Handlers ───────────────────────────────────────────
-
   const handleTest = useCallback(async () => {
     const settings = buildSettings();
     if (!settings) {
@@ -524,7 +497,6 @@ export function WebdavSyncSection({
       setActionState("idle");
     }
   }, [buildSettings, passwordTouched, t]);
-
   const handleSave = useCallback(async () => {
     const settings = buildSettings();
     if (!settings) {
@@ -561,7 +533,6 @@ export function WebdavSyncSection({
       setActionState("idle");
       return;
     }
-
     // Auto-test connection after save
     setActionState("testing");
     try {
@@ -577,7 +548,6 @@ export function WebdavSyncSection({
       setActionState("idle");
     }
   }, [buildSettings, form.password, passwordTouched, queryClient, t]);
-
   /** Forget the saved WebDAV config on this device; remote data is kept. */
   const handleClearConfirm = useCallback(async () => {
     setShowClearConfirm(false);
@@ -610,7 +580,6 @@ export function WebdavSyncSection({
       setActionState("idle");
     }
   }, [queryClient, t]);
-
   /** Fetch remote info, then open upload confirmation dialog. */
   const handleUploadClick = useCallback(async () => {
     if (dirty) {
@@ -634,7 +603,6 @@ export function WebdavSyncSection({
     }
     setActionState("idle");
   }, [dirty, t]);
-
   /** Actually perform the upload after user confirms. */
   const handleUploadConfirm = useCallback(async () => {
     if (dirty) {
@@ -657,7 +625,6 @@ export function WebdavSyncSection({
       setActionState("idle");
     }
   }, [closeDialog, dirty, queryClient, t]);
-
   /** Fetch remote info, then open download confirmation dialog. */
   const handleDownloadClick = useCallback(async () => {
     if (dirty) {
@@ -694,7 +661,6 @@ export function WebdavSyncSection({
       setActionState("idle");
     }
   }, [dirty, t]);
-
   /** Actually perform the download after user confirms. */
   const handleDownloadConfirm = useCallback(async () => {
     if (dirty) {
@@ -704,9 +670,13 @@ export function WebdavSyncSection({
     closeDialog();
     setActionState("downloading");
     try {
-      await settingsApi.webdavSyncDownload();
-      toast.success(t("settings.webdavSync.downloadSuccess"));
-      await queryClient.invalidateQueries();
+      const result = await settingsApi.webdavSyncDownload();
+      if (result.warning) {
+        toast.warning(result.warning);
+      } else {
+        toast.success(t("settings.webdavSync.downloadSuccess"));
+      }
+      await invalidateQueriesAfterChange(queryClient);
     } catch (error) {
       toast.error(
         t("settings.webdavSync.downloadFailed", {
@@ -717,9 +687,7 @@ export function WebdavSyncSection({
       setActionState("idle");
     }
   }, [closeDialog, dirty, queryClient, t]);
-
   // ─── S3 helpers ────────────────────────────────────────────
-
   const markS3Dirty = useCallback(() => {
     setS3Dirty(true);
     setS3JustSaved(false);
@@ -728,7 +696,6 @@ export function WebdavSyncSection({
       s3JustSavedTimerRef.current = null;
     }
   }, []);
-
   const handleS3PresetChange = useCallback(
     (id: string) => {
       setS3Preset(id);
@@ -736,7 +703,6 @@ export function WebdavSyncSection({
     },
     [markS3Dirty],
   );
-
   const buildS3Settings = useCallback((): S3SyncSettings => {
     return {
       enabled: s3Enabled,
@@ -762,9 +728,7 @@ export function WebdavSyncSection({
     s3Profile,
     s3Preset,
   ]);
-
   // ─── S3 Handlers ──────────────────────────────────────────
-
   const handleS3Test = useCallback(async () => {
     const s3Settings = buildS3Settings();
     if (!s3Settings.bucket) {
@@ -785,7 +749,6 @@ export function WebdavSyncSection({
       setS3ActionState("idle");
     }
   }, [buildS3Settings, s3SecretTouched, t]);
-
   const handleS3Save = useCallback(async () => {
     const s3Settings = buildS3Settings();
     if (!s3Settings.bucket) {
@@ -814,7 +777,6 @@ export function WebdavSyncSection({
       setS3ActionState("idle");
       return;
     }
-
     // Auto-test connection after save
     setS3ActionState("testing");
     try {
@@ -830,7 +792,6 @@ export function WebdavSyncSection({
       setS3ActionState("idle");
     }
   }, [buildS3Settings, s3SecretTouched, queryClient, t]);
-
   const handleS3UploadClick = useCallback(async () => {
     if (s3Dirty) {
       toast.error(t("settings.s3Sync.unsavedChanges"));
@@ -853,7 +814,6 @@ export function WebdavSyncSection({
     }
     setS3ActionState("idle");
   }, [s3Dirty, t]);
-
   const handleS3UploadConfirm = useCallback(async () => {
     if (s3Dirty) {
       toast.error(t("settings.s3Sync.unsavedChanges"));
@@ -875,7 +835,6 @@ export function WebdavSyncSection({
       setS3ActionState("idle");
     }
   }, [closeS3Dialog, s3Dirty, queryClient, t]);
-
   const handleS3DownloadClick = useCallback(async () => {
     if (s3Dirty) {
       toast.error(t("settings.s3Sync.unsavedChanges"));
@@ -908,7 +867,6 @@ export function WebdavSyncSection({
       setS3ActionState("idle");
     }
   }, [s3Dirty, t]);
-
   const handleS3DownloadConfirm = useCallback(async () => {
     if (s3Dirty) {
       toast.error(t("settings.s3Sync.unsavedChanges"));
@@ -917,9 +875,13 @@ export function WebdavSyncSection({
     closeS3Dialog();
     setS3ActionState("downloading");
     try {
-      await settingsApi.s3SyncDownload();
-      toast.success(t("settings.s3Sync.downloadSuccess"));
-      await queryClient.invalidateQueries();
+      const result = await settingsApi.s3SyncDownload();
+      if (result.warning) {
+        toast.warning(result.warning);
+      } else {
+        toast.success(t("settings.s3Sync.downloadSuccess"));
+      }
+      await invalidateQueriesAfterChange(queryClient);
     } catch (error) {
       toast.error(
         t("settings.s3Sync.downloadFailed", {
@@ -930,20 +892,16 @@ export function WebdavSyncSection({
       setS3ActionState("idle");
     }
   }, [closeS3Dialog, s3Dirty, queryClient, t]);
-
   // ─── Sync type switching with mutual exclusion ─────────────
-
   const handleSyncTypeChange = useCallback(
     (value: string) => {
       const next = value as SyncType;
       if (next === syncType) return;
-
       // Check if the "other" type is currently enabled
       const otherEnabled =
         next === "s3"
           ? config?.enabled !== false && Boolean(config?.baseUrl?.trim())
           : s3Config?.enabled === true;
-
       if (otherEnabled) {
         setPendingSyncType(next);
         setDialogType("mutual_exclusion");
@@ -953,7 +911,6 @@ export function WebdavSyncSection({
     },
     [syncType, config, s3Config],
   );
-
   const handleMutualExclusionConfirm = useCallback(async () => {
     if (!pendingSyncType) return;
     closeDialog();
@@ -988,14 +945,11 @@ export function WebdavSyncSection({
     }
     setPendingSyncType(null);
   }, [pendingSyncType, closeDialog, config, s3Config, queryClient, t]);
-
   const handleMutualExclusionCancel = useCallback(() => {
     closeDialog();
     setPendingSyncType(null);
   }, [closeDialog]);
-
   // ─── Derived state ──────────────────────────────────────
-
   const isLoading = actionState !== "idle";
   const isS3Loading = s3ActionState !== "idle";
   const hasSavedConfig = Boolean(
@@ -1004,7 +958,6 @@ export function WebdavSyncSection({
   const hasS3SavedConfig = Boolean(
     s3Config?.bucket?.trim() && s3Config?.accessKeyId?.trim(),
   );
-
   const lastSyncAt = config?.status?.lastSyncAt;
   const lastSyncDisplay = lastSyncAt
     ? new Date(lastSyncAt * 1000).toLocaleString()
@@ -1018,7 +971,6 @@ export function WebdavSyncSection({
     remoteInfo?.dbCompatVersion,
   );
   const remoteIsLegacy = remoteInfo?.layout === "legacy";
-
   const s3LastSyncAt = s3Config?.status?.lastSyncAt;
   const s3LastSyncDisplay = s3LastSyncAt
     ? new Date(s3LastSyncAt * 1000).toLocaleString()
@@ -1026,9 +978,7 @@ export function WebdavSyncSection({
   const s3LastError = s3Config?.status?.lastError?.trim();
   const s3ShowAutoSyncError =
     !!s3LastError && s3Config?.status?.lastErrorSource === "auto";
-
   // ─── Render ─────────────────────────────────────────────
-
   return (
     <section className="space-y-4">
       <header className="space-y-2">
@@ -1473,6 +1423,10 @@ export function WebdavSyncSection({
                 <Switch
                   checked={s3AutoSync}
                   onCheckedChange={(checked) => {
+                    if (checked && !settings?.autoSyncConfirmed) {
+                      setAutoSyncConfirmation("s3");
+                      return;
+                    }
                     setS3AutoSync(checked);
                     markS3Dirty();
                   }}
@@ -1920,13 +1874,13 @@ export function WebdavSyncSection({
 
       {/* ─── Auto-sync confirmation dialog ────────────────── */}
       <ConfirmDialog
-        isOpen={showAutoSyncConfirm}
+        isOpen={autoSyncConfirmation !== null}
         variant="info"
         title={t("confirm.autoSync.title")}
         message={t("confirm.autoSync.message")}
         confirmText={t("confirm.autoSync.confirm")}
         onConfirm={() => void handleAutoSyncConfirm()}
-        onCancel={() => setShowAutoSyncConfirm(false)}
+        onCancel={() => setAutoSyncConfirmation(null)}
       />
 
       {/* ─── Clear WebDAV config confirmation dialog ──────── */}

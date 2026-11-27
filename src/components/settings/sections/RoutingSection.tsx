@@ -1,9 +1,24 @@
-import { useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
-import type { TFunction } from "i18next";
-import { useQueries } from "@tanstack/react-query";
-import { toast } from "@/lib/toast";
-import { ChevronRight, Loader2 } from "lucide-react";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { MODE_TONE } from "@/components/providers/mode/ModeTabs";
+import { AutoFailoverConfigPanel } from "@/components/proxy/AutoFailoverConfigPanel";
+import { RectifierConfigPanel } from "@/components/settings/RectifierConfigPanel";
+import {
+  SettingsBlock,
+  SettingsCard,
+  SettingsRow,
+  SettingsSwitchRow,
+} from "@/components/settings/SettingsLayout";
+import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
+import { Button } from "@/components/ui/button";
+import { DisabledReason, HelpTip } from "@/components/ui/help-tip";
+import { Input } from "@/components/ui/input";
+import { SegmentedControl } from "@/components/ui/segmented-control";
+import {
+  MODE_APP_IDS,
+  PROXY_APP_IDS,
+  type ProxyAppId,
+} from "@/config/appConfig";
+import { useProxyStatus } from "@/hooks/useProxyStatus";
 import type { AppId } from "@/lib/api";
 import { proxyApi } from "@/lib/api/proxy";
 import { useProvidersQuery } from "@/lib/query";
@@ -14,35 +29,18 @@ import {
   useSetProxyClientHost,
   useUpdateGlobalProxyConfig,
 } from "@/lib/query/proxy";
-import { useProxyStatus } from "@/hooks/useProxyStatus";
-import {
-  MODE_APP_IDS,
-  PROXY_APP_IDS,
-  type ProxyAppId,
-} from "@/config/appConfig";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { HelpTip, DisabledReason } from "@/components/ui/help-tip";
-import { SegmentedControl } from "@/components/ui/segmented-control";
-import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { AutoFailoverConfigPanel } from "@/components/proxy/AutoFailoverConfigPanel";
-import { RectifierConfigPanel } from "@/components/settings/RectifierConfigPanel";
-import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
-import { MODE_TONE } from "@/components/providers/mode/ModeTabs";
-import {
-  SettingsBlock,
-  SettingsCard,
-  SettingsRow,
-  SettingsSwitchRow,
-} from "@/components/settings/SettingsLayout";
-import type { AppMode } from "@/types/proxy";
+import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
-
+import type { AppMode } from "@/types/proxy";
+import { useQueries } from "@tanstack/react-query";
+import type { TFunction } from "i18next";
+import { ChevronRight, Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 interface RoutingSectionProps {
   /** 「前往」打开这个应用的供应商页 */
   onOpenApp: (app: AppId) => void;
 }
-
 const isValidListenAddress = (address: string): boolean => {
   if (address === "localhost" || address === "0.0.0.0") return true;
   if (/^(\d{1,3}\.){3}\d{1,3}$/.test(address)) {
@@ -57,7 +55,6 @@ const isValidListenAddress = (address: string): boolean => {
     return false;
   }
 };
-
 /** 客户端地址：空（按监听地址）、IP 或主机名；`0.0.0.0` / `::` 客户端连不上 */
 const isValidClientHost = (host: string): boolean => {
   if (host === "") return true;
@@ -69,7 +66,6 @@ const isValidClientHost = (host: string): boolean => {
     host,
   );
 };
-
 /** 没设客户端地址时写给客户端的主机，和后端 `proxy_origin` 一致 */
 const defaultClientHost = (listenAddress: string): string =>
   listenAddress === "0.0.0.0"
@@ -77,7 +73,6 @@ const defaultClientHost = (listenAddress: string): string =>
     : listenAddress === "::"
       ? "::1"
       : listenAddress;
-
 function formatUptime(seconds: number, t: TFunction) {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
@@ -85,7 +80,6 @@ function formatUptime(seconds: number, t: TFunction) {
     ? t("routingSettings.uptimeHours", { hours, minutes })
     : t("routingSettings.uptimeMinutes", { minutes: Math.max(minutes, 0) });
 }
-
 /**
  * 设置 → 本地路由（v7）：服务（状态、统计、启停、监听地址、请求日志）→ 正在使用路由的应用
  * → 全部回到直连 → 故障转移参数 → 整流与优化。进出路由在各应用页的模式 tab 里。
@@ -105,21 +99,30 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
   const [addressError, setAddressError] = useState<string | null>(null);
   const [portError, setPortError] = useState<string | null>(null);
   const [clientHost, setClientHost] = useState("");
+  const [lanToken, setLanToken] = useState("");
+  const [loadingLanToken, setLoadingLanToken] = useState(false);
+  const loadLanToken = async (rotate = false) => {
+    setLoadingLanToken(true);
+    try {
+      setLanToken(await proxyApi.getLanToken(rotate));
+    } catch (error) {
+      toast.error(String(error));
+    } finally {
+      setLoadingLanToken(false);
+    }
+  };
   const [clientHostError, setClientHostError] = useState<string | null>(null);
   const [confirmExitAll, setConfirmExitAll] = useState(false);
   const [failoverApp, setFailoverApp] = useState<ProxyAppId>("claude");
-
   useEffect(() => {
     if (config) {
       setAddress(config.listenAddress);
       setPort(String(config.listenPort));
     }
   }, [config]);
-
   useEffect(() => {
     if (savedClientHost !== undefined) setClientHost(savedClientHost);
   }, [savedClientHost]);
-
   const modeQueries = useQueries({
     queries: MODE_APP_IDS.map((app) => ({
       queryKey: ["providers", app, "mode"],
@@ -129,11 +132,7 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
   const providerQueries = {
     claude: useProvidersQuery("claude").data,
     codex: useProvidersQuery("codex").data,
-    gemini: useProvidersQuery("gemini").data,
-    grokbuild: useProvidersQuery("grokbuild").data,
-    "claude-desktop": useProvidersQuery("claude-desktop").data,
   };
-
   const usingApps = MODE_APP_IDS.flatMap((app, index) => {
     const view = modeQueries[index]?.data;
     if (!view || view.mode === "direct") return [];
@@ -144,7 +143,6 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
     return [{ app, mode: view.mode as AppMode, routeName }];
   });
   const usingCount = usingApps.length;
-
   const saveListen = async () => {
     if (!config) return;
     const trimmed = address.trim();
@@ -165,12 +163,10 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
       // useUpdateGlobalProxyConfig 的 onSuccess / onError 已经弹过 toast
     }
   };
-
   const listenDirty =
     !!config &&
     (address.trim() !== config.listenAddress ||
       port.trim() !== String(config.listenPort));
-
   const saveClientHost = async () => {
     const trimmed = clientHost.trim();
     const ok = isValidClientHost(trimmed);
@@ -182,7 +178,6 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
       // useSetProxyClientHost 的 onSuccess / onError 已经弹过 toast
     }
   };
-
   const toggleLogging = async (enabled: boolean) => {
     if (!config) return;
     try {
@@ -191,10 +186,8 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
       toast.error(t("proxy.logging.failed"));
     }
   };
-
   const stopReason =
     running && usingCount > 0 ? t("routingSettings.stopBlocked") : undefined;
-
   return (
     <>
       <SettingsBlock title={t("routingSettings.service")}>
@@ -373,6 +366,65 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
               </div>
             }
           />
+          <SettingsRow
+            label={t("routingSettings.lanToken", {
+              defaultValue: "局域网访问令牌",
+            })}
+            help={{
+              title: t("routingSettings.lanToken", {
+                defaultValue: "局域网访问令牌",
+              }),
+              body: t("routingSettings.lanTokenHelp", {
+                defaultValue:
+                  "远程客户端必须将此令牌作为 API Key（Authorization: Bearer、x-api-key 或 x-goog-api-key），或通过 x-cc-switch-token 请求头发送。仅 TCP 回环连接免验证；不信任 X-Forwarded-For。请只在可信网络或 TLS 隧道中使用。重置立即撤销旧令牌，Claude Desktop 仍使用其专用令牌。",
+              }),
+            }}
+            control={
+              <div className="flex items-center gap-2">
+                <Input
+                  type="password"
+                  readOnly
+                  value={lanToken}
+                  aria-label={t("routingSettings.lanToken", {
+                    defaultValue: "局域网访问令牌",
+                  })}
+                />
+                <Button
+                  variant="neutral"
+                  disabled={loadingLanToken}
+                  onClick={() => void loadLanToken()}
+                >
+                  {t("routingSettings.loadLanToken", {
+                    defaultValue: "读取令牌",
+                  })}
+                </Button>
+                <Button
+                  variant="neutral"
+                  disabled={loadingLanToken || !lanToken}
+                  onClick={() => void loadLanToken(true)}
+                >
+                  {t("routingSettings.rotateLanToken", {
+                    defaultValue: "重置令牌",
+                  })}
+                </Button>
+                <Button
+                  variant="neutral"
+                  disabled={!lanToken}
+                  onClick={() => {
+                    void navigator.clipboard.writeText(lanToken).then(
+                      () =>
+                        toast.success(
+                          t("common.copied", { defaultValue: "已复制" }),
+                        ),
+                      (error) => toast.error(String(error)),
+                    );
+                  }}
+                >
+                  {t("common.copy", { defaultValue: "复制" })}
+                </Button>
+              </div>
+            }
+          />
           <SettingsSwitchRow
             label={t("routingSettings.logging")}
             help={{
@@ -472,7 +524,6 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
     </>
   );
 }
-
 function UsingAppRow({
   app,
   modeLabel,

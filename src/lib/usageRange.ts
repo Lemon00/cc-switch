@@ -1,17 +1,13 @@
 import type { UsageRangePreset, UsageRangeSelection } from "@/types/usage";
-
 const DAY_SECONDS = 24 * 60 * 60;
-
 export interface ResolvedUsageRange {
   startDate: number;
   endDate: number;
 }
-
 function getStartOfLocalDayDate(nowMs: number): Date {
   const date = new Date(nowMs);
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
-
 function getPresetLookbackStart(
   preset: Exclude<UsageRangePreset, "today" | "1d" | "all" | "custom">,
   nowMs: number,
@@ -27,13 +23,11 @@ function getPresetLookbackStart(
   );
   return Math.floor(start.getTime() / 1000);
 }
-
 export function resolveUsageRange(
   selection: UsageRangeSelection,
   nowMs: number = Date.now(),
 ): ResolvedUsageRange {
   const endDate = Math.floor(nowMs / 1000);
-
   switch (selection.preset) {
     case "today":
       return {
@@ -67,10 +61,14 @@ export function resolveUsageRange(
     }
   }
 }
-
 export function getUsageRangePresetLabel(
   preset: UsageRangePreset,
-  t: (key: string, options?: { defaultValue?: string }) => string,
+  t: (
+    key: string,
+    options?: {
+      defaultValue?: string;
+    },
+  ) => string,
 ): string {
   switch (preset) {
     case "today":

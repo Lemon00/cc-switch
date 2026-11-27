@@ -8,211 +8,12 @@
 //! 「我的图标」是用户上传过的图片，存在 settings 的 `custom_icons` 键下，供选择器复用。
 //! 前端渲染时另有一道同样的长度、宽高检查兜底（`src/utils/customIcon.ts`）。
 
-use std::io::Cursor;
-
-use base64::Engine;
-use rusqlite::{params, Connection, OptionalExtension};
-
-use crate::database::{CustomIconEntry, Database, CUSTOM_ICONS_KEY};
+use crate::database::{CustomIconEntry, Database};
 use crate::error::AppError;
 
-/// 自定义图标的前缀，和前端 `src/utils/customIcon.ts` 的 `CUSTOM_ICON_PREFIX` 一致。
-pub const CUSTOM_ICON_PREFIX: &str = "data:image/png;base64,";
-
-/// 整个 data URI 的长度上限，和前端的 `MAX_CUSTOM_ICON_LENGTH` 一致。
-/// 前端输出 96×96 的 PNG，最坏情况（不可压缩）base64 后约 50 KB。
-pub const MAX_CUSTOM_ICON_LENGTH: usize = 64 * 1024;
-
-/// PNG 宽高上限，和前端的 `MAX_CUSTOM_ICON_DIMENSION` 一致。前端只输出 96×96，留出余量即可。
-const MAX_CUSTOM_ICON_DIMENSION: u32 = 256;
-
-/// 解码时允许分配的内存：256×256 的 16 位 RGBA 是 512 KiB，留一倍余量
-const DECODE_LIMIT_BYTES: usize = 1024 * 1024;
-
-/// 是不是自定义图标（任何 `data:` 开头的值都算，交给 [`validate_icon`] 判断是否合法）。
-pub fn is_custom_icon(icon: &str) -> bool {
-    icon.starts_with("data:")
-}
-
-/// 保存供应商前校验 `icon`。
-///
-/// 只管 `data:` 开头的值；其余字符串照旧当图标名放行（找不到对应内置图标时前端显示首字母），
-/// 否则库里已有的旧值会让用户连编辑都保存不了。
-pub fn validate_icon(icon: Option<&str>) -> Result<(), AppError> {
-    match icon {
-        Some(icon) if is_custom_icon(icon) && !is_valid_custom_icon(icon) => {
-            Err(AppError::localized(
-                "provider.icon.invalid",
-                "自定义图标无效，请重新上传",
-                "The custom icon is invalid, please upload it again",
-            ))
-        }
-        _ => Ok(()),
-    }
-}
-
-/// 完整解码一遍：签名、块校验和、像素数据都要完好，宽高在上限内，解码内存有上限。
-fn is_valid_custom_icon(icon: &str) -> bool {
-    if icon.len() > MAX_CUSTOM_ICON_LENGTH {
-        return false;
-    }
-    let Some(encoded) = icon.strip_prefix(CUSTOM_ICON_PREFIX) else {
-        return false;
-    };
-    let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(encoded) else {
-        return false;
-    };
-    let decoder = png::Decoder::new_with_limits(
-        Cursor::new(bytes.as_slice()),
-        png::Limits {
-            bytes: DECODE_LIMIT_BYTES,
-        },
-    );
-    let Ok(mut reader) = decoder.read_info() else {
-        return false;
-    };
-    let (width, height) = reader.info().size();
-    // 先看宽高再分配像素缓冲区
-    if width == 0
-        || height == 0
-        || width > MAX_CUSTOM_ICON_DIMENSION
-        || height > MAX_CUSTOM_ICON_DIMENSION
-    {
-        return false;
-    }
-    let Some(size) = reader.output_buffer_size() else {
-        return false;
-    };
-    let mut buf = vec![0; size];
-    reader.next_frame(&mut buf).is_ok() && reader.finish().is_ok()
-}
-
-/// SQL 导入、云同步在替换主库前调用：把暂存库里不合格的自定义图标清空（退回首字母），
-/// 其余数据原样保留，不让一个坏图标挡住整份备份。返回清掉的个数。
-///
-/// 图标存在三处：`providers.icon` 列、settings 表 `universal_providers` 键下的 JSON
-/// （统一供应商，同步到应用时会原样复制给子供应商），以及 `custom_icons` 键下的图标库
-/// （选中后原样写进供应商）。三处都要清。
-pub fn strip_invalid_custom_icons(conn: &Connection) -> Result<usize, AppError> {
-    let db_err = |e: rusqlite::Error| AppError::Database(e.to_string());
-
-    let rows: Vec<(String, String, String)> = {
-        let mut stmt = conn
-            .prepare("SELECT id, app_type, icon FROM providers WHERE icon LIKE 'data:%'")
-            .map_err(db_err)?;
-        let rows = stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
-            .map_err(db_err)?
-            .collect::<Result<_, _>>()
-            .map_err(db_err)?;
-        rows
-    };
-    let mut stripped = 0;
-    for (id, app_type, icon) in rows {
-        if is_valid_custom_icon(&icon) {
-            continue;
-        }
-        conn.execute(
-            "UPDATE providers SET icon = NULL, icon_color = NULL WHERE id = ?1 AND app_type = ?2",
-            params![id, app_type],
-        )
-        .map_err(db_err)?;
-        stripped += 1;
-    }
-
-    stripped += strip_invalid_universal_icons(conn)?;
-    stripped += strip_invalid_library_icons(conn)?;
-
-    if stripped > 0 {
-        log::warn!("导入的数据里有 {stripped} 个无效的自定义图标，已清空");
-    }
-    Ok(stripped)
-}
-
-/// 按 JSON 原样改写，不经过 `UniversalProvider` 结构体：较新版本写进来的未知字段要保留。
-/// JSON 解析不了就不动，交给读取它的地方报错。
-fn strip_invalid_universal_icons(conn: &Connection) -> Result<usize, AppError> {
-    let db_err = |e: rusqlite::Error| AppError::Database(e.to_string());
-    let raw: Option<String> = conn
-        .query_row(
-            "SELECT value FROM settings WHERE key = 'universal_providers'",
-            [],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(db_err)?;
-    let Some(raw) = raw else {
-        return Ok(0);
-    };
-    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&raw) else {
-        return Ok(0);
-    };
-    let Some(providers) = value.as_object_mut() else {
-        return Ok(0);
-    };
-    let mut stripped = 0;
-    for provider in providers.values_mut() {
-        let Some(provider) = provider.as_object_mut() else {
-            continue;
-        };
-        let invalid = provider
-            .get("icon")
-            .and_then(|icon| icon.as_str())
-            .is_some_and(|icon| is_custom_icon(icon) && !is_valid_custom_icon(icon));
-        if invalid {
-            provider.remove("icon");
-            provider.remove("iconColor");
-            stripped += 1;
-        }
-    }
-    if stripped > 0 {
-        conn.execute(
-            "UPDATE settings SET value = ?1 WHERE key = 'universal_providers'",
-            params![value.to_string()],
-        )
-        .map_err(db_err)?;
-    }
-    Ok(stripped)
-}
-
-/// 图标库里 `data` 不是合格自定义图标的条目整条删掉。和统一供应商一样按 JSON 改写，
-/// 保留其余条目的未知字段；数组解析不了就不动（读取时按空库处理）。
-fn strip_invalid_library_icons(conn: &Connection) -> Result<usize, AppError> {
-    let db_err = |e: rusqlite::Error| AppError::Database(e.to_string());
-    let raw: Option<String> = conn
-        .query_row(
-            "SELECT value FROM settings WHERE key = ?1",
-            [CUSTOM_ICONS_KEY],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(db_err)?;
-    let Some(raw) = raw else {
-        return Ok(0);
-    };
-    let Ok(mut entries) = serde_json::from_str::<Vec<serde_json::Value>>(&raw) else {
-        return Ok(0);
-    };
-    let before = entries.len();
-    entries.retain(|entry| {
-        entry
-            .get("data")
-            .and_then(|data| data.as_str())
-            .is_some_and(is_valid_custom_icon)
-    });
-    let stripped = before - entries.len();
-    if stripped > 0 {
-        conn.execute(
-            "UPDATE settings SET value = ?1 WHERE key = ?2",
-            params![
-                serde_json::Value::Array(entries).to_string(),
-                CUSTOM_ICONS_KEY
-            ],
-        )
-        .map_err(db_err)?;
-    }
-    Ok(stripped)
-}
+pub use crate::database::icon_sanitizer::strip_invalid_custom_icons;
+use crate::icon::is_valid_custom_icon;
+pub use crate::icon::{is_custom_icon, validate_icon, CUSTOM_ICON_PREFIX, MAX_CUSTOM_ICON_LENGTH};
 
 // --- 我的图标（图标库） ---
 
@@ -277,32 +78,32 @@ pub fn add_library_icon(
             "The custom icon is invalid, please upload it again",
         ));
     }
-    let mut icons = db.get_custom_icons()?;
-    if let Some(existing) = icons.iter().find(|icon| icon.data == data) {
-        return Ok(AddLibraryIconResult {
-            icon: existing.clone(),
-            existed: true,
-        });
-    }
-    if icons.len() >= MAX_LIBRARY_ICONS {
-        return Err(AppError::localized(
-            "customIcon.libraryFull",
-            format!("「我的图标」最多存 {MAX_LIBRARY_ICONS} 个，请先删掉一些"),
-            format!("My Icons holds up to {MAX_LIBRARY_ICONS} icons, please delete some first"),
-        ));
-    }
-    let icon = CustomIconEntry {
-        id: uuid::Uuid::new_v4().to_string(),
-        name,
-        data: data.to_string(),
-        created_at: chrono::Utc::now().timestamp_millis(),
-        extra: serde_json::Map::new(),
-    };
-    icons.insert(0, icon.clone());
-    db.save_custom_icons(&icons)?;
-    Ok(AddLibraryIconResult {
-        icon,
-        existed: false,
+    db.mutate_custom_icons(|icons| {
+        if let Some(existing) = icons.iter().find(|icon| icon.data == data) {
+            return Ok(AddLibraryIconResult {
+                icon: existing.clone(),
+                existed: true,
+            });
+        }
+        if icons.len() >= MAX_LIBRARY_ICONS {
+            return Err(AppError::localized(
+                "customIcon.libraryFull",
+                format!("「我的图标」最多存 {MAX_LIBRARY_ICONS} 个，请先删掉一些"),
+                format!("My Icons holds up to {MAX_LIBRARY_ICONS} icons, please delete some first"),
+            ));
+        }
+        let icon = CustomIconEntry {
+            id: uuid::Uuid::new_v4().to_string(),
+            name,
+            data: data.to_string(),
+            created_at: chrono::Utc::now().timestamp_millis(),
+            extra: serde_json::Map::new(),
+        };
+        icons.insert(0, icon.clone());
+        Ok(AddLibraryIconResult {
+            icon,
+            existed: false,
+        })
     })
 }
 
@@ -312,32 +113,32 @@ pub fn rename_library_icon(
     name: &str,
 ) -> Result<CustomIconEntry, AppError> {
     let name = normalize_library_name(name)?;
-    let mut icons = db.get_custom_icons()?;
-    let icon = icons
-        .iter_mut()
-        .find(|icon| icon.id == id)
-        .ok_or_else(library_icon_not_found)?;
-    icon.name = name;
-    let renamed = icon.clone();
-    db.save_custom_icons(&icons)?;
-    Ok(renamed)
+    db.mutate_custom_icons(|icons| {
+        let icon = icons
+            .iter_mut()
+            .find(|icon| icon.id == id)
+            .ok_or_else(library_icon_not_found)?;
+        icon.name = name;
+        let renamed = icon.clone();
+        Ok(renamed)
+    })
 }
 
 /// 只删图标库里的条目，已经选了这张图的供应商自己存着图片，不受影响。
 /// 条目已经不在（比如另一台设备删了又同步过来）时什么都不做。
 pub fn delete_library_icon(db: &Database, id: &str) -> Result<(), AppError> {
-    let mut icons = db.get_custom_icons()?;
-    let before = icons.len();
-    icons.retain(|icon| icon.id != id);
-    if icons.len() != before {
-        db.save_custom_icons(&icons)?;
-    }
-    Ok(())
+    db.mutate_custom_icons(|icons| {
+        icons.retain(|icon| icon.id != id);
+        Ok(())
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::CUSTOM_ICONS_KEY;
+    use base64::Engine;
+    use rusqlite::{params, Connection};
 
     /// 用真正的编码器生成一张 PNG
     fn encode_png(width: u32, height: u32) -> Vec<u8> {
@@ -358,6 +159,44 @@ mod tests {
             "{CUSTOM_ICON_PREFIX}{}",
             base64::engine::general_purpose::STANDARD.encode(bytes)
         )
+    }
+
+    #[test]
+    fn concurrent_library_uploads_preserve_every_icon() {
+        let db = Database::memory().unwrap();
+        let barrier = std::sync::Barrier::new(8);
+        std::thread::scope(|scope| {
+            for size in 1..=8 {
+                let db = &db;
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    let data = data_uri(&encode_png(size, size));
+                    barrier.wait();
+                    add_library_icon(db, &format!("Icon {size}"), &data).unwrap();
+                });
+            }
+        });
+        assert_eq!(db.get_custom_icons().unwrap().len(), 8);
+    }
+
+    #[test]
+    fn concurrent_identical_uploads_share_one_entry() {
+        let db = Database::memory().unwrap();
+        let data = data_uri(&encode_png(2, 2));
+        let barrier = std::sync::Barrier::new(8);
+        let added = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    barrier.wait();
+                    if !add_library_icon(&db, "Icon", &data).unwrap().existed {
+                        added.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    }
+                });
+            }
+        });
+        assert_eq!(added.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(db.get_custom_icons().unwrap().len(), 1);
     }
 
     #[test]

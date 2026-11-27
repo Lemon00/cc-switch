@@ -5,10 +5,12 @@ import {
   extractCodexModelName,
   extractCodexWireApi,
 } from "@/utils/providerConfigUtils";
-
 const expectedChatPresets = new Map<
   string,
-  { baseUrl: string; contextWindows: Record<string, number> }
+  {
+    baseUrl: string;
+    contextWindows: Record<string, number>;
+  }
 >([
   // 火山 Agent Plan / Coding Plan 与 BytePlus 国际站（coding/v3）、智谱 GLM、
   // Kimi 两条（开放平台 + Kimi Code）均已切原生 Responses，见下方 native 清单
@@ -117,7 +119,6 @@ const expectedChatPresets = new Map<
     },
   ],
 ]);
-
 describe("Codex Chat provider presets", () => {
   it.each([
     ["StepFun API", "https://api.stepfun.com/v1", "step-3.7-flash"],
@@ -132,7 +133,6 @@ describe("Codex Chat provider presets", () => {
     "connects %s to its native Responses endpoint",
     (name, baseUrl, modelId) => {
       const preset = codexProviderPresets.find((item) => item.name === name);
-
       expect(preset, `${name} preset`).toBeDefined();
       expect(preset?.apiFormat).toBe("openai_responses");
       expect(extractCodexBaseUrl(preset?.config)).toBe(baseUrl);
@@ -144,7 +144,6 @@ describe("Codex Chat provider presets", () => {
       expect(preset?.promptCacheRouting).toBeUndefined();
     },
   );
-
   it("drops prompt cache routing once Kimi Coding is direct-connect", () => {
     // promptCacheRouting 只被 Responses→Chat 转换层消费（forwarder 在转换后
     // 重注入 prompt_cache_key）。原生直连由 Codex 自己发 prompt_cache_key，
@@ -152,11 +151,9 @@ describe("Codex Chat provider presets", () => {
     const preset = codexProviderPresets.find(
       (item) => item.name === "Kimi For Coding",
     );
-
     expect(preset?.apiFormat).toBe("openai_responses");
     expect(preset?.promptCacheRouting).toBeUndefined();
   });
-
   it("keeps open-weight Qwen models scoped to pay-as-you-go catalogs", () => {
     for (const name of ["千问AI平台", "QwenCloud"]) {
       const preset = codexProviderPresets.find((item) => item.name === name);
@@ -182,11 +179,9 @@ describe("Codex Chat provider presets", () => {
       expect(models).not.toContain("qwen3.8-27b");
     }
   });
-
   it("marks migrated Chat Completions presets for local routing", () => {
     for (const [name, expected] of expectedChatPresets) {
       const preset = codexProviderPresets.find((item) => item.name === name);
-
       expect(preset, `${name} preset`).toBeDefined();
       expect(preset?.apiFormat).toBe("openai_chat");
       expect(extractCodexBaseUrl(preset?.config)).toBe(expected.baseUrl);
@@ -206,11 +201,13 @@ describe("Codex Chat provider presets", () => {
       ).toEqual(expected.contextWindows);
     }
   });
-
   it("uses native Responses API for migrated CN providers without local route mapping", () => {
     const nativeResponsesPresets = new Map<
       string,
-      { baseUrl?: string; contextWindows: Record<string, number> }
+      {
+        baseUrl?: string;
+        contextWindows: Record<string, number>;
+      }
     >([
       // 官方 Codex 文档确认 Agent Plan /api/plan/v3 与 Coding Plan
       // /api/coding/v3 均支持 Responses API；BytePlus 国际站 coding/v3
@@ -339,10 +336,8 @@ describe("Codex Chat provider presets", () => {
         },
       ],
     ]);
-
     for (const [name, expected] of nativeResponsesPresets) {
       const preset = codexProviderPresets.find((item) => item.name === name);
-
       expect(preset, `${name} preset`).toBeDefined();
       expect(preset?.apiFormat).toBe("openai_responses");
       if (expected.baseUrl) {
@@ -371,7 +366,6 @@ describe("Codex Chat provider presets", () => {
       expect(preset?.codexChatReasoning).toBeUndefined();
     }
   });
-
   it("ships per-model reasoningLevels for OpenCode Go mirroring models.dev", () => {
     // Zen 网关的合法 effort 档位是逐模型的（models.dev reasoning_options，
     // 2026-09-10）：统一并集映射会把 high 发给仅声明 max 的 kimi-k3.1-pro（原 kimi-k3），
@@ -379,7 +373,6 @@ describe("Codex Chat provider presets", () => {
     const preset = codexProviderPresets.find(
       (item) => item.name === "OpenCode Go",
     );
-
     expect(preset, "OpenCode Go preset").toBeDefined();
     expect(preset?.codexChatReasoning?.effortValueMode).toBe("zen");
     expect(

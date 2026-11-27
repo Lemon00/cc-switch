@@ -231,7 +231,10 @@ pub async fn migrate_skill_storage(
     target: SkillStorageLocation,
     app_state: State<'_, AppState>,
 ) -> Result<MigrationResult, String> {
-    SkillService::migrate_storage(&app_state.db, target).map_err(|e| e.to_string())
+    run_db_task(&app_state, move |state| {
+        SkillService::migrate_storage(&state.db, target).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// CC Switch 目录下放 Skill 主副本的位置（改过配置目录就是改后的）

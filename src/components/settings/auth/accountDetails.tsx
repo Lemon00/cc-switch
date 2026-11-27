@@ -1,5 +1,4 @@
 import { Fragment, type ReactNode } from "react";
-
 /**
  * 账号第二行的登录日期（「9月12日」；不是今年的带上年份）。
  * authenticated_at 是秒；0 / 缺失时不写。
@@ -23,7 +22,6 @@ export function signedInDate(
     return date.toLocaleDateString();
   }
 }
-
 /** 文案里的标识符（id_token）用等宽字体 */
 export function withMonoToken(text: string, token: string): ReactNode {
   const parts = text.split(token);

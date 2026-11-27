@@ -1,14 +1,39 @@
+import { ToolErrorMessage } from "@/components/settings/ToolErrorMessage";
+import { ToolInstallRow } from "@/components/settings/ToolInstallRow";
+import { ToolUpgradeConfirmDialog } from "@/components/settings/ToolUpgradeConfirmDialog";
+import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
+import { AppPageHeader } from "@/components/shell/AppPageHeader";
+import { Button } from "@/components/ui/button";
 import {
-  createContext,
-  useContext,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-} from "react";
-import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { HelpTip } from "@/components/ui/help-tip";
+import { HoverTip } from "@/components/ui/hover-tip";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { DEFAULT_VISIBLE_APPS, orderAppIds } from "@/config/appConfig";
+import { useSettings } from "@/hooks/useSettings";
+import type { AppId } from "@/lib/api";
+import type { ToolInstallationReport } from "@/lib/api/settings";
+import { cn } from "@/lib/utils";
+import { isUpdateAvailable } from "@/lib/version";
+import type { VisibleApps } from "@/types";
 import {
   closestCenter,
   DndContext,
@@ -16,9 +41,9 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
+  type DragEndEvent,
   type DraggableAttributes,
   type DraggableSyntheticListeners,
-  type DragEndEvent,
   type Modifier,
 } from "@dnd-kit/core";
 import {
@@ -42,45 +67,18 @@ import {
   RefreshCw,
   Trash2,
 } from "lucide-react";
-import type { AppId } from "@/lib/api";
-import { providersApi } from "@/lib/api/providers";
-import type { ToolInstallationReport } from "@/lib/api/settings";
-import type { VisibleApps } from "@/types";
-import { DEFAULT_VISIBLE_APPS, orderAppIds } from "@/config/appConfig";
-import { useSettings } from "@/hooks/useSettings";
-import { isUpdateAvailable } from "@/lib/version";
-import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
-import { HelpTip } from "@/components/ui/help-tip";
-import { HoverTip } from "@/components/ui/hover-tip";
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { AppPageHeader } from "@/components/shell/AppPageHeader";
-import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
-import { ToolUpgradeConfirmDialog } from "@/components/settings/ToolUpgradeConfirmDialog";
-import { ToolInstallRow } from "@/components/settings/ToolInstallRow";
-import { ToolErrorMessage } from "@/components/settings/ToolErrorMessage";
-import { ToolUninstallConfirmDialog } from "./ToolUninstallConfirmDialog";
+  createContext,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
+import { useTranslation } from "react-i18next";
 import { ManualUninstallDialog } from "./ManualUninstallDialog";
+import { ToolUninstallConfirmDialog } from "./ToolUninstallConfirmDialog";
 import {
   ENV_BADGE_CONFIG,
   ONE_CLICK_INSTALL_COMMANDS,
@@ -93,7 +91,6 @@ import {
   type ToolLifecycleAction,
   type ToolName,
 } from "./useToolManagement";
-
 /** 安装来源的显示名：只标认得出的，认不出（system）就不标，免得标错。 */
 const SOURCE_LABEL: Record<string, string> = {
   homebrew: "Homebrew",
@@ -106,19 +103,18 @@ const SOURCE_LABEL: Record<string, string> = {
   scoop: "Scoop",
   pip: "pip",
 };
-
-type Row = { kind: "tool"; tool: ToolName } | { kind: "desktop" };
-
+type Row = {
+  tool: ToolName;
+};
 const ROW_BY_APP = Object.fromEntries([
-  ["claude-desktop", { kind: "desktop" }],
-  ...TOOL_NAMES.map((tool) => [TOOL_APP_IDS[tool], { kind: "tool", tool }]),
+  ...TOOL_NAMES.map((tool) => [TOOL_APP_IDS[tool], { tool }]),
 ]) as Record<AppId, Row>;
-
-type RowSection = { key: string; title: string; rows: Row[] };
-
-const rowKey = (row: Row): AppId =>
-  row.kind === "desktop" ? "claude-desktop" : TOOL_APP_IDS[row.tool];
-
+type RowSection = {
+  key: string;
+  title: string;
+  rows: Row[];
+};
+const rowKey = (row: Row): AppId => TOOL_APP_IDS[row.tool];
 // 只上下拖，且停在本组的列表框里：列表框裁掉超出的部分，拖出去整行会看不见
 const verticalDragModifiers: Modifier[] = [
   ({ transform, draggingNodeRect, containerNodeRect }) => {
@@ -132,30 +128,30 @@ const verticalDragModifiers: Modifier[] = [
     };
   },
 ];
-
 type DragHandle = {
   attributes: DraggableAttributes;
   listeners: DraggableSyntheticListeners;
   isDragging: boolean;
 };
-
 /** 可拖动的行把拖动把手交给里面的 `AppRow`（ToolRow 自己渲染 AppRow，不必逐层传参）。 */
 const DragHandleContext = createContext<DragHandle | null>(null);
-
 /** 本机有这个命令行应用：探到了版本、装了但跑不起来，或探测报告里有安装位置（和「卸载」出现的条件一致）。 */
 function isToolPresent(
-  info: { version?: string | null; installed_but_broken?: boolean } | undefined,
+  info:
+    | {
+        version?: string | null;
+        installed_but_broken?: boolean;
+      }
+    | undefined,
   report: ToolInstallationReport | undefined,
 ): boolean {
   return Boolean(
     info?.version || info?.installed_but_broken || report?.installs.length,
   );
 }
-
 // 表头和应用行共用列宽；操作列宽取各行按钮和表头量宽按钮的最大值，最后一列是行尾的「⋯」菜单。
 const APP_ROW_GRID =
   "grid grid-cols-[minmax(0,1fr)_168px_var(--apps-actions-width,0px)_56px_28px] items-center gap-x-4";
-
 function formatCheckedAt(timestamp: number, locale: string): string {
   const date = new Date(timestamp);
   const now = new Date();
@@ -167,7 +163,6 @@ function formatCheckedAt(timestamp: number, locale: string): string {
     ? time
     : `${date.toLocaleDateString(locale, { month: "numeric", day: "numeric" })} ${time}`;
 }
-
 /**
  * 「应用」页（v7）：每个应用一行 = 安装状态 / 版本 + 安装 / 升级 + 在侧栏显示的开关 + 「⋯」菜单（卸载）。
  * 隐藏一个应用只影响界面（侧栏、MCP / Skills 的列、提示词和会话的下拉），配置照常同步。
@@ -177,18 +172,9 @@ export function AppsPage() {
   const tools = useToolManagement();
   const { settings, updateSettings, autoSaveSettings } = useSettings();
   const tableRef = useRef<HTMLDivElement>(null);
-  const { data: desktopStatus, isPending: isDesktopStatusPending } = useQuery({
-    queryKey: ["claude-desktop-status"],
-    queryFn: () => providersApi.getClaudeDesktopStatus(),
-    staleTime: 30_000,
-  });
-
-  // 按「已安装 / 未安装」分两组。Claude Desktop 没有命令可探，用后端按数据目录 / 应用包推断的结果。
+  // 按安装探测结果分成「已安装 / 未安装」两组。
   // 首次探测还没出结果时不分组，免得各行探完一个跳一个；之后重新检查时沿用上次结果，位置不动。
   const rowInstalled = (row: Row): boolean | null => {
-    if (row.kind === "desktop") {
-      return isDesktopStatusPending ? null : Boolean(desktopStatus?.installed);
-    }
     const info = tools.toolVersionByName.get(row.tool);
     if (!info && tools.isLoadingTools) return null;
     return isToolPresent(info, tools.installReports?.[row.tool]);
@@ -228,7 +214,6 @@ export function AppsPage() {
   const sectionLayoutKey = sections
     .map((section) => `${section.key}:${section.rows.map(rowKey).join(",")}`)
     .join("|");
-
   useLayoutEffect(() => {
     const table = tableRef.current;
     if (!table) return;
@@ -249,7 +234,6 @@ export function AppsPage() {
     actions.forEach((action) => observer.observe(action));
     return () => observer.disconnect();
   }, [sectionLayoutKey]);
-
   const [showCommands, setShowCommands] = useState(false);
   const [showUninstallCommands, setShowUninstallCommands] = useState(false);
   const [pendingUninstall, setPendingUninstall] = useState<ToolName | null>(
@@ -269,13 +253,11 @@ export function AppsPage() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tools.toolDiagnostics]);
-
   const visibleApps: VisibleApps = {
     ...DEFAULT_VISIBLE_APPS,
     ...settings?.visibleApps,
   };
-  const visibleCount = Object.values(visibleApps).filter(Boolean).length;
-
+  const visibleCount = appOrder.filter((app) => visibleApps[app]).length;
   const setVisible = (app: AppId, visible: boolean) => {
     if (!settings) return;
     // 至少留一个应用在侧栏
@@ -287,7 +269,6 @@ export function AppsPage() {
       updateSettings({ visibleApps: previous }),
     );
   };
-
   const visibilitySwitch = (app: AppId) => (
     <Switch
       size="sm"
@@ -297,7 +278,6 @@ export function AppsPage() {
       aria-label={t("appsPage.showInSidebar", { name: APP_DISPLAY_NAME[app] })}
     />
   );
-
   // 检查更新时各工具逐个进入加载，可升级列表会先清零再逐个回来；页头沿用检查前的数，
   // 检查完再一次性更新，免得「全部升级」闪没又出现、数字逐个跳。
   const settledUpdatableCount = useRef(0);
@@ -307,20 +287,17 @@ export function AppsPage() {
   const updatableCount = tools.isLoadingTools
     ? settledUpdatableCount.current
     : tools.updatableToolNames.length;
-
   const lastChecked = tools.lastCheckedAt
     ? t("appsPage.lastChecked", {
         time: formatCheckedAt(tools.lastCheckedAt, i18n.language),
       })
     : t("appsPage.neverChecked");
-
   const dragSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     }),
   );
-
   // 在整份顺序里移动：组内两行之间夹着的别组应用相对次序不变
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
     if (!settings || !over || active.id === over.id) return;
@@ -334,46 +311,22 @@ export function AppsPage() {
       updateSettings({ appOrder: previous }),
     );
   };
-
-  const renderRow = (row: Row) =>
-    row.kind === "desktop" ? (
-      <AppRow
-        key="claude-desktop"
-        app="claude-desktop"
-        name={
-          <span className="truncate">{APP_DISPLAY_NAME["claude-desktop"]}</span>
-        }
-        version={
-          <span className="inline-flex items-center gap-1 text-caption text-fg-2">
-            {desktopStatus?.supported === false
-              ? t("appsPage.desktopUnsupported")
-              : desktopStatus?.configured
-                ? t("appsPage.desktopConnected")
-                : t("appsPage.desktopNotConnected")}
-            <HelpTip title={APP_DISPLAY_NAME["claude-desktop"]} align="end">
-              {t("appsPage.desktopHelp")}
-            </HelpTip>
-          </span>
-        }
-        visibility={visibilitySwitch("claude-desktop")}
-      />
-    ) : (
-      <ToolRow
-        key={row.tool}
-        tool={row.tool}
-        tools={tools}
-        onUninstall={() => setPendingUninstall(row.tool)}
-        expanded={expanded[row.tool] ?? false}
-        onToggleExpanded={() =>
-          setExpanded((prev) => ({
-            ...prev,
-            [row.tool]: !prev[row.tool],
-          }))
-        }
-        visibility={visibilitySwitch(TOOL_APP_IDS[row.tool])}
-      />
-    );
-
+  const renderRow = (row: Row) => (
+    <ToolRow
+      key={row.tool}
+      tool={row.tool}
+      tools={tools}
+      onUninstall={() => setPendingUninstall(row.tool)}
+      expanded={expanded[row.tool] ?? false}
+      onToggleExpanded={() =>
+        setExpanded((prev) => ({
+          ...prev,
+          [row.tool]: !prev[row.tool],
+        }))
+      }
+      visibility={visibilitySwitch(TOOL_APP_IDS[row.tool])}
+    />
+  );
   return (
     <>
       <AppPageHeader
@@ -492,7 +445,7 @@ export function AppsPage() {
             <SectionTitle title={sections[0]?.title} />
             <span className="text-end">{t("appsPage.columnVersion")}</span>
             {/* 看不见的「安装 / 升级」按钮只用来量宽：操作列始终留出按钮的位置，
-                版本号加载完或检查到新版本、按钮冒出来时，版本列不会被推开。 */}
+版本号加载完或检查到新版本、按钮冒出来时，版本列不会被推开。 */}
             <div
               data-tool-actions
               aria-hidden
@@ -621,7 +574,6 @@ export function AppsPage() {
     </>
   );
 }
-
 function AppRow({
   app,
   name,
@@ -688,7 +640,6 @@ function AppRow({
     </div>
   );
 }
-
 function Pill({ children }: { children: React.ReactNode }) {
   return (
     <span className="inline-flex h-[18px] shrink-0 items-center rounded-full border border-border-strong px-1.5 text-badge text-fg-2">
@@ -696,7 +647,6 @@ function Pill({ children }: { children: React.ReactNode }) {
     </span>
   );
 }
-
 function ToolRow({
   tool,
   tools,
@@ -722,7 +672,6 @@ function ToolRow({
   const otherInstalls = (report?.installs.length ?? 0) - 1;
   // 「诊断安装冲突」的结果优先（升级后会重新诊断），否则用打开页面时探测到的安装分布
   const installs = tools.toolDiagnostics[tool] ?? report?.installs;
-
   const isVersionLoading =
     Boolean(tools.loadingTools[tool]) ||
     (tools.isLoadingTools && !tools.toolVersionByName.has(tool));
@@ -748,7 +697,6 @@ function ToolRow({
     info?.env_type === "wsl" && ENV_BADGE_CONFIG.wsl
       ? `${t(ENV_BADGE_CONFIG.wsl.labelKey)}${info.wsl_distro ? ` · ${info.wsl_distro}` : ""}`
       : null;
-
   const version = isVersionLoading ? (
     <span
       role="status"
@@ -776,7 +724,6 @@ function ToolRow({
   ) : (
     <span className="text-caption text-fg-2">{t("common.notInstalled")}</span>
   );
-
   const actionButton = action ? (
     <Button
       variant="neutral"
@@ -797,7 +744,6 @@ function ToolRow({
         : t("settings.toolUpdate")}
     </Button>
   ) : null;
-
   const installHint = t(`appsPage.installHint.${tool}`, { defaultValue: "" });
   const meta = defaultInstall ? (
     <>
@@ -826,7 +772,6 @@ function ToolRow({
       {installHint}
     </span>
   ) : null;
-
   const wslControls =
     info?.env_type === "wsl" ? (
       <div className="flex items-center gap-2 text-caption text-fg-2">
@@ -872,12 +817,10 @@ function ToolRow({
         </Select>
       </div>
     ) : null;
-
   const errorLine =
     !isVersionLoading && !info?.version && info?.error ? (
       <ToolErrorMessage message={info.error} />
     ) : null;
-
   const nodeLine =
     !isVersionLoading && nodeGap ? (
       <p className="flex items-start gap-1 text-caption text-warning-text">
@@ -889,7 +832,6 @@ function ToolRow({
         })}
       </p>
     ) : null;
-
   const conflictList =
     expanded && installs && installs.length > 1 ? (
       <div className="space-y-1.5 rounded-control bg-warning-soft p-2.5">
@@ -905,7 +847,6 @@ function ToolRow({
         </ul>
       </div>
     ) : null;
-
   const footer =
     wslControls || errorLine || nodeLine || conflictList ? (
       <div className="space-y-2">
@@ -915,7 +856,6 @@ function ToolRow({
         {conflictList}
       </div>
     ) : undefined;
-
   return (
     <AppRow
       app={TOOL_APP_IDS[tool]}
@@ -968,7 +908,6 @@ function ToolRow({
     />
   );
 }
-
 function SortableAppRow({
   id,
   children,
@@ -1002,7 +941,6 @@ function SortableAppRow({
     </div>
   );
 }
-
 function SectionTitle({ title }: { title?: string }) {
   return (
     <h2 className="m-0 truncate text-caption font-semibold text-fg-2">

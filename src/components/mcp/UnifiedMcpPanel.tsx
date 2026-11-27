@@ -1,19 +1,8 @@
-import React, { useMemo, useRef, useState } from "react";
-import { useDelayedFlag } from "@/hooks/useDelayedFlag";
-import { useMcpConnectivity } from "@/hooks/useMcpConnectivity";
-import { useTranslation } from "react-i18next";
-import {
-  Activity,
-  Download,
-  MoreHorizontal,
-  Pencil,
-  Plus,
-  Server,
-} from "lucide-react";
-import { toast } from "@/lib/toast";
+import { UnreadableEntriesNotice } from "@/components/common/UnreadableEntriesNotice";
+import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
+import { AppPageHeader } from "@/components/shell/AppPageHeader";
 import { Button } from "@/components/ui/button";
-import { HelpTip } from "@/components/ui/help-tip";
-import { Notice, NoticeSlot } from "@/components/ui/notice";
+import { DialogTitle } from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,11 +10,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { DialogTitle } from "@/components/ui/dialog";
+import { HelpTip } from "@/components/ui/help-tip";
 import { HoverTip } from "@/components/ui/hover-tip";
-import { AppPageHeader } from "@/components/shell/AppPageHeader";
-import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
-import { useIsMutating } from "@tanstack/react-query";
+import { Notice, NoticeSlot } from "@/components/ui/notice";
+import { MCP_APP_IDS, isMcpAppId, type McpAppId } from "@/config/appConfig";
+import { mcpPresets } from "@/config/mcpPresets";
+import { useDelayedFlag } from "@/hooks/useDelayedFlag";
 import {
   MCP_UPSERT_MUTATION_KEY,
   useAllMcpServers,
@@ -35,32 +25,41 @@ import {
   useResyncMcpToApps,
   useToggleMcpApp,
 } from "@/hooks/useMcp";
-import type { McpServer } from "@/types";
-import type { McpAppSyncOutcome } from "@/lib/api/mcp";
-import { MCP_APP_IDS, isMcpAppId, type McpAppId } from "@/config/appConfig";
-import { mcpPresets } from "@/config/mcpPresets";
+import { useMcpConnectivity } from "@/hooks/useMcpConnectivity";
 import { settingsApi } from "@/lib/api";
+import { mcpApi, type McpAppSyncOutcome } from "@/lib/api/mcp";
 import { copyText } from "@/lib/clipboard";
+import { toast } from "@/lib/toast";
+import { cn } from "@/lib/utils";
+import type { McpServer } from "@/types";
 import {
   extractErrorMessage,
   translateMcpBackendError,
 } from "@/utils/errorUtils";
-import { cn } from "@/lib/utils";
-import McpFormModal from "./McpFormModal";
+import { useIsMutating } from "@tanstack/react-query";
+import {
+  Activity,
+  Download,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Server,
+} from "lucide-react";
+import React, { useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   MatrixCell,
   MatrixColumnHeader,
   MatrixColumnHighlight,
   MatrixSearch,
   NeutralBadge,
-  ompDiscoveryColumnNote,
   resolveBulkScope,
   showUndoToast,
 } from "./AppMatrix";
 import { DisclosureButton, V7ConfirmDialog, V7Dialog } from "./formBits";
 import { summaryOf } from "./mcpDraft";
+import McpFormModal from "./McpFormModal";
 import { useVisibleAppIds } from "./useVisibleAppIds";
-
 function getMcpSearchText(id: string, server: McpServer): string {
   const spec = server.server ?? {};
   const values: unknown[] = [
@@ -78,7 +77,6 @@ function getMcpSearchText(id: string, server: McpServer): string {
     server.docs,
     server.source,
   ];
-
   // Keep this an explicit allow-list. In particular, env and headers may
   // contain credentials and must never become part of the searchable text.
   return values
@@ -86,57 +84,37 @@ function getMcpSearchText(id: string, server: McpServer): string {
     .join("\n")
     .toLowerCase();
 }
-
 /** 导入时各应用读的用户级配置文件（只用于「读取了哪些文件」的说明） */
 const IMPORT_SOURCE_FILES: Record<
   McpAppId,
-  { file: string; noteKey?: string }
+  {
+    file: string;
+    noteKey?: string;
+  }
 > = {
   claude: { file: "~/.claude.json", noteKey: "mcpPage.import.claudeNote" },
   codex: { file: "~/.codex/config.toml" },
-  gemini: { file: "~/.gemini/settings.json" },
-  grokbuild: { file: "~/.grok/config.toml" },
   opencode: { file: "~/.config/opencode/opencode.json" },
-  hermes: { file: "~/.hermes/config.yaml" },
-  pi: { file: "~/.pi/agent/mcp.json" },
   agy: { file: "~/.gemini/config/mcp_config.json" },
   dsh: {
     file: "~/.dsh/profiles/<profile>/cordis.patch.yml",
     noteKey: "mcpPage.import.dshNote",
   },
-  kimi: { file: "~/.kimi-code/mcp.json" },
-  mcode: { file: "~/.minimax/mcp.json" },
-  omp: { file: "~/.omp/agent/mcp.json" },
 };
-
-/** 先写配置文件、成功后才入库的应用：写失败时开关没变，重试要逐行重写 */
-const WRITE_THEN_SAVE_APPS: ReadonlySet<McpAppId> = new Set([
-  "mcode",
-  "kimi",
-  "dsh",
-  "pi",
-  "agy",
-  "omp",
-]);
-
 /** 写入失败：记下想要的状态，「重试」按这个值再写一次 */
 interface WriteFailure {
   desired: boolean;
   error: string;
 }
-
 const failKey = (id: string, app: McpAppId) => `${id}\u0000${app}`;
-
 interface UnifiedMcpPanelProps {
   onInteractionBlockedChange?: (blocked: boolean) => void;
 }
-
 interface ImportReport {
   added: string[];
   hadExisting: boolean;
   error?: string;
 }
-
 /**
  * MCP 全局页（v7）：页头 + 应用矩阵 + 添加 / 编辑抽屉。
  * 以这里为准写进勾选的应用；不支持的应用（Claude Desktop、OpenClaw）没有列。
@@ -147,7 +125,14 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   const { t } = useTranslation();
   const appIds = useVisibleAppIds(MCP_APP_IDS);
   const [drawer, setDrawer] = useState<
-    { mode: "add" } | { mode: "edit"; id: string } | null
+    | {
+        mode: "add";
+      }
+    | {
+        mode: "edit";
+        id: string;
+      }
+    | null
   >(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [importReport, setImportReport] = useState<ImportReport | null>(null);
@@ -160,7 +145,6 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   );
   const [writePending, setWritePending] = useState(false);
   const writeLockRef = useRef(false);
-
   const {
     data: serversMap,
     isLoading,
@@ -174,7 +158,6 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   const deleteServerMutation = useDeleteMcpServer();
   const importMutation = useImportMcpFromApps();
   const resyncMutation = useResyncMcpToApps();
-
   const mutationPending =
     toggleAppMutation.isPending ||
     bulkToggleAppMutation.isPending ||
@@ -187,7 +170,6 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   // 外观上的禁用晚 300ms 才出现：点一个格子写得很快时不让整页按钮闪一下变灰。
   // 写入本身仍由写锁（writeLockRef / interactionBlocked）拦着。
   const controlsDisabled = useDelayedFlag(interactionBlocked);
-
   // 编辑页自己的保存不在 mutationPending 里，按 mutation key 单独看
   const editorSaving =
     useIsMutating({ mutationKey: MCP_UPSERT_MUTATION_KEY }) > 0;
@@ -202,12 +184,10 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   React.useEffect(() => {
     onInteractionBlockedChange?.(navigationBlocked);
   }, [navigationBlocked, onInteractionBlockedChange]);
-
   React.useEffect(
     () => () => onInteractionBlockedChange?.(false),
     [onInteractionBlockedChange],
   );
-
   const beginWrite = (allowOpenDialog = false) => {
     if (
       writeLockRef.current ||
@@ -220,17 +200,14 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
     setWritePending(true);
     return true;
   };
-
   const endWrite = () => {
     writeLockRef.current = false;
     setWritePending(false);
   };
-
   const serverEntries = useMemo((): Array<[string, McpServer]> => {
     if (!serversMap) return [];
     return Object.entries(serversMap);
   }, [serversMap]);
-
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
   const filteredServerEntries = useMemo(() => {
     if (!normalizedSearchQuery) return serverEntries;
@@ -238,15 +215,12 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
       getMcpSearchText(id, server).includes(normalizedSearchQuery),
     );
   }, [normalizedSearchQuery, serverEntries]);
-
   const scope = resolveBulkScope(
     serverEntries,
     filteredServerEntries,
     normalizedSearchQuery ? "search" : null,
   );
-
   const noun = t("mcpPage.noun");
-
   // ─── 写入与失败记录 ────────────────────────────────────────────────
   const recordResult = (
     id: string,
@@ -268,7 +242,6 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
       return next;
     });
   };
-
   const writeOne = async (id: string, app: McpAppId, enabled: boolean) => {
     if (!beginWrite()) return;
     try {
@@ -280,17 +253,22 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
       endWrite();
     }
   };
-
   /** 依次写一组（服务器, 应用）；返回成功写入的那些 */
   const writeMany = async (
-    pairs: Array<{ id: string; app: McpAppId }>,
+    pairs: Array<{
+      id: string;
+      app: McpAppId;
+    }>,
     enabled: boolean,
   ) => {
     const byApp = new Map<McpAppId, string[]>();
     for (const pair of pairs) {
       byApp.set(pair.app, [...(byApp.get(pair.app) ?? []), pair.id]);
     }
-    const succeeded: Array<{ id: string; app: McpAppId }> = [];
+    const succeeded: Array<{
+      id: string;
+      app: McpAppId;
+    }> = [];
     let failed = 0;
     for (const [app, ids] of byApp) {
       try {
@@ -314,7 +292,6 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
     }
     return { succeeded, failed };
   };
-
   const handleCellClick = (id: string, server: McpServer, app: McpAppId) => {
     const failure = fails[failKey(id, app)];
     if (failure) {
@@ -323,11 +300,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
     }
     void writeOne(id, app, !server.apps[app]);
   };
-
-  /**
-   * 记下重新同步的逐应用结果。成功的应用清掉它的失败记录——数据库里的开关已经写进去了；
-   * MiniMax Code 例外：它写失败时开关没有入库，重新同步补不上，行上的失败要留着按想要的值重试。
-   */
+  /** 重同步只恢复已提交的状态；失败的开关操作仍需按用户期望的值重试。 */
   const applyResyncOutcomes = (outcomes: McpAppSyncOutcome[]) => {
     const okApps = new Set<McpAppId>();
     const failedApps: Partial<Record<McpAppId, string>> = {};
@@ -341,37 +314,27 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
       for (const app of okApps) delete next[app];
       return next;
     });
-    setFails((prev) => {
-      const next = { ...prev };
-      for (const key of Object.keys(next)) {
-        const app = key.split("\u0000")[1] as McpAppId;
-        if (okApps.has(app) && !WRITE_THEN_SAVE_APPS.has(app)) delete next[key];
-      }
-      return next;
-    });
     return outcomes.filter((outcome) => !outcome.ok);
   };
-
   const rowFailsFor = (app: McpAppId) =>
     Object.entries(fails).filter(([key]) => key.endsWith(`\u0000${app}`));
-
   const retryApp = async (app: McpAppId) => {
     if (!beginWrite()) return;
     try {
       const entries = rowFailsFor(app);
       let ok = true;
-      if (WRITE_THEN_SAVE_APPS.has(app) && entries.length > 0) {
-        // MiniMax Code / Pi 写失败时开关没入库：按每行想要的值再写一次
+      if (entries.length > 0) {
+        // 所有应用都在原生写入成功后提交开关。
         for (const [key, failure] of entries) {
           const id = key.split("\u0000")[0];
           const { failed } = await writeMany([{ id, app }], failure.desired);
           if (failed) ok = false;
         }
-      } else {
-        // 其余应用的开关已经入库：按这里的开关把这个应用整个重写一遍
+      }
+      if (entries.length === 0 || appFails[app]) {
         try {
           const outcomes = await resyncMutation.mutateAsync([app]);
-          ok = applyResyncOutcomes(outcomes).length === 0;
+          ok = applyResyncOutcomes(outcomes).length === 0 && ok;
         } catch (error) {
           ok = false;
           setAppFails((prev) => ({
@@ -390,7 +353,6 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
       endWrite();
     }
   };
-
   const handleResyncAll = async () => {
     if (!beginWrite()) return;
     try {
@@ -423,7 +385,6 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
       endWrite();
     }
   };
-
   const handleBulk = async (app: McpAppId, enabled: boolean) => {
     if (!beginWrite()) return;
     try {
@@ -451,7 +412,12 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
         succeeded.length
           ? () => {
               void (async () => {
-                if (!beginWrite()) return;
+                if (!beginWrite()) {
+                  toast.warning(t("mcpPage.toast.undoBusy"), {
+                    closeButton: true,
+                  });
+                  return;
+                }
                 try {
                   const result = await writeMany(succeeded, !enabled);
                   if (result.failed) {
@@ -476,20 +442,32 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
       endWrite();
     }
   };
-
   const handleRowAll = async (id: string, server: McpServer, on: boolean) => {
     if (!beginWrite()) return;
     try {
-      const targets = appIds
-        .filter((app) => Boolean(server.apps[app]) !== on)
-        .map((app) => ({ id, app }));
+      // 「全部启用/关闭」覆盖所有受管应用，不只侧栏可见列（隐藏只影响界面）
+      const targets = MCP_APP_IDS.filter(
+        (app) => Boolean(server.apps[app]) !== on,
+      ).map((app) => ({ id, app }));
       if (targets.length === 0) return;
-      const { failed } = await writeMany(targets, on);
+      const { succeeded, failed } = await writeMany(targets, on);
       if (!failed) {
         toast.success(
           on
-            ? t("mcpPage.toast.rowAllOn", { id, count: appIds.length })
+            ? t("mcpPage.toast.rowAllOn", {
+                id,
+                count: MCP_APP_IDS.length,
+              })
             : t("mcpPage.toast.rowAllOff", { id }),
+          { closeButton: true },
+        );
+      } else {
+        toast[succeeded.length ? "warning" : "error"](
+          t("mcpPage.toast.rowAllPartial", {
+            id,
+            ok: succeeded.length,
+            failed,
+          }),
           { closeButton: true },
         );
       }
@@ -497,18 +475,15 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
       endWrite();
     }
   };
-
   // ─── 其他操作 ───────────────────────────────────────────────────────
   const openAdd = () => {
     if (writeLockRef.current || interactionBlocked) return;
     setDrawer({ mode: "add" });
   };
-
   const openEdit = (id: string) => {
     if (writeLockRef.current || interactionBlocked) return;
     setDrawer({ mode: "edit", id });
   };
-
   const handleImport = async () => {
     if (!beginWrite()) return;
     const before = new Set(Object.keys(serversMap ?? {}));
@@ -530,7 +505,6 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
       endWrite();
     }
   };
-
   const copyJson = async (servers: Record<string, McpServer>, text: string) => {
     const mcpServers = Object.fromEntries(
       Object.entries(servers).map(([id, server]) => [id, server.server]),
@@ -542,7 +516,6 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
       toast.error(t("common.error"), { description: String(error) });
     }
   };
-
   const openDocs = async (server: McpServer, id: string) => {
     const preset = mcpPresets.find((item) => item.id === id);
     const url =
@@ -554,12 +527,17 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
       // ignore
     }
   };
-
   const confirmDelete = async () => {
     if (!deleteId || !beginWrite(true)) return;
     const id = deleteId;
     try {
-      await deleteServerMutation.mutateAsync(id);
+      const removed = await deleteServerMutation.mutateAsync(id);
+      if (!removed) {
+        toast.error(t("mcpPage.toast.deleteMissing", { id }), {
+          closeButton: true,
+        });
+        return;
+      }
       setDeleteId(null);
       setDrawer(null);
       setFails((prev) =>
@@ -576,7 +554,6 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
       endWrite();
     }
   };
-
   // ─── 派生显示 ───────────────────────────────────────────────────────
   /** 有写入失败的应用 → 通知条里显示的错误（整个应用的失败优先） */
   const failedApps = useMemo(() => {
@@ -592,19 +569,15 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
     }
     return map;
   }, [fails, appFails, serversMap]);
-
   const enabledNames = (server: McpServer) =>
     MCP_APP_IDS.filter((app) => server.apps[app]).map(
       (app) => APP_DISPLAY_NAME[app],
     );
-
   const deleteTarget = deleteId ? serversMap?.[deleteId] : undefined;
   const deleteApps = deleteTarget ? enabledNames(deleteTarget) : [];
   const listSeparator = t("mcpPage.listSeparator");
-
   const hasServers = serverEntries.length > 0;
   const showList = !isLoading && !isError && hasServers;
-
   return (
     <>
       <AppPageHeader
@@ -741,6 +714,15 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
           ))}
         </NoticeSlot>
 
+        <div className="flex flex-col gap-2 px-6 pb-3 empty:hidden">
+          <UnreadableEntriesNotice
+            queryKey={["mcp", "unreadable"]}
+            load={mcpApi.getUnreadableServers}
+            remove={mcpApi.deleteUnifiedServer}
+            invalidate={[["mcp", "all"]]}
+          />
+        </div>
+
         <div className="flex min-h-0 flex-1 flex-col px-6 pb-5">
           {isLoading ? (
             <div className="py-12 text-center text-body text-fg-2">
@@ -833,7 +815,6 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                             scopeKind={scope.kind}
                             noun={noun}
                             disabled={controlsDisabled}
-                            {...ompDiscoveryColumnNote(app, t)}
                             onEnableRest={() => void handleBulk(app, true)}
                             onDisableAll={() => void handleBulk(app, false)}
                           />
@@ -1227,7 +1208,5 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
     </>
   );
 };
-
 UnifiedMcpPanel.displayName = "UnifiedMcpPanel";
-
 export default UnifiedMcpPanel;

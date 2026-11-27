@@ -72,6 +72,14 @@ pub fn convert_to_opencode_format(spec: &Value) -> Result<Value, AppError> {
                     result.insert("environment".into(), env.clone());
                 }
             }
+            if let Some(cwd) = obj.get("cwd") {
+                if cwd.as_str().is_some_and(|s| !s.trim().is_empty()) {
+                    result.insert("cwd".into(), cwd.clone());
+                }
+            }
+            if let Some(timeout) = obj.get("timeout") {
+                result.insert("timeout".into(), timeout.clone());
+            }
 
             // Add enabled flag (OpenCode expects this)
             result.insert("enabled".into(), json!(true));
@@ -91,6 +99,9 @@ pub fn convert_to_opencode_format(spec: &Value) -> Result<Value, AppError> {
                 {
                     result.insert("headers".into(), headers.clone());
                 }
+            }
+            if let Some(timeout) = obj.get("timeout") {
+                result.insert("timeout".into(), timeout.clone());
             }
 
             // Add enabled flag
@@ -112,7 +123,7 @@ pub fn convert_to_opencode_format(spec: &Value) -> Result<Value, AppError> {
 ///
 /// Conversion rules:
 /// - `local` → `stdio`, command array → command+args, environment → env
-/// - `remote` → `sse`, url preserved
+/// - `remote` → `http`, url preserved
 pub fn convert_from_opencode_format(spec: &Value) -> Result<Value, AppError> {
     let obj = spec
         .as_object()
@@ -151,8 +162,9 @@ pub fn convert_from_opencode_format(spec: &Value) -> Result<Value, AppError> {
             }
         }
         "remote" => {
-            // Convert to "sse" type (default remote protocol)
-            result.insert("type".into(), json!("sse"));
+            // 无更细协议信息时默认 http（与 spec_transport_type 一致）；误标 sse
+            // 再投影到 Gemini 会走 url 而非 httpUrl。
+            result.insert("type".into(), json!("http"));
 
             // Preserve url
             if let Some(url) = obj.get("url") {
@@ -174,6 +186,11 @@ pub fn convert_from_opencode_format(spec: &Value) -> Result<Value, AppError> {
         }
     }
 
+    for field in ["cwd", "timeout", "oauth"] {
+        if let Some(value) = obj.get(field) {
+            result.insert(field.into(), value.clone());
+        }
+    }
     Ok(Value::Object(result))
 }
 
@@ -182,11 +199,7 @@ pub fn convert_from_opencode_format(spec: &Value) -> Result<Value, AppError> {
 // ============================================================================
 
 /// Sync a single MCP server to OpenCode live config
-pub fn sync_single_server_to_opencode(
-    _config: &MultiAppConfig,
-    id: &str,
-    server_spec: &Value,
-) -> Result<(), AppError> {
+pub fn sync_single_server_to_opencode(id: &str, server_spec: &Value) -> Result<(), AppError> {
     if !should_sync_opencode_mcp()? {
         return Ok(());
     }
@@ -240,10 +253,11 @@ pub fn import_from_opencode(config: &mut MultiAppConfig) -> Result<usize, AppErr
             continue;
         }
 
+        let enabled = spec.get("enabled").and_then(Value::as_bool).unwrap_or(true);
         if let Some(existing) = servers.get_mut(&id) {
             // Existing server: just enable OpenCode app
-            if !existing.apps.opencode {
-                existing.apps.opencode = true;
+            if existing.apps.opencode != enabled {
+                existing.apps.opencode = enabled;
                 changed += 1;
                 log::info!("MCP server '{id}' enabled for OpenCode");
             }
@@ -259,15 +273,8 @@ pub fn import_from_opencode(config: &mut MultiAppConfig) -> Result<usize, AppErr
                         agy: false,
                         claude: false,
                         codex: false,
-                        gemini: false,
-                        grokbuild: false,
-                        opencode: true,
-                        hermes: false,
-                        mcode: false,
-                        kimi: false,
+                        opencode: enabled,
                         dsh: false,
-                        pi: false,
-                        omp: false,
                     },
                     description: None,
                     homepage: None,
@@ -358,7 +365,7 @@ mod tests {
     }
 
     #[test]
-    fn test_convert_remote_to_sse() {
+    fn test_convert_remote_to_http() {
         let spec = json!({
             "type": "remote",
             "url": "https://example.com/mcp",
@@ -366,7 +373,7 @@ mod tests {
         });
 
         let result = convert_from_opencode_format(&spec).unwrap();
-        assert_eq!(result["type"], "sse");
+        assert_eq!(result["type"], "http");
         assert_eq!(result["url"], "https://example.com/mcp");
         assert_eq!(result["headers"]["Authorization"], "Bearer xxx");
     }

@@ -2,15 +2,12 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-
 import { WebdavSyncSection } from "@/components/settings/WebdavSyncSection";
 import type { S3SyncSettings, WebDavSyncSettings } from "@/types";
-
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
 const toastWarningMock = vi.fn();
 const toastInfoMock = vi.fn();
-
 vi.mock("sonner", () => ({
   toast: {
     success: (...args: unknown[]) => toastSuccessMock(...args),
@@ -19,23 +16,19 @@ vi.mock("sonner", () => ({
     info: (...args: unknown[]) => toastInfoMock(...args),
   },
 }));
-
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: (key: string) => key,
   }),
 }));
-
 vi.mock("@/components/ui/button", () => ({
   Button: ({ children, ...props }: any) => (
     <button {...props}>{children}</button>
   ),
 }));
-
 vi.mock("@/components/ui/input", () => ({
   Input: (props: any) => <input {...props} />,
 }));
-
 vi.mock("@/components/ui/switch", () => ({
   Switch: ({ checked, onCheckedChange, ...props }: any) => (
     <button
@@ -46,7 +39,6 @@ vi.mock("@/components/ui/switch", () => ({
     />
   ),
 }));
-
 vi.mock("@/components/ui/select", () => ({
   Select: ({ value, onValueChange, children }: any) => (
     <select
@@ -64,7 +56,6 @@ vi.mock("@/components/ui/select", () => ({
     <option value={value}>{children}</option>
   ),
 }));
-
 vi.mock("@/components/ui/dialog", () => ({
   Dialog: ({ open, children }: any) => (open ? <div>{children}</div> : null),
   DialogContent: ({ children }: any) => <div>{children}</div>,
@@ -73,7 +64,6 @@ vi.mock("@/components/ui/dialog", () => ({
   DialogHeader: ({ children }: any) => <div>{children}</div>,
   DialogTitle: ({ children }: any) => <h2>{children}</h2>,
 }));
-
 const { settingsApiMock } = vi.hoisted(() => ({
   settingsApiMock: {
     webdavTestConnection: vi.fn(),
@@ -89,11 +79,9 @@ const { settingsApiMock } = vi.hoisted(() => ({
     s3SyncDownload: vi.fn(),
   },
 }));
-
 vi.mock("@/lib/api", () => ({
   settingsApi: settingsApiMock,
 }));
-
 const baseConfig: WebDavSyncSettings = {
   enabled: true,
   baseUrl: "https://dav.example.com/dav/",
@@ -104,11 +92,7 @@ const baseConfig: WebDavSyncSettings = {
   autoSync: false,
   status: {},
 };
-
-function renderSection(
-  config?: WebDavSyncSettings,
-  s3Config?: S3SyncSettings,
-) {
+function renderSection(config?: WebDavSyncSettings, s3Config?: S3SyncSettings) {
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -122,8 +106,47 @@ function renderSection(
   );
   return { ...view, client };
 }
-
 describe("WebdavSyncSection", () => {
+  it.each(["webdav", "s3"] as const)(
+    "requires confirmation for %s auto sync and honours failed acknowledgement",
+    async (backend) => {
+      const client = new QueryClient();
+      const onAutoSave = vi.fn().mockResolvedValue(false);
+      render(
+        <QueryClientProvider client={client}>
+          <WebdavSyncSection
+            config={baseConfig}
+            s3Config={
+              backend === "s3"
+                ? { enabled: true, bucket: "bucket", accessKeyId: "AKID" }
+                : undefined
+            }
+            onAutoSave={onAutoSave}
+          />
+        </QueryClientProvider>,
+      );
+      const toggle = screen.getByRole("switch", {
+        name: `settings.${backend === "s3" ? "s3Sync" : "webdavSync"}.autoSync`,
+      });
+      fireEvent.click(toggle);
+      expect(toggle).toHaveAttribute("aria-checked", "false");
+      fireEvent.click(
+        screen.getByRole("button", { name: "confirm.autoSync.confirm" }),
+      );
+      await waitFor(() =>
+        expect(onAutoSave).toHaveBeenCalledWith({ autoSyncConfirmed: true }),
+      );
+      expect(toggle).toHaveAttribute("aria-checked", "false");
+      onAutoSave.mockResolvedValue(true);
+      fireEvent.click(toggle);
+      fireEvent.click(
+        screen.getByRole("button", { name: "confirm.autoSync.confirm" }),
+      );
+      await waitFor(() =>
+        expect(toggle).toHaveAttribute("aria-checked", "true"),
+      );
+    },
+  );
   beforeEach(() => {
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
@@ -143,7 +166,6 @@ describe("WebdavSyncSection", () => {
     settingsApiMock.s3SyncFetchRemoteInfo.mockReset();
     settingsApiMock.s3SyncUpload.mockReset();
     settingsApiMock.s3SyncDownload.mockReset();
-
     settingsApiMock.webdavSyncSaveSettings.mockResolvedValue({ success: true });
     settingsApiMock.s3TestConnection.mockResolvedValue({
       success: true,
@@ -167,7 +189,6 @@ describe("WebdavSyncSection", () => {
       status: "downloaded",
     });
   });
-
   it("shows auto sync error callout when last auto sync failed", () => {
     renderSection({
       ...baseConfig,
@@ -176,13 +197,11 @@ describe("WebdavSyncSection", () => {
         lastErrorSource: "auto",
       },
     });
-
     expect(
       screen.getByText("settings.webdavSync.autoSyncLastErrorTitle"),
     ).toBeInTheDocument();
     expect(screen.getByText("network timeout")).toBeInTheDocument();
   });
-
   it("does not show auto sync error callout for manual sync errors", () => {
     renderSection({
       ...baseConfig,
@@ -191,12 +210,10 @@ describe("WebdavSyncSection", () => {
         lastErrorSource: "manual",
       },
     });
-
     expect(
       screen.queryByText("settings.webdavSync.autoSyncLastErrorTitle"),
     ).not.toBeInTheDocument();
   });
-
   it("does not show auto sync error callout when source is missing", () => {
     renderSection({
       ...baseConfig,
@@ -205,34 +222,27 @@ describe("WebdavSyncSection", () => {
         lastError: "legacy error without source",
       },
     });
-
     expect(
       screen.queryByText("settings.webdavSync.autoSyncLastErrorTitle"),
     ).not.toBeInTheDocument();
   });
-
   it("hides the clear button when nothing is saved", () => {
     renderSection(undefined);
-
     expect(
       screen.queryByRole("button", { name: "settings.webdavSync.clear" }),
     ).not.toBeInTheDocument();
   });
-
   it("clears the saved config after confirmation and empties the form", async () => {
     renderSection(baseConfig);
-
     fireEvent.click(
       screen.getByRole("button", { name: "settings.webdavSync.clear" }),
     );
     expect(settingsApiMock.webdavSyncClearSettings).not.toHaveBeenCalled();
-
     fireEvent.click(
       screen.getByRole("button", {
         name: "settings.webdavSync.clearConfirm.confirm",
       }),
     );
-
     await waitFor(() => {
       expect(settingsApiMock.webdavSyncClearSettings).toHaveBeenCalledTimes(1);
     });
@@ -247,13 +257,11 @@ describe("WebdavSyncSection", () => {
     expect(screen.queryByDisplayValue("alice")).not.toBeInTheDocument();
     expect(settingsApiMock.webdavSyncSaveSettings).not.toHaveBeenCalled();
   });
-
   it("does not refill the form from the stale config after clearing unsaved edits", async () => {
     const view = renderSection(baseConfig);
     // The refetch resolves before the parent settings form passes the
     // cleared config down; the prop only changes afterwards.
     vi.spyOn(view.client, "invalidateQueries").mockResolvedValue(undefined);
-
     fireEvent.change(screen.getByDisplayValue("alice"), {
       target: { value: "bob" },
     });
@@ -265,7 +273,6 @@ describe("WebdavSyncSection", () => {
         name: "settings.webdavSync.clearConfirm.confirm",
       }),
     );
-
     await waitFor(() => {
       expect(toastSuccessMock).toHaveBeenCalledWith(
         "settings.webdavSync.clearSuccess",
@@ -282,27 +289,21 @@ describe("WebdavSyncSection", () => {
     expect(screen.queryByDisplayValue("alice")).not.toBeInTheDocument();
     expect(screen.queryByDisplayValue("bob")).not.toBeInTheDocument();
   });
-
   it("shows validation error when saving without base url", async () => {
     renderSection({ ...baseConfig, baseUrl: "" });
-
     fireEvent.click(
       screen.getByRole("button", { name: "settings.webdavSync.save" }),
     );
-
     expect(toastErrorMock).toHaveBeenCalledWith(
       "settings.webdavSync.missingUrl",
     );
     expect(settingsApiMock.webdavSyncSaveSettings).not.toHaveBeenCalled();
   });
-
   it("saves settings and auto tests connection", async () => {
     renderSection(baseConfig);
-
     fireEvent.click(
       screen.getByRole("button", { name: "settings.webdavSync.save" }),
     );
-
     await waitFor(() => {
       expect(settingsApiMock.webdavSyncSaveSettings).toHaveBeenCalledTimes(1);
     });
@@ -327,24 +328,19 @@ describe("WebdavSyncSection", () => {
       "settings.webdavSync.saveAndTestSuccess",
     );
   });
-
   it("preserves password only for the single post-save refresh", async () => {
     const view = renderSection(baseConfig);
-
     fireEvent.click(
       screen.getByRole("button", { name: "settings.webdavSync.save" }),
     );
-
     await waitFor(() => {
       expect(settingsApiMock.webdavSyncSaveSettings).toHaveBeenCalledTimes(1);
     });
-
     view.rerender(
       <QueryClientProvider client={view.client}>
         <WebdavSyncSection config={{ ...baseConfig, password: "" }} />
       </QueryClientProvider>,
     );
-
     expect(
       (
         screen.getByPlaceholderText(
@@ -352,13 +348,11 @@ describe("WebdavSyncSection", () => {
         ) as HTMLInputElement
       ).value,
     ).toBe("secret");
-
     view.rerender(
       <QueryClientProvider client={view.client}>
         <WebdavSyncSection config={{ ...baseConfig, password: "" }} />
       </QueryClientProvider>,
     );
-
     expect(
       (
         screen.getByPlaceholderText(
@@ -367,24 +361,19 @@ describe("WebdavSyncSection", () => {
       ).value,
     ).toBe("");
   });
-
   it("does not preserve password after a later external config refresh", async () => {
     const view = renderSection(baseConfig);
-
     fireEvent.click(
       screen.getByRole("button", { name: "settings.webdavSync.save" }),
     );
-
     await waitFor(() => {
       expect(settingsApiMock.webdavSyncSaveSettings).toHaveBeenCalledTimes(1);
     });
-
     view.rerender(
       <QueryClientProvider client={view.client}>
         <WebdavSyncSection config={{ ...baseConfig, password: "" }} />
       </QueryClientProvider>,
     );
-
     expect(
       (
         screen.getByPlaceholderText(
@@ -392,7 +381,6 @@ describe("WebdavSyncSection", () => {
         ) as HTMLInputElement
       ).value,
     ).toBe("secret");
-
     view.rerender(
       <QueryClientProvider client={view.client}>
         <WebdavSyncSection
@@ -400,7 +388,6 @@ describe("WebdavSyncSection", () => {
         />
       </QueryClientProvider>,
     );
-
     expect(
       (
         screen.getByPlaceholderText(
@@ -409,28 +396,22 @@ describe("WebdavSyncSection", () => {
       ).value,
     ).toBe("");
   });
-
   it("does not submit a preserved password again when testing without touching it", async () => {
     const view = renderSection(baseConfig);
-
     fireEvent.click(
       screen.getByRole("button", { name: "settings.webdavSync.save" }),
     );
-
     await waitFor(() => {
       expect(settingsApiMock.webdavSyncSaveSettings).toHaveBeenCalledTimes(1);
     });
-
     view.rerender(
       <QueryClientProvider client={view.client}>
         <WebdavSyncSection config={{ ...baseConfig, password: "" }} />
       </QueryClientProvider>,
     );
-
     fireEvent.click(
       screen.getByRole("button", { name: "settings.webdavSync.test" }),
     );
-
     await waitFor(() => {
       expect(settingsApiMock.webdavTestConnection).toHaveBeenLastCalledWith(
         expect.objectContaining({
@@ -440,10 +421,8 @@ describe("WebdavSyncSection", () => {
       );
     });
   });
-
   it("saves auto sync as true after toggle", async () => {
     renderSection(baseConfig);
-
     fireEvent.click(
       screen.getByRole("switch", { name: "settings.webdavSync.autoSync" }),
     );
@@ -458,7 +437,6 @@ describe("WebdavSyncSection", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "settings.webdavSync.save" }),
     );
-
     await waitFor(() => {
       expect(settingsApiMock.webdavSyncSaveSettings).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -468,10 +446,8 @@ describe("WebdavSyncSection", () => {
       );
     });
   });
-
   it("blocks upload when there are unsaved changes", async () => {
     renderSection(baseConfig);
-
     fireEvent.change(
       screen.getByPlaceholderText("settings.webdavSync.usernamePlaceholder"),
       { target: { value: "bob" } },
@@ -479,47 +455,38 @@ describe("WebdavSyncSection", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "settings.webdavSync.upload" }),
     );
-
     expect(toastErrorMock).toHaveBeenCalledWith(
       "settings.webdavSync.unsavedChanges",
     );
     expect(settingsApiMock.webdavSyncFetchRemoteInfo).not.toHaveBeenCalled();
   });
-
   it("disables sync buttons until config is saved", () => {
     renderSection(undefined);
-
     const uploadButton = screen.getByRole("button", {
       name: "settings.webdavSync.upload",
     });
     const downloadButton = screen.getByRole("button", {
       name: "settings.webdavSync.download",
     });
-
     expect(uploadButton).toBeDisabled();
     expect(downloadButton).toBeDisabled();
     expect(settingsApiMock.webdavSyncFetchRemoteInfo).not.toHaveBeenCalled();
   });
-
   it("fetches remote info and uploads after confirmation", async () => {
     renderSection(baseConfig);
-
     fireEvent.click(
       screen.getByRole("button", { name: "settings.webdavSync.upload" }),
     );
-
     await waitFor(() => {
       expect(settingsApiMock.webdavSyncFetchRemoteInfo).toHaveBeenCalledTimes(
         1,
       );
     });
-
     fireEvent.click(
       screen.getByRole("button", {
         name: "settings.webdavSync.confirmUpload.confirm",
       }),
     );
-
     await waitFor(() => {
       expect(settingsApiMock.webdavSyncUpload).toHaveBeenCalledTimes(1);
     });
@@ -527,10 +494,8 @@ describe("WebdavSyncSection", () => {
       "settings.webdavSync.uploadSuccess",
     );
   });
-
   it("blocks upload confirmation if form changes after dialog opens", async () => {
     renderSection(baseConfig);
-
     fireEvent.click(
       screen.getByRole("button", { name: "settings.webdavSync.upload" }),
     );
@@ -539,7 +504,6 @@ describe("WebdavSyncSection", () => {
         1,
       );
     });
-
     fireEvent.change(screen.getByPlaceholderText("cc-switch-sync"), {
       target: { value: "new-root" },
     });
@@ -548,7 +512,6 @@ describe("WebdavSyncSection", () => {
         name: "settings.webdavSync.confirmUpload.confirm",
       }),
     );
-
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalledWith(
         "settings.webdavSync.unsavedChanges",
@@ -556,26 +519,21 @@ describe("WebdavSyncSection", () => {
     });
     expect(settingsApiMock.webdavSyncUpload).not.toHaveBeenCalled();
   });
-
   it("fetches remote info and downloads after confirmation", async () => {
     renderSection(baseConfig);
-
     fireEvent.click(
       screen.getByRole("button", { name: "settings.webdavSync.download" }),
     );
-
     await waitFor(() => {
       expect(settingsApiMock.webdavSyncFetchRemoteInfo).toHaveBeenCalledTimes(
         1,
       );
     });
-
     fireEvent.click(
       screen.getByRole("button", {
         name: "settings.webdavSync.confirmDownload.confirm",
       }),
     );
-
     await waitFor(() => {
       expect(settingsApiMock.webdavSyncDownload).toHaveBeenCalledTimes(1);
     });
@@ -583,10 +541,8 @@ describe("WebdavSyncSection", () => {
       "settings.webdavSync.downloadSuccess",
     );
   });
-
   it("blocks download confirmation if form changes after dialog opens", async () => {
     renderSection(baseConfig);
-
     fireEvent.click(
       screen.getByRole("button", { name: "settings.webdavSync.download" }),
     );
@@ -595,7 +551,6 @@ describe("WebdavSyncSection", () => {
         1,
       );
     });
-
     fireEvent.change(screen.getByPlaceholderText("default"), {
       target: { value: "new-profile" },
     });
@@ -604,7 +559,6 @@ describe("WebdavSyncSection", () => {
         name: "settings.webdavSync.confirmDownload.confirm",
       }),
     );
-
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalledWith(
         "settings.webdavSync.unsavedChanges",
@@ -612,17 +566,14 @@ describe("WebdavSyncSection", () => {
     });
     expect(settingsApiMock.webdavSyncDownload).not.toHaveBeenCalled();
   });
-
   it("shows info when no remote snapshot is found for download", async () => {
     settingsApiMock.webdavSyncFetchRemoteInfo.mockResolvedValueOnce({
       empty: true,
     });
     renderSection(baseConfig);
-
     fireEvent.click(
       screen.getByRole("button", { name: "settings.webdavSync.download" }),
     );
-
     await waitFor(() => {
       expect(toastInfoMock).toHaveBeenCalledWith(
         "settings.webdavSync.noRemoteData",
@@ -630,7 +581,6 @@ describe("WebdavSyncSection", () => {
     });
     expect(settingsApiMock.webdavSyncDownload).not.toHaveBeenCalled();
   });
-
   it("blocks download when remote snapshot is incompatible", async () => {
     settingsApiMock.webdavSyncFetchRemoteInfo.mockResolvedValueOnce({
       deviceName: "Legacy Machine",
@@ -641,11 +591,9 @@ describe("WebdavSyncSection", () => {
       artifacts: ["db.sql"],
     });
     renderSection(baseConfig);
-
     fireEvent.click(
       screen.getByRole("button", { name: "settings.webdavSync.download" }),
     );
-
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalledWith(
         "settings.webdavSync.incompatibleVersion",
@@ -658,11 +606,9 @@ describe("WebdavSyncSection", () => {
       }),
     ).not.toBeInTheDocument();
   });
-
   it("shows error when download fails after confirmation", async () => {
     settingsApiMock.webdavSyncDownload.mockRejectedValueOnce(new Error("boom"));
     renderSection(baseConfig);
-
     fireEvent.click(
       screen.getByRole("button", { name: "settings.webdavSync.download" }),
     );
@@ -671,20 +617,17 @@ describe("WebdavSyncSection", () => {
         1,
       );
     });
-
     fireEvent.click(
       screen.getByRole("button", {
         name: "settings.webdavSync.confirmDownload.confirm",
       }),
     );
-
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalledWith(
         "settings.webdavSync.downloadFailed",
       );
     });
   });
-
   describe("S3 provider preset", () => {
     const baseS3Config: S3SyncSettings = {
       enabled: true,
@@ -697,20 +640,16 @@ describe("WebdavSyncSection", () => {
       profile: "default",
       status: {},
     };
-
     // Sync-type selector comes first, S3 preset selector second.
     const s3PresetSelect = () =>
       screen.getAllByTestId("webdav-preset-select")[1] as HTMLSelectElement;
-
     it("shows the saved R2 preset instead of falling back to AWS S3", () => {
       renderSection(undefined, {
         ...baseS3Config,
         endpoint: "https://0123456789abcdef.r2.cloudflarestorage.com",
       });
-
       expect(s3PresetSelect().value).toBe("s3-r2");
     });
-
     it.each([
       ["https://oss-cn-hangzhou.aliyuncs.com", "s3-oss"],
       ["https://cos.ap-guangzhou.myqcloud.com", "s3-cos"],
@@ -718,44 +657,34 @@ describe("WebdavSyncSection", () => {
       ["https://minio.internal:9000", "s3-custom"],
     ])("restores the preset for %s", (endpoint, expected) => {
       renderSection(undefined, { ...baseS3Config, endpoint });
-
       expect(s3PresetSelect().value).toBe(expected);
     });
-
     it("uses AWS S3 when the endpoint is empty", () => {
       renderSection(undefined, { ...baseS3Config, endpoint: "" });
-
       expect(s3PresetSelect().value).toBe("aws-s3");
     });
-
     it("keeps an explicit preset that the endpoint cannot be inferred from", () => {
       renderSection(undefined, {
         ...baseS3Config,
         endpoint: "https://minio.internal:9000",
         preset: "s3-minio",
       });
-
       expect(s3PresetSelect().value).toBe("s3-minio");
     });
-
     it("falls back to the endpoint when the saved preset is unknown", () => {
       renderSection(undefined, {
         ...baseS3Config,
         endpoint: "https://oss-cn-hangzhou.aliyuncs.com",
         preset: "s3-from-a-newer-version",
       });
-
       expect(s3PresetSelect().value).toBe("s3-oss");
     });
-
     it("saves the selected preset so it survives reopening", async () => {
       renderSection(undefined, baseS3Config);
-
       fireEvent.change(s3PresetSelect(), { target: { value: "s3-minio" } });
       fireEvent.click(
         screen.getByRole("button", { name: "settings.s3Sync.save" }),
       );
-
       await waitFor(() => {
         expect(settingsApiMock.s3SyncSaveSettings).toHaveBeenCalledWith(
           expect.objectContaining({ preset: "s3-minio" }),
@@ -763,10 +692,8 @@ describe("WebdavSyncSection", () => {
         );
       });
     });
-
     it("repopulates the preset when the saved config arrives later", () => {
       const view = renderSection(undefined, undefined);
-
       view.rerender(
         <QueryClientProvider client={view.client}>
           <WebdavSyncSection
@@ -778,7 +705,6 @@ describe("WebdavSyncSection", () => {
           />
         </QueryClientProvider>,
       );
-
       expect(s3PresetSelect().value).toBe("s3-oss");
     });
   });

@@ -1,21 +1,20 @@
 pub mod cache;
 pub mod content;
-#[cfg(windows)]
-pub mod hermes_wsl;
 pub mod model;
 pub mod providers;
 pub mod terminal;
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
+
+/// Serialize destructive session deletes across providers (shared indexes / trees).
+static DELETE_LOCK: Mutex<()> = Mutex::new(());
 
 // 其余模型类型从 `session_manager::model` 引用
 pub use model::SessionMessage;
-use providers::{
-    agy, claude, codex, dsh, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw, opencode, pi,
-};
+use providers::{agy, claude, codex, dsh, opencode};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,44 +56,33 @@ pub struct DeleteSessionOutcome {
     pub error: Option<String>,
 }
 
-pub fn scan_sessions() -> Vec<SessionMeta> {
-    let (r1, r2, r3, r4, r5, r6, r7, r8, r9) = std::thread::scope(|s| {
-        let h1 = s.spawn(codex::scan_sessions);
-        let h2 = s.spawn(claude::scan_sessions);
-        let h3 = s.spawn(opencode::scan_sessions);
-        let h4 = s.spawn(openclaw::scan_sessions);
-        let h5 = s.spawn(gemini::scan_sessions);
-        let h6 = s.spawn(hermes::scan_sessions);
-        let h7 = s.spawn(grokbuild::scan_sessions);
-        let h8 = s.spawn(pi::scan_sessions);
-        let h9 = s.spawn(omp::scan_sessions);
-        (
-            h1.join().unwrap_or_default(),
-            h2.join().unwrap_or_default(),
-            h3.join().unwrap_or_default(),
-            h4.join().unwrap_or_default(),
-            h5.join().unwrap_or_default(),
-            h6.join().unwrap_or_default(),
-            h7.join().unwrap_or_default(),
-            h8.join().unwrap_or_default(),
-            h9.join().unwrap_or_default(),
-        )
-    });
+fn join_scan(
+    label: &str,
+    handle: std::thread::ScopedJoinHandle<'_, Vec<SessionMeta>>,
+) -> Vec<SessionMeta> {
+    match handle.join() {
+        Ok(sessions) => sessions,
+        Err(_) => {
+            log::error!("{label} session scan panicked; treating as empty for this provider");
+            Vec::new()
+        }
+    }
+}
 
-    let mut sessions = Vec::new();
-    sessions.extend(r1);
-    sessions.extend(r2);
-    sessions.extend(r3);
-    sessions.extend(r4);
-    sessions.extend(r5);
-    sessions.extend(r6);
-    sessions.extend(r7);
-    sessions.extend(r8);
-    sessions.extend(r9);
-    sessions.extend(mcode::scan_sessions());
-    sessions.extend(kimi::scan_sessions());
-    sessions.extend(dsh::scan_sessions());
-    sessions.extend(agy::scan_sessions());
+pub fn scan_sessions() -> Vec<SessionMeta> {
+    let mut sessions = std::thread::scope(|scope| {
+        let handles = [
+            ("claude", scope.spawn(claude::scan_sessions)),
+            ("codex", scope.spawn(codex::scan_sessions)),
+            ("opencode", scope.spawn(opencode::scan_sessions)),
+            ("dsh", scope.spawn(dsh::scan_sessions)),
+            ("agy", scope.spawn(agy::scan_sessions)),
+        ];
+        handles
+            .into_iter()
+            .flat_map(|(label, handle)| join_scan(label, handle))
+            .collect::<Vec<_>>()
+    });
 
     sessions.sort_by(|a, b| {
         let a_ts = a.last_active_at.or(a.created_at).unwrap_or(0);
@@ -106,15 +94,9 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
 }
 
 pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<SessionMessage>, String> {
-    if provider_id == "mcode" {
-        return mcode::load_messages(source_path);
-    }
     // SQLite sessions use a "sqlite:" prefixed source_path
     if provider_id == "opencode" && source_path.starts_with("sqlite:") {
         return opencode::load_messages_sqlite(source_path);
-    }
-    if provider_id == "hermes" && source_path.starts_with("sqlite:") {
-        return hermes::load_messages_sqlite(source_path);
     }
 
     let path = Path::new(source_path);
@@ -122,14 +104,9 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "codex" => codex::load_messages(path),
         "claude" => claude::load_messages(path),
         "opencode" => opencode::load_messages(path),
-        "openclaw" => openclaw::load_messages(path),
-        "gemini" => gemini::load_messages(path),
+
         "agy" => agy::load_messages(path),
-        "grokbuild" => grokbuild::load_messages(path),
-        "hermes" => hermes::load_messages(path),
-        "pi" => pi::load_messages(path),
-        "kimi" => kimi::load_messages(path),
-        "omp" => omp::load_messages(path),
+
         "dsh" => dsh::load_messages(path),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
@@ -166,9 +143,13 @@ pub fn delete_session(
     session_id: &str,
     source_path: &str,
 ) -> Result<bool, String> {
+    let _guard = DELETE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let deleted = delete_session_source(provider_id, session_id, source_path)?;
     if deleted {
         cache::global().remove(provider_id, source_path);
+        content::invalidate_project_dir(provider_id, source_path);
     }
     Ok(deleted)
 }
@@ -183,24 +164,10 @@ fn delete_session_source(
             "Delete this session in DeepSeek Harness to keep its native history consistent".into(),
         );
     }
-    if provider_id == "agy" {
-        return Err(
-            "Delete this session in Antigravity to keep its binary store and summaries consistent"
-                .into(),
-        );
-    }
-    if provider_id == "mcode" {
-        return Err(
-            "Delete this session in MCode so its runtime state and history are removed together"
-                .into(),
-        );
-    }
+
     // SQLite sessions bypass the file-based deletion path
     if provider_id == "opencode" && source_path.starts_with("sqlite:") {
         return opencode::delete_session_sqlite(session_id, source_path);
-    }
-    if provider_id == "hermes" && source_path.starts_with("sqlite:") {
-        return hermes::delete_session_sqlite(session_id, source_path);
     }
 
     let roots = provider_roots(provider_id)?;
@@ -230,13 +197,8 @@ fn delete_session_with_roots(
         "codex" => codex::delete_session(&validated_root, &validated_source, session_id),
         "claude" => claude::delete_session(&validated_root, &validated_source, session_id),
         "opencode" => opencode::delete_session(&validated_root, &validated_source, session_id),
-        "openclaw" => openclaw::delete_session(&validated_root, &validated_source, session_id),
-        "gemini" => gemini::delete_session(&validated_root, &validated_source, session_id),
-        "grokbuild" => grokbuild::delete_session(&validated_root, &validated_source, session_id),
-        "hermes" => hermes::delete_session(&validated_root, &validated_source, session_id),
-        "pi" => pi::delete_session(&validated_root, &validated_source, session_id),
-        "omp" => omp::delete_session(&validated_root, &validated_source, session_id),
-        "kimi" => kimi::delete_session(&validated_root, &validated_source, session_id),
+
+        "agy" => agy::delete_session(&validated_root, &validated_source, session_id),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -246,15 +208,10 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "codex" => codex::session_roots(),
         "claude" => vec![crate::config::get_claude_config_dir().join("projects")],
         "opencode" => vec![opencode::get_opencode_data_dir()],
-        "openclaw" => vec![crate::openclaw_config::get_openclaw_dir().join("agents")],
-        "gemini" => vec![crate::gemini_config::get_gemini_dir().join("tmp")],
-        "grokbuild" => grokbuild::session_roots(),
-        "hermes" => vec![crate::hermes_config::get_hermes_dir().join("sessions")],
-        "pi" => pi::session_roots(),
-        "kimi" => kimi::session_roots(),
+
         "dsh" => dsh::session_roots(),
         "agy" => agy::session_roots(),
-        "omp" => omp::session_roots(),
+
         _ => return Err(format!("Unsupported provider: {provider_id}")),
     };
 

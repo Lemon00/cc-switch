@@ -1,12 +1,10 @@
-import { memo } from "react";
-import { ChevronRight, Copy } from "lucide-react";
-
 import { HoverTip } from "@/components/ui/hover-tip";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import { cn } from "@/lib/utils";
+import { ChevronRight, Copy } from "lucide-react";
+import { memo } from "react";
 import { useReaderT } from "./i18n";
 import { formatDuration, formatTokens, type TurnSummary } from "./toolSummary";
-
 export interface SessionTimelineProps {
   turnKey: string;
   summary: TurnSummary;
@@ -20,7 +18,6 @@ export interface SessionTimelineProps {
   onToggle: (turnKey: string, expanded: boolean) => void;
   onCopyTurn: (turnKey: string) => void;
 }
-
 /**
  * 执行过程的折叠摘要行（规则 1）：
  * `执行过程 · 14 步 · 9 个命令 · 改了 2 个文件 · 1 个失败 · ⏱ 2m14s`，为 0 的项不写。
@@ -38,7 +35,11 @@ export const SessionTimeline = memo(function SessionTimeline({
 }: SessionTimelineProps) {
   const rt = useReaderT();
   const { moneyCompact } = useMoneyFormat();
-  const parts: { key: string; text: string; danger?: boolean }[] = [];
+  const parts: {
+    key: string;
+    text: string;
+    danger?: boolean;
+  }[] = [];
   if (summary.commandCount > 0) {
     parts.push({
       key: "cmd",
@@ -77,7 +78,6 @@ export const SessionTimeline = memo(function SessionTimeline({
   }
   const steps = summary.stepCount || stepTotal;
   const actionLabel = expanded ? rt("collapseTimeline") : rt("expandTimeline");
-
   return (
     <div className="group/timeline flex min-w-0 items-center gap-1">
       <button

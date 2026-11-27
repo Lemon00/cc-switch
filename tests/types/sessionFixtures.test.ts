@@ -25,7 +25,6 @@ import gemini from "../fixtures/sessions/gemini.messages.json";
 import generic from "../fixtures/sessions/generic.messages.json";
 import opencode from "../fixtures/sessions/opencode.messages.json";
 import pi from "../fixtures/sessions/pi.messages.json";
-
 /**
  * tests/fixtures/sessions/*.messages.json 是后端解析结果的契约样例（Rust 侧在
  * session_manager/model.rs 里做往返校验）。JSON import 会把字面量放宽成 string，
@@ -33,22 +32,20 @@ import pi from "../fixtures/sessions/pi.messages.json";
  * schema 本身通过 `satisfies Spec<T>` 与 src/types.ts 绑定：类型增删字段或改变
  * 可选性时，这里会编译失败。
  */
-
 // ─── 运行时 schema ────────────────────────────────────────────────────────
-
 type Check = (value: unknown, path: string, errors: string[]) => void;
-type Field<Required extends boolean> = { required: Required; check: Check };
+type Field<Required extends boolean> = {
+  required: Required;
+  check: Check;
+};
 /** 每个键都必须声明，且必填/可选与类型一致 */
 type Spec<T> = {
   [K in keyof T]-?: undefined extends T[K] ? Field<false> : Field<true>;
 };
-
 const req = (check: Check): Field<true> => ({ required: true, check });
 const opt = (check: Check): Field<false> => ({ required: false, check });
-
 const fail = (errors: string[], path: string, msg: string) =>
   errors.push(`${path}: ${msg}`);
-
 const str: Check = (v, p, e) => {
   if (typeof v !== "string") fail(e, p, "应为 string");
 };
@@ -82,7 +79,6 @@ const arrayOf =
     if (nonEmpty && v.length === 0) fail(e, p, "空数组应省略");
     v.forEach((x, i) => item(x, `${p}[${i}]`, e));
   };
-
 function object<T>(spec: Spec<T>): Check {
   const fields = spec as Record<string, Field<boolean>>;
   return (v, p, e) => {
@@ -106,11 +102,12 @@ function object<T>(spec: Spec<T>): Check {
     }
   };
 }
-
 /** 判别联合：按 tag 字段选 schema；`cases` 的键必须覆盖联合的全部 tag 值 */
 function tagged<U, Tag extends keyof U & string>(
   tag: Tag,
-  cases: { [K in U[Tag] & string]: Check },
+  cases: {
+    [K in U[Tag] & string]: Check;
+  },
 ): Check {
   const table = cases as Record<string, Check>;
   return (v, p, e) => {
@@ -120,7 +117,6 @@ function tagged<U, Tag extends keyof U & string>(
     check(v, p, e);
   };
 }
-
 /** 列出联合类型的全部取值；少列会编译失败 */
 const allOf =
   <T extends string>() =>
@@ -128,10 +124,11 @@ const allOf =
     list: L &
       ([Exclude<T, L[number]>] extends [never]
         ? unknown
-        : { missing: Exclude<T, L[number]> }),
+        : {
+            missing: Exclude<T, L[number]>;
+          }),
   ) =>
     list;
-
 const TOOL_KINDS = allOf<ToolKind>()([
   "shell",
   "read",
@@ -174,52 +171,89 @@ const BLOCK_TYPES = allOf<SessionBlock["type"]>()([
   "event",
   "step",
 ] as const);
-
 const lit = (value: string) => oneOf([value]);
-
 const contentRef = tagged<ContentRef, "kind">("kind", {
-  jsonl: object<Extract<ContentRef, { kind: "jsonl" }>>({
+  jsonl: object<
+    Extract<
+      ContentRef,
+      {
+        kind: "jsonl";
+      }
+    >
+  >({
     kind: req(lit("jsonl")),
     offset: req(int),
     len: req(int),
     pointer: req(str),
   }),
-  sqlite: object<Extract<ContentRef, { kind: "sqlite" }>>({
+  sqlite: object<
+    Extract<
+      ContentRef,
+      {
+        kind: "sqlite";
+      }
+    >
+  >({
     kind: req(lit("sqlite")),
     table: req(str),
     id: req(str),
     column: req(str),
     pointer: req(str),
   }),
-  file: object<Extract<ContentRef, { kind: "file" }>>({
+  file: object<
+    Extract<
+      ContentRef,
+      {
+        kind: "file";
+      }
+    >
+  >({
     kind: req(lit("file")),
     relPath: req(str),
     pointer: req(str),
   }),
-  sidecar: object<Extract<ContentRef, { kind: "sidecar" }>>({
+  sidecar: object<
+    Extract<
+      ContentRef,
+      {
+        kind: "sidecar";
+      }
+    >
+  >({
     kind: req(lit("sidecar")),
     relPath: req(str),
   }),
 });
-
 const imageSource = tagged<ImageSource, "kind">("kind", {
-  inline: object<Extract<ImageSource, { kind: "inline" }>>({
+  inline: object<
+    Extract<
+      ImageSource,
+      {
+        kind: "inline";
+      }
+    >
+  >({
     kind: req(lit("inline")),
     content: req(contentRef),
   }),
-  local_file: object<Extract<ImageSource, { kind: "local_file" }>>({
+  local_file: object<
+    Extract<
+      ImageSource,
+      {
+        kind: "local_file";
+      }
+    >
+  >({
     kind: req(lit("local_file")),
     path: req(str),
   }),
 });
-
 const imageRef = object<ImageRef>({
   source: req(imageSource),
   mediaType: req(str),
   size: req(int),
   alt: opt(str),
 });
-
 const diffSummary = object<DiffSummary>({
   files: req(
     arrayOf(
@@ -235,7 +269,6 @@ const diffSummary = object<DiffSummary>({
   removed: req(int),
   full: opt(contentRef),
 });
-
 const sessionBlock = tagged<SessionBlock, "type">("type", {
   text: object<TextBlock>({
     type: req(lit("text")),
@@ -294,7 +327,6 @@ const sessionBlock = tagged<SessionBlock, "type">("type", {
     reason: opt(str),
   }),
 });
-
 const messageMeta = object<MessageMeta>({
   model: opt(str),
   inputTokens: opt(int),
@@ -306,7 +338,6 @@ const messageMeta = object<MessageMeta>({
   durationMs: opt(int),
   stopReason: opt(str),
 });
-
 const sessionMessage = object<SessionMessage>({
   role: req(oneOf(["user", "assistant", "tool", "system"])),
   content: opt(str),
@@ -317,20 +348,16 @@ const sessionMessage = object<SessionMessage>({
   blocks: opt(arrayOf(sessionBlock, { nonEmpty: true })),
   meta: opt(messageMeta),
 });
-
 // ─── 契约规则（与 Rust providers/blocks.rs 常量一致） ──────────────────────
-
 const PREVIEW_LINES = 12;
 const PREVIEW_CHARS = 1200;
 const INPUT_PREVIEW_CHARS = 400;
 const THINKING_PREVIEW_CHARS = 400;
 const TITLE_CHARS = 200;
-
 const charCount = (s: string) => Array.from(s).length;
 /** 与 Rust `str::lines().count()` 一致：末尾换行不额外计一行 */
 const lineCount = (s: string) =>
   s === "" ? 0 : s.replace(/\r?\n$/, "").split("\n").length;
-
 const fixtures: Record<string, unknown> = {
   claude,
   codex,
@@ -339,11 +366,9 @@ const fixtures: Record<string, unknown> = {
   pi,
   generic,
 };
-
 const asMessages = (raw: unknown) => raw as SessionMessage[];
 const allBlocks = (messages: SessionMessage[]) =>
   messages.flatMap((m) => m.blocks ?? []);
-
 describe("session reader fixtures", () => {
   it.each(Object.entries(fixtures))(
     "%s 符合 SessionMessage 类型",
@@ -353,7 +378,6 @@ describe("session reader fixtures", () => {
       expect(errors).toEqual([]);
     },
   );
-
   it.each(Object.entries(fixtures))(
     "%s 有 blocks 的消息不带 content（前端从 blocks 推导）",
     (name, raw) => {
@@ -365,12 +389,17 @@ describe("session reader fixtures", () => {
       expect(offenders).toEqual([]);
     },
   );
-
   it.each(Object.entries(fixtures))(
     "%s 的 tool_result 都能配上同一轮里更早的 tool_call",
     (name, raw) => {
       const messages = asMessages(raw);
-      const calls = new Map<string, { turnId?: string; index: number }>();
+      const calls = new Map<
+        string,
+        {
+          turnId?: string;
+          index: number;
+        }
+      >();
       const problems: string[] = [];
       messages.forEach((message, index) => {
         for (const block of message.blocks ?? []) {
@@ -397,7 +426,6 @@ describe("session reader fixtures", () => {
       expect(problems).toEqual([]);
     },
   );
-
   it.each(Object.entries(fixtures))(
     "%s 的预览遵守长度上限与统计口径",
     (name, raw) => {
@@ -450,13 +478,11 @@ describe("session reader fixtures", () => {
       expect(problems).toEqual([]);
     },
   );
-
   it("6 份 fixture 合起来覆盖所有块类型、工具类别、状态与事件", () => {
     const blocks = Object.values(fixtures).flatMap((raw) =>
       allBlocks(asMessages(raw)),
     );
     const seen = <T>(values: T[]) => [...new Set(values)].sort();
-
     expect(seen(blocks.map((b) => b.type))).toEqual([...BLOCK_TYPES].sort());
     expect(
       seen(blocks.flatMap((b) => (b.type === "tool_call" ? [b.kind] : []))),
@@ -467,7 +493,6 @@ describe("session reader fixtures", () => {
     expect(
       seen(blocks.flatMap((b) => (b.type === "event" ? [b.kind] : []))),
     ).toEqual([...EVENT_KINDS].sort());
-
     const images = blocks.flatMap((b) =>
       b.type === "image"
         ? [b.image]

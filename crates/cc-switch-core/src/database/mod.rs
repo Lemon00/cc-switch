@@ -24,34 +24,40 @@
 //! ```
 
 pub mod backup;
+pub mod changes;
+pub mod codex_usage_reset;
 pub mod dao;
+pub mod icon_sanitizer;
 pub mod migration;
 pub mod schema;
+pub mod sql_helpers;
+pub mod usage;
 
+#[cfg(test)]
+mod persistence_tests;
 #[cfg(test)]
 pub mod tests;
 
 // DAO 类型导出供外部使用
 pub use dao::custom_icons::{CustomIconEntry, CUSTOM_ICONS_KEY};
-pub use dao::providers_seed::{
-    is_official_seed_id, CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID, CODEX_OFFICIAL_PROVIDER_ID,
-    GROKBUILD_OFFICIAL_PROVIDER_ID,
-};
+pub use dao::providers_seed::{is_official_seed_id, CODEX_OFFICIAL_PROVIDER_ID};
 pub use dao::proxy::{PRICING_SOURCE_REQUEST, PRICING_SOURCE_RESPONSE};
 pub use dao::FailoverQueueItem;
 pub use dao::Profile;
+pub use dao::UnreadableEntry;
 
 use crate::config::get_app_config_dir;
 use crate::error::AppError;
+use changes::{DatabaseChangeObserver, NoOpDatabaseChangeObserver};
 use rusqlite::{hooks::Action, Connection};
 use serde::Serialize;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 // DAO 方法通过 impl Database 提供，无需额外导出
 
 /// 当前 Schema 版本号
 /// 每次修改表结构时递增，并在 schema.rs 中添加相应的迁移逻辑
-pub const SCHEMA_VERSION: i32 = 24;
+pub const SCHEMA_VERSION: i32 = 26;
 
 /// 安全地序列化 JSON，避免 unwrap panic
 pub fn to_json_string<T: Serialize>(value: &T) -> Result<String, AppError> {
@@ -108,7 +114,7 @@ impl RecoverPoisoned for Connection {
     }
 }
 
-impl RecoverPoisoned for Option<crate::services::usage_stats::LogCountCache> {
+impl RecoverPoisoned for Option<crate::database::usage::LogCountCache> {
     /// 只是加速用的缓存，清空后下次查询重新统计。
     fn recover_poisoned(&mut self) -> Result<(), AppError> {
         *self = None;
@@ -121,22 +127,67 @@ impl RecoverPoisoned for Option<crate::services::usage_stats::LogCountCache> {
 /// 使用 Mutex 包装 Connection 以支持在多线程环境（如 Tauri State）中共享。
 /// rusqlite::Connection 本身不是 Sync 的，因此需要这层包装。
 pub struct Database {
-    pub conn: Mutex<Connection>,
-    /// 请求日志总数缓存，见 `services::usage_stats::LogCountCache`
-    pub log_count_cache: Mutex<Option<crate::services::usage_stats::LogCountCache>>,
+    pub(crate) conn: Mutex<Connection>,
+    /// 请求日志总数缓存，见 `usage::LogCountCache`
+    pub(crate) log_count_cache: Mutex<Option<crate::database::usage::LogCountCache>>,
+    pub(crate) change_observer: Arc<dyn DatabaseChangeObserver>,
 }
 
-fn register_db_change_hook(conn: &Connection) {
+fn register_db_change_hook(conn: &Connection, observer: Arc<dyn DatabaseChangeObserver>) {
     conn.update_hook(Some(
-        |action: Action, _database: &str, table: &str, _row_id: i64| match action {
+        move |action: Action, _database: &str, table: &str, _row_id: i64| match action {
             Action::SQLITE_INSERT | Action::SQLITE_UPDATE | Action::SQLITE_DELETE => {
-                use crate::services::{auto_sync, s3_auto_sync, webdav_auto_sync};
-                auto_sync::notify_db_changed::<webdav_auto_sync::WebDavAutoSync>(table);
-                auto_sync::notify_db_changed::<s3_auto_sync::S3AutoSync>(table);
+                observer.table_changed(table);
             }
             _ => {}
         },
     ));
+}
+
+/// Unix：新建主库用 0600 占位后再交给 SQLite；已有文件收紧到 0600。
+/// Windows 仍依赖用户目录 ACL，这里只确保父目录与文件存在。
+fn ensure_private_db_file(db_path: &std::path::Path, db_exists: bool) -> Result<(), AppError> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        if !db_exists {
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(db_path)
+                .map_err(|e| AppError::io(db_path, e))?;
+            file.write_all(b"").map_err(|e| AppError::io(db_path, e))?;
+            // 空文件交给 Connection::open 初始化；权限已是 0600。
+            drop(file);
+        } else if let Err(e) =
+            std::fs::set_permissions(db_path, std::fs::Permissions::from_mode(0o600))
+        {
+            log::warn!(
+                "Failed to tighten permissions on {}: {e}",
+                db_path.display()
+            );
+        }
+        // WAL/SHM 若已存在一并收紧（SQLite 可能稍后创建）。
+        for suffix in ["-wal", "-shm"] {
+            let side = db_path.with_file_name(format!(
+                "{}{suffix}",
+                db_path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("cc-switch.db")
+            ));
+            if side.exists() {
+                let _ = std::fs::set_permissions(&side, std::fs::Permissions::from_mode(0o600));
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (db_path, db_exists);
+    }
+    Ok(())
 }
 
 impl Database {
@@ -144,18 +195,35 @@ impl Database {
     ///
     /// 数据库文件位于 `~/.cc-switch/cc-switch.db`
     pub fn init() -> Result<Self, AppError> {
+        Self::init_with_observer(Arc::new(NoOpDatabaseChangeObserver))
+    }
+
+    /// Initialize persistence with application-supplied change notifications.
+    pub fn init_with_observer(
+        change_observer: Arc<dyn DatabaseChangeObserver>,
+    ) -> Result<Self, AppError> {
         let db_path = get_app_config_dir().join("cc-switch.db");
         let db_exists = db_path.exists();
 
-        // 确保父目录存在
+        // 确保父目录存在；Unix 下配置目录 0700、主库 0600（含凭据）。
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+            }
         }
+        ensure_private_db_file(&db_path, db_exists)?;
 
         let conn = Connection::open(&db_path).map_err(|e| AppError::Database(e.to_string()))?;
 
         // 启用外键约束
         conn.execute("PRAGMA foreign_keys = ON;", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        // GUI + CLI/tray may share the DB; wait briefly instead of failing
+        // immediately with SQLITE_BUSY.
+        conn.busy_timeout(std::time::Duration::from_secs(5))
             .map_err(|e| AppError::Database(e.to_string()))?;
         if !db_exists {
             // For a brand-new database, configure incremental auto-vacuum
@@ -163,36 +231,39 @@ impl Database {
             conn.execute("PRAGMA auto_vacuum = INCREMENTAL;", [])
                 .map_err(|e| AppError::Database(e.to_string()))?;
         }
-        register_db_change_hook(&conn);
+        register_db_change_hook(&conn, change_observer.clone());
 
         let db = Self {
             conn: Mutex::new(conn),
             log_count_cache: Mutex::new(None),
+            change_observer,
         };
-        db.create_tables()?;
 
-        // Pre-migration backup: only when upgrading from an existing database
-        {
-            let conn = lock_conn!(db.conn);
-            let version = Self::get_user_version(&conn)?;
-            drop(conn);
-            if version > 0 && version < SCHEMA_VERSION {
+        // Pre-migration backup must run BEFORE create_tables: that path can
+        // ALTER/DROP existing tables, so a post-create backup is not a true
+        // pre-migration snapshot of the user's database.
+        if db_exists {
+            let (version, has_tables) = {
+                let conn = lock_conn!(db.conn);
+                (
+                    Self::get_user_version(&conn)?,
+                    Self::has_user_tables(&conn)?,
+                )
+            };
+            if has_tables && version < SCHEMA_VERSION {
                 log::info!(
                     "Creating pre-migration database backup (v{version} → v{SCHEMA_VERSION})"
                 );
-                if let Err(e) = db.backup_database_file() {
-                    log::warn!("Pre-migration backup failed, continuing migration: {e}");
-                }
+                db.backup_database_file()?;
             }
         }
 
-        db.apply_schema_migrations()?;
+        {
+            let conn = lock_conn!(db.conn);
+            Self::initialize_schema_on_conn(&conn)?;
+        }
         if let Err(e) = db.ensure_incremental_auto_vacuum() {
             log::warn!("Failed to ensure incremental auto-vacuum: {e}");
-        }
-        db.ensure_model_pricing_seeded()?;
-        if let Err(e) = crate::services::model_pricing::sync_local_model_pricing(&db) {
-            log::warn!("Failed to sync local model pricing file: {e}");
         }
 
         // Log rollup/pruning and vacuum run in periodic_backup_if_needed after
@@ -213,30 +284,66 @@ impl Database {
         if !db_path.exists() {
             return Ok(None);
         }
-        let conn = Connection::open(db_path).map_err(|e| AppError::Database(e.to_string()))?;
+        let conn = Connection::open_with_flags(
+            db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
         let version = Self::get_user_version(&conn)?;
         Ok((version > SCHEMA_VERSION).then_some(version))
     }
 
     /// 创建内存数据库（用于测试）
     pub fn memory() -> Result<Self, AppError> {
+        Self::memory_with_observer(Arc::new(NoOpDatabaseChangeObserver))
+    }
+
+    pub fn memory_with_observer(
+        change_observer: Arc<dyn DatabaseChangeObserver>,
+    ) -> Result<Self, AppError> {
         let conn = Connection::open_in_memory().map_err(|e| AppError::Database(e.to_string()))?;
 
         // 启用外键约束
         conn.execute("PRAGMA foreign_keys = ON;", [])
             .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))
+            .map_err(|e| AppError::Database(e.to_string()))?;
         conn.execute("PRAGMA auto_vacuum = INCREMENTAL;", [])
             .map_err(|e| AppError::Database(e.to_string()))?;
-        register_db_change_hook(&conn);
+        register_db_change_hook(&conn, change_observer.clone());
 
         let db = Self {
             conn: Mutex::new(conn),
             log_count_cache: Mutex::new(None),
+            change_observer,
         };
-        db.create_tables()?;
-        db.ensure_model_pricing_seeded()?;
+        {
+            let conn = lock_conn!(db.conn);
+            Self::initialize_schema_on_conn(&conn)?;
+        }
 
         Ok(db)
+    }
+
+    /// Test-only contention hook without exposing the SQL connection to hosts.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_connection_locked_for_test<T>(&self, operation: impl FnOnce() -> T) -> T {
+        let _guard = self.conn.lock().expect("test connection lock");
+        operation()
+    }
+
+    /// 清空请求日志计数缓存（导入/恢复整库后必须调用）。
+    pub fn invalidate_log_count_cache(&self) {
+        if let Ok(mut cache) = self.log_count_cache.lock() {
+            *cache = None;
+        }
+    }
+
+    /// 尽量释放 SQLite 页缓存等可回收内存，减轻后台常驻占用。
+    pub fn shrink_memory(&self) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute_batch("PRAGMA shrink_memory;")
+            .map_err(|e| AppError::Database(format!("释放数据库缓存失败: {e}")))
     }
 
     pub fn get_auto_vacuum_mode(conn: &Connection) -> Result<i32, AppError> {

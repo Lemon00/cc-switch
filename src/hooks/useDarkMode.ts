@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-
 /**
  * Subscribe to the presence of `class="dark"` on `<html>`. The theme-provider
  * toggles this class whenever the effective theme changes (including when the
@@ -13,7 +12,6 @@ export function useDarkMode(): boolean {
       ? document.documentElement.classList.contains("dark")
       : false,
   );
-
   useEffect(() => {
     const observer = new MutationObserver(() => {
       setIsDark(document.documentElement.classList.contains("dark"));
@@ -24,6 +22,5 @@ export function useDarkMode(): boolean {
     });
     return () => observer.disconnect();
   }, []);
-
   return isDark;
 }

@@ -6,11 +6,10 @@ import {
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
+import { http, HttpResponse } from "msw";
 import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
-import { settingsApi } from "@/lib/api";
 import type { McpApps, McpServer, McpServerSpec } from "@/types";
-
+import { server } from "../msw/server";
 const mocks = vi.hoisted(() => ({
   serversMap: {} as Record<string, McpServer>,
   isLoading: false,
@@ -24,7 +23,7 @@ const mocks = vi.hoisted(() => ({
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
   toastWarning: vi.fn(),
-  visibleApps: ["claude", "codex", "gemini"] as string[],
+  visibleApps: ["claude", "codex"] as string[],
   connectivity: {
     states: { alpha: "connected", beta: "disconnected" } as Record<
       string,
@@ -36,7 +35,6 @@ const mocks = vi.hoisted(() => ({
     checkServer: vi.fn(),
   },
 }));
-
 vi.mock("@/hooks/useMcp", () => ({
   MCP_UPSERT_MUTATION_KEY: ["mcp", "upsert"],
   useAllMcpServers: () => ({
@@ -64,22 +62,18 @@ vi.mock("@/hooks/useMcp", () => ({
     isPending: false,
   }),
 }));
-
 vi.mock("@/components/mcp/useVisibleAppIds", () => ({
   useVisibleAppIds: (ids: string[]) =>
     ids.filter((id) => mocks.visibleApps.includes(id)),
 }));
-
 vi.mock("@/hooks/useMcpConnectivity", () => ({
   useMcpConnectivity: () => mocks.connectivity,
 }));
-
 vi.mock("@/components/mcp/McpFormModal", () => ({
   default: ({ editingId }: { editingId?: string }) => (
     <div data-testid="mcp-drawer">{editingId ?? "add"}</div>
   ),
 }));
-
 vi.mock("sonner", () => ({
   toast: {
     error: mocks.toastError,
@@ -88,12 +82,10 @@ vi.mock("sonner", () => ({
     info: vi.fn(),
   },
 }));
-
 type ServerOverrides = Partial<Omit<McpServer, "apps" | "server">> & {
   apps?: Partial<McpApps>;
   server?: Partial<McpServerSpec>;
 };
-
 function makeServer(id: string, overrides: ServerOverrides = {}): McpServer {
   const { apps, server, ...metadata } = overrides;
   return {
@@ -104,16 +96,11 @@ function makeServer(id: string, overrides: ServerOverrides = {}): McpServer {
     apps: {
       claude: false,
       codex: false,
-      gemini: false,
-      grokbuild: false,
       opencode: false,
-      openclaw: false,
-      hermes: false,
       ...apps,
     },
   } as McpServer;
 }
-
 const renderPanel = (
   onBlocked?: (blocked: boolean) => void,
   extra?: React.ReactNode,
@@ -124,7 +111,6 @@ const renderPanel = (
       {extra}
     </QueryClientProvider>,
   );
-
 /** 模拟编辑页发起、一直没完成的保存 */
 function PendingEditorSave() {
   const save = useMutation({
@@ -137,18 +123,16 @@ function PendingEditorSave() {
     </button>
   );
 }
-
 const rowNames = () =>
   within(screen.getByRole("list", { name: "mcpPage.listLabel" }))
     .getAllByRole("listitem")
     .map((item) => item.querySelector("span[title].truncate")?.textContent);
-
 describe("UnifiedMcpPanel", () => {
   beforeEach(() => {
     mocks.serversMap = {};
     mocks.isLoading = false;
     mocks.isError = false;
-    mocks.visibleApps = ["claude", "codex", "gemini"];
+    mocks.visibleApps = ["claude", "codex"];
     mocks.connectivity.states = { alpha: "connected", beta: "disconnected" };
     mocks.connectivity.checking = false;
     mocks.connectivity.canCheck = true;
@@ -162,7 +146,7 @@ describe("UnifiedMcpPanel", () => {
     mocks.deleteServer.mockReset().mockResolvedValue(true);
     mocks.importServers.mockReset().mockResolvedValue(0);
     mocks.resync.mockReset().mockImplementation(async (apps?: string[]) =>
-      (apps ?? ["claude", "codex", "gemini"]).map((app) => ({
+      (apps ?? ["claude", "codex"]).map((app) => ({
         app,
         ok: true,
       })),
@@ -172,7 +156,6 @@ describe("UnifiedMcpPanel", () => {
     mocks.toastError.mockReset();
     mocks.toastSuccess.mockReset();
   });
-
   it("searches the allow-listed fields but never env or header values", async () => {
     mocks.serversMap = {
       alpha: makeServer("alpha", {
@@ -193,7 +176,6 @@ describe("UnifiedMcpPanel", () => {
     expect(screen.getByText("uvx fetch-tool")).toBeInTheDocument();
     expect(screen.getByText("beta.example.com/mcp")).toBeInTheDocument();
     expect(screen.queryByText(/secret-token/)).not.toBeInTheDocument();
-
     const search = screen.getByRole("textbox", {
       name: "mcp.unifiedPanel.searchAriaLabel",
     });
@@ -206,13 +188,29 @@ describe("UnifiedMcpPanel", () => {
     await userEvent.type(search, "hidden-value");
     expect(screen.getByText("mcpPage.noMatch")).toBeInTheDocument();
   });
-
+  it("lists unreadable servers apart from the table", async () => {
+    server.use(
+      http.post("http://tauri.local/get_unreadable_mcp_servers", () =>
+        HttpResponse.json([
+          {
+            id: "broken",
+            name: "Broken",
+            error: "MCP 服务器 broken 的 server_config 无法解析",
+          },
+        ]),
+      ),
+    );
+    renderPanel();
+    expect(
+      await screen.findByText("「Broken」的数据无法读取"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("mcpPage.emptyTitle")).toBeInTheDocument();
+  });
   it("shows the empty state, not a search miss, when there are no servers", () => {
     renderPanel();
     expect(screen.getByText("mcpPage.emptyTitle")).toBeInTheDocument();
     expect(screen.queryByText("mcpPage.noMatch")).not.toBeInTheDocument();
   });
-
   it("shows compact connectivity lights separately from app enablement", () => {
     mocks.serversMap = {
       alpha: makeServer("alpha", { apps: { claude: true } }),
@@ -242,7 +240,6 @@ describe("UnifiedMcpPanel", () => {
       screen.getByRole("img", { name: "mcpPage.connection.disabled" }),
     ).toHaveClass("bg-fg-3");
   });
-
   it("checks connectivity only when asked, for the page or a single row", async () => {
     mocks.serversMap = {
       alpha: makeServer("alpha", { apps: { claude: true } }),
@@ -251,12 +248,10 @@ describe("UnifiedMcpPanel", () => {
     renderPanel();
     expect(mocks.connectivity.checkAll).not.toHaveBeenCalled();
     expect(mocks.connectivity.checkServer).not.toHaveBeenCalled();
-
     await userEvent.click(
       screen.getByRole("button", { name: "mcpPage.checkConnectivity" }),
     );
     expect(mocks.connectivity.checkAll).toHaveBeenCalledTimes(1);
-
     const [alphaMore, disabledMore] = screen.getAllByRole("button", {
       name: "mcpPage.rowMoreAria",
     });
@@ -265,14 +260,12 @@ describe("UnifiedMcpPanel", () => {
       await screen.findByRole("menuitem", { name: "mcpPage.testConnection" }),
     );
     expect(mocks.connectivity.checkServer).toHaveBeenCalledWith("alpha");
-
     await userEvent.click(disabledMore);
     await screen.findByRole("menuitem", { name: "mcpPage.copyJson" });
     expect(
       screen.queryByRole("menuitem", { name: "mcpPage.testConnection" }),
     ).not.toBeInTheDocument();
   });
-
   it("disables the page check while a check runs or nothing is enabled", () => {
     mocks.serversMap = {
       alpha: makeServer("alpha", { apps: { claude: true } }),
@@ -290,7 +283,6 @@ describe("UnifiedMcpPanel", () => {
       screen.getByRole("button", { name: "mcpPage.checkConnectivity" }),
     ).toBeDisabled();
   });
-
   it("shows the load error instead of the empty state", () => {
     mocks.isError = true;
     renderPanel();
@@ -298,16 +290,14 @@ describe("UnifiedMcpPanel", () => {
     expect(screen.getByText("database is locked")).toBeInTheDocument();
     expect(screen.queryByText("mcpPage.emptyTitle")).not.toBeInTheDocument();
   });
-
   it("only renders columns for apps shown on the Apps page", () => {
     mocks.serversMap = { alpha: makeServer("alpha") };
     renderPanel();
     const header = screen.getByTestId("mcp-matrix");
     expect(
       within(header).getAllByRole("button", { name: /appMatrix.columnAria/ }),
-    ).toHaveLength(3);
+    ).toHaveLength(2);
   });
-
   it("highlights a column for its cells but shows the app name only when hovering the header", async () => {
     const user = userEvent.setup();
     mocks.serversMap = { alpha: makeServer("alpha") };
@@ -321,7 +311,6 @@ describe("UnifiedMcpPanel", () => {
     expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
     act(() => cell.blur());
     expect(columns[1]).not.toHaveAttribute("data-highlighted");
-
     await user.hover(cell);
     expect(columns[1]).toHaveAttribute("data-highlighted");
     expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
@@ -330,18 +319,15 @@ describe("UnifiedMcpPanel", () => {
     );
     await user.click(cell);
     expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
-
     await user.hover(columns[1]);
     expect(screen.getByTestId("matrix-column-name")).toHaveTextContent("Codex");
     await user.unhover(columns[1]);
     expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
-
     await user.hover(columns[1]);
     await user.hover(cell);
     expect(columns[1]).toHaveAttribute("data-highlighted");
     expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
   });
-
   it("bulk-enables only the rows left by the search and offers undo", async () => {
     mocks.serversMap = {
       "alpha-one": makeServer("alpha-one"),
@@ -361,7 +347,6 @@ describe("UnifiedMcpPanel", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "appMatrix.pop.enableRest" }),
     );
-
     await waitFor(() => expect(mocks.bulkToggle).toHaveBeenCalledTimes(1));
     expect(mocks.bulkToggle).toHaveBeenCalledWith({
       serverIds: ["alpha-one"],
@@ -371,7 +356,6 @@ describe("UnifiedMcpPanel", () => {
     await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalled());
     const [, options] = mocks.toastSuccess.mock.calls[0];
     expect(options.action.label).toBe("appMatrix.undo");
-
     options.action.onClick();
     await waitFor(() => expect(mocks.bulkToggle).toHaveBeenCalledTimes(2));
     expect(mocks.bulkToggle).toHaveBeenLastCalledWith({
@@ -380,7 +364,6 @@ describe("UnifiedMcpPanel", () => {
       enabled: false,
     });
   });
-
   it.each<["error" | "warning", string[]]>([
     ["error", ["alpha", "beta"]],
     ["warning", ["beta"]],
@@ -400,7 +383,6 @@ describe("UnifiedMcpPanel", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "appMatrix.pop.enableRest" }),
     );
-
     const expected = level === "error" ? mocks.toastError : mocks.toastWarning;
     await waitFor(() =>
       expect(expected).toHaveBeenCalledWith(
@@ -415,7 +397,6 @@ describe("UnifiedMcpPanel", () => {
       screen.getAllByRole("button", { name: "appMatrix.cell.fail" }),
     ).toHaveLength(failedIds.length);
   });
-
   it.each(["success", "partial", "total", "rejected"] as const)(
     "reports the real result of a bulk undo (%s)",
     async (outcome) => {
@@ -433,7 +414,6 @@ describe("UnifiedMcpPanel", () => {
       await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledTimes(1));
       const [, options] = mocks.toastSuccess.mock.calls[0];
       mocks.toastSuccess.mockClear();
-
       const failedIds =
         outcome === "success"
           ? []
@@ -449,7 +429,6 @@ describe("UnifiedMcpPanel", () => {
         }));
       }
       act(() => options.action.onClick());
-
       const expected =
         outcome === "success"
           ? mocks.toastSuccess
@@ -478,12 +457,10 @@ describe("UnifiedMcpPanel", () => {
       });
     },
   );
-
   it("marks a failed write with a warning and retries the wanted state", async () => {
     mocks.serversMap = { serena: makeServer("serena") };
     mocks.toggle.mockRejectedValueOnce(new Error("config.toml line 12"));
     renderPanel();
-
     await userEvent.click(
       screen.getAllByRole("button", { name: "appMatrix.cell.off" })[1],
     );
@@ -498,7 +475,6 @@ describe("UnifiedMcpPanel", () => {
     const failCell = screen.getByRole("button", {
       name: "appMatrix.cell.fail",
     });
-
     await userEvent.click(failCell);
     await waitFor(() => expect(mocks.toggle).toHaveBeenCalledTimes(2));
     expect(mocks.toggle).toHaveBeenLastCalledWith({
@@ -512,22 +488,25 @@ describe("UnifiedMcpPanel", () => {
       ).not.toBeInTheDocument(),
     );
   });
-
-  it("retries a failed app from the notice by resyncing that app", async () => {
+  it("retries a failed Codex toggle using the requested state", async () => {
     mocks.serversMap = { serena: makeServer("serena") };
     mocks.toggle.mockRejectedValueOnce(new Error("config.toml line 12"));
     renderPanel();
-
     await userEvent.click(
       screen.getAllByRole("button", { name: "appMatrix.cell.off" })[1],
     );
     await waitFor(() =>
       expect(screen.getByText("mcpPage.failNoticeTitle")).toBeInTheDocument(),
     );
-
     await userEvent.click(screen.getByRole("button", { name: "common.retry" }));
-
-    await waitFor(() => expect(mocks.resync).toHaveBeenCalledWith(["codex"]));
+    await waitFor(() =>
+      expect(mocks.bulkToggle).toHaveBeenCalledWith({
+        serverIds: ["serena"],
+        app: "codex",
+        enabled: true,
+      }),
+    );
+    expect(mocks.resync).not.toHaveBeenCalled();
     expect(mocks.toggle).toHaveBeenCalledTimes(1);
     await waitFor(() =>
       expect(
@@ -539,86 +518,69 @@ describe("UnifiedMcpPanel", () => {
       expect.anything(),
     );
   });
-
-  it("rewrites Oh My Pi cell by cell on retry, because the toggle never reached the DB", async () => {
+  it("rewrites Antigravity cell by cell on retry, because the toggle never reached the DB", async () => {
     // omp commits only after the config write succeeds (`sync_and_commit`), so a
     // failed write leaves the row's flag unset: the retry must re-write that
     // value instead of resyncing from the (unchanged) database state.
-    mocks.visibleApps = ["omp"];
+    mocks.visibleApps = ["agy"];
     mocks.serversMap = { serena: makeServer("serena") };
     mocks.toggle.mockRejectedValueOnce(new Error("models.yml line 3"));
     renderPanel();
-
     await userEvent.click(
       screen.getByRole("button", { name: "appMatrix.cell.off" }),
     );
     await waitFor(() =>
       expect(screen.getByText("mcpPage.failNoticeTitle")).toBeInTheDocument(),
     );
-
     await userEvent.click(screen.getByRole("button", { name: "common.retry" }));
-
     await waitFor(() =>
       expect(mocks.bulkToggle).toHaveBeenCalledWith({
         serverIds: ["serena"],
-        app: "omp",
+        app: "agy",
         enabled: true,
       }),
     );
     expect(mocks.toggle).toHaveBeenCalledTimes(1);
     expect(mocks.resync).not.toHaveBeenCalled();
   });
-
-  it("explains Oh My Pi's discovery in its column popover only", async () => {
-    const openExternal = vi
-      .spyOn(settingsApi, "openExternal")
-      .mockResolvedValue(undefined);
-    mocks.visibleApps = ["codex", "omp"];
-    mocks.serversMap = { serena: makeServer("serena") };
-    renderPanel();
-    const [codexColumn, ompColumn] = screen.getAllByRole("button", {
-      name: /appMatrix.columnAria/,
-    });
-
-    await userEvent.click(codexColumn);
-    expect(
-      screen.queryByRole("button", { name: "appMatrix.ompDiscovery.docsLink" }),
-    ).not.toBeInTheDocument();
-    await userEvent.keyboard("{Escape}");
-
-    await userEvent.click(ompColumn);
-    expect(
-      screen.getByRole("button", { name: "appMatrix.ompDiscovery.title" }),
-    ).toBeInTheDocument();
-    await userEvent.click(
-      screen.getByRole("button", { name: "appMatrix.ompDiscovery.docsLink" }),
-    );
-    expect(openExternal).toHaveBeenCalledWith(
-      expect.stringContaining("oh-my-pi/blob/main/docs/context-files.md"),
-    );
-    openExternal.mockRestore();
-  });
-
-  it("keeps the notice when the resync retry fails again", async () => {
+  it("keeps the notice when the toggle retry fails again", async () => {
     mocks.serversMap = { serena: makeServer("serena") };
     mocks.toggle.mockRejectedValueOnce(new Error("config.toml line 12"));
-    mocks.resync.mockResolvedValueOnce([
-      { app: "codex", ok: false, error: "still broken" },
-    ]);
+    mocks.bulkToggle.mockResolvedValueOnce({
+      succeeded: [],
+      failed: [{ item: "serena", error: "still broken" }],
+    });
     renderPanel();
-
     await userEvent.click(
       screen.getAllByRole("button", { name: "appMatrix.cell.off" })[1],
     );
     await userEvent.click(
       await screen.findByRole("button", { name: "common.retry" }),
     );
-
-    await waitFor(() => expect(mocks.resync).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mocks.bulkToggle).toHaveBeenCalledTimes(1));
     expect(screen.getByText("mcpPage.failNoticeTitle")).toBeInTheDocument();
     expect(mocks.toastSuccess).not.toHaveBeenCalled();
   });
-
+  it("does not erase a failed toggle after resyncing the committed state", async () => {
+    mocks.serversMap = { serena: makeServer("serena") };
+    mocks.toggle.mockRejectedValueOnce(new Error("config.toml line 12"));
+    renderPanel();
+    await userEvent.click(
+      screen.getAllByRole("button", { name: "appMatrix.cell.off" })[1],
+    );
+    await screen.findByText("mcpPage.failNoticeTitle");
+    await userEvent.click(
+      screen.getByRole("button", { name: "mcpPage.moreActions" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "mcpPage.resync" }),
+    );
+    await waitFor(() => expect(mocks.resync).toHaveBeenCalled());
+    expect(
+      screen.getByRole("button", { name: "appMatrix.cell.fail" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("mcpPage.failNoticeTitle")).toBeInTheDocument();
+  });
   it("resyncs every app from the more menu and reports the ones that failed", async () => {
     mocks.serversMap = {
       serena: makeServer("serena", { apps: { codex: true } }),
@@ -628,14 +590,12 @@ describe("UnifiedMcpPanel", () => {
       { app: "codex", ok: false, error: "config.toml line 12" },
     ]);
     renderPanel();
-
     await userEvent.click(
       screen.getByRole("button", { name: "mcpPage.moreActions" }),
     );
     await userEvent.click(
       await screen.findByRole("menuitem", { name: "mcpPage.resync" }),
     );
-
     await waitFor(() => expect(mocks.resync).toHaveBeenCalledWith(undefined));
     await waitFor(() =>
       expect(screen.getByText("mcpPage.failNoticeTitle")).toBeInTheDocument(),
@@ -644,7 +604,6 @@ describe("UnifiedMcpPanel", () => {
       "mcpPage.toast.resyncPartial",
       expect.anything(),
     );
-
     // 再来一次全部成功：通知条消失
     await userEvent.click(
       screen.getByRole("button", { name: "mcpPage.moreActions" }),
@@ -662,10 +621,9 @@ describe("UnifiedMcpPanel", () => {
       expect.anything(),
     );
   });
-
   it("opens the edit drawer from the pencil button", async () => {
     mocks.serversMap = {
-      serena: makeServer("serena", { apps: { claude: true, hermes: true } }),
+      serena: makeServer("serena", { apps: { claude: true } }),
     };
     renderPanel();
     await userEvent.click(
@@ -673,7 +631,6 @@ describe("UnifiedMcpPanel", () => {
     );
     expect(screen.getByTestId("mcp-drawer")).toHaveTextContent("serena");
   });
-
   it("deletes after confirming in the dialog", async () => {
     mocks.serversMap = {
       serena: makeServer("serena", { apps: { claude: true } }),
@@ -693,7 +650,6 @@ describe("UnifiedMcpPanel", () => {
       expect(mocks.deleteServer).toHaveBeenCalledWith("serena"),
     );
   });
-
   it("reports which servers an import added", async () => {
     mocks.serversMap = {};
     mocks.refetch.mockResolvedValue({
@@ -712,7 +668,6 @@ describe("UnifiedMcpPanel", () => {
     expect(mocks.importServers).toHaveBeenCalled();
     expect(screen.getByText("mcpPage.import.added")).toBeInTheDocument();
   });
-
   it("locks navigation while the editor page is saving", async () => {
     const onBlocked = vi.fn();
     renderPanel(onBlocked, <PendingEditorSave />);
@@ -722,7 +677,6 @@ describe("UnifiedMcpPanel", () => {
     );
     await waitFor(() => expect(onBlocked).toHaveBeenLastCalledWith(true));
   });
-
   it("does not lock navigation just because the editor page is open", async () => {
     const onBlocked = vi.fn();
     mocks.serversMap = { alpha: makeServer("alpha") };

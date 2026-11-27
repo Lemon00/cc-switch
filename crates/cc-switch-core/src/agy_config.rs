@@ -613,7 +613,8 @@ mod integration_tests {
             let dir = tempfile::tempdir().unwrap();
             let previous = std::env::var_os("CC_SWITCH_TEST_HOME");
             std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
-            crate::settings::reload_settings().unwrap();
+            crate::settings::update_settings(Default::default())
+                .expect("initialize settings for isolated test home");
             Self(dir, previous)
         }
         fn path(&self) -> &Path {
@@ -695,7 +696,7 @@ mod integration_tests {
 
         // A pointer left by an older version is neither re-applied by a full
         // sync nor a reason to refuse deleting the card.
-        db.set_current_provider("agy", "login").unwrap();
+        db.set_current_provider(&AppType::Agy, "login").unwrap();
         if let Err(error) = ProviderService::sync_current_to_live(&state) {
             assert!(!error.to_string().contains("provider/agy"), "{error}");
         }
@@ -786,7 +787,7 @@ mod integration_tests {
         let _home = HomeGuard::new();
         let db = Database::memory().unwrap();
         let row = relay("relay one");
-        db.save_provider("agy", &row).unwrap();
+        db.save_provider(&AppType::Agy, &row).unwrap();
         let launch = prepare_launch(&row.id, &row.settings_config).unwrap();
         let dir = launch.gemini_dir.unwrap();
         let logs = dir.join("antigravity-cli/brain/abc-123/.system_generated/logs");
@@ -848,12 +849,12 @@ mod integration_tests {
         assert!(
             !crate::services::ProviderService::import_default_config(&state, AppType::Agy).unwrap()
         );
-        assert!(db.get_all_providers("agy").unwrap().is_empty());
+        assert!(db.get_all_providers(&AppType::Agy).unwrap().is_empty());
 
         // A stored provider is not applied by a full sync either.
         let blank = provider("blank", json!({"env":{},"config":{}}), false);
-        db.save_provider("agy", &blank).unwrap();
-        db.set_current_provider("agy", "blank").unwrap();
+        db.save_provider(&AppType::Agy, &blank).unwrap();
+        db.set_current_provider(&AppType::Agy, "blank").unwrap();
         let result = crate::services::ProviderService::sync_current_to_live(&state);
         if let Err(error) = &result {
             assert!(!error.to_string().contains("provider/agy"), "{error}");
@@ -876,7 +877,10 @@ mod integration_tests {
             crate::services::ProviderService::import_default_config(&state, AppType::Agy).unwrap()
         );
         // The key never lives in a file, so anything imported is agy's own login.
-        let imported = db.get_provider_by_id("default", "agy").unwrap().unwrap();
+        let imported = db
+            .get_provider_by_id("default", &AppType::Agy)
+            .unwrap()
+            .unwrap();
         assert_eq!(imported.category.as_deref(), Some("official"));
         assert!(agy_direct::is_official(&imported));
     }
@@ -1031,4 +1035,31 @@ mod integration_tests {
         let path = std::env::join_paths([&wrapper_dir, &plain, &real_dir]).unwrap();
         assert_eq!(resolve_real_agy(&path, &home, &[], false), Some(real));
     }
+}
+
+pub fn validate_settings(settings: &Value) -> Result<(), AppError> {
+    // 只验证基本结构，不强制要求 GEMINI_API_KEY
+    // 如果有 env 字段，验证它是一个对象
+    if let Some(env) = settings.get("env") {
+        if !env.is_object() {
+            return Err(AppError::localized(
+                "agy.validation.invalid_env",
+                "Antigravity 配置格式错误: env 必须是对象",
+                "Antigravity config invalid: env must be an object",
+            ));
+        }
+    }
+
+    // 如果有 config 字段，验证它是对象或 null
+    if let Some(config) = settings.get("config") {
+        if !(config.is_object() || config.is_null()) {
+            return Err(AppError::localized(
+                "agy.validation.invalid_config",
+                "Antigravity 配置格式错误: config 必须是对象",
+                "Antigravity config invalid: config must be an object",
+            ));
+        }
+    }
+
+    Ok(())
 }

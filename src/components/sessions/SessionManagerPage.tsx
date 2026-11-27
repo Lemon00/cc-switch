@@ -1,34 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
-import {
-  defaultRangeExtractor,
-  observeElementRect,
-  useVirtualizer,
-  type Range,
-} from "@tanstack/react-virtual";
-import { toast } from "@/lib/toast";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Check,
-  ChevronDown,
-  History,
-  LayoutGrid,
-  MoreHorizontal,
-} from "lucide-react";
-import { useSessionSearch } from "@/hooks/useSessionSearch";
-import {
-  piKeys,
-  useDeleteSessionMutation,
-  useSessionsQuery,
-  useSettingsQuery,
-} from "@/lib/query";
-import { piApi, sessionsApi, type AppId } from "@/lib/api";
-import type { SessionMeta } from "@/types";
-import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
+import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
+import { AppPageHeader } from "@/components/shell/AppPageHeader";
 import { Button } from "@/components/ui/button";
-import { HelpTip } from "@/components/ui/help-tip";
-import { Notice } from "@/components/ui/notice";
-import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -36,17 +8,44 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { HelpTip } from "@/components/ui/help-tip";
 import { HoverTip } from "@/components/ui/hover-tip";
-import { AppPageHeader } from "@/components/shell/AppPageHeader";
-import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
-import { extractErrorMessage } from "@/utils/errorUtils";
-import { isMac } from "@/lib/platform";
+import { Notice } from "@/components/ui/notice";
 import { SearchField } from "@/components/ui/search-field";
+import { SegmentedControl } from "@/components/ui/segmented-control";
+import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
+import { useSessionSearch } from "@/hooks/useSessionSearch";
+import { sessionsApi, type AppId } from "@/lib/api";
+import { isMac } from "@/lib/platform";
+import {
+  useDeleteSessionMutation,
+  useSessionsQuery,
+  useSettingsQuery,
+} from "@/lib/query";
+import { sessionKeys, useSessionTranscript } from "@/lib/query/sessions";
+import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
+import type { SessionMeta } from "@/types";
+import { extractErrorMessage } from "@/utils/errorUtils";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  defaultRangeExtractor,
+  observeElementRect,
+  useVirtualizer,
+  type Range,
+} from "@tanstack/react-virtual";
+import {
+  Check,
+  ChevronDown,
+  History,
+  LayoutGrid,
+  MoreHorizontal,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { SessionDeleteDialog, SessionSourcesDialog } from "./SessionDialogs";
 import { SessionItem, sessionMenuItemClass } from "./SessionItem";
 import { SessionReader } from "./reader/SessionReader";
-import { sessionKeys, useSessionTranscript } from "@/lib/query/sessions";
-import { SessionDeleteDialog, SessionSourcesDialog } from "./SessionDialogs";
 import {
   canDeleteSession,
   formatRelativeTime,
@@ -61,16 +60,13 @@ import {
   type SessionAppId,
   type SessionTimeBucket,
 } from "./utils";
-
 const GROUP_MODE_STORAGE_KEY = "cc-switch.sessionManager.groupMode";
 // 按项目分组时默认全部收起，只记住用户手动展开过的项目。
 // 换了新键：旧的 collapsedProjects 记的是「收起了哪些」，语义相反，直接弃用。
 const EXPANDED_STORAGE_KEY = "cc-switch.sessionManager.expandedProjects";
-
 type AppFilter = SessionAppId | "all";
 type GroupMode = "time" | "project";
 type DeleteSource = "row" | "reader" | "bar";
-
 const readGroupMode = (): GroupMode => {
   try {
     const stored = window.localStorage.getItem(GROUP_MODE_STORAGE_KEY);
@@ -79,7 +75,6 @@ const readGroupMode = (): GroupMode => {
     return "project";
   }
 };
-
 const readExpanded = (): Set<string> => {
   try {
     const parsed = JSON.parse(
@@ -94,9 +89,7 @@ const readExpanded = (): Set<string> => {
     return new Set();
   }
 };
-
 const openButtonId = (key: string) => `session-open-${encodeURIComponent(key)}`;
-
 const focusSoon = (ids: string[]) => {
   window.setTimeout(() => {
     for (const id of ids) {
@@ -108,23 +101,29 @@ const focusSoon = (ids: string[]) => {
     }
   }, 0);
 };
-
 type SessionListRow =
-  | { kind: "time"; key: string; bucket: SessionTimeBucket; first: boolean }
+  | {
+      kind: "time";
+      key: string;
+      bucket: SessionTimeBucket;
+      first: boolean;
+    }
   | {
       kind: "project";
       key: string;
       group: ReturnType<typeof groupSessionsByProject>[number];
       first: boolean;
     }
-  | { kind: "session"; key: string; session: SessionMeta; bordered: boolean };
-
+  | {
+      kind: "session";
+      key: string;
+      session: SessionMeta;
+      bordered: boolean;
+    };
 /** 虚拟列表每种行的固定高度：时间分组标题 h-7、项目分组标题 h-9、会话行 h-14 */
 const LIST_ROW_HEIGHT = { time: 28, project: 36, session: 56 } as const;
-
 const linkButton =
   "h-[22px] rounded-[4px] px-0.5 text-caption text-fg-1 underline decoration-border-strong underline-offset-[3px] hover:decoration-fg-2";
-
 interface SessionManagerPageProps {
   appId: string;
   /** 侧栏上当前的应用（从 Claude Desktop 进来时要提示一句） */
@@ -132,18 +131,15 @@ interface SessionManagerPageProps {
   /** 打开设置里的「首选终端」 */
   onOpenTerminalSettings?: () => void;
 }
-
 export function SessionManagerPage({
   appId,
-  fromApp,
   onOpenTerminalSettings,
 }: SessionManagerPageProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { data, isLoading, refetch } = useSessionsQuery();
+  const { data, isLoading, isError, error, refetch } = useSessionsQuery();
   const sessions = useMemo(() => data ?? [], [data]);
   const { data: settings } = useSettingsQuery();
-
   const [appFilter, setAppFilter] = useState<AppFilter>(
     isSessionAppId(appId) ? appId : "claude",
   );
@@ -162,11 +158,9 @@ export function SessionManagerPage({
   const [isBatchDeleting, setIsBatchDeleting] = useState(false);
   const [whereOpen, setWhereOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement | null>(null);
-
   useEffect(() => {
     setAppFilter(isSessionAppId(appId) ? appId : "claude");
   }, [appId]);
-
   useEffect(() => {
     try {
       window.localStorage.setItem(GROUP_MODE_STORAGE_KEY, groupMode);
@@ -174,7 +168,6 @@ export function SessionManagerPage({
       // 存不了就算了，下次用默认值
     }
   }, [groupMode]);
-
   useEffect(() => {
     try {
       window.localStorage.setItem(
@@ -185,26 +178,12 @@ export function SessionManagerPage({
       // 同上
     }
   }, [expanded]);
-
-  const piSessionDiscovery = useQuery({
-    queryKey: piKeys.sessionDiscovery,
-    queryFn: () => piApi.getSessionDiscovery(),
-    enabled: appFilter === "pi",
-    staleTime: 30 * 1000,
-  });
-
   // 下拉里只列「应用」页设为显示的应用；Claude Code 的会话在 Claude Desktop 显示时也算，
   // DeepSeek Harness（Web 与 Desktop 共用会话目录，合并成一项）在 Desktop 显示时也算
   const availableApps = useMemo(() => {
     const visible = { ...DEFAULT_VISIBLE_APPS, ...settings?.visibleApps };
-    return SESSION_APP_IDS.filter(
-      (app) =>
-        visible[app] ||
-        (app === "claude" && visible["claude-desktop"]) ||
-        app === appFilter,
-    );
+    return SESSION_APP_IDS.filter((app) => visible[app] || app === appFilter);
   }, [settings?.visibleApps, appFilter]);
-
   const scopedSessions = useMemo(
     () =>
       sessions.filter((session) =>
@@ -212,7 +191,6 @@ export function SessionManagerPage({
       ),
     [sessions, availableApps],
   );
-
   const counts = useMemo(() => {
     const map = new Map<string, number>();
     scopedSessions.forEach((session) =>
@@ -220,7 +198,6 @@ export function SessionManagerPage({
     );
     return map;
   }, [scopedSessions]);
-
   const menuApps = useMemo(
     () =>
       [...availableApps].sort((a, b) => {
@@ -229,7 +206,6 @@ export function SessionManagerPage({
       }),
     [availableApps, counts],
   );
-
   const { search: searchSessions } = useSessionSearch({
     sessions: scopedSessions,
     providerFilter: appFilter,
@@ -244,7 +220,6 @@ export function SessionManagerPage({
     () => sortSessionsByTime(searchSessions(query)),
     [searchSessions, query],
   );
-
   const unknownLabel = t("sessionManager.unknownDirectory", {
     defaultValue: "未知目录",
   });
@@ -267,7 +242,6 @@ export function SessionManagerPage({
         : matches,
     [groupMode, projectGroups, matches],
   );
-
   const readerSession = useMemo(
     () =>
       readerKey
@@ -281,22 +255,18 @@ export function SessionManagerPage({
         (session) => getSessionKey(session) === readerKey,
       )
     : -1;
-
   // 阅读中的会话被删掉（或刷新后消失）就回到列表
   useEffect(() => {
     if (readerKey && !isLoading && !readerSession) {
       setReaderKey(null);
     }
   }, [readerKey, readerSession, isLoading]);
-
   const transcript = useSessionTranscript(
     readerSession?.providerId,
     readerSession?.sourcePath,
   );
-
   const deleteSessionMutation = useDeleteSessionMutation();
   const isDeleting = deleteSessionMutation.isPending || isBatchDeleting;
-
   // 选择里去掉已经不存在的会话
   useEffect(() => {
     const valid = new Set(sessions.map(getSessionKey));
@@ -305,7 +275,6 @@ export function SessionManagerPage({
       return next.size === current.size ? current : next;
     });
   }, [sessions]);
-
   const terminalName = useMemo(() => {
     if (!isMac()) return null;
     const value = settings?.preferredTerminal || "terminal";
@@ -313,7 +282,6 @@ export function SessionManagerPage({
     const label = t(key);
     return label === key ? value : label;
   }, [settings?.preferredTerminal, t]);
-
   const copyText = useCallback(
     async (text: string, message: string) => {
       try {
@@ -332,7 +300,6 @@ export function SessionManagerPage({
     (text: string, message: string) => void copyText(text, message),
     [copyText],
   );
-
   const handleLaunch = async (session: SessionMeta) => {
     const command = session.resumeCommand;
     if (!command) return;
@@ -385,12 +352,10 @@ export function SessionManagerPage({
       );
     }
   };
-
   const openReader = (session: SessionMeta) => {
     setReaderKey(getSessionKey(session));
     focusSoon(["session-reader-back"]);
   };
-
   const backToList = () => {
     const key = readerKey;
     setReaderKey(null);
@@ -405,7 +370,6 @@ export function SessionManagerPage({
       );
     }, 0);
   };
-
   const enterSelection = (session?: SessionMeta) => {
     setSelectionMode(true);
     setSelectedKeys(
@@ -415,12 +379,10 @@ export function SessionManagerPage({
     );
     setReaderKey(null);
   };
-
   const exitSelection = () => {
     setSelectionMode(false);
     setSelectedKeys(new Set());
   };
-
   const toggleSelected = (session: SessionMeta, checked: boolean) => {
     if (!canDeleteSession(session)) return;
     const key = getSessionKey(session);
@@ -431,7 +393,6 @@ export function SessionManagerPage({
       return next;
     });
   };
-
   const selectedSessions = useMemo(
     () =>
       sessions.filter(
@@ -447,26 +408,25 @@ export function SessionManagerPage({
   const hiddenSelected = selectedSessions.filter(
     (session) => !matchKeys.has(getSessionKey(session)),
   ).length;
-
   const openDelete = (targets: SessionMeta[], source: DeleteSource) => {
+    if (isDeleting) return;
     const deletable = targets.filter(canDeleteSession);
     if (deletable.length === 0) return;
     deleteSourceRef.current = source;
     setDeleteTargets(deletable);
   };
-
   const cancelDelete = () => {
     if (isDeleting) return;
     setDeleteTargets(null);
   };
-
   const handleDeleteConfirm = async () => {
     if (!deleteTargets || deleteTargets.length === 0 || isDeleting) return;
     const targets = deleteTargets.filter(canDeleteSession);
     const source = deleteSourceRef.current;
-    setDeleteTargets(null);
-    if (targets.length === 0) return;
-
+    if (targets.length === 0) {
+      setDeleteTargets(null);
+      return;
+    }
     if (targets.length === 1) {
       const [target] = targets;
       try {
@@ -475,8 +435,9 @@ export function SessionManagerPage({
           sessionId: target.sessionId,
           sourcePath: target.sourcePath!,
         });
+        setDeleteTargets(null);
       } catch {
-        // 失败的 toast 由 mutation 统一给
+        // 失败的 toast 由 mutation 统一给；保留对话框便于重试
         return;
       }
       setSelectedKeys((current) => {
@@ -491,8 +452,8 @@ export function SessionManagerPage({
       }
       return;
     }
-
     setIsBatchDeleting(true);
+    setDeleteTargets(null);
     try {
       const results = await sessionsApi.deleteMany(
         targets.map((session) => ({
@@ -501,7 +462,6 @@ export function SessionManagerPage({
           sourcePath: session.sourcePath!,
         })),
       );
-
       const deletedKeys = results
         .filter((result) => result.success)
         .map(
@@ -511,7 +471,6 @@ export function SessionManagerPage({
       const failedErrors = results
         .filter((result) => !result.success)
         .map((result) => result.error || t("common.unknown"));
-
       if (deletedKeys.length > 0) {
         const deletedKeySet = new Set(deletedKeys);
         queryClient.setQueryData<SessionMeta[]>(["sessions"], (current) =>
@@ -535,16 +494,19 @@ export function SessionManagerPage({
               result.sourcePath,
             ),
           });
+          queryClient.removeQueries({
+            queryKey: sessionKeys.blockContents(
+              result.providerId,
+              result.sourcePath,
+            ),
+          });
         });
-
       setSelectedKeys((current) => {
         const next = new Set(current);
         deletedKeys.forEach((key) => next.delete(key));
         return next;
       });
-
       await queryClient.invalidateQueries({ queryKey: ["sessions"] });
-
       if (deletedKeys.length > 0) {
         toast.success(
           t("sessionManager.batchDeleteSuccess", {
@@ -576,7 +538,6 @@ export function SessionManagerPage({
       setIsBatchDeleting(false);
     }
   };
-
   const toggleGroup = (key: string) => {
     setExpanded((current) => {
       const next = new Set(current);
@@ -585,23 +546,30 @@ export function SessionManagerPage({
       return next;
     });
   };
-
   const refreshList = async () => {
-    await refetch();
+    const result = await refetch();
+    if (result.error) {
+      toast.error(
+        t("sessionManager.listRefreshFailed", {
+          defaultValue: "刷新会话列表失败",
+        }),
+      );
+      return;
+    }
     toast.success(
       t("sessionManager.listRefreshed", { defaultValue: "已刷新会话列表" }),
     );
   };
-
   const reloadMessages = async () => {
-    const result = (await transcript.refetch()) as { error?: unknown };
+    const result = (await transcript.refetch()) as {
+      error?: unknown;
+    };
     if (!result.error) {
       toast.success(
         t("sessionManager.reloaded", { defaultValue: "已重新读取这个会话" }),
       );
     }
   };
-
   const handleRootKeyDown = (event: React.KeyboardEvent) => {
     if (event.key !== "Escape" || event.defaultPrevented) return;
     const target = event.target as HTMLElement | null;
@@ -618,7 +586,6 @@ export function SessionManagerPage({
       exitSelection();
     }
   };
-
   const appName = (app: string) =>
     isSessionAppId(app) ? APP_DISPLAY_NAME[app] : app;
   const showAppIcon = appFilter === "all";
@@ -628,7 +595,6 @@ export function SessionManagerPage({
   const noSessionsLabel = t("sessionManager.noSessionsCount", {
     defaultValue: "无会话",
   });
-
   // ─── 列表行 ────────────────────────────────────────────────────────────
   const renderRow = (session: SessionMeta, bordered: boolean) => {
     const key = getSessionKey(session);
@@ -683,7 +649,6 @@ export function SessionManagerPage({
       />
     );
   };
-
   const bucketLabel = (bucket: SessionTimeBucket) =>
     ({
       today: t("sessionManager.bucketToday", { defaultValue: "今天" }),
@@ -691,7 +656,6 @@ export function SessionManagerPage({
       thisWeek: t("sessionManager.bucketThisWeek", { defaultValue: "本周" }),
       earlier: t("sessionManager.bucketEarlier", { defaultValue: "更早" }),
     })[bucket];
-
   // 列表虚拟化：几千个会话也只渲染可视区域和前后几行。分组标题和会话行拍平成一列，
   // 项目分组的标题用 rangeExtractor 留在渲染范围里并吸顶（原来的 sticky 效果）。
   const listRows = useMemo<SessionListRow[]>(() => {
@@ -734,7 +698,6 @@ export function SessionManagerPage({
     }
     return rows;
   }, [groupMode, timeGroups, projectGroups, isGroupOpen]);
-
   const stickyIndexes = useMemo(
     () =>
       listRows.flatMap((row, index) => (row.kind === "project" ? [index] : [])),
@@ -770,7 +733,6 @@ export function SessionManagerPage({
         cb(rect);
       }),
   });
-
   const renderProjectHeader = (
     group: (typeof projectGroups)[number],
     first: boolean,
@@ -842,7 +804,6 @@ export function SessionManagerPage({
       </div>
     );
   };
-
   const renderList = () => (
     <div
       className="relative w-full"
@@ -882,7 +843,6 @@ export function SessionManagerPage({
       })}
     </div>
   );
-
   // ─── 空状态 ────────────────────────────────────────────────────────────
   const renderEmpty = () => {
     if (trimmedQuery) {
@@ -927,9 +887,6 @@ export function SessionManagerPage({
       />
     );
   };
-
-  const piStatus = piSessionDiscovery.data?.status;
-
   return (
     <div
       className="flex min-h-0 flex-1 flex-col"
@@ -1196,15 +1153,6 @@ export function SessionManagerPage({
             />
           </div>
 
-          {fromApp === "claude-desktop" && appFilter === "claude" && (
-            <p className="m-0 mx-6 mt-2 shrink-0 text-caption text-fg-2">
-              {t("sessionManager.desktopNote", {
-                defaultValue:
-                  "Claude Desktop 没有单独的会话记录，这里显示 Claude Code 的会话。",
-              })}
-            </p>
-          )}
-
           {appFilter === "dsh" && (
             <p className="m-0 mx-6 mt-2 shrink-0 text-caption text-fg-2">
               {t("sessionManager.dshMergedNote", {
@@ -1213,39 +1161,6 @@ export function SessionManagerPage({
               })}
             </p>
           )}
-
-          {appFilter === "pi" && piStatus === "requires_project_context" && (
-            <div role="status" className="mx-6 mt-3 shrink-0">
-              <Notice
-                tone="warning"
-                title={
-                  <>
-                    {t("sessionManager.piRelativeSessionDir")}{" "}
-                    <code className="font-mono text-caption">
-                      {piSessionDiscovery.data?.status ===
-                      "requires_project_context"
-                        ? piSessionDiscovery.data.configuredPath
-                        : ""}
-                    </code>
-                  </>
-                }
-              />
-            </div>
-          )}
-          {appFilter === "pi" &&
-            (piStatus === "unavailable" || piSessionDiscovery.isError) && (
-              <div role="alert" className="mx-6 mt-3 shrink-0">
-                <Notice
-                  tone="danger"
-                  title={t("sessionManager.piDiscoveryUnavailable", {
-                    error:
-                      piSessionDiscovery.data?.status === "unavailable"
-                        ? piSessionDiscovery.data.reason
-                        : extractErrorMessage(piSessionDiscovery.error),
-                  })}
-                />
-              </div>
-            )}
 
           {selectionMode && (
             <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap px-6 pt-2 text-caption text-fg-2">
@@ -1307,6 +1222,25 @@ export function SessionManagerPage({
                 defaultValue: "加载会话中...",
               })}
             </div>
+          ) : isError && sessions.length === 0 ? (
+            <div role="alert" className="mx-6 mt-3">
+              <Notice
+                tone="danger"
+                title={t("sessionManager.listRefreshFailed", {
+                  defaultValue: "刷新会话列表失败",
+                })}
+              />
+              <p className="text-caption text-fg-2">
+                {extractErrorMessage(error)}
+              </p>
+              <Button
+                variant="neutral"
+                size="regular"
+                onClick={() => void refreshList()}
+              >
+                {t("common.retry", { defaultValue: "重试" })}
+              </Button>
+            </div>
           ) : matches.length === 0 ? (
             renderEmpty()
           ) : (
@@ -1322,13 +1256,7 @@ export function SessionManagerPage({
               >
                 {renderList()}
               </div>
-              {appFilter === "hermes" && (
-                <p className="m-0 mx-6 mt-2 shrink-0 text-caption text-fg-3">
-                  {t("sessionManager.hermesLimit", {
-                    defaultValue: "Hermes 只显示最近 500 个会话",
-                  })}
-                </p>
-              )}
+
               <div className="flex-1" />
             </>
           )}
@@ -1399,7 +1327,6 @@ export function SessionManagerPage({
     </div>
   );
 }
-
 function AppMenuItem({
   pressed,
   dimmed = false,
@@ -1445,7 +1372,6 @@ function AppMenuItem({
     </DropdownMenuItem>
   );
 }
-
 function EmptyState({
   title,
   hint,

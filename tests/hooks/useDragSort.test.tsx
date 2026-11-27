@@ -4,39 +4,31 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi, beforeEach, afterAll } from "vitest";
 import type { Provider } from "@/types";
 import { useDragSort } from "@/hooks/useDragSort";
-
 const updateSortOrderMock = vi.fn();
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
 const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
 vi.mock("sonner", () => ({
   toast: {
     success: (...args: unknown[]) => toastSuccessMock(...args),
     error: (...args: unknown[]) => toastErrorMock(...args),
   },
 }));
-
 vi.mock("@/lib/api", () => ({
   providersApi: {
     updateSortOrder: (...args: unknown[]) => updateSortOrderMock(...args),
   },
 }));
-
 interface WrapperProps {
   children: ReactNode;
 }
-
 function createWrapper() {
   const queryClient = new QueryClient();
-
   const wrapper = ({ children }: WrapperProps) => (
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   );
-
   return { wrapper, queryClient };
 }
-
 const mockProviders: Record<string, Provider> = {
   a: {
     id: "a",
@@ -59,7 +51,6 @@ const mockProviders: Record<string, Provider> = {
     createdAt: 1,
   },
 };
-
 describe("useDragSort", () => {
   beforeEach(() => {
     updateSortOrderMock.mockReset();
@@ -67,41 +58,90 @@ describe("useDragSort", () => {
     toastErrorMock.mockReset();
     consoleErrorSpy.mockClear();
   });
-
   afterAll(() => {
     consoleErrorSpy.mockRestore();
   });
-
   it("should sort providers by sortIndex, createdAt, and name", () => {
     const { wrapper } = createWrapper();
-
     const { result } = renderHook(() => useDragSort(mockProviders, "claude"), {
       wrapper,
     });
-
     expect(result.current.sortedProviders.map((item) => item.id)).toEqual([
       "b",
       "a",
       "c",
     ]);
   });
-
+  it.each([
+    ["a", "b", "c"],
+    ["a", "c", "b"],
+    ["b", "a", "c"],
+    ["b", "c", "a"],
+    ["c", "a", "b"],
+    ["c", "b", "a"],
+  ])(
+    "sorts missing creation times consistently for input %s,%s,%s",
+    (...order) => {
+      const rows: Record<string, Provider> = {
+        a: { id: "a", name: "C", settingsConfig: {}, createdAt: 1 },
+        b: { id: "b", name: "B", settingsConfig: {} },
+        c: { id: "c", name: "A", settingsConfig: {}, createdAt: 2 },
+      };
+      const { wrapper } = createWrapper();
+      const { result } = renderHook(
+        () =>
+          useDragSort(
+            Object.fromEntries(order.map((id) => [id, rows[id]])),
+            "claude",
+          ),
+        { wrapper },
+      );
+      expect(result.current.sortedProviders.map((row) => row.id)).toEqual([
+        "b",
+        "a",
+        "c",
+      ]);
+    },
+  );
+  it("breaks equal sort indexes, times and names by provider ID", () => {
+    const rows: Record<string, Provider> = {
+      b: {
+        id: "b",
+        name: "Same",
+        settingsConfig: {},
+        sortIndex: 2,
+        createdAt: 1,
+      },
+      a: {
+        id: "a",
+        name: "Same",
+        settingsConfig: {},
+        sortIndex: 2,
+        createdAt: 1,
+      },
+    };
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useDragSort(rows, "claude"), {
+      wrapper,
+    });
+    expect(result.current.sortedProviders.map((row) => row.id)).toEqual([
+      "a",
+      "b",
+    ]);
+  });
   it("should call API and invalidate query cache after successful drag", async () => {
     updateSortOrderMock.mockResolvedValue(true);
     const { wrapper, queryClient } = createWrapper();
     const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
-
     const { result } = renderHook(() => useDragSort(mockProviders, "claude"), {
       wrapper,
     });
-
     await act(async () => {
       await result.current.handleDragEnd({
         active: { id: "b" },
         over: { id: "a" },
       } as any);
     });
-
     expect(updateSortOrderMock).toHaveBeenCalledTimes(1);
     expect(updateSortOrderMock).toHaveBeenCalledWith(
       [
@@ -117,41 +157,33 @@ describe("useDragSort", () => {
     expect(toastSuccessMock).toHaveBeenCalledTimes(1);
     expect(toastErrorMock).not.toHaveBeenCalled();
   });
-
   it("should show error toast when drag operation fails", async () => {
     updateSortOrderMock.mockRejectedValue(new Error("network"));
     const { wrapper } = createWrapper();
-
     const { result } = renderHook(() => useDragSort(mockProviders, "claude"), {
       wrapper,
     });
-
     await act(async () => {
       await result.current.handleDragEnd({
         active: { id: "b" },
         over: { id: "a" },
       } as any);
     });
-
     expect(toastErrorMock).toHaveBeenCalledTimes(1);
     expect(toastSuccessMock).not.toHaveBeenCalled();
     expect(consoleErrorSpy).toHaveBeenCalled();
   });
-
   it("should not trigger API call when there is no valid target", async () => {
     const { wrapper } = createWrapper();
-
     const { result } = renderHook(() => useDragSort(mockProviders, "claude"), {
       wrapper,
     });
-
     await act(async () => {
       await result.current.handleDragEnd({
         active: { id: "b" },
         over: null,
       } as any);
     });
-
     expect(updateSortOrderMock).not.toHaveBeenCalled();
   });
 });

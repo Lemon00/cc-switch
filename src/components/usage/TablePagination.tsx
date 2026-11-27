@@ -1,6 +1,3 @@
-import { useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { ChevronLeft, ChevronRight } from "lucide-react";
 import { HoverTip } from "@/components/ui/hover-tip";
 import {
   Select,
@@ -9,8 +6,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { fmtInt, getLocaleFromLanguage } from "./format";
-
 interface TablePaginationProps {
   /** 从 0 开始的页码 */
   page: number;
@@ -23,10 +22,8 @@ interface TablePaginationProps {
   pageSizeOptions?: readonly number[];
   onPageSizeChange?: (size: number) => void;
 }
-
 const NAV_BUTTON =
   "inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1 disabled:pointer-events-none disabled:opacity-45";
-
 /**
  * 用量页表格共用的翻页条：总数、上一页、可输入的页码、下一页。
  * 只有一页时不画——翻不了页，总数在页签计数里已经有；
@@ -46,12 +43,10 @@ export function TablePagination({
     i18n.resolvedLanguage || i18n.language || "en",
   );
   const [pageDraft, setPageDraft] = useState<string | null>(null);
-
   // 页码从外部变了（翻页、筛选重置）时丢掉没提交的输入
   useEffect(() => {
     setPageDraft(null);
   }, [page]);
-
   const commitPageDraft = () => {
     if (pageDraft == null) return;
     const trimmed = pageDraft.trim();
@@ -61,12 +56,10 @@ export function TablePagination({
     if (parsed < 1 || parsed > totalPages) return;
     onPageChange(parsed - 1);
   };
-
   const canResize =
     pageSize != null && onPageSizeChange != null && !!pageSizeOptions?.length;
   const resizable = canResize && total > Math.min(...pageSizeOptions!);
   if (totalPages <= 1 && !resizable) return null;
-
   return (
     <div className="flex h-11 items-center gap-2 border-t border-border bg-subtle px-4 text-caption text-fg-3">
       <span className="tabular-nums">{t("usage.totalRecords", { total })}</span>
@@ -139,9 +132,7 @@ export function TablePagination({
     </div>
   );
 }
-
 export const TABLE_PAGE_SIZE = 20;
-
 /**
  * 前端分页：数据一次性拿到、在客户端切页的表格（供应商、模型、定价）用。
  * `resetKey` 变了（换时间范围 / 筛选）回到第一页；自动刷新只换数据不换 key，
@@ -154,17 +145,14 @@ export function useClientPagination<T>(
 ) {
   const [page, setPage] = useState(0);
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
-
   useEffect(() => {
     setPage(0);
   }, [resetKey]);
-
   const currentPage = Math.min(page, totalPages - 1);
   const pageRows = rows.slice(
     currentPage * pageSize,
     (currentPage + 1) * pageSize,
   );
-
   return {
     page: currentPage,
     setPage,

@@ -1,7 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
 import type { AppId } from "@/lib/api/types";
 import type { AppMode } from "@/types/proxy";
-
+import { invoke } from "@tauri-apps/api/core";
 /** 面板文案（后端 `tray_panel::PanelTexts`），随方位一起下发。 */
 export interface PanelTexts {
   switchProvider: string;
@@ -25,12 +24,10 @@ export interface PanelTexts {
   /** 可用的额度重置次数：`{count}` */
   resetCredits: string;
 }
-
 export interface PanelLink {
   id: string;
   text: string;
 }
-
 export interface PanelQuotaLine {
   text: string;
   /** 剩余百分比；余额这种没有总额的为空 */
@@ -41,14 +38,12 @@ export interface PanelQuotaLine {
   /** `text` 里要上绿色的那段数值（还有余额时的金额） */
   emphasis: string | null;
 }
-
 export interface PanelQuota {
   lines: PanelQuotaLine[];
   note: string | null;
   /** ChatGPT 订阅（Codex）可用的额度重置次数 */
   resetCredits: number | null;
 }
-
 export interface PanelProvider {
   name: string;
   hint: string | null;
@@ -56,7 +51,6 @@ export interface PanelProvider {
   iconColor: string | null;
   quota: PanelQuota | null;
 }
-
 export interface PanelRow {
   kind: "provider" | "check" | "item" | "label" | "separator";
   id: string;
@@ -65,7 +59,6 @@ export interface PanelRow {
   checked: boolean;
   provider: PanelProvider | null;
 }
-
 export interface PanelApp {
   app: AppId;
   name: string;
@@ -79,7 +72,6 @@ export interface PanelApp {
   addText: string;
   rows: PanelRow[];
 }
-
 /** 托盘面板的数据（后端 `tray::PanelModel`）。 */
 export interface TrayPanelState {
   problems: PanelLink[];
@@ -88,7 +80,6 @@ export interface TrayPanelState {
   lightweight: boolean;
   quitHint: string | null;
 }
-
 /** 这次弹出的方位和文案（后端 `tray_panel::PanelPlacement`），坐标为逻辑像素。 */
 export interface PanelPlacement {
   seq: number;
@@ -107,14 +98,12 @@ export interface PanelPlacement {
   glass: "native" | "frosted";
   texts: PanelTexts;
 }
-
 export interface CardRect {
   x: number;
   y: number;
   width: number;
   height: number;
 }
-
 export interface PanelLayout {
   seq: number;
   width: number;
@@ -124,10 +113,9 @@ export interface PanelLayout {
   cards: CardRect[];
   dark: boolean | null;
 }
-
 export const SHOW_EVENT = "tray-panel-show";
+export const HIDE_EVENT = "tray-panel-hide";
 export const CHANGED_EVENT = "tray-panel-changed";
-
 export const trayPanelApi = {
   state: () => invoke<TrayPanelState>("tray_panel_state"),
   placement: () => invoke<PanelPlacement | null>("tray_panel_placement"),

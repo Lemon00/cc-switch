@@ -255,12 +255,16 @@ pub fn create_anthropic_sse_stream_from_gemini<E: std::error::Error + Send + 'st
         let mut latest_usage: Option<Value> = None;
         let mut latest_finish_reason: Option<String> = None;
         let mut blocked_text: Option<String> = None;
+        let mut stream_done = false;
         tokio::pin!(stream);
 
         while let Some(chunk) = stream.next().await {
+            if stream_done {
+                break;
+            }
             match chunk {
                 Ok(bytes) => {
-                    sse.push_bytes(&bytes);
+                    sse.push_bytes(&bytes)?;
 
                     while let Some(block) = sse.next_block() {
                         if block.trim().is_empty() {
@@ -280,6 +284,9 @@ pub fn create_anthropic_sse_stream_from_gemini<E: std::error::Error + Send + 'st
 
                         let data = data_lines.join("\n");
                         if data.trim() == "[DONE]" {
+                            // Exit both the SSE-block loop and the outer byte
+                            // stream loop so we don't stall on keepalives after DONE.
+                            stream_done = true;
                             break;
                         }
 

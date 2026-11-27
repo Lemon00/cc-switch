@@ -1,20 +1,17 @@
-import { useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { toast } from "@/lib/toast";
+import { cn } from "@/lib/utils";
+import { extractErrorMessage } from "@/utils/errorUtils";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Maximize2, Minimize2, Minus, X } from "lucide-react";
-import { extractErrorMessage } from "@/utils/errorUtils";
-import { cn } from "@/lib/utils";
-import { HoverTip } from "@/components/ui/hover-tip";
-
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 const BUTTON =
   "flex h-7 w-7 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1";
-
 /** 接在页头最右端的最小化 / 最大化 / 关闭：Windows 一律用它，Linux 打开「使用应用内窗口按钮」后用它。 */
 export function WindowControls() {
   const { t } = useTranslation();
   const [maximized, setMaximized] = useState(false);
-
   useEffect(() => {
     let active = true;
     let unlisten: (() => void) | undefined;
@@ -22,11 +19,26 @@ export function WindowControls() {
       try {
         const win = getCurrentWindow();
         const update = async () => {
-          const value = await win.isMaximized();
-          if (active) setMaximized(value);
+          try {
+            const value = await win.isMaximized();
+            if (active) setMaximized(value);
+          } catch (error) {
+            if (active) {
+              console.error(
+                "[WindowControls] Failed to sync maximized state",
+                error,
+              );
+            }
+          }
         };
         await update();
-        unlisten = await win.onResized(() => void update());
+        if (!active) return;
+        const off = await win.onResized(() => void update());
+        if (!active) {
+          off();
+          return;
+        }
+        unlisten = off;
       } catch (error) {
         console.error("[WindowControls] Failed to sync maximized state", error);
       }
@@ -37,7 +49,6 @@ export function WindowControls() {
       unlisten?.();
     };
   }, []);
-
   const run = async (action: () => Promise<void>) => {
     try {
       await action();
@@ -51,11 +62,9 @@ export function WindowControls() {
       );
     }
   };
-
   const maximizeLabel = maximized
     ? t("header.windowRestore")
     : t("header.windowMaximize");
-
   return (
     <>
       <HoverTip content={t("header.windowMinimize")}>

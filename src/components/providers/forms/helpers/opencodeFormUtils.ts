@@ -1,25 +1,14 @@
-import type { OpenCodeModel, OpenCodeProviderConfig } from "@/types";
+import { REASONING_LEVELS } from "@/config/reasoningLevels";
 import { isPlainObject } from "@/lib/requestOverrides";
-
+import type { OpenCodeModel, OpenCodeProviderConfig } from "@/types";
 // ── Default configs ──────────────────────────────────────────────────
-
 export const CLAUDE_DEFAULT_CONFIG = JSON.stringify({ env: {} }, null, 2);
-export const CLAUDE_DESKTOP_DEFAULT_CONFIG = JSON.stringify(
-  {
-    env: {
-      ANTHROPIC_BASE_URL: "",
-      ANTHROPIC_AUTH_TOKEN: "",
-    },
-  },
-  null,
-  2,
-);
 export const CODEX_DEFAULT_CONFIG = JSON.stringify(
   { auth: {}, config: "" },
   null,
   2,
 );
-export const GEMINI_DEFAULT_CONFIG = JSON.stringify(
+export const AGY_DEFAULT_CONFIG = JSON.stringify(
   {
     env: {
       GOOGLE_GEMINI_BASE_URL: "",
@@ -30,7 +19,6 @@ export const GEMINI_DEFAULT_CONFIG = JSON.stringify(
   null,
   2,
 );
-
 export const OPENCODE_DEFAULT_NPM = "@ai-sdk/openai-compatible";
 export const OPENCODE_DEFAULT_CONFIG = JSON.stringify(
   {
@@ -50,138 +38,23 @@ export const OPENCODE_KNOWN_OPTION_KEYS = [
   "apiKey",
   "headers",
 ] as const;
-
 // Contains ":", which is not valid in an HTTP field name, so it cannot
 // collide with a legitimate custom header from an existing configuration.
 export { REQUEST_HEADER_DRAFT_PREFIX as OPENCODE_HEADER_DRAFT_PREFIX } from "./requestHeaders";
 export const OPENCODE_EXTRA_OPTION_DRAFT_PREFIX = "draft-option:";
-
-export const OPENCLAW_DEFAULT_CONFIG = JSON.stringify(
-  {
-    baseUrl: "",
-    apiKey: "",
-    api: "openai-completions",
-    models: [],
-  },
-  null,
-  2,
-);
-
 // ── Pure functions ───────────────────────────────────────────────────
-
-// Keys only a V1 declaration has, and keys only a native one has. Mirrors
-// provider_format in crates/cc-switch-core/src/opencode_config.rs.
-const OPENCODE_LEGACY_ONLY_KEYS = ["npm", "options", "api"];
-const OPENCODE_NATIVE_ONLY_KEYS = [
-  "package",
-  "settings",
-  "headers",
-  "body",
-  "canonical",
-];
-
-function parseJson(json: string): unknown {
-  try {
-    return JSON.parse(json);
-  } catch {
-    return undefined;
-  }
-}
-
-/** Keep native declarations out of the V1 structured editor. Source metadata
- * disambiguates built-in overrides containing only models (or an empty object).
- * A pasted full config holding `providers` counts as native too.
- */
-export function isNativeOpencodeConfig(
-  json: string,
-  source?: "v1" | "v2",
-): boolean {
-  if (source) return source === "v2";
-  const value = parseJson(json);
-  if (!isPlainObject(value)) return false;
-  if (OPENCODE_LEGACY_ONLY_KEYS.some((key) => key in value)) return false;
-  return [...OPENCODE_NATIVE_ONLY_KEYS, "providers"].some(
-    (key) => key in value,
-  );
-}
-
-/** A declaration that does not rely on a built-in definition: it names a
- * package (`npm` for V1, `package` for native) and at least one model.
- */
-export function hasOpencodeDefinition(
-  declaration: unknown,
-  packageKey: "npm" | "package",
-): boolean {
-  if (!isPlainObject(declaration)) return false;
-  const pkg = declaration[packageKey];
-  const { models } = declaration;
-  return (
-    typeof pkg === "string" &&
-    pkg.trim() !== "" &&
-    isPlainObject(models) &&
-    Object.keys(models).length > 0
-  );
-}
-
-/** The native form's check: a pasted full config holds the declaration under
- * `providers.<id>`, where the backend also takes it from.
- */
-export function hasNativeOpencodeDefinition(
-  json: string,
-  providerId: string,
-): boolean {
-  const value = parseJson(json);
-  const providers = isPlainObject(value) ? value.providers : undefined;
-  const declaration = isPlainObject(providers)
-    ? (providers[providerId] ?? value)
-    : value;
-  return hasOpencodeDefinition(declaration, "package");
-}
-
-/** Models a stored provider declares, read from the fragment the backend
- * writes: settings may hold a full config with the declaration under
- * `providers.<id>` / `provider.<id>`.
- */
-export function getOpencodeDeclaredModels(
-  providerId: string,
-  settingsConfig: unknown,
-): { id: string; name?: string }[] {
-  let declaration = settingsConfig;
-  if (
-    isPlainObject(settingsConfig) &&
-    ["$schema", "provider", "providers"].some((key) => key in settingsConfig)
-  ) {
-    const pick = (key: string) => {
-      const section = settingsConfig[key];
-      return isPlainObject(section) ? section[providerId] : undefined;
-    };
-    declaration = pick("providers") ?? pick("provider") ?? settingsConfig;
-  }
-  const models = isPlainObject(declaration) ? declaration.models : undefined;
-  if (!isPlainObject(models)) return [];
-  return (
-    Object.entries(models)
-      // 原生声明可以 `disabled: true` 关掉某个模型，不能拿它当默认
-      .filter(
-        ([id, model]) =>
-          id.trim() && !(isPlainObject(model) && model.disabled === true),
-      )
-      .map(([id, model]) => ({
-        id,
-        name:
-          isPlainObject(model) && typeof model.name === "string"
-            ? model.name
-            : undefined,
-      }))
-  );
-}
-
+export {
+  getOpencodeDeclaredModels,
+  hasNativeOpencodeDefinition,
+  hasOpencodeDefinition,
+  isNativeOpencodeConfig,
+} from "@/lib/providerConfig";
+export { buildOmoProfilePreview } from "@/types/omo";
 export function isKnownOpencodeOptionKey(key: string): boolean {
   return OPENCODE_KNOWN_OPTION_KEYS.includes(
     key as (typeof OPENCODE_KNOWN_OPTION_KEYS)[number],
   );
 }
-
 export function parseOpencodeConfig(
   settingsConfig?: Record<string, unknown>,
 ): OpenCodeProviderConfig {
@@ -198,7 +71,6 @@ export function parseOpencodeConfig(
         ? (parsed.models as Record<string, OpenCodeModel>)
         : {},
   });
-
   try {
     const parsed = JSON.parse(
       settingsConfig ? JSON.stringify(settingsConfig) : OPENCODE_DEFAULT_CONFIG,
@@ -212,7 +84,6 @@ export function parseOpencodeConfig(
     };
   }
 }
-
 export function parseOpencodeConfigStrict(
   settingsConfig?: Record<string, unknown>,
 ): OpenCodeProviderConfig {
@@ -231,29 +102,26 @@ export function parseOpencodeConfigStrict(
         : {},
   };
 }
-
 export const OPENCODE_KNOWN_MODEL_KEYS = ["name", "limit", "options"] as const;
-
 export function isKnownModelKey(key: string): boolean {
   return OPENCODE_KNOWN_MODEL_KEYS.includes(
     key as (typeof OPENCODE_KNOWN_MODEL_KEYS)[number],
   );
 }
-
 /**
  * 模型字段的方言：OpenCode 和 MiniMax Code 用 OpenCode 的模型结构；DeepSeek Harness
  * 走 pi-ai 适配器，多认 `reasoningEfforts`（档位 → 上游值）和 `compat`。
  */
 export type OpenCodeModelDialect = "opencode" | "dsh";
-
-type Modalities = { input: string[]; output?: string[] };
-
+type Modalities = {
+  input: string[];
+  output?: string[];
+};
 function isStringList(value: unknown): value is string[] {
   return (
     Array.isArray(value) && value.every((item) => typeof item === "string")
   );
 }
-
 function isModalities(value: unknown): value is Modalities {
   return (
     isPlainObject(value) &&
@@ -261,18 +129,21 @@ function isModalities(value: unknown): value is Modalities {
     (value.output === undefined || isStringList(value.output))
   );
 }
-
+const REASONING_EFFORT_LEVEL_SET = new Set<string>(REASONING_LEVELS);
 export function isReasoningEffortMap(
   value: unknown,
 ): value is Record<string, string | null> {
+  if (!isPlainObject(value)) return false;
+  const entries = Object.entries(value);
   return (
-    isPlainObject(value) &&
-    Object.values(value).every(
-      (item) => item === null || typeof item === "string",
+    entries.length > 0 &&
+    entries.every(
+      ([key, item]) =>
+        REASONING_EFFORT_LEVEL_SET.has(key) &&
+        (item === null || typeof item === "string"),
     )
   );
 }
-
 /** 展开区有专门控件的字段不在「模型属性」里重复；形状认不出的照旧留在那里，免得藏起来改不了。 */
 function hasDedicatedControl(
   key: string,
@@ -294,7 +165,6 @@ function hasDedicatedControl(
       return false;
   }
 }
-
 export function modelSupportsReasoning(
   model: OpenCodeModel,
   dialect: OpenCodeModelDialect,
@@ -302,7 +172,6 @@ export function modelSupportsReasoning(
   if (typeof model.reasoning === "boolean") return model.reasoning;
   return dialect === "dsh" && isReasoningEffortMap(model.reasoningEfforts);
 }
-
 // 与后端给「开了思考、没写档位」的模型补的默认档位一致（dsh_config.rs）
 const DSH_DEFAULT_REASONING_EFFORTS = {
   off: null,
@@ -310,7 +179,6 @@ const DSH_DEFAULT_REASONING_EFFORTS = {
   medium: "medium",
   high: "high",
 };
-
 export function withModelReasoning(
   model: OpenCodeModel,
   enabled: boolean,
@@ -333,13 +201,11 @@ export function withModelReasoning(
   }
   return next;
 }
-
 export function modelSupportsImageInput(model: OpenCodeModel): boolean {
   return (
     isModalities(model.modalities) && model.modalities.input.includes("image")
   );
 }
-
 export function withModelImageInput(
   model: OpenCodeModel,
   enabled: boolean,
@@ -355,7 +221,6 @@ export function withModelImageInput(
     },
   };
 }
-
 export function getModelExtraFields(
   model: OpenCodeModel,
   dialect: OpenCodeModelDialect = "opencode",
@@ -368,11 +233,9 @@ export function getModelExtraFields(
   }
   return extra;
 }
-
 export function formatOpencodeExtraOptionValue(value: unknown): string {
   return typeof value === "string" ? value : JSON.stringify(value);
 }
-
 export function toOpencodeExtraOptions(
   options: OpenCodeProviderConfig["options"],
 ): Record<string, string> {
@@ -384,7 +247,6 @@ export function toOpencodeExtraOptions(
   }
   return extra;
 }
-
 /**
  * Reconciles the extra-option row editor's string map into the stored
  * `options` object in place. Rows whose text still matches the stored
@@ -405,7 +267,6 @@ export function mergeOpencodeExtraOptionRows(
       nextRows[trimmedKey] = v;
     }
   }
-
   // Keys that vanished from the rows were deleted or renamed away. Keep
   // their stored values around: a renamed row's untouched display text is
   // matched against them below to re-home the value with its type.
@@ -422,7 +283,6 @@ export function mergeOpencodeExtraOptionRows(
       delete options[k];
     }
   }
-
   for (const [k, v] of Object.entries(nextRows)) {
     const existing = options[k];
     if (
@@ -450,5 +310,3 @@ export function mergeOpencodeExtraOptionRows(
     }
   }
 }
-
-export { buildOmoProfilePreview } from "@/types/omo";

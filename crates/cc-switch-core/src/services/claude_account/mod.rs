@@ -131,6 +131,7 @@ pub struct ClaudeAccountManager {
     /// 账号表；同时充当所有改动的互斥锁
     store: Mutex<StoreFile>,
     pending: Mutex<HashMap<String, PendingLogin>>,
+    completion_lock: Mutex<()>,
     /// 登录进程已经结束的流程。前端每 1.5 秒轮询一次、不等上一次返回：收录期间来的轮询
     /// 回「还没好」，收录完的回同一个账号，都不能报「登录已结束」。下次加号时清空。
     ended: std::sync::Mutex<HashMap<String, FlowEnd>>,
@@ -147,6 +148,9 @@ fn store_file_guard() -> std::sync::MutexGuard<'static, ()> {
 }
 
 fn persist_store(data_dir: &Path, store: &StoreFile) -> Result<(), AppError> {
+    // Never replace an unreadable index with a snapshot built from an empty
+    // fallback. This also protects callers outside the account manager.
+    load_store_checked(data_dir)?;
     let snapshot = StoreFile {
         version: 1,
         accounts: store.accounts.clone(),
@@ -157,17 +161,20 @@ fn persist_store(data_dir: &Path, store: &StoreFile) -> Result<(), AppError> {
 }
 
 fn load_store(data_dir: &Path) -> StoreFile {
+    load_store_checked(data_dir).unwrap_or_else(|error| {
+        log::warn!("[ClaudeAccount] 账号文件读取失败，保留原文件: {error}");
+        StoreFile::default()
+    })
+}
+
+fn load_store_checked(data_dir: &Path) -> Result<StoreFile, AppError> {
     let path = data_dir.join(STORE_FILENAME);
     match std::fs::read(&path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|error| {
-            log::warn!("[ClaudeAccount] 账号文件解析失败，按空表处理: {error}");
-            StoreFile::default()
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|_| {
+            AppError::Message("Claude 账号文件损坏，已停止写入。请修复账号文件后重试。".into())
         }),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => StoreFile::default(),
-        Err(error) => {
-            log::warn!("[ClaudeAccount] 账号文件读取失败，按空表处理: {error}");
-            StoreFile::default()
-        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(StoreFile::default()),
+        Err(error) => Err(AppError::io(&path, error)),
     }
 }
 
@@ -183,12 +190,34 @@ pub fn sync_shared(config_dir: &Path) {
 
 /// 同步本机全部账号目录的共享层（启动时、MCP 同步后）。
 pub fn sync_all_shared(data_dir: &Path) {
+    let _ = sync_all_shared_checked(data_dir);
+}
+
+/// 与 [`sync_all_shared`] 相同，但任一账号镜像失败时返回错误（MCP 写路径用，避免
+/// 主 `.claude.json` 已回滚 / DB 已提交而账号目录仍是半新半旧）。
+pub fn sync_all_shared_checked(data_dir: &Path) -> Result<(), crate::error::AppError> {
     let store = load_store(data_dir);
+    let mut errors = Vec::new();
     for data in store.accounts.values() {
         if !layout::valid_local_id(&data.local_id) {
             continue;
         }
-        sync_shared(&layout::config_dir(data_dir, &data.local_id));
+        let config_dir = layout::config_dir(data_dir, &data.local_id);
+        let Some(home) = config_dir.parent() else {
+            continue;
+        };
+        if let Err(error) = shared::sync_account(&shared::Defaults::current(), &config_dir, home) {
+            log::warn!("[ClaudeAccount] 同步共享层失败: {error}");
+            errors.push(format!("{}: {error}", data.local_id));
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(crate::error::AppError::Config(format!(
+            "同步 Claude 账号 MCP 镜像失败: {}",
+            errors.join("; ")
+        )))
     }
 }
 
@@ -242,6 +271,7 @@ impl ClaudeAccountManager {
             data_dir,
             store: Mutex::new(store),
             pending: Mutex::new(HashMap::new()),
+            completion_lock: Mutex::new(()),
             ended: std::sync::Mutex::new(HashMap::new()),
         }
     }
@@ -251,6 +281,7 @@ impl ClaudeAccountManager {
     /// 新建账号目录，在里面启动 `claude auth login`，拿到登录链接后返回。
     /// `open_browser` 为假（授权中心关了「登录时自动打开浏览器」）时不让 Claude Code 自己打开浏览器。
     pub async fn start_login(&self, open_browser: bool) -> Result<LoginStart, AppError> {
+        load_store_checked(&self.data_dir)?;
         let local_id = layout::new_local_id();
         let home = layout::account_home(&self.data_dir, &local_id);
         let config_dir = layout::config_dir(&self.data_dir, &local_id);
@@ -293,6 +324,7 @@ impl ClaudeAccountManager {
     /// 还没登完时返回 `Ok(None)`；成功时收录账号并返回它。同一个账号再登录一次会替换掉
     /// 旧目录（旧登录通常已经失效，这就是「重新登录」）。
     pub async fn poll_login(&self, flow_id: &str) -> Result<Option<ClaudeAccount>, AppError> {
+        let _completion = self.completion_lock.lock().await;
         let (local_id, exit) = {
             let mut pending = self.pending.lock().await;
             match self.ended_flows().get(flow_id) {
@@ -380,7 +412,7 @@ impl ClaudeAccountManager {
 
         let mut store = self.store.lock().await;
         let file = store_file_guard();
-        *store = load_store(&self.data_dir);
+        let mut next = load_store_checked(&self.data_dir)?;
         let data = AccountData {
             local_id: local_id.clone(),
             email: found
@@ -395,8 +427,9 @@ impl ClaudeAccountManager {
             rate_limit_tier: None,
             added_at: chrono::Utc::now().timestamp(),
         };
-        let replaced = store.accounts.insert(found.key.clone(), data);
-        self.persist(&store)?;
+        let replaced = next.accounts.insert(found.key.clone(), data);
+        self.persist(&next)?;
+        *store = next;
         drop(file);
         let account = to_account(&found.key, &store.accounts[&found.key], &self.data_dir);
         drop(store);
@@ -502,13 +535,15 @@ impl ClaudeAccountManager {
 
     /// 从 CC Switch 删掉这个账号：删目录和钥匙串里的条目。不吊销、不登出，服务端的令牌到期自然失效。
     pub async fn remove(&self, account_id: &str) -> Result<(), AppError> {
+        let _completion = self.completion_lock.lock().await;
         let mut store = self.store.lock().await;
         let file = store_file_guard();
-        *store = load_store(&self.data_dir);
-        let Some(data) = store.accounts.remove(account_id) else {
+        let mut next = load_store_checked(&self.data_dir)?;
+        let Some(data) = next.accounts.remove(account_id) else {
             return Err(account_not_found());
         };
-        self.persist(&store)?;
+        self.persist(&next)?;
+        *store = next;
         let _ = snapshot::update_state(&self.data_dir, |state| {
             state.login_expiry.remove(account_id);
         });
@@ -519,12 +554,18 @@ impl ClaudeAccountManager {
     }
 
     pub async fn remove_all(&self) -> Result<Vec<String>, AppError> {
+        let _completion = self.completion_lock.lock().await;
+        for (_, login) in self.pending.lock().await.drain() {
+            self.abandon(login);
+        }
+        self.ended_flows().clear();
         let mut store = self.store.lock().await;
         let file = store_file_guard();
-        *store = load_store(&self.data_dir);
+        let mut next = load_store_checked(&self.data_dir)?;
         let removed: Vec<(String, AccountData)> =
-            std::mem::take(&mut store.accounts).into_iter().collect();
-        self.persist(&store)?;
+            std::mem::take(&mut next.accounts).into_iter().collect();
+        self.persist(&next)?;
+        *store = next;
         let _ = snapshot::update_state(&self.data_dir, |state| state.login_expiry.clear());
         drop(file);
         drop(store);

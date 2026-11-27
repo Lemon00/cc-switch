@@ -7,7 +7,6 @@ import type { TemplateType } from "@/config/constants";
 import { usageKeys } from "@/lib/query/usage";
 import type { Provider } from "@/types";
 import { createTestQueryClient } from "../utils/testQueryClient";
-
 vi.mock("@/components/providers/ProviderActions", () => ({
   ProviderActions: () => null,
 }));
@@ -22,7 +21,6 @@ vi.mock("@/components/SubscriptionQuotaFooter", () => ({
 vi.mock("@/lib/query/failover", () => ({
   useProviderHealth: () => ({ data: undefined }),
 }));
-
 function renderCard({
   official = false,
   templateType = "custom",
@@ -52,7 +50,6 @@ function renderCard({
       { planName: "seven_day", total: 100, used: 30, remaining: 70, unit: "%" },
     ],
   });
-
   return render(
     <QueryClientProvider client={queryClient}>
       <ProviderCard
@@ -69,11 +66,9 @@ function renderCard({
     </QueryClientProvider>,
   );
 }
-
 describe("ProviderCard cached usage expansion", () => {
   it("keeps official subscription quota inline despite cached script tiers", () => {
     renderCard({ official: true, templateType: "official_subscription" });
-
     expect(screen.getByText("official-subscription-quota")).toBeInTheDocument();
     expect(screen.queryByText("expanded-plan-details")).not.toBeInTheDocument();
     expect(
@@ -83,7 +78,6 @@ describe("ProviderCard cached usage expansion", () => {
       screen.queryByRole("button", { name: "展开" }),
     ).not.toBeInTheDocument();
   });
-
   it.each<Parameters<typeof renderCard>[0]>([
     { official: true },
     { templateType: "official_subscription" },
@@ -91,7 +85,6 @@ describe("ProviderCard cached usage expansion", () => {
     { enabled: false },
   ])("does not expand ineligible cached usage: %j", (options) => {
     renderCard(options);
-
     expect(screen.queryByText("expanded-plan-details")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "收起" }),
@@ -100,11 +93,9 @@ describe("ProviderCard cached usage expansion", () => {
       screen.queryByRole("button", { name: "展开" }),
     ).not.toBeInTheDocument();
   });
-
   it("still expands ordinary multi-plan usage and allows collapsing it", async () => {
     const user = userEvent.setup();
     renderCard();
-
     expect(screen.getByText("expanded-plan-details")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "收起" }));
     expect(screen.queryByText("expanded-plan-details")).not.toBeInTheDocument();

@@ -1,18 +1,17 @@
-import { useTranslation } from "react-i18next";
-import { ChevronDown } from "lucide-react";
-import { FormLabel } from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { HelpTip } from "@/components/ui/help-tip";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { isValidUserAgentHeader } from "@/lib/userAgent";
+import { FormLabel } from "@/components/ui/form";
+import { HelpTip } from "@/components/ui/help-tip";
+import { Input } from "@/components/ui/input";
 import { USER_AGENT_PRESETS } from "@/config/userAgentPresets";
-
+import { isValidUserAgentHeader } from "@/lib/userAgent";
+import { ChevronDown } from "lucide-react";
+import { useTranslation } from "react-i18next";
 interface CustomUserAgentFieldProps {
   /** 输入框的 id（用于 label htmlFor）；两个表单需传入各自唯一值。 */
   id: string;
@@ -21,7 +20,6 @@ interface CustomUserAgentFieldProps {
   /** 字段名后「?」里的说明；「只在路由、聚合模式下生效」由调用方在分组开头说一次。 */
   help: string;
 }
-
 /**
  * 供应商级自定义 User-Agent 字段（Claude / Codex 表单共用）。
  *
@@ -40,7 +38,6 @@ export function CustomUserAgentField({
   const label = t("providerForm.customUserAgent", {
     defaultValue: "自定义 User-Agent",
   });
-
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-0.5">

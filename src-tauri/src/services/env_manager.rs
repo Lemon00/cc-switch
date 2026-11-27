@@ -2,12 +2,19 @@ use super::env_checker::EnvConflict;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
-#[cfg(target_os = "windows")]
-use winreg::enums::*;
-#[cfg(target_os = "windows")]
-use winreg::RegKey;
+mod legacy;
+mod snapshot;
+
+static ENV_MUTATION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub(crate) fn lock_env_mutation() -> Result<std::sync::MutexGuard<'static, ()>, String> {
+    ENV_MUTATION_LOCK
+        .lock()
+        .map_err(|_| "环境变量操作锁不可用".to_string())
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -15,16 +22,26 @@ pub struct BackupInfo {
     pub backup_path: String,
     pub timestamp: String,
     pub conflicts: Vec<EnvConflict>,
+    #[serde(default, skip_serializing)]
+    snapshots: Vec<snapshot::EnvSnapshot>,
 }
 
 /// Delete environment variables with automatic backup
 pub fn delete_env_vars(conflicts: Vec<EnvConflict>) -> Result<BackupInfo, String> {
-    // Step 1: Create backup
-    let backup_info = create_backup(&conflicts)?;
+    let _guard = lock_env_mutation()?;
+    delete_env_vars_in(conflicts, &backup_dir()?)
+}
+
+fn delete_env_vars_in(
+    conflicts: Vec<EnvConflict>,
+    backup_dir: &Path,
+) -> Result<BackupInfo, String> {
+    let snapshots = snapshot::prepare_deletions(&conflicts)?;
+    let backup_info = create_backup_in(backup_dir, &conflicts, snapshots)?;
 
     // Step 2: Delete variables
-    for conflict in &conflicts {
-        match delete_single_env(conflict) {
+    for snapshot in &backup_info.snapshots {
+        match snapshot.apply(false) {
             Ok(_) => {}
             Err(e) => {
                 // If deletion fails, we keep the backup but return error
@@ -39,28 +56,58 @@ pub fn delete_env_vars(conflicts: Vec<EnvConflict>) -> Result<BackupInfo, String
     Ok(backup_info)
 }
 
-/// Create backup file before deletion
-fn create_backup(conflicts: &[EnvConflict]) -> Result<BackupInfo, String> {
-    // Get backup directory
-    let backup_dir = backup_dir()?;
-    fs::create_dir_all(&backup_dir).map_err(|e| format!("创建备份目录失败: {e}"))?;
+fn create_backup_in(
+    backup_dir: &Path,
+    conflicts: &[EnvConflict],
+    snapshots: Vec<snapshot::EnvSnapshot>,
+) -> Result<BackupInfo, String> {
+    fs::create_dir_all(backup_dir).map_err(|e| format!("创建备份目录失败: {e}"))?;
 
-    // Generate backup file name with timestamp
+    // 秒级时间戳 + 随机后缀，避免同一秒内多次清理互相覆盖；create_new 防止截断已有备份。
     let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
-    let backup_file = backup_dir.join(format!("env-backup-{timestamp}.json"));
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let backup_file = backup_dir.join(format!(
+        "env-backup-{timestamp}-{nonce}-{}.json",
+        std::process::id()
+    ));
 
     // Create backup data
     let backup_info = BackupInfo {
         backup_path: backup_file.to_string_lossy().to_string(),
         timestamp: timestamp.clone(),
         conflicts: conflicts.to_vec(),
+        snapshots,
     };
 
     // Write backup file
-    let json = serde_json::to_string_pretty(&backup_info)
+    let mut backup_data = serde_json::to_value(&backup_info)
+        .map_err(|error| format!("序列化备份数据失败: {error}"))?;
+    backup_data["snapshots"] = serde_json::to_value(&backup_info.snapshots)
+        .map_err(|error| format!("序列化环境快照失败: {error}"))?;
+    let json = serde_json::to_string_pretty(&backup_data)
         .map_err(|e| format!("序列化备份数据失败: {e}"))?;
 
-    fs::write(&backup_file, json).map_err(|e| format!("写入备份文件失败: {e}"))?;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&backup_file)
+        .map_err(|e| format!("创建备份文件失败: {e}"))?;
+    if let Err(error) = file
+        .write_all(json.as_bytes())
+        .and_then(|_| file.sync_all())
+    {
+        drop(file);
+        let _ = fs::remove_file(&backup_file);
+        return Err(format!("写入备份文件失败: {error}"));
+    }
 
     Ok(backup_info)
 }
@@ -72,37 +119,21 @@ pub(crate) fn backup_dir() -> Result<PathBuf, String> {
 }
 
 /// Delete a single environment variable
-#[cfg(target_os = "windows")]
-fn delete_single_env(conflict: &EnvConflict) -> Result<(), String> {
-    match conflict.source_type.as_str() {
-        "system" => {
-            if conflict.source_path.contains("HKEY_CURRENT_USER") {
-                let hkcu = RegKey::predef(HKEY_CURRENT_USER)
-                    .open_subkey_with_flags("Environment", KEY_ALL_ACCESS)
-                    .map_err(|e| format!("打开注册表失败: {}", e))?;
-
-                hkcu.delete_value(&conflict.var_name)
-                    .map_err(|e| format!("删除注册表项失败: {}", e))?;
-            } else if conflict.source_path.contains("HKEY_LOCAL_MACHINE") {
-                let hklm = RegKey::predef(HKEY_LOCAL_MACHINE)
-                    .open_subkey_with_flags(
-                        "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
-                        KEY_ALL_ACCESS,
-                    )
-                    .map_err(|e| format!("打开系统注册表失败 (需要管理员权限): {}", e))?;
-
-                hklm.delete_value(&conflict.var_name)
-                    .map_err(|e| format!("删除系统注册表项失败: {}", e))?;
-            }
-            Ok(())
-        }
-        "file" => Err("Windows 系统不应该有文件类型的环境变量".to_string()),
-        _ => Err(format!("未知的环境变量来源类型: {}", conflict.source_type)),
+#[cfg(any(test, target_os = "windows"))]
+fn registry_is_current_user(source_path: &str) -> Result<bool, String> {
+    if source_path.eq_ignore_ascii_case("HKEY_CURRENT_USER\\Environment") {
+        Ok(true)
+    } else if source_path.eq_ignore_ascii_case(
+        "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
+    ) {
+        Ok(false)
+    } else {
+        Err(format!("不支持的环境变量注册表路径: {source_path}"))
     }
 }
 
-#[cfg(not(target_os = "windows"))]
-fn parse_file_source_path(source_path: &str) -> Result<&str, String> {
+#[cfg(any(test, not(target_os = "windows")))]
+fn parse_file_source_path(source_path: &str) -> Result<(&str, usize), String> {
     let (file_path, line_num) = source_path
         .rsplit_once(':')
         .ok_or_else(|| "无效的文件路径格式".to_string())?;
@@ -111,133 +142,175 @@ fn parse_file_source_path(source_path: &str) -> Result<&str, String> {
         return Err("无效的文件路径格式".to_string());
     }
 
-    line_num
+    let line_num = line_num
         .parse::<usize>()
         .map_err(|_| "无效的文件路径格式".to_string())?;
-
-    Ok(file_path)
-}
-
-#[cfg(not(target_os = "windows"))]
-fn delete_single_env(conflict: &EnvConflict) -> Result<(), String> {
-    match conflict.source_type.as_str() {
-        "file" => {
-            // Parse file path and line number from source_path (format: "path:line")
-            let file_path = parse_file_source_path(&conflict.source_path)?;
-
-            // Read file content
-            let content = fs::read_to_string(file_path)
-                .map_err(|e| format!("读取文件失败 {file_path}: {e}"))?;
-
-            // Filter out the line containing the environment variable
-            let new_content: Vec<String> = content
-                .lines()
-                .filter(|line| {
-                    let trimmed = line.trim();
-                    let export_line = trimmed.strip_prefix("export ").unwrap_or(trimmed);
-
-                    // Check if this line sets the target variable
-                    if let Some(eq_pos) = export_line.find('=') {
-                        let var_name = export_line[..eq_pos].trim();
-                        var_name != conflict.var_name
-                    } else {
-                        true
-                    }
-                })
-                .map(|s| s.to_string())
-                .collect();
-
-            // Write back to file
-            fs::write(file_path, new_content.join("\n"))
-                .map_err(|e| format!("写入文件失败 {file_path}: {e}"))?;
-
-            Ok(())
-        }
-        "system" => {
-            // On Unix, we can't directly delete process environment variables
-            Ok(())
-        }
-        _ => Err(format!("未知的环境变量来源类型: {}", conflict.source_type)),
+    if line_num == 0 {
+        return Err("无效的文件行号".to_string());
     }
+
+    Ok((file_path, line_num))
 }
 
 /// Restore environment variables from backup
 pub fn restore_from_backup(backup_path: String) -> Result<(), String> {
+    let _guard = lock_env_mutation()?;
     // Read backup file
     let content = fs::read_to_string(&backup_path).map_err(|e| format!("读取备份文件失败: {e}"))?;
 
     let backup_info: BackupInfo =
         serde_json::from_str(&content).map_err(|e| format!("解析备份文件失败: {e}"))?;
 
-    // Restore each variable
-    for conflict in &backup_info.conflicts {
-        restore_single_env(conflict)?;
+    let snapshots = if backup_info.snapshots.is_empty() {
+        legacy::prepare_restoration(&backup_info.conflicts)?
+    } else {
+        backup_info.snapshots
+    };
+    for snapshot in &snapshots {
+        snapshot.validate(true)?;
     }
-
+    for snapshot in &snapshots {
+        snapshot.apply(true)?;
+    }
     Ok(())
 }
 
-/// Restore a single environment variable
-#[cfg(target_os = "windows")]
-fn restore_single_env(conflict: &EnvConflict) -> Result<(), String> {
-    match conflict.source_type.as_str() {
-        "system" => {
-            if conflict.source_path.contains("HKEY_CURRENT_USER") {
-                let (hkcu, _) = RegKey::predef(HKEY_CURRENT_USER)
-                    .create_subkey("Environment")
-                    .map_err(|e| format!("打开注册表失败: {}", e))?;
-
-                hkcu.set_value(&conflict.var_name, &conflict.var_value)
-                    .map_err(|e| format!("恢复注册表项失败: {}", e))?;
-            } else if conflict.source_path.contains("HKEY_LOCAL_MACHINE") {
-                let (hklm, _) = RegKey::predef(HKEY_LOCAL_MACHINE)
-                    .create_subkey(
-                        "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
-                    )
-                    .map_err(|e| format!("打开系统注册表失败 (需要管理员权限): {}", e))?;
-
-                hklm.set_value(&conflict.var_name, &conflict.var_value)
-                    .map_err(|e| format!("恢复系统注册表项失败: {}", e))?;
-            }
-            Ok(())
-        }
-        _ => Err(format!(
-            "无法恢复类型为 {} 的环境变量",
-            conflict.source_type
-        )),
+#[cfg(any(test, not(target_os = "windows")))]
+fn shell_export_line(name: &str, value: &str) -> Result<String, String> {
+    let valid_name = !name.is_empty()
+        && name.bytes().enumerate().all(|(index, byte)| {
+            byte == b'_' || byte.is_ascii_alphabetic() || (index > 0 && byte.is_ascii_digit())
+        });
+    if !valid_name || value.contains('\0') {
+        return Err("Invalid environment variable name or value".to_string());
     }
-}
-
-#[cfg(not(target_os = "windows"))]
-fn restore_single_env(conflict: &EnvConflict) -> Result<(), String> {
-    match conflict.source_type.as_str() {
-        "file" => {
-            // Parse file path from source_path
-            let file_path = parse_file_source_path(&conflict.source_path)?;
-
-            // Read file content
-            let mut content = fs::read_to_string(file_path)
-                .map_err(|e| format!("读取文件失败 {file_path}: {e}"))?;
-
-            // Append the environment variable line
-            let export_line = format!("\nexport {}={}", conflict.var_name, conflict.var_value);
-            content.push_str(&export_line);
-
-            // Write back to file
-            fs::write(file_path, content).map_err(|e| format!("写入文件失败 {file_path}: {e}"))?;
-
-            Ok(())
-        }
-        _ => Err(format!(
-            "无法恢复类型为 {} 的环境变量",
-            conflict.source_type
-        )),
-    }
+    Ok(format!(
+        "\nexport {name}='{}'\n",
+        value.replace('\'', "'\\''")
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn registry_sources_must_match_supported_locations() {
+        assert_eq!(
+            registry_is_current_user("hkey_current_user\\environment"),
+            Ok(true)
+        );
+        assert_eq!(
+            registry_is_current_user("HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment"),
+            Ok(false)
+        );
+        for path in [
+            "",
+            "prefix-HKEY_CURRENT_USER",
+            "HKEY_CURRENT_USER\\Other",
+            "HKEY_LOCAL_MACHINE",
+        ] {
+            assert!(registry_is_current_user(path).is_err());
+        }
+    }
+
+    #[test]
+    fn backups_are_complete_unique_and_private() {
+        let temp = tempfile::tempdir().unwrap();
+        let conflicts = vec![EnvConflict {
+            var_name: "OPENAI_API_KEY".into(),
+            var_value: "backup-secret".into(),
+            source_type: "system".into(),
+            source_path: "HKEY_CURRENT_USER\\Environment".into(),
+        }];
+        let first = create_backup_in(temp.path(), &conflicts, Vec::new()).unwrap();
+        let second = create_backup_in(temp.path(), &conflicts, Vec::new()).unwrap();
+        assert_ne!(first.backup_path, second.backup_path);
+        let restored: BackupInfo =
+            serde_json::from_slice(&fs::read(&first.backup_path).unwrap()).unwrap();
+        assert_eq!(restored.conflicts[0].var_value, "backup-secret");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&first.backup_path)
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+    }
+
+    #[test]
+    fn snapshots_are_stored_in_backup_but_not_exposed_in_ipc_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        let backup = create_backup_in(
+            temp.path(),
+            &[],
+            vec![snapshot::EnvSnapshot::File {
+                path: temp.path().join("shellrc"),
+                before: "private shell configuration".into(),
+                after: String::new(),
+            }],
+        )
+        .unwrap();
+        let metadata = serde_json::to_string(&backup).unwrap();
+        assert!(!metadata.contains("private shell configuration"));
+        assert!(!metadata.contains("snapshots"));
+        let stored: BackupInfo =
+            serde_json::from_slice(&fs::read(&backup.backup_path).unwrap()).unwrap();
+        assert_eq!(stored.snapshots.len(), 1);
+    }
+
+    #[test]
+    fn legacy_backups_without_snapshots_remain_readable() {
+        let backup: BackupInfo = serde_json::from_value(serde_json::json!({
+            "backupPath": "legacy.json",
+            "timestamp": "20260101_000000",
+            "conflicts": []
+        }))
+        .unwrap();
+        assert!(backup.snapshots.is_empty());
+    }
+
+    #[test]
+    fn restore_preflights_every_snapshot_before_writing_any_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let first = temp.path().join("first");
+        let second = temp.path().join("second");
+        fs::write(&first, "after").unwrap();
+        fs::write(&second, "external edit").unwrap();
+        let snapshots = [&first, &second]
+            .into_iter()
+            .map(|path| snapshot::EnvSnapshot::File {
+                path: path.to_path_buf(),
+                before: "before".into(),
+                after: "after".into(),
+            })
+            .collect();
+        let backup = create_backup_in(&temp.path().join("backups"), &[], snapshots).unwrap();
+        assert!(restore_from_backup(backup.backup_path.clone()).is_err());
+        assert_eq!(fs::read_to_string(&first).unwrap(), "after");
+        assert_eq!(fs::read_to_string(&second).unwrap(), "external edit");
+        fs::write(&second, "after").unwrap();
+        restore_from_backup(backup.backup_path.clone()).unwrap();
+        restore_from_backup(backup.backup_path).unwrap();
+        assert_eq!(fs::read_to_string(first).unwrap(), "before");
+        assert_eq!(fs::read_to_string(second).unwrap(), "before");
+    }
+
+    #[test]
+    fn shell_restore_quotes_values_without_executing_them() {
+        assert_eq!(
+            shell_export_line("OPENAI_API_KEY", "a'b $HOME\n$(id)").unwrap(),
+            "\nexport OPENAI_API_KEY='a'\\''b $HOME\n$(id)'\n"
+        );
+        for name in ["", "1KEY", "KEY;id", "KEY\nOTHER"] {
+            assert!(shell_export_line(name, "value").is_err());
+        }
+    }
 
     #[cfg(not(target_os = "windows"))]
     use tempfile::tempdir;
@@ -253,9 +326,10 @@ mod tests {
     fn file_source_path_parser_preserves_colons_in_path() {
         assert_eq!(
             parse_file_source_path("/tmp/cc:test/.zshrc:8"),
-            Ok("/tmp/cc:test/.zshrc")
+            Ok(("/tmp/cc:test/.zshrc", 8))
         );
         assert!(parse_file_source_path("/tmp/.zshrc:not-a-line").is_err());
+        assert!(parse_file_source_path("/tmp/.zshrc:0").is_err());
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -265,21 +339,29 @@ mod tests {
         let colon_dir = temp.path().join("foo:bar");
         fs::create_dir(&colon_dir).expect("create colon directory");
         let file_path = colon_dir.join(".zshrc");
-        fs::write(&file_path, "export OPENAI_API_KEY=original\n").expect("write shell config");
+        fs::write(
+            &file_path,
+            "# keep\r\nexport OPENAI_API_KEY=original\r\nexport OTHER=1\r\n",
+        )
+        .expect("write shell config");
 
         let conflict = EnvConflict {
             var_name: "OPENAI_API_KEY".to_string(),
             var_value: "original".to_string(),
             source_type: "file".to_string(),
-            source_path: format!("{}:1", file_path.display()),
+            source_path: format!("{}:2", file_path.display()),
         };
 
-        delete_single_env(&conflict).expect("delete variable from shell config");
+        let backup = delete_env_vars_in(vec![conflict], &temp.path().join("backups"))
+            .expect("delete variable from shell config");
         let deleted = fs::read_to_string(&file_path).expect("read updated shell config");
-        assert!(!deleted.contains("OPENAI_API_KEY"));
+        assert_eq!(deleted, "# keep\r\nexport OTHER=1\r\n");
 
-        restore_single_env(&conflict).expect("restore variable to shell config");
+        restore_from_backup(backup.backup_path).expect("restore variable to shell config");
         let restored = fs::read_to_string(&file_path).expect("read restored shell config");
-        assert!(restored.contains("export OPENAI_API_KEY=original"));
+        assert_eq!(
+            restored,
+            "# keep\r\nexport OPENAI_API_KEY=original\r\nexport OTHER=1\r\n"
+        );
     }
 }

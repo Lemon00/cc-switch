@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useRef } from "react";
-import { focusManager, useQueryClient } from "@tanstack/react-query";
 import { usageApi } from "@/lib/api/usage";
-import { usageKeys } from "@/lib/query/usage";
+import { localUsageQueryFilters, usageKeys } from "@/lib/query/usage";
 import type { SessionSyncResult } from "@/types/usage";
-
+import { focusManager, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useRef } from "react";
 interface UsageAutoRefreshOptions {
   refreshIntervalMs: number;
   sessionAutoSyncEnabled: boolean;
@@ -11,10 +10,8 @@ interface UsageAutoRefreshOptions {
   /** 时间范围随「现在」移动（今天、最近 24 小时等） */
   rollingRange?: boolean;
 }
-
 /** 随时间移动的范围多久重算一次：跨过午夜、滚动窗口移出旧记录都靠它 */
-const ROLLING_RANGE_REFRESH_MS = 60_000;
-
+const ROLLING_RANGE_REFRESH_MS = 60000;
 /**
  * 用量页打开期间按所选间隔扫描会话日志：打开即扫一次，之后每隔一段扫一次，
  * 窗口隐藏时停、重新显示时立刻补扫。后台只有 10 分钟一次的兜底扫描。
@@ -30,7 +27,6 @@ export function useUsageAutoRefresh({
 }: UsageAutoRefreshOptions) {
   const queryClient = useQueryClient();
   const pendingSync = useRef<Promise<SessionSyncResult> | null>(null);
-
   // 手动同步复用尚未完成的静默扫描；慢扫描不会在后端互斥锁前排队累积。
   const syncSessionUsage = useCallback(() => {
     if (!pendingSync.current) {
@@ -40,11 +36,9 @@ export function useUsageAutoRefresh({
     }
     return pendingSync.current;
   }, []);
-
   useEffect(() => {
     if (!sessionAutoSyncEnabled || refreshIntervalMs <= 0 || paused) return;
     let disposed = false;
-
     const scan = async () => {
       if (!focusManager.isFocused() || pendingSync.current) return;
       try {
@@ -65,7 +59,6 @@ export function useUsageAutoRefresh({
         });
       }
     };
-
     void scan();
     const timer = window.setInterval(() => void scan(), refreshIntervalMs);
     const unsubscribe = focusManager.subscribe((focused) => {
@@ -83,16 +76,14 @@ export function useUsageAutoRefresh({
     sessionAutoSyncEnabled,
     syncSessionUsage,
   ]);
-
   useEffect(() => {
     if (!rollingRange || paused) return;
     const timer = window.setInterval(() => {
       if (focusManager.isFocused()) {
-        void queryClient.invalidateQueries({ queryKey: usageKeys.all });
+        void queryClient.invalidateQueries(localUsageQueryFilters);
       }
     }, ROLLING_RANGE_REFRESH_MS);
     return () => window.clearInterval(timer);
   }, [paused, queryClient, rollingRange]);
-
   return { syncSessionUsage };
 }

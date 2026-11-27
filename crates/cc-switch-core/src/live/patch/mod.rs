@@ -4,7 +4,6 @@
 //! `None`），输出写后的字节。解析不了就报错，绝不退回空文档（C0 事故、v3.11.0
 //! 都是解析失败后从空文档开始写，等于清空了用户的配置）。
 
-pub mod dotenv;
 pub mod json;
 pub mod toml;
 
@@ -145,6 +144,9 @@ pub enum LiveWriteError {
     /// 写完之后客户端实际走的路由不是目标供应商：当前生效的 profile 覆盖了选路。
     #[error("Codex 当前生效的 profile \"{profile}\" 覆盖了 {key}")]
     Route { profile: String, key: String },
+    /// 补丁输入本身不合法（例如 `.env` 值含换行）。
+    #[error("{0}")]
+    Invalid(String),
 }
 
 /// 编辑冲突的错误码。命令返回 JSON 字符串，前端据此让用户选保留哪一边。
@@ -208,6 +210,7 @@ impl From<LiveWriteError> for crate::error::AppError {
                 })
                 .to_string(),
             ),
+            LiveWriteError::Invalid(message) => AppError::InvalidInput(message),
         }
     }
 }

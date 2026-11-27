@@ -4,7 +4,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useManagedAuth } from "@/components/providers/forms/hooks/useManagedAuth";
 import { CODEX_OAUTH_DUPLICATE_ACCOUNT_ERROR } from "@/lib/api/auth";
-
 const apiMocks = vi.hoisted(() => ({
   authGetStatus: vi.fn(),
   authStartLogin: vi.fn(),
@@ -15,8 +14,9 @@ const apiMocks = vi.hoisted(() => ({
 }));
 const toastMocks = vi.hoisted(() => ({
   success: vi.fn(),
+  error: vi.fn(),
+  warning: vi.fn(),
 }));
-
 vi.mock("@/lib/api", () => ({
   authApi: {
     authGetStatus: (...args: unknown[]) => apiMocks.authGetStatus(...args),
@@ -32,17 +32,16 @@ vi.mock("@/lib/api", () => ({
     openExternal: vi.fn().mockResolvedValue(undefined),
   },
 }));
-
 vi.mock("@/lib/clipboard", () => ({
   copyText: vi.fn().mockResolvedValue(undefined),
 }));
-
 vi.mock("sonner", () => ({
   toast: {
     success: toastMocks.success,
+    error: toastMocks.error,
+    warning: toastMocks.warning,
   },
 }));
-
 function createWrapper(
   queryClient = new QueryClient({
     defaultOptions: {
@@ -57,8 +56,57 @@ function createWrapper(
     );
   };
 }
-
 describe("useManagedAuth", () => {
+  it.each(["github_copilot", "xai_oauth"] as const)(
+    "cancels %s in the backend and waits before logging out",
+    async (provider) => {
+      let finishCancel!: (cancelled: boolean) => void;
+      let finishPoll!: (account: object) => void;
+      apiMocks.authStartLogin.mockResolvedValue({
+        provider,
+        device_code: "device-1",
+        user_code: "ABCD-EFGH",
+        verification_uri: "https://example.com/device",
+        expires_in: 600,
+        interval: 5,
+      });
+      apiMocks.authPollForAccount.mockImplementation(
+        () => new Promise((resolve) => (finishPoll = resolve)),
+      );
+      apiMocks.authCancelLogin.mockImplementation(
+        () => new Promise((resolve) => (finishCancel = resolve)),
+      );
+      const { result, unmount } = renderHook(() => useManagedAuth(provider), {
+        wrapper: createWrapper(),
+      });
+      await waitFor(() => expect(result.current.isStatusSuccess).toBe(true));
+      act(() => result.current.startAuth());
+      await waitFor(() =>
+        expect(apiMocks.authPollForAccount).toHaveBeenCalled(),
+      );
+      let logout!: Promise<unknown>;
+      act(() => {
+        logout = result.current.logout();
+      });
+      await waitFor(() =>
+        expect(apiMocks.authCancelLogin).toHaveBeenCalledWith(
+          provider,
+          "device-1",
+        ),
+      );
+      expect(apiMocks.authLogout).not.toHaveBeenCalled();
+      expect(result.current.isPolling).toBe(false);
+      await act(async () => {
+        finishCancel(true);
+        await logout;
+      });
+      expect(apiMocks.authLogout).toHaveBeenCalledWith(provider);
+      await act(async () => finishPoll({ id: "late-account" }));
+      expect(result.current.pollingState).toBe("idle");
+      expect(result.current.deviceCode).toBeNull();
+      unmount();
+    },
+  );
   it("opens browser login without copying a device code and keeps the reauth target", async () => {
     const { copyText } = await import("@/lib/clipboard");
     const { settingsApi } = await import("@/lib/api");
@@ -100,7 +148,6 @@ describe("useManagedAuth", () => {
     );
     unmount();
   });
-
   it("copies the Claude sign-in link when the browser is not to be opened", async () => {
     const { copyText } = await import("@/lib/clipboard");
     const { settingsApi } = await import("@/lib/api");
@@ -140,7 +187,6 @@ describe("useManagedAuth", () => {
     unmount();
     window.localStorage.removeItem("cc-switch.authCenter.openBrowser");
   });
-
   it("copies only the link, not the device code, when the browser is not to be opened", async () => {
     const { copyText } = await import("@/lib/clipboard");
     const { settingsApi } = await import("@/lib/api");
@@ -180,7 +226,6 @@ describe("useManagedAuth", () => {
     unmount();
     window.localStorage.removeItem("cc-switch.authCenter.openBrowser");
   });
-
   beforeEach(() => {
     apiMocks.authGetStatus.mockReset().mockResolvedValue({
       provider: "codex_oauth",
@@ -208,7 +253,6 @@ describe("useManagedAuth", () => {
     apiMocks.authRemoveAccount.mockReset().mockResolvedValue(undefined);
     apiMocks.authLogout.mockReset().mockResolvedValue(undefined);
   });
-
   describe.each(["codex_oauth", "agy_oauth"] as const)(
     "%s browser login",
     (provider) => {
@@ -230,7 +274,6 @@ describe("useManagedAuth", () => {
             ),
           { wrapper: createWrapper() },
         );
-
       it("polls every 1500 ms without overlapping and resumes after pending errors", async () => {
         const { copyText } = await import("@/lib/clipboard");
         const { settingsApi } = await import("@/lib/api");
@@ -255,7 +298,6 @@ describe("useManagedAuth", () => {
           expect(copyText).not.toHaveBeenCalled();
           await act(() => vi.advanceTimersByTimeAsync(4500));
           expect(apiMocks.authPollForAccount).toHaveBeenCalledTimes(1);
-
           await act(async () => resolvePoll(null));
           await act(() => vi.advanceTimersByTimeAsync(1499));
           expect(apiMocks.authPollForAccount).toHaveBeenCalledTimes(1);
@@ -273,7 +315,6 @@ describe("useManagedAuth", () => {
           vi.useRealTimers();
         }
       });
-
       it.each(["cancel", "expire", "replace", "unmount"] as const)(
         "ignores an in-flight result after %s and cancels the old flow",
         async (ending) => {
@@ -320,7 +361,6 @@ describe("useManagedAuth", () => {
               provider,
               "browser:flow",
             );
-
             await act(async () => resolvePoll({ id: "stale-account" }));
             await act(() => vi.advanceTimersByTimeAsync(4500));
             expect(apiMocks.authGetStatus).toHaveBeenCalledTimes(statusCalls);
@@ -341,7 +381,6 @@ describe("useManagedAuth", () => {
       );
     },
   );
-
   it.each([
     [1, 8000],
     [10, 13000],
@@ -374,15 +413,12 @@ describe("useManagedAuth", () => {
       vi.useRealTimers();
     }
   });
-
   it("starts reauthentication for the selected account", async () => {
     const { result } = renderHook(() => useManagedAuth("codex_oauth"), {
       wrapper: createWrapper(),
     });
     await waitFor(() => expect(result.current.isStatusSuccess).toBe(true));
-
     act(() => result.current.reauthAccount("acct-1"));
-
     await waitFor(() =>
       expect(apiMocks.authStartLogin).toHaveBeenCalledWith(
         "codex_oauth",
@@ -391,18 +427,15 @@ describe("useManagedAuth", () => {
       ),
     );
   });
-
   it("retries reauthentication for the same target account", async () => {
     apiMocks.authStartLogin.mockRejectedValue(new Error("start failed"));
     const { result } = renderHook(() => useManagedAuth("codex_oauth"), {
       wrapper: createWrapper(),
     });
     await waitFor(() => expect(result.current.isStatusSuccess).toBe(true));
-
     act(() => result.current.reauthAccount("acct-1"));
     await waitFor(() => expect(result.current.pollingState).toBe("error"));
     act(() => result.current.retryAuth());
-
     await waitFor(() =>
       expect(apiMocks.authStartLogin).toHaveBeenCalledTimes(2),
     );
@@ -413,7 +446,6 @@ describe("useManagedAuth", () => {
       "acct-1",
     );
   });
-
   it("localizes a duplicate Codex account error", async () => {
     apiMocks.authStartLogin.mockResolvedValue({
       provider: "codex_oauth",
@@ -429,15 +461,12 @@ describe("useManagedAuth", () => {
     const { result } = renderHook(() => useManagedAuth("codex_oauth"), {
       wrapper: createWrapper(),
     });
-
     act(() => result.current.addAccount());
-
     await waitFor(() => expect(result.current.pollingState).toBe("error"));
     expect(result.current.error).toBe(
       "该 ChatGPT 账号已添加，请直接使用现有账号。",
     );
   });
-
   it("cancels the active Codex device flow in the backend", async () => {
     apiMocks.authStartLogin.mockResolvedValue({
       provider: "codex_oauth",
@@ -453,9 +482,7 @@ describe("useManagedAuth", () => {
     });
     act(() => result.current.reauthAccount("acct-1"));
     await waitFor(() => expect(result.current.deviceCode).not.toBeNull());
-
     act(() => result.current.cancelAuth());
-
     await waitFor(() =>
       expect(apiMocks.authCancelLogin).toHaveBeenCalledWith(
         "codex_oauth",
@@ -464,7 +491,6 @@ describe("useManagedAuth", () => {
     );
     expect(result.current.pollingState).toBe("idle");
   });
-
   it("refreshes status when login committed before cancellation", async () => {
     let resolvePoll!: (account: object) => void;
     let resolveCancel!: (cancelled: boolean) => void;
@@ -486,7 +512,6 @@ describe("useManagedAuth", () => {
       wrapper: createWrapper(),
     });
     await waitFor(() => expect(result.current.isStatusSuccess).toBe(true));
-
     act(() => result.current.reauthAccount("acct-1"));
     await waitFor(() => expect(apiMocks.authPollForAccount).toHaveBeenCalled());
     apiMocks.authGetStatus.mockResolvedValue({
@@ -508,17 +533,14 @@ describe("useManagedAuth", () => {
         },
       ],
     });
-
     act(() => result.current.cancelAuth());
     await waitFor(() => expect(apiMocks.authCancelLogin).toHaveBeenCalled());
     act(() => {
       resolvePoll({ id: "acct-2" });
       resolveCancel(false);
     });
-
     await waitFor(() => expect(result.current.accounts).toHaveLength(2));
   });
-
   it("waits for active-flow cancellation before starting another login", async () => {
     let resolveCancel!: (cancelled: boolean) => void;
     apiMocks.authStartLogin.mockResolvedValue({
@@ -536,20 +558,16 @@ describe("useManagedAuth", () => {
     const { result } = renderHook(() => useManagedAuth("codex_oauth"), {
       wrapper: createWrapper(),
     });
-
     act(() => result.current.reauthAccount("acct-1"));
     await waitFor(() => expect(result.current.deviceCode).not.toBeNull());
     act(() => result.current.reauthAccount("acct-1"));
     await waitFor(() => expect(apiMocks.authCancelLogin).toHaveBeenCalled());
     expect(apiMocks.authStartLogin).toHaveBeenCalledTimes(1);
-
     act(() => resolveCancel(true));
-
     await waitFor(() =>
       expect(apiMocks.authStartLogin).toHaveBeenCalledTimes(2),
     );
   });
-
   it.each([
     ["remove", false],
     ["remove", true],
@@ -588,11 +606,14 @@ describe("useManagedAuth", () => {
           new Error("账号已删除，但 Codex 供应商解绑失败"),
         );
       }
-      act(() =>
-        operation === "remove"
-          ? result.current.removeAccount("acct-1")
-          : result.current.logout(),
-      );
+      await act(async () => {
+        const mutation =
+          operation === "remove"
+            ? result.current.removeAccount("acct-1")
+            : result.current.logout();
+        if (fails) await expect(mutation).rejects.toThrow("解绑失败");
+        else await mutation;
+      });
       await waitFor(() =>
         expect(
           queryClient.getQueryState(["providers", "codex"])?.isInvalidated,
@@ -605,15 +626,14 @@ describe("useManagedAuth", () => {
       if (fails) expect(result.current.error).toContain("解绑失败");
     },
   );
-
   it("shows a success toast after removing an account", async () => {
     const { result } = renderHook(() => useManagedAuth("codex_oauth"), {
       wrapper: createWrapper(),
     });
     await waitFor(() => expect(result.current.isStatusSuccess).toBe(true));
-
-    act(() => result.current.removeAccount("acct-1"));
-
+    await act(async () => {
+      await result.current.removeAccount("acct-1");
+    });
     await waitFor(() =>
       expect(apiMocks.authRemoveAccount).toHaveBeenCalledWith(
         "codex_oauth",

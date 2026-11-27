@@ -7,12 +7,10 @@ import {
   terminalNeedsRoute,
 } from "@/components/providers/OpenTerminalDialog";
 import type { Provider } from "@/types";
-
 const openTerminalMock = vi.fn();
 const pickDirectoryMock = vi.fn();
 const agyStatusMock = vi.fn();
 const agyRunningMock = vi.fn();
-
 vi.mock("@/lib/api", () => ({
   providersApi: {
     openTerminal: (...args: unknown[]) => openTerminalMock(...args),
@@ -29,11 +27,9 @@ vi.mock("@/lib/platform", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/platform")>()),
   isMac: () => true,
 }));
-
 vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
-
 const STORAGE_KEY = "cc-switch:terminal:recent-dirs";
 const provider = {
   id: "p1",
@@ -45,7 +41,6 @@ const provider = {
     },
   },
 } as Provider;
-
 function renderDialog(
   onClose = vi.fn(),
   target: Provider = provider,
@@ -61,7 +56,6 @@ function renderDialog(
   );
   return onClose;
 }
-
 describe("OpenTerminalDialog", () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -78,7 +72,6 @@ describe("OpenTerminalDialog", () => {
     });
     agyRunningMock.mockReset().mockResolvedValue(false);
   });
-
   const agyOfficial = (accountId?: string) =>
     ({
       id: "agy-official",
@@ -95,7 +88,6 @@ describe("OpenTerminalDialog", () => {
           }
         : undefined,
     }) as Provider;
-
   it("says agy's sign-in will switch when the card is bound to another account", async () => {
     agyRunningMock.mockResolvedValue(true);
     renderDialog(vi.fn(), agyOfficial("b"), "agy");
@@ -104,7 +96,6 @@ describe("OpenTerminalDialog", () => {
     ).toBeInTheDocument();
     expect(await screen.findByText(/检测到 agy 正在运行/)).toBeInTheDocument();
   });
-
   it("stays quiet when the bound account is already signed in, or nothing is bound", async () => {
     renderDialog(vi.fn(), agyOfficial("a"), "agy");
     await waitFor(() => expect(agyStatusMock).toHaveBeenCalled());
@@ -113,17 +104,14 @@ describe("OpenTerminalDialog", () => {
     renderDialog(vi.fn(), agyOfficial(), "agy");
     expect(agyStatusMock).not.toHaveBeenCalled();
   });
-
   it("explains first and only opens the folder picker on request", async () => {
     pickDirectoryMock.mockResolvedValue("/work/alpha");
     const onClose = renderDialog();
-
     expect(pickDirectoryMock).not.toHaveBeenCalled();
     const confirm = screen.getByRole("button", {
       name: "provider.openTerminalDialog.confirm",
     });
     expect(confirm).toBeDisabled();
-
     fireEvent.click(
       screen.getByRole("button", {
         name: "provider.openTerminalDialog.choose",
@@ -131,7 +119,6 @@ describe("OpenTerminalDialog", () => {
     );
     await waitFor(() => expect(confirm).toBeEnabled());
     fireEvent.click(confirm);
-
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(openTerminalMock).toHaveBeenCalledWith("p1", "claude", {
       cwd: "/work/alpha",
@@ -141,14 +128,12 @@ describe("OpenTerminalDialog", () => {
       "/work/alpha",
     ]);
   });
-
   it("prefills the last folder and moves a picked recent one to the front", async () => {
     window.localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify(["/work/alpha", "/work/beta"]),
     );
     const onClose = renderDialog();
-
     // 上次的目录直接填好，另一个在「最近用过」里
     expect(screen.getByTitle("/work/alpha")).toBeInTheDocument();
     fireEvent.click(screen.getByTitle("/work/beta"));
@@ -157,7 +142,6 @@ describe("OpenTerminalDialog", () => {
         name: "provider.openTerminalDialog.confirm",
       }),
     );
-
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(openTerminalMock).toHaveBeenCalledWith("p1", "claude", {
       cwd: "/work/beta",
@@ -168,11 +152,9 @@ describe("OpenTerminalDialog", () => {
       "/work/alpha",
     ]);
   });
-
   it("passes the skip-permissions choice and remembers it per app after opening", async () => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(["/work/alpha"]));
     const onClose = renderDialog();
-
     const checkbox = screen.getByRole("checkbox");
     expect(checkbox).not.toBeChecked();
     fireEvent.click(checkbox);
@@ -181,7 +163,6 @@ describe("OpenTerminalDialog", () => {
         name: "provider.openTerminalDialog.confirm",
       }),
     );
-
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(openTerminalMock).toHaveBeenCalledWith("p1", "claude", {
       cwd: "/work/alpha",
@@ -194,7 +175,6 @@ describe("OpenTerminalDialog", () => {
       window.localStorage.getItem("cc-switch:terminal:skip-permissions:agy"),
     ).toBeNull();
   });
-
   it("prefills the remembered skip-permissions choice", () => {
     window.localStorage.setItem(
       "cc-switch:terminal:skip-permissions:claude",
@@ -203,11 +183,9 @@ describe("OpenTerminalDialog", () => {
     renderDialog();
     expect(screen.getByRole("checkbox")).toBeChecked();
   });
-
   it("passes trimmed extra arguments and remembers them per app after opening", async () => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(["/work/alpha"]));
     const onClose = renderDialog();
-
     fireEvent.change(
       screen.getByLabelText("provider.openTerminalDialog.extraArgs"),
       { target: { value: '  --debug --append-system-prompt "be brief"  ' } },
@@ -217,7 +195,6 @@ describe("OpenTerminalDialog", () => {
         name: "provider.openTerminalDialog.confirm",
       }),
     );
-
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(openTerminalMock).toHaveBeenCalledWith("p1", "claude", {
       cwd: "/work/alpha",
@@ -231,7 +208,6 @@ describe("OpenTerminalDialog", () => {
       window.localStorage.getItem("cc-switch:terminal:extra-args:codex"),
     ).toBeNull();
   });
-
   // 回车直接打开：确认按钮被挤到下面时也能用键盘确认（#9478）；输入法选词的回车不算
   it("opens on Enter in the extra-arguments field, but not while composing", async () => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(["/work/alpha"]));
@@ -239,10 +215,8 @@ describe("OpenTerminalDialog", () => {
     const input = screen.getByLabelText(
       "provider.openTerminalDialog.extraArgs",
     );
-
     fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
     expect(openTerminalMock).not.toHaveBeenCalled();
-
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(openTerminalMock).toHaveBeenCalledWith("p1", "claude", {
@@ -250,7 +224,6 @@ describe("OpenTerminalDialog", () => {
       skipPermissions: false,
     });
   });
-
   it("prefills the remembered extra arguments", () => {
     window.localStorage.setItem(
       "cc-switch:terminal:extra-args:claude",
@@ -261,32 +234,27 @@ describe("OpenTerminalDialog", () => {
       screen.getByLabelText("provider.openTerminalDialog.extraArgs"),
     ).toHaveValue("--debug");
   });
-
   it("keeps the dialog open and the list unchanged when opening fails", async () => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(["/gone"]));
     openTerminalMock.mockRejectedValue(new Error("目录不存在: /gone"));
     const onClose = renderDialog();
-
     fireEvent.click(
       screen.getByRole("button", {
         name: "provider.openTerminalDialog.confirm",
       }),
     );
-
     await waitFor(() => expect(openTerminalMock).toHaveBeenCalled());
     expect(onClose).not.toHaveBeenCalled();
     expect(JSON.parse(window.localStorage.getItem(STORAGE_KEY)!)).toEqual([
       "/gone",
     ]);
   });
-
   it("shows the isolation notice only when the card carries its own address and key", () => {
     renderDialog();
     expect(
       screen.getByText("provider.openTerminalDialog.isolationTitle"),
     ).toBeInTheDocument();
   });
-
   // 官方登录卡 env 为空：终端跟着 ~/.claude/settings.json 和全局登录走，不能说隔离
   it("hides the isolation notice for an official login card", () => {
     renderDialog(vi.fn(), {
@@ -298,7 +266,6 @@ describe("OpenTerminalDialog", () => {
       screen.queryByText("provider.openTerminalDialog.isolationTitle"),
     ).not.toBeInTheDocument();
   });
-
   // 绑了授权中心账号的官方卡：终端用这个账号的 CLAUDE_CONFIG_DIR 启动，固定在这个号上
   it("shows the isolation notice for an official card bound to a Claude account", () => {
     renderDialog(vi.fn(), {
@@ -318,7 +285,6 @@ describe("OpenTerminalDialog", () => {
       screen.getByText("provider.openTerminalDialog.isolationTitle"),
     ).toBeInTheDocument();
   });
-
   // agy 带 Key 的卡用自己的私有目录启动；官方登录卡跟着全局登录走
   it("treats only Antigravity key cards as isolated", () => {
     renderDialog(
@@ -334,7 +300,6 @@ describe("OpenTerminalDialog", () => {
       screen.getByText("provider.openTerminalDialog.isolationTitle"),
     ).toBeInTheDocument();
   });
-
   it("hides the isolation notice for the Antigravity login card", () => {
     renderDialog(
       vi.fn(),
@@ -350,7 +315,6 @@ describe("OpenTerminalDialog", () => {
       screen.queryByText("provider.openTerminalDialog.isolationTitle"),
     ).not.toBeInTheDocument();
   });
-
   const codexRelay = {
     id: "kimi",
     name: "Kimi",
@@ -360,7 +324,6 @@ describe("OpenTerminalDialog", () => {
         'model_provider = "kimi"\n[model_providers.kimi]\nbase_url = "https://api.moonshot.cn/v1"\n',
     },
   } as Provider;
-
   // Codex 跳过权限确认的参数和 Claude Code 不同，带路由表的第三方卡才算隔离
   it("shows Codex's own skip flag and isolates its third-party cards", () => {
     renderDialog(vi.fn(), codexRelay, "codex");
@@ -371,7 +334,6 @@ describe("OpenTerminalDialog", () => {
       screen.getByText("provider.openTerminalDialog.isolationTitle"),
     ).toBeInTheDocument();
   });
-
   it("offers a Codex terminal for login cards only when it is current", () => {
     const official = {
       id: "openai",
@@ -384,7 +346,6 @@ describe("OpenTerminalDialog", () => {
     expect(terminalAvailable(official, "codex", true)).toBe(true);
     expect(terminalAvailable(official, "claude", false)).toBe(true);
   });
-
   // 终端直连卡上的地址：要经路由的卡（托管账号、非原生格式）直连不通，托管账号卡没 Key，
   // Claude Code 的临时文件把凭据置空后只会提示 /login。按钮照样显示（卡片对齐），但置灰
   it("keeps the terminal button but marks route-only cards, current or not", () => {
@@ -412,7 +373,6 @@ describe("OpenTerminalDialog", () => {
         "claude",
       ),
     ).toBe(false);
-
     const routed = {
       ...codexRelay,
       meta: { apiFormat: "anthropic" },

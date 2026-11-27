@@ -7,7 +7,6 @@ import {
 } from "../utils/testQueryClient";
 import { describe, expect, it, vi } from "vitest";
 import { UsageTrendChart } from "@/components/usage/UsageTrendChart";
-
 vi.mock("recharts", async (importOriginal) => {
   const recharts = await importOriginal<typeof import("recharts")>();
   return {
@@ -31,14 +30,12 @@ vi.mock("recharts", async (importOriginal) => {
     ),
   };
 });
-
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: (key: string) => key,
     i18n: { resolvedLanguage: "en", language: "en" },
   }),
 }));
-
 vi.mock("@/lib/query/usage", () => ({
   useUsageTrends: () => ({
     data: [
@@ -55,7 +52,6 @@ vi.mock("@/lib/query/usage", () => ({
     isLoading: false,
   }),
 }));
-
 describe("UsageTrendChart (single metric)", () => {
   it("titles the chart with the metric picked on the metric strip", () => {
     const { rerender } = render(
@@ -73,7 +69,6 @@ describe("UsageTrendChart (single metric)", () => {
     expect(
       screen.queryByRole("button", { name: "usage.trend.cost" }),
     ).not.toBeInTheDocument();
-
     rerender(
       <UsageTrendChart
         range={{ preset: "7d" }}
@@ -86,7 +81,6 @@ describe("UsageTrendChart (single metric)", () => {
     ).toBeInTheDocument();
   });
 });
-
 describe("UsageTrendChart styles", () => {
   // 样式在用量「设置」里选，存在 settings.usageDisplay.trendChartType
   const renderWithChartType = (
@@ -110,7 +104,6 @@ describe("UsageTrendChart styles", () => {
       ),
     });
   };
-
   it("draws a bar chart by default without a style switch on the chart", () => {
     const { container } = renderWithChartType(undefined);
     expect(container.querySelector(".recharts-bar-rectangle")).not.toBeNull();
@@ -121,7 +114,6 @@ describe("UsageTrendChart styles", () => {
       }),
     ).not.toBeInTheDocument();
   });
-
   it.each(["tokens", "requests", "cost", "hitRate"] as const)(
     "draws the saved area style for the %s metric",
     (metric) => {
@@ -132,7 +124,6 @@ describe("UsageTrendChart styles", () => {
       expect(container.querySelector(".recharts-bar-rectangle")).toBeNull();
     },
   );
-
   it("falls back to a bar chart for an unknown saved style", () => {
     const { container } = renderWithChartType("unknown");
     expect(container.querySelector(".recharts-bar-rectangle")).not.toBeNull();

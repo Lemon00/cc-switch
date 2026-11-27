@@ -10,9 +10,8 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{LazyLock, Mutex, OnceLock};
 
-use once_cell::sync::Lazy;
 use serde::Serialize;
 use tauri::image::Image;
 use tauri::menu::{
@@ -35,31 +34,19 @@ const COPILOT_UNIT_PREMIUM: &str = "requests";
 pub const TRAY_ID: &str = "cc-switch";
 
 /// 进托盘的应用，顺序和侧栏一致。累加式应用没有「当前供应商」，不进托盘。
-pub const TRAY_APPS: [AppType; 5] = [
-    AppType::Claude,
-    AppType::ClaudeDesktop,
-    AppType::Codex,
-    AppType::Gemini,
-    AppType::GrokBuild,
-];
+pub const TRAY_APPS: [AppType; 2] = [AppType::Claude, AppType::Codex];
 
 /// 应用全称（产品名，不翻译）。用全称是为了把 Claude Code 和 Claude Desktop 分开。
 fn app_display_name(app: &AppType) -> &'static str {
     match app {
         AppType::Claude => "Claude Code",
-        AppType::ClaudeDesktop => "Claude Desktop",
+
         AppType::Codex => "Codex",
-        AppType::Gemini => "Gemini CLI",
-        AppType::GrokBuild => "Grok Build",
+
         AppType::OpenCode => "OpenCode",
-        AppType::OpenClaw => "OpenClaw",
-        AppType::Hermes => "Hermes",
-        AppType::Pi => "Pi",
-        AppType::Mcode => "MiniMax Code",
-        AppType::Kimi => "Kimi Code",
+
         AppType::Dsh => "DeepSeek Harness",
         AppType::Agy => "Antigravity",
-        AppType::Omp => "Oh My Pi",
     }
 }
 
@@ -74,8 +61,8 @@ const WARN_BELOW_PERCENT: f64 = 20.0;
 
 /// 每个应用行的子菜单句柄，额度更新时就地改标题而不是整菜单重建（整建会关掉 macOS 上
 /// 正开着的菜单）。`create_tray_menu` 每次重建都整表覆盖写入。
-static TRAY_SECTION_SUBMENUS: Lazy<Mutex<HashMap<AppType, Submenu<tauri::Wry>>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+static TRAY_SECTION_SUBMENUS: LazyLock<Mutex<HashMap<AppType, Submenu<tauri::Wry>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 // ─── 文案 ────────────────────────────────────────────────────────────────────
 
@@ -147,30 +134,11 @@ pub struct TrayTexts {
     pub quota_used: bool,
 }
 
-/// 将系统区域标识映射为托盘支持的语言码。
-///
-/// 镜像前端 `i18n/getInitialLanguage` 的判定顺序，确保首次安装
-/// （`settings.language` 尚未写入）时托盘语言与界面语言一致：
-/// 繁中系统（zh-TW/HK/MO/Hant）→ `zh-TW`，其余 zh → `zh`，
-/// 日文 → `ja`，土耳其文 → `tr`，英文 → `en`，其他语言回退到 `en`，
-/// 区域为空时回退到 `zh`（与前端默认一致）。
+/// 与前端一致：中文区域使用简体中文，其他区域使用英文；无区域时默认中文。
 fn map_locale_to_tray_language(locale: &str) -> &'static str {
-    let locale = locale.to_lowercase();
-    if locale == "zh" {
-        "zh"
-    } else if locale.starts_with("zh-tw")
-        || locale.starts_with("zh-hk")
-        || locale.starts_with("zh-mo")
-        || locale.starts_with("zh-hant")
-    {
-        "zh-TW"
-    } else if locale.starts_with("zh") {
-        "zh"
-    } else if locale.starts_with("ja") {
-        "ja"
-    } else if locale.starts_with("tr") {
-        "tr"
-    } else if locale.is_empty() {
+    let locale = locale.trim().to_lowercase();
+    let language = locale.split(['-', '_']).next().unwrap_or_default();
+    if language == "zh" || locale.is_empty() {
         "zh"
     } else {
         "en"
@@ -472,7 +440,7 @@ impl TrayTexts {
     fn current() -> Self {
         let settings = crate::settings::get_settings();
         let language = match settings.language.as_deref() {
-            Some(lang) => lang,
+            Some(lang) => map_locale_to_tray_language(lang),
             None => detect_system_tray_language(),
         };
         Self {
@@ -486,7 +454,10 @@ impl TrayTexts {
 pub(crate) fn tray_language() -> String {
     crate::settings::get_settings()
         .language
-        .unwrap_or_else(|| detect_system_tray_language().to_string())
+        .as_deref()
+        .map(map_locale_to_tray_language)
+        .unwrap_or_else(detect_system_tray_language)
+        .to_string()
 }
 
 /// 按占位符填模板。
@@ -951,8 +922,7 @@ fn tray_usage_source(app_type: &AppType, provider: &Provider) -> Option<TrayUsag
         return Some(TrayUsageSource::Subscription);
     }
     (provider.has_usage_script_enabled()
-        && (provider.category.as_deref() != Some("official")
-            || provider_uses_official_subscription(provider)))
+        && (!provider.has_official_category() || provider_uses_official_subscription(provider)))
     .then_some(TrayUsageSource::Script)
 }
 
@@ -1025,7 +995,7 @@ const MANAGED_OAUTH_PROVIDER_TYPES: &[&str] = &["github_copilot", "codex_oauth",
 
 /// 官方账号卡（同前端 `isOfficialAccount`）：Codex 早期绑定托管账号的官方卡没有 category，按身份认。
 fn is_official_account(app: &AppType, provider: &Provider) -> bool {
-    provider.category.as_deref() == Some("official")
+    provider.has_official_category()
         || (*app == AppType::Codex && crate::proxy::providers::is_codex_official_provider(provider))
 }
 
@@ -1038,20 +1008,7 @@ fn blocked_from_routing(app: &AppType, provider: &Provider) -> bool {
 /// Codex / Grok Build 配置里当前供应商的 `wire_api`；TOML 读不懂时退回唯一的一条赋值。
 fn codex_wire_api(config_text: &str) -> Option<String> {
     if let Ok(doc) = config_text.parse::<toml::Value>() {
-        if let Some(active) = doc.get("model_provider").and_then(|v| v.as_str()) {
-            if let Some(wire_api) = doc
-                .get("model_providers")
-                .and_then(|providers| providers.get(active))
-                .and_then(|provider| provider.get("wire_api"))
-                .and_then(|v| v.as_str())
-            {
-                return Some(wire_api.to_string());
-            }
-        }
-        return doc
-            .get("wire_api")
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
+        return crate::codex_config::active_provider_str(&doc, "wire_api").map(str::to_string);
     }
     let mut found = config_text.lines().filter_map(|line| {
         let (key, value) = line.split_once('=')?;
@@ -1064,23 +1021,6 @@ fn codex_wire_api(config_text: &str) -> Option<String> {
     });
     let first = found.next()?;
     found.next().is_none().then_some(first)
-}
-
-fn is_chat_or_anthropic_wire_api(value: &str) -> bool {
-    matches!(
-        value.trim().to_ascii_lowercase().as_str(),
-        "chat"
-            | "chat_completions"
-            | "chat-completions"
-            | "openai_chat"
-            | "openai-chat"
-            | "openai_chat_completions"
-            | "anthropic"
-            | "anthropic_messages"
-            | "anthropic-messages"
-            | "messages"
-            | "claude"
-    )
 }
 
 /// 这家在这个应用下必须经过路由服务才能用（直连写进去也用不了）。和前端
@@ -1098,16 +1038,10 @@ pub(crate) fn provider_needs_routing(app: &AppType, provider: &Provider) -> bool
         .and_then(|meta| meta.api_format.as_deref())
         .filter(|fmt| !fmt.is_empty());
     match app {
-        AppType::ClaudeDesktop => {
-            managed_oauth
-                || meta
-                    .and_then(|meta| meta.claude_desktop_mode.as_ref())
-                    .is_some_and(|mode| *mode == crate::provider::ClaudeDesktopMode::Proxy)
-        }
         AppType::Claude => {
             managed_oauth || full_url || api_format.is_some_and(|f| f != "anthropic")
         }
-        AppType::Codex | AppType::GrokBuild => {
+        AppType::Codex => {
             managed_oauth
                 || full_url
                 || matches!(api_format, Some("openai_chat" | "anthropic"))
@@ -1116,7 +1050,10 @@ pub(crate) fn provider_needs_routing(app: &AppType, provider: &Provider) -> bool
                     .get("config")
                     .and_then(|config| config.as_str())
                     .and_then(codex_wire_api)
-                    .is_some_and(|wire_api| is_chat_or_anthropic_wire_api(&wire_api))
+                    .is_some_and(|wire_api| {
+                        crate::codex_config::is_chat_wire_api(&wire_api)
+                            || crate::codex_config::is_anthropic_wire_api(&wire_api)
+                    })
         }
         _ => false,
     }
@@ -1272,7 +1209,7 @@ fn tray_mode(app_state: &AppState, app: &AppType) -> TrayMode {
     if crate::mode::stack::stack_mode_now(app) {
         return TrayMode::Stack;
     }
-    let (_, auto_failover) = app_state.db.get_proxy_flags_sync(app.as_str());
+    let (_, auto_failover) = app_state.db.get_proxy_flags_sync(app);
     if auto_failover {
         TrayMode::Failover
     } else {
@@ -1288,7 +1225,11 @@ fn collect_app_snapshot(
     service_running: Option<bool>,
     profiles: &[crate::database::Profile],
 ) -> Result<AppSnapshot, AppError> {
-    let rows = app_state.db.get_all_providers(app.as_str())?;
+    // 读不出来的行在托盘里略过（界面里单独列出），不拖累其余供应商。
+    let rows = app_state
+        .db
+        .get_provider_rows(app)?
+        .into_readable("托盘供应商列表");
     let claude_accounts = if *app == AppType::Claude {
         crate::services::claude_account::labels_on_disk(&crate::config::get_app_config_dir())
     } else {
@@ -1310,7 +1251,7 @@ fn collect_app_snapshot(
     let queue = if mode == TrayMode::Failover {
         app_state
             .db
-            .get_failover_queue(app.as_str())?
+            .get_failover_queue(app)?
             .into_iter()
             .map(|item| item.provider_id)
             .filter(|id| rows.contains_key(id))
@@ -1371,7 +1312,7 @@ fn collect_app_snapshot(
 /// 启动流程（接上路由、拉起 Desktop 映射服务）走完之前不报「路由服务没在跑」：那时它本来就还没起来。
 static STARTUP_SETTLED: AtomicBool = AtomicBool::new(false);
 /// 启动时没能接上、已退回直连的应用（托盘自己留一份，界面照样取走它的那份）。
-static ATTACH_FAILURES: Lazy<Mutex<Vec<(AppType, bool)>>> = Lazy::new(|| Mutex::new(Vec::new()));
+static ATTACH_FAILURES: Mutex<Vec<(AppType, bool)>> = Mutex::new(Vec::new());
 
 /// 托盘里切换失败的应用。规格 5.5：处理掉才消失（同一应用之后切换成功、或打开过它的页面），
 /// 不按时间过期。
@@ -1380,9 +1321,10 @@ struct SwitchFailure {
     reason: String,
 }
 
-static SWITCH_FAILURES: Lazy<Mutex<Vec<SwitchFailure>>> = Lazy::new(|| Mutex::new(Vec::new()));
+static SWITCH_FAILURES: Mutex<Vec<SwitchFailure>> = Mutex::new(Vec::new());
 /// 上一次建菜单时菜单上会自己过时的那部分，悬停图标 / 路由服务启停时比一下，变了才重建。
-static LAST_STATUS: Lazy<Mutex<MenuStatus>> = Lazy::new(|| Mutex::new(MenuStatus::default()));
+static LAST_STATUS: LazyLock<Mutex<MenuStatus>> =
+    LazyLock::new(|| Mutex::new(MenuStatus::default()));
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
@@ -1403,6 +1345,7 @@ pub fn mark_startup_settled(app: &tauri::AppHandle) {
         }
     }
     STARTUP_SETTLED.store(true, Ordering::Release);
+    let _ = app.emit("startup-routing-settled", ());
     refresh_tray_menu(app);
 }
 
@@ -1518,27 +1461,17 @@ struct FeedbackRecord {
     seen: bool,
 }
 
-static FEEDBACK: Lazy<Mutex<Option<FeedbackRecord>>> = Lazy::new(|| Mutex::new(None));
+static FEEDBACK: Mutex<Option<FeedbackRecord>> = Mutex::new(None);
 
 /// 切换成功后要不要说一句：客户端只在启动时读配置的才说；Claude Code 直连、路由 / 故障转移
 /// 换一家立即生效，不说。Claude Desktop 换一家都要重启 Desktop（路由那家的模型列表写在配置
 /// 里，聚合换默认也一样）。
 fn switch_feedback(app: &AppType, mode: TrayMode, name: String) -> Option<TrayFeedback> {
     match mode {
-        TrayMode::Direct | TrayMode::Route | TrayMode::Stack if *app == AppType::ClaudeDesktop => {
-            Some(TrayFeedback::Switched {
-                app: app.clone(),
-                name,
-            })
-        }
-        TrayMode::Direct
-            if matches!(app, AppType::Codex | AppType::Gemini | AppType::GrokBuild) =>
-        {
-            Some(TrayFeedback::Switched {
-                app: app.clone(),
-                name,
-            })
-        }
+        TrayMode::Direct if matches!(app, AppType::Codex) => Some(TrayFeedback::Switched {
+            app: app.clone(),
+            name,
+        }),
         TrayMode::Stack => Some(TrayFeedback::StackDefault {
             app: app.clone(),
             name,
@@ -2322,8 +2255,10 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
 
     let mut apps = Vec::with_capacity(snapshots.len());
     for snapshot in &snapshots {
-        let app = snapshot.app.as_str();
-        let providers = app_state.db.get_all_providers(app)?;
+        let providers = app_state
+            .db
+            .get_provider_rows(&snapshot.app)?
+            .into_readable("托盘用量面板");
         let (header, rows) = panel_rows(&app_state.usage_cache, &texts, snapshot, &providers, now);
         let credits = snapshot
             .current_id
@@ -2338,7 +2273,7 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
             .as_ref()
             .map(|view| panel_quota(&texts, view, now, credits));
         apps.push(PanelApp {
-            app: app.to_string(),
+            app: snapshot.app.as_str().to_string(),
             name: app_display_name(&snapshot.app),
             current: snapshot.current().map(|p| p.name.clone()),
             mode: match snapshot.mode {
@@ -2357,7 +2292,7 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
             add_id: snapshot
                 .providers
                 .is_empty()
-                .then(|| format!("nav:add:{app}")),
+                .then(|| format!("nav:add:{}", snapshot.app.as_str())),
             add_text: texts.add_provider.to_string(),
             rows,
         });
@@ -2576,7 +2511,7 @@ fn tray_tooltip(texts: &TrayTexts, problems: &[TrayProblem]) -> String {
 }
 
 /// 现在托盘上的（有没有圆点，悬停提示）；`None` = 托盘图标还没建好，还是建图标时的样子。
-static APPLIED_INDICATOR: Lazy<Mutex<Option<(bool, String)>>> = Lazy::new(|| Mutex::new(None));
+static APPLIED_INDICATOR: Mutex<Option<(bool, String)>> = Mutex::new(None);
 
 /// 问题区有内容时托盘图标加圆点、悬停提示写第一条问题（macOS 不设提示，见
 /// `TRAY_TOOLTIP_ENABLED`）；问题都消失后换回原图标和提示。只在变了时才动（Linux 每次换图标
@@ -2809,7 +2744,7 @@ impl TrayNavigation {
 }
 
 /// 等主界面来取的导航：轻量模式下窗口是新建的，事件发出去时前端可能还没开始监听。
-static PENDING_NAVIGATION: Lazy<Mutex<Option<TrayNavigation>>> = Lazy::new(|| Mutex::new(None));
+static PENDING_NAVIGATION: Mutex<Option<TrayNavigation>> = Mutex::new(None);
 
 /// 解析 `nav:…` 菜单 id：`nav:main`、`nav:settings:<分组>`、`nav:app:<应用>[:…]`、
 /// `nav:add:<应用>`、`nav:needs:<应用>:<供应商 id>`。
@@ -2880,7 +2815,30 @@ fn navigate(app: &tauri::AppHandle, navigation: TrayNavigation) {
 
 /// 显示并聚焦主窗口；轻量模式下重建窗口。
 pub fn show_main_window(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
+    crate::startup::request_main_window();
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        crate::init_status::wait_for_startup().await;
+        if let Err(error) = tauri::async_runtime::spawn_blocking(move || {
+            crate::lightweight::with_lifecycle_lock(|| show_main_window_unlocked(&app));
+        })
+        .await
+        {
+            log::error!("显示主窗口失败: {error}");
+        }
+    });
+}
+
+// Never hold the lifecycle lock on the event loop: rebuilding a WebView needs that thread.
+fn show_main_window_unlocked(app: &tauri::AppHandle) {
+    if crate::USER_EXIT_IN_PROGRESS.load(std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    if crate::lightweight::is_lightweight_mode() || app.get_webview_window("main").is_none() {
+        if let Err(e) = crate::lightweight::exit_lightweight_mode_unlocked(app) {
+            log::error!("退出轻量模式重建窗口失败: {e}");
+        }
+    } else if let Some(window) = app.get_webview_window("main") {
         #[cfg(target_os = "windows")]
         {
             let _ = window.set_skip_taskbar(false);
@@ -2895,10 +2853,6 @@ pub fn show_main_window(app: &tauri::AppHandle) {
         #[cfg(target_os = "macos")]
         {
             apply_tray_policy(app, true);
-        }
-    } else if crate::lightweight::is_lightweight_mode() {
-        if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
-            log::error!("退出轻量模式重建窗口失败: {e}");
         }
     }
 }
@@ -2923,8 +2877,11 @@ pub fn handle_profile_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool
         tauri::async_runtime::spawn_blocking(move || {
             let _serial = crate::commands::PROFILE_LOCK.blocking_lock();
             if let Some(app_state) = app_handle.try_state::<AppState>() {
-                if let Err(e) = app_state.db.set_current_profile_id(scope.as_str(), None) {
+                if let Err(e) =
+                    crate::services::profile::ProfileService::clear_current(&app_state, scope)
+                {
                     log::error!("清除当前项目失败: {e}");
+                    return;
                 }
             }
             // 通知主窗口刷新（profileId=null 表示该分组已清除当前项目）
@@ -2982,21 +2939,26 @@ pub fn handle_profile_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool
                         },
                     );
                 }
-                crate::commands::emit_profile_apply_events(
-                    &app_handle,
-                    app_state.inner(),
-                    &profile_id,
-                    scope,
-                );
             }
             Err(e) => {
                 log::error!("应用项目 {profile_id} 失败: {e}");
                 if let Some(app_type) = scope.apps().first() {
                     record_switch_failure(app_type, e.to_string());
                 }
-                refresh_tray_menu(&app_handle);
             }
         }
+        // A failed final pointer write does not undo earlier resource changes.
+        let current_id = app_state
+            .db
+            .get_current_profile_id(scope.as_str())
+            .ok()
+            .flatten();
+        crate::commands::emit_profile_apply_events(
+            &app_handle,
+            app_state.inner(),
+            current_id.as_deref(),
+            scope,
+        );
     });
     true
 }
@@ -3088,7 +3050,7 @@ fn handle_provider_click(
     }
     let provider = state
         .db
-        .get_provider_by_id(provider_id, app_type.as_str())?
+        .get_provider_by_id(provider_id, app_type)?
         .ok_or_else(|| AppError::Message(format!("供应商 {provider_id} 不存在")))?;
     if mode == TrayMode::Direct && provider_needs_routing(app_type, &provider) {
         return Ok(ClickOutcome::NeedsRoute);
@@ -3104,7 +3066,7 @@ fn emit_switched(app: &tauri::AppHandle, app_type: &AppType, provider_id: &str) 
     let proxy_enabled = crate::mode::current::is_proxy(app_type);
     let auto_failover = app
         .try_state::<AppState>()
-        .map(|state| state.db.get_proxy_flags_sync(app_type.as_str()).1)
+        .map(|state| state.db.get_proxy_flags_sync(app_type).1)
         .unwrap_or(false);
     let event_data = serde_json::json!({
         "appType": app_type.as_str(),
@@ -3146,18 +3108,27 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
     match event_id {
         "show_main" => show_main_window(app),
         "open_website" => {
-            if let Err(e) = app.opener().open_url("https://ccswitch.io", None::<String>) {
+            if let Err(e) = app
+                .opener()
+                .open_url("https://github.com/Lemon00/cc-switch", None::<String>)
+            {
                 log::error!("打开官方网站失败: {e}");
             }
         }
         "lightweight_mode" => {
-            if crate::lightweight::is_lightweight_mode() {
-                if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
-                    log::error!("退出轻量模式失败: {e}");
-                }
-            } else if let Err(e) = crate::lightweight::enter_lightweight_mode(app) {
-                log::error!("进入轻量模式失败: {e}");
-            }
+            let app = app.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                crate::lightweight::with_lifecycle_lock(|| {
+                    let result = if crate::lightweight::is_lightweight_mode() {
+                        crate::lightweight::exit_lightweight_mode_unlocked(&app)
+                    } else {
+                        crate::lightweight::enter_lightweight_mode_unlocked(&app)
+                    };
+                    if let Err(error) = result {
+                        log::error!("切换轻量模式失败: {error}");
+                    }
+                });
+            });
         }
         "quit" => {
             log::info!("退出应用");
@@ -3262,7 +3233,7 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
         };
         // 只需当前 provider —— by-id 查询避免把整个 app 的 provider 列表加载
         // 进内存（每次悬停的热路径）。
-        let current = match app_state.db.get_provider_by_id(&current_id, app_type_str) {
+        let current = match app_state.db.get_provider_by_id(&current_id, app_type) {
             Ok(Some(p)) => p,
             Ok(None) => continue,
             Err(e) => {
@@ -3323,8 +3294,12 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
 }
 
 /// 托盘面板发起过的脚本额度查询：(应用, 供应商 id) → 上次查询时间。
-static PANEL_SCRIPT_QUERIES: Lazy<Mutex<HashMap<(AppType, String), std::time::Instant>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+static PANEL_SCRIPT_QUERIES: LazyLock<Mutex<HashMap<(AppType, String), std::time::Instant>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn script_query_interval(minutes: u64) -> std::time::Duration {
+    std::time::Duration::from_secs(minutes.saturating_mul(60))
+}
 
 /// 托盘面板弹出时：子面板里每一家都写额度，不在用的那几家也要有数据。开了自动查询的脚本
 /// 供应商（余额、套餐），缓存里还没有、或距面板上次替它查已超过它自己的自动查询间隔，就在
@@ -3332,7 +3307,7 @@ static PANEL_SCRIPT_QUERIES: Lazy<Mutex<HashMap<(AppType, String), std::time::In
 /// 自动查询间隔为 0（关掉了）的不查；在用的那家由 `refresh_all_usage_in_tray` 负责。
 pub(crate) async fn refresh_panel_provider_usage(app: &tauri::AppHandle) {
     use crate::commands::CopilotAuthState;
-    use futures::future::join_all;
+    use futures::{stream, StreamExt};
 
     let Some(app_state) = app.try_state::<AppState>() else {
         return;
@@ -3342,7 +3317,11 @@ pub(crate) async fn refresh_panel_provider_usage(app: &tauri::AppHandle) {
         .unwrap_or_default();
     let mut due = Vec::new();
     for app_type in TRAY_APPS.iter().filter(|app| visible_apps.is_visible(app)) {
-        let rows = match app_state.db.get_all_providers(app_type.as_str()) {
+        let rows = match app_state
+            .db
+            .get_provider_rows(&app_type)
+            .map(|rows| rows.into_readable("托盘用量自动查询"))
+        {
             Ok(rows) => rows,
             Err(e) => {
                 log::warn!("[Tray] 读取{}供应商失败: {e}", app_display_name(app_type));
@@ -3362,7 +3341,7 @@ pub(crate) async fn refresh_panel_provider_usage(app: &tauri::AppHandle) {
             if interval_minutes == 0 {
                 continue;
             }
-            let interval = std::time::Duration::from_secs(interval_minutes * 60);
+            let interval = script_query_interval(interval_minutes);
             let cached = app_state
                 .usage_cache
                 .with_script(app_type, id, |_| ())
@@ -3403,12 +3382,21 @@ pub(crate) async fn refresh_panel_provider_usage(app: &tauri::AppHandle) {
             }
         }
     });
-    join_all(queries).await;
+    // Large provider catalogs must not launch all HTTP/script requests at once.
+    stream::iter(queries)
+        .buffer_unordered(4)
+        .for_each(|_| async {})
+        .await;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn script_query_intervals_do_not_wrap_or_panic_on_imported_values() {
+        assert_eq!(script_query_interval(5).as_secs(), 300);
+        assert_eq!(script_query_interval(u64::MAX).as_secs(), u64::MAX);
+    }
     use crate::provider::{UsageData, UsageResult};
     use crate::services::subscription::{
         CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_GEMINI_FLASH,
@@ -3440,23 +3428,14 @@ mod tests {
     #[test]
     fn tray_lists_switch_apps_in_sidebar_order_without_additive_apps() {
         let names: Vec<&str> = TRAY_APPS.iter().map(app_display_name).collect();
-        assert_eq!(
-            names,
-            [
-                "Claude Code",
-                "Claude Desktop",
-                "Codex",
-                "Gemini CLI",
-                "Grok Build"
-            ]
-        );
+        assert_eq!(names, ["Claude Code", "Codex"]);
         for app in TRAY_APPS {
             assert!(!app.is_additive_mode(), "{app:?} 是累加式应用，不进托盘");
         }
     }
 
     #[test]
-    fn locale_maps_traditional_chinese_variants_to_zh_tw() {
+    fn locale_maps_traditional_chinese_variants_to_zh() {
         for locale in [
             "zh-TW",
             "zh-HK",
@@ -3467,8 +3446,8 @@ mod tests {
         ] {
             assert_eq!(
                 map_locale_to_tray_language(locale),
-                "zh-TW",
-                "expected {locale} -> zh-TW"
+                "zh",
+                "expected {locale} -> zh"
             );
         }
     }
@@ -3486,10 +3465,10 @@ mod tests {
 
     #[test]
     fn locale_maps_japanese_and_english() {
-        assert_eq!(map_locale_to_tray_language("tr-TR"), "tr");
-        assert_eq!(map_locale_to_tray_language("tr"), "tr");
-        assert_eq!(map_locale_to_tray_language("ja-JP"), "ja");
-        assert_eq!(map_locale_to_tray_language("ja"), "ja");
+        assert_eq!(map_locale_to_tray_language("tr-TR"), "en");
+        assert_eq!(map_locale_to_tray_language("tr"), "en");
+        assert_eq!(map_locale_to_tray_language("ja-JP"), "en");
+        assert_eq!(map_locale_to_tray_language("ja"), "en");
         assert_eq!(map_locale_to_tray_language("en-US"), "en");
         assert_eq!(map_locale_to_tray_language("en"), "en");
     }
@@ -4221,73 +4200,6 @@ mod tests {
     }
 
     #[test]
-    fn needs_routing_mirrors_the_frontend_rule() {
-        let plain = provider(serde_json::json!({}), serde_json::json!({}));
-        for app in TRAY_APPS {
-            assert!(!provider_needs_routing(&app, &plain), "{app:?}");
-        }
-
-        let copilot = provider(
-            serde_json::json!({"providerType": "github_copilot"}),
-            serde_json::json!({}),
-        );
-        for app in [
-            AppType::Claude,
-            AppType::ClaudeDesktop,
-            AppType::Codex,
-            AppType::GrokBuild,
-        ] {
-            assert!(provider_needs_routing(&app, &copilot), "{app:?}");
-        }
-        assert!(!provider_needs_routing(&AppType::Gemini, &copilot));
-
-        let openai_chat = provider(
-            serde_json::json!({"apiFormat": "openai_chat"}),
-            serde_json::json!({}),
-        );
-        assert!(provider_needs_routing(&AppType::Claude, &openai_chat));
-        assert!(provider_needs_routing(&AppType::Codex, &openai_chat));
-        let anthropic = provider(
-            serde_json::json!({"apiFormat": "anthropic"}),
-            serde_json::json!({}),
-        );
-        assert!(!provider_needs_routing(&AppType::Claude, &anthropic));
-        assert!(provider_needs_routing(&AppType::Codex, &anthropic));
-        let full_url = provider(
-            serde_json::json!({"isFullUrl": true}),
-            serde_json::json!({}),
-        );
-        assert!(provider_needs_routing(&AppType::Claude, &full_url));
-
-        let codex_config = |wire_api: &str| {
-            serde_json::json!({
-                "auth": {"OPENAI_API_KEY": "sk"},
-                "config": format!(
-                    "model_provider = \"x\"\n[model_providers.x]\nbase_url = \"https://x.example/v1\"\nwire_api = \"{wire_api}\"\n"
-                )
-            })
-        };
-        let chat_wire = provider(serde_json::json!({}), codex_config("chat"));
-        assert!(provider_needs_routing(&AppType::Codex, &chat_wire));
-        let responses_wire = provider(serde_json::json!({}), codex_config("responses"));
-        assert!(!provider_needs_routing(&AppType::Codex, &responses_wire));
-
-        let desktop_mapping = provider(
-            serde_json::json!({"claudeDesktopMode": "proxy"}),
-            serde_json::json!({}),
-        );
-        assert!(provider_needs_routing(
-            &AppType::ClaudeDesktop,
-            &desktop_mapping
-        ));
-
-        // 官方卡永远不算。
-        let mut official = copilot.clone();
-        official.category = Some("official".to_string());
-        assert!(!provider_needs_routing(&AppType::Claude, &official));
-    }
-
-    #[test]
     fn codex_wire_api_falls_back_to_a_single_assignment_when_toml_is_broken() {
         assert_eq!(
             codex_wire_api("wire_api = \"chat\"\nbroken = [").as_deref(),
@@ -4362,35 +4274,6 @@ mod tests {
     }
 
     #[test]
-    fn top_level_order_is_open_apps_lightweight_website_quit() {
-        let apps = [
-            snapshot(
-                AppType::Claude,
-                TrayMode::Direct,
-                vec![entry("kimi", "Kimi For Coding")],
-            ),
-            snapshot(AppType::GrokBuild, TrayMode::Direct, vec![]),
-        ];
-        let menu = model(&[], &apps);
-        assert_eq!(
-            texts_of(&menu),
-            [
-                "打开 CC Switch",
-                "---",
-                "Claude Code · Kimi For Coding",
-                "Grok Build · 添加供应商…",
-                "---",
-                "轻量模式",
-                "---",
-                "打开官方网站",
-                "退出 CC Switch",
-            ]
-        );
-        assert!(matches!(&menu[3], TrayEntry::Item { id, .. } if id == "nav:add:grokbuild"));
-        assert!(matches!(&menu[8], TrayEntry::Item { id, .. } if id == "quit"));
-    }
-
-    #[test]
     fn direct_submenu_sends_needs_routing_providers_to_the_app_page() {
         let mut copilot = entry("copilot", "GitHub Copilot");
         copilot.needs_routing = true;
@@ -4423,26 +4306,6 @@ mod tests {
             TrayEntry::Item { id, enabled: true, .. } if id == "nav:needs:claude:copilot"
         ));
         assert!(matches!(&children[4], TrayEntry::Item { id, .. } if id == "nav:app:claude"));
-    }
-
-    #[test]
-    fn route_submenu_disables_official_plans_with_the_reason() {
-        let mut official = entry("xai", "xAI Official");
-        official.official = true;
-        official.blocked_from_routing = true;
-        let app = snapshot(
-            AppType::GrokBuild,
-            TrayMode::Route,
-            vec![entry("or", "OpenRouter"), official],
-        );
-        let menu = model(&[], &[app]);
-        assert_eq!(text_of(&menu[2]), "Grok Build · 路由 · OpenRouter");
-        let children = children_of(&menu, &AppType::GrokBuild);
-        assert_eq!(text_of(&children[0]), "路由");
-        assert!(
-            matches!(&children[2], TrayEntry::Item { enabled: false, text, .. }
-            if text == "xAI Official（官方订阅不经过路由）")
-        );
     }
 
     #[test]
@@ -4514,69 +4377,6 @@ mod tests {
                 "打开 Codex 页面"
             ]
         );
-    }
-
-    #[test]
-    fn desktop_uses_the_same_mode_rows_as_the_routing_apps() {
-        let mut mapping = entry("kimi", "Kimi For Coding");
-        mapping.needs_routing = true;
-        let mut official = entry("official", "Claude Desktop Official");
-        official.official = true;
-        official.blocked_from_routing = true;
-        let direct = snapshot(
-            AppType::ClaudeDesktop,
-            TrayMode::Direct,
-            vec![mapping.clone(), official.clone()],
-        );
-        let children = children_of(&model(&[], &[direct]), &AppType::ClaudeDesktop);
-        // 直连下要经路由的卡点了去应用页弹「需要路由」，不直接切。
-        assert!(
-            matches!(&children[1], TrayEntry::Item { id, .. } if id == "nav:needs:claude-desktop:kimi")
-        );
-
-        let mut routed = snapshot(
-            AppType::ClaudeDesktop,
-            TrayMode::Route,
-            vec![mapping, official],
-        );
-        routed.current_id = Some("kimi".to_string());
-        let menu = model(&[], &[routed]);
-        assert_eq!(text_of(&menu[2]), "Claude Desktop · 路由 · Kimi For Coding");
-        let children = children_of(&menu, &AppType::ClaudeDesktop);
-        assert!(
-            matches!(&children[1], TrayEntry::Check { id, checked: true, .. } if id == "prov:claude-desktop:kimi")
-        );
-    }
-
-    #[test]
-    fn service_down_shows_the_problem_row_and_needs_attention_instead_of_quota() {
-        let mut mapping = entry("kimi", "Kimi For Coding");
-        mapping.needs_routing = true;
-        let mut desktop = snapshot(AppType::ClaudeDesktop, TrayMode::Route, vec![mapping]);
-        desktop.service_down = true;
-        desktop.quota = Some(QuotaView::Lines(vec![tier_line(
-            &zh(),
-            zh().tier_weekly,
-            20.0,
-            None,
-        )]));
-        let mut apps = [desktop];
-        let problems = [TrayProblem::ServiceDown { port: 15721 }];
-        mark_attention(&mut apps, &problems);
-        let menu = model(&problems, &apps);
-        assert_eq!(text_of(&menu[0]), "路由服务没在运行（端口 15721）");
-        assert!(
-            matches!(&menu[0], TrayEntry::Item { id, enabled: true, .. } if id == "nav:settings:routing")
-        );
-        assert_eq!(text_of(&menu[1]), "---");
-        assert_eq!(text_of(&menu[2]), "打开 CC Switch");
-        assert_eq!(
-            text_of(&menu[4]),
-            "Claude Desktop · 路由 · Kimi For Coding · 需要处理"
-        );
-        // 子菜单和其他路由应用一样以模式标题开头，服务没在跑由顶部问题区说。
-        let children = children_of(&menu, &AppType::ClaudeDesktop);
-        assert_eq!(text_of(&children[0]), "路由");
     }
 
     #[test]
@@ -4823,100 +4623,6 @@ mod tests {
     }
 
     #[test]
-    fn feedback_only_for_switches_that_need_a_client_restart() {
-        let name = || "DeepSeek".to_string();
-        for app in [AppType::Codex, AppType::Gemini, AppType::GrokBuild] {
-            assert_eq!(
-                switch_feedback(&app, TrayMode::Direct, name()),
-                Some(TrayFeedback::Switched {
-                    app: app.clone(),
-                    name: name()
-                })
-            );
-            // 路由 / 故障转移换一家立即生效。
-            assert_eq!(switch_feedback(&app, TrayMode::Route, name()), None);
-            assert_eq!(switch_feedback(&app, TrayMode::Failover, name()), None);
-        }
-        assert_eq!(
-            switch_feedback(&AppType::Claude, TrayMode::Direct, name()),
-            None
-        );
-        // Desktop 只在启动时读配置：直连、路由换一家都要重启。
-        for mode in [TrayMode::Direct, TrayMode::Route] {
-            assert!(matches!(
-                switch_feedback(&AppType::ClaudeDesktop, mode, name()),
-                Some(TrayFeedback::Switched { .. })
-            ));
-        }
-        for app in [AppType::Claude, AppType::Codex] {
-            assert!(matches!(
-                switch_feedback(&app, TrayMode::Stack, name()),
-                Some(TrayFeedback::StackDefault { .. })
-            ));
-        }
-    }
-
-    #[test]
-    fn feedback_row_is_a_grey_line_after_the_problems() {
-        let status = MenuStatus {
-            problems: vec![TrayProblem::ServiceDown { port: 15721 }],
-            feedback: Some(TrayFeedback::Switched {
-                app: AppType::Codex,
-                name: "DeepSeek".to_string(),
-            }),
-            routing_in_use: false,
-        };
-        let menu = build_menu_model(&zh(), &status, &[], false, now());
-        assert_eq!(
-            texts_of(&menu[..4]),
-            [
-                "路由服务没在运行（端口 15721）",
-                "Codex 已切换到 DeepSeek，重启 Codex 后生效",
-                "---",
-                "打开 CC Switch",
-            ]
-        );
-        assert!(matches!(&menu[1], TrayEntry::Item { enabled: false, .. }));
-
-        let only_feedback = MenuStatus {
-            feedback: Some(TrayFeedback::StackDefault {
-                app: AppType::Codex,
-                name: "Kimi For Coding".to_string(),
-            }),
-            ..Default::default()
-        };
-        let menu = build_menu_model(&zh(), &only_feedback, &[], false, now());
-        assert_eq!(
-            texts_of(&menu[..3]),
-            [
-                "Codex 的默认供应商改为 Kimi For Coding，重启 Codex 后生效",
-                "---",
-                "打开 CC Switch",
-            ]
-        );
-        assert_eq!(
-            feedback_text(
-                &zh(),
-                &TrayFeedback::ProfileApplied {
-                    app: AppType::Claude,
-                    name: "公司项目".to_string()
-                }
-            ),
-            "已把项目「公司项目」用到 Claude Code"
-        );
-        assert_eq!(
-            feedback_text(
-                &en(),
-                &TrayFeedback::Switched {
-                    app: AppType::ClaudeDesktop,
-                    name: "DeepSeek".to_string()
-                }
-            ),
-            "Claude Desktop switched to DeepSeek. Restart Claude Desktop to apply"
-        );
-    }
-
-    #[test]
     fn feedback_goes_away_after_the_panel_showed_it_or_two_minutes() {
         let record = |at: std::time::Instant| {
             *lock(&FEEDBACK) = Some(FeedbackRecord {
@@ -4955,16 +4661,16 @@ mod tests {
             })
         );
         assert_eq!(
-            parse_nav_id("nav:app:claude-desktop:quota"),
+            parse_nav_id("nav:app:claude:quota"),
             Some(TrayNavigation {
-                app: Some("claude-desktop".to_string()),
+                app: Some("claude".to_string()),
                 ..Default::default()
             })
         );
         assert_eq!(
-            parse_nav_id("nav:add:grokbuild"),
+            parse_nav_id("nav:add:codex"),
             Some(TrayNavigation {
-                app: Some("grokbuild".to_string()),
+                app: Some("codex".to_string()),
                 intent: Some("add".to_string()),
                 ..Default::default()
             })

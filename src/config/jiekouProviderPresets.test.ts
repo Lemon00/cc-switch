@@ -1,22 +1,13 @@
 import { describe, expect, it } from "vitest";
-
-import { claudeDesktopProviderPresets } from "./claudeDesktopProviderPresets";
 import { providerPresets } from "./claudeProviderPresets";
 import { codexProviderPresets } from "./codexProviderPresets";
-import { hermesProviderPresets } from "./hermesProviderPresets";
-import { openclawProviderPresets } from "./openclawProviderPresets";
 import { opencodeProviderPresets } from "./opencodeProviderPresets";
 import { getIcon, getIconMetadata } from "../icons/extracted";
-
 const allJieKouPresetGroups = [
   ["Claude Code", providerPresets],
-  ["Claude Desktop", claudeDesktopProviderPresets],
   ["Codex", codexProviderPresets],
   ["OpenCode", opencodeProviderPresets],
-  ["OpenClaw", openclawProviderPresets],
-  ["Hermes", hermesProviderPresets],
 ] as const;
-
 const defaultModelId = "claude-fable-5-1";
 const defaultModelName = "Claude Fable 5.1";
 const anthropicBaseUrl = "https://api.jiekou.ai/anthropic";
@@ -28,11 +19,13 @@ const brandDetails = {
   icon: "jiekou",
   iconColor: "#000000",
 };
-
-function findJieKouEntry<T extends { name: string }>(entries: readonly T[]) {
+function findJieKouEntry<
+  T extends {
+    name: string;
+  },
+>(entries: readonly T[]) {
   return entries.find((entry) => entry.name === "JieKou AI");
 }
-
 describe("JieKou AI provider presets", () => {
   it.each(allJieKouPresetGroups)(
     "%s registers exactly one JieKou AI preset",
@@ -42,7 +35,6 @@ describe("JieKou AI provider presets", () => {
       ).toHaveLength(1);
     },
   );
-
   it("configures Claude Code with the Anthropic endpoint", () => {
     const preset = findJieKouEntry(providerPresets)!;
     expect(preset).toMatchObject({
@@ -61,24 +53,6 @@ describe("JieKou AI provider presets", () => {
       modelsUrl: `${openAiBaseUrl}/models`,
     });
   });
-
-  it("configures Claude Desktop with the Anthropic endpoint", () => {
-    expect(findJieKouEntry(claudeDesktopProviderPresets)).toMatchObject({
-      ...brandDetails,
-      baseUrl: anthropicBaseUrl,
-      mode: "proxy",
-      apiFormat: "anthropic",
-      modelRoutes: [
-        {
-          routeId: "claude-fable-5",
-          upstreamModel: defaultModelId,
-          supports1m: true,
-        },
-      ],
-      endpointCandidates: [anthropicBaseUrl],
-    });
-  });
-
   it("configures Codex for the Chat Completions translation path", () => {
     const preset = findJieKouEntry(codexProviderPresets)!;
     expect(preset).toMatchObject({
@@ -102,7 +76,6 @@ describe("JieKou AI provider presets", () => {
       "https://api.jiekou.ai/openai/v1/chat/completions",
     );
   });
-
   it("configures OpenCode with the verified model limits", () => {
     const preset = findJieKouEntry(opencodeProviderPresets)!;
     expect(preset).toMatchObject({
@@ -137,68 +110,6 @@ describe("JieKou AI provider presets", () => {
       "https://api.jiekou.ai/openai/v1/chat/completions",
     );
   });
-
-  it("configures OpenClaw with verified model metadata", () => {
-    const preset = findJieKouEntry(openclawProviderPresets)!;
-    expect(preset).toMatchObject({
-      ...brandDetails,
-      settingsConfig: {
-        baseUrl: openAiBaseUrl,
-        apiKey: "",
-        api: "openai-completions",
-        models: expect.arrayContaining([
-          expect.objectContaining({
-            id: defaultModelId,
-            name: defaultModelName,
-            reasoning: true,
-            input: ["text", "image"],
-            contextWindow: 1000000,
-            maxTokens: 128000,
-            cost: { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
-          }),
-        ]),
-      },
-      templateValues: {
-        apiKey: { label: "API Key", placeholder: "sk-...", editorValue: "" },
-      },
-      suggestedDefaults: {
-        model: { primary: `jiekou/${defaultModelId}` },
-        modelCatalog: {
-          [`jiekou/${defaultModelId}`]: { alias: defaultModelName },
-        },
-      },
-    });
-    expect(`${preset.settingsConfig.baseUrl}/chat/completions`).toBe(
-      "https://api.jiekou.ai/openai/v1/chat/completions",
-    );
-  });
-
-  it("configures Hermes with the OpenAI-compatible endpoint", () => {
-    const preset = findJieKouEntry(hermesProviderPresets)!;
-    expect(preset).toMatchObject({
-      ...brandDetails,
-      settingsConfig: {
-        name: "jiekou",
-        base_url: openAiBaseUrl,
-        api_key: "",
-        api_mode: "chat_completions",
-        models: expect.arrayContaining([
-          expect.objectContaining({
-            id: defaultModelId,
-            name: defaultModelName,
-            context_length: 1000000,
-          }),
-        ]),
-      },
-      suggestedDefaults: {
-        model: { default: defaultModelId, provider: "jiekou" },
-      },
-    });
-    expect(`${preset.settingsConfig.base_url}/chat/completions`).toBe(
-      "https://api.jiekou.ai/openai/v1/chat/completions",
-    );
-  });
-
   it("registers the JieKou AI brand icon", () => {
     expect(getIcon("jiekou")).toContain("<title>JieKou AI</title>");
     expect(getIconMetadata("jiekou")).toMatchObject({

@@ -1,6 +1,5 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-
 import {
   Sheet,
   SheetContent,
@@ -9,8 +8,11 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-
-function renderSheet(props: { dismissOnOutsideClick?: boolean } = {}) {
+function renderSheet(
+  props: {
+    dismissOnOutsideClick?: boolean;
+  } = {},
+) {
   const onOpenChange = vi.fn();
   render(
     <>
@@ -28,7 +30,6 @@ function renderSheet(props: { dismissOnOutsideClick?: boolean } = {}) {
   );
   return { onOpenChange };
 }
-
 /** Radix 在下一帧才开始听外部 pointerdown：先让它挂上，再点遮罩外面 */
 async function clickOutside() {
   await act(async () => {
@@ -43,7 +44,6 @@ async function clickOutside() {
     fireEvent.click(target);
   });
 }
-
 describe("SheetContent", () => {
   it("ignores clicks on the overlay by default so drafts aren't lost", async () => {
     const { onOpenChange } = renderSheet();
@@ -51,13 +51,11 @@ describe("SheetContent", () => {
     expect(onOpenChange).not.toHaveBeenCalled();
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
-
   it("closes on an outside click only when the drawer opts in", async () => {
     const { onOpenChange } = renderSheet({ dismissOnOutsideClick: true });
     await clickOutside();
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
-
   it("page mode renders a page header whose back button closes the sheet", () => {
     const onOpenChange = vi.fn();
     render(
@@ -73,7 +71,6 @@ describe("SheetContent", () => {
     fireEvent.click(screen.getByRole("button", { name: "back" }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
-
   it("non-modal page mode leaves the rest of the window interactive", () => {
     const onOpenChange = vi.fn();
     const onOutside = vi.fn();

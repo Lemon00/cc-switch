@@ -1,16 +1,16 @@
+import { promptsApi, type AppId, type Prompt } from "@/lib/api";
+import type { PromptWriteExpectation } from "@/lib/api/prompts";
+import { isPromptCache } from "@/lib/cacheValidation";
 import { readLocalCache, writeLocalCache } from "@/lib/localCache";
-import { useState, useCallback, useEffect, useRef } from "react";
-import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
-import { promptsApi, type Prompt, type AppId } from "@/lib/api";
-
+import { extractErrorMessage } from "@/utils/errorUtils";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 const EMPTY_PROMPTS: Record<string, Prompt> = {};
-
 interface PromptActionsOptions {
   /** false：成功时不弹通用 toast（提示词页自己写带后果和撤销的 toast）；失败照样提示 */
   notify?: boolean;
 }
-
 export function usePromptActions(
   appId: AppId,
   { notify = true }: PromptActionsOptions = {},
@@ -23,7 +23,7 @@ export function usePromptActions(
     null,
   );
   const [currentFileAppId, setCurrentFileAppId] = useState<AppId | null>(null);
-  const [togglingId, setTogglingId] = useState<string | null>(null);
+  const togglingId = null;
   const reloadGenerationRef = useRef(0);
   const currentAppIdRef = useRef(appId);
   const promptsAppIdRef = useRef<AppId | null>(null);
@@ -33,18 +33,15 @@ export function usePromptActions(
     prompts: Record<string, Prompt>;
   } | null>(null);
   currentAppIdRef.current = appId;
-
   const visiblePrompts = promptsAppId === appId ? prompts : EMPTY_PROMPTS;
   const visibleCurrentFileContent =
     currentFileAppId === appId ? currentFileContent : null;
-
   const updatePromptsForApp = useCallback(
     (
       targetAppId: AppId,
       updater: (current: Record<string, Prompt>) => Record<string, Prompt>,
     ) => {
       if (currentAppIdRef.current !== targetAppId) return;
-
       const previousAppId = promptsAppIdRef.current;
       setPrompts((current) =>
         updater(previousAppId === targetAppId ? current : EMPTY_PROMPTS),
@@ -54,26 +51,22 @@ export function usePromptActions(
     },
     [],
   );
-
   useEffect(
     () => () => {
       reloadGenerationRef.current += 1;
     },
     [],
   );
-
   const reload = useCallback(async (): Promise<boolean> => {
     const requestAppId = appId;
     if (currentAppIdRef.current !== requestAppId) return false;
-
     const requestGeneration = ++reloadGenerationRef.current;
     const isCurrentRequest = () =>
       reloadGenerationRef.current === requestGeneration &&
       currentAppIdRef.current === requestAppId;
-
     // 先显示上次的列表（本地缓存），后台读到最新的再替换；没有缓存才显示「加载中」
     const cacheKey = `prompts.${requestAppId}.v1`;
-    const cached = readLocalCache<Record<string, Prompt>>(cacheKey);
+    const cached = readLocalCache(cacheKey, isPromptCache);
     if (cached && promptsAppIdRef.current !== requestAppId) {
       updatePromptsForApp(requestAppId, () => cached);
     }
@@ -84,7 +77,6 @@ export function usePromptActions(
       latestLoadedRef.current = { appId: requestAppId, prompts: data };
       updatePromptsForApp(requestAppId, () => data);
       writeLocalCache(cacheKey, data);
-
       try {
         const content = await promptsApi.getCurrentFileContent(requestAppId);
         if (!isCurrentRequest()) return false;
@@ -108,11 +100,18 @@ export function usePromptActions(
       }
     }
   }, [appId, t, updatePromptsForApp]);
-
   const savePrompt = useCallback(
-    async (id: string, prompt: Prompt) => {
+    async (id: string, prompt: Prompt, expected?: PromptWriteExpectation) => {
       try {
-        await promptsApi.upsertPrompt(appId, id, prompt);
+        await promptsApi.upsertPrompt(
+          appId,
+          id,
+          prompt,
+          expected ?? {
+            prompt: visiblePrompts[id] ?? null,
+            fileContent: visibleCurrentFileContent,
+          },
+        );
         updatePromptsForApp(appId, (current) => ({
           ...current,
           [id]: prompt,
@@ -122,21 +121,27 @@ export function usePromptActions(
         if (notify) {
           toast.success(t("prompts.saveSuccess"), {
             closeButton: true,
-            description:
-              appId === "pi" && prompt.enabled
-                ? t("pi.prompts.reloadNotice")
-                : undefined,
+            description: undefined,
           });
         }
         return refreshed;
       } catch (error) {
-        toast.error(t("prompts.saveFailed"));
+        toast.error(t("prompts.saveFailed"), {
+          description: extractErrorMessage(error) || undefined,
+        });
         throw error;
       }
     },
-    [appId, notify, reload, t, updatePromptsForApp],
+    [
+      appId,
+      notify,
+      reload,
+      t,
+      updatePromptsForApp,
+      visiblePrompts,
+      visibleCurrentFileContent,
+    ],
   );
-
   const deletePrompt = useCallback(
     async (id: string) => {
       try {
@@ -159,7 +164,6 @@ export function usePromptActions(
     },
     [appId, notify, reload, t, updatePromptsForApp],
   );
-
   const enablePrompt = useCallback(
     async (id: string) => {
       try {
@@ -185,53 +189,10 @@ export function usePromptActions(
     },
     [appId, notify, reload, t, updatePromptsForApp],
   );
-
   const toggleEnabled = useCallback(
     async (id: string, enabled: boolean) => {
-      if (appId === "pi") {
-        setTogglingId(id);
-        try {
-          if (enabled) {
-            await promptsApi.enablePrompt(appId, id);
-          } else {
-            const prompt = visiblePrompts[id];
-            if (!prompt) {
-              throw new Error(`Prompt ${id} does not exist`);
-            }
-            await promptsApi.upsertPrompt(appId, id, {
-              ...prompt,
-              enabled: false,
-            });
-          }
-          const refreshed =
-            currentAppIdRef.current === appId ? await reload() : false;
-          if (notify) {
-            toast.success(
-              t(
-                enabled
-                  ? "pi.prompts.usePromptSuccess"
-                  : "pi.prompts.stopUsingSuccess",
-              ),
-              {
-                closeButton: true,
-                description: t("pi.prompts.reloadNotice"),
-              },
-            );
-          }
-          return refreshed;
-        } catch (error) {
-          toast.error(
-            enabled ? t("prompts.enableFailed") : t("prompts.disableFailed"),
-          );
-          throw error;
-        } finally {
-          setTogglingId(null);
-        }
-      }
-
       const previousPrompts = visiblePrompts;
       const mutationGeneration = reloadGenerationRef.current;
-
       if (enabled) {
         const updatedPrompts = Object.keys(visiblePrompts).reduce(
           (acc, key) => {
@@ -253,7 +214,6 @@ export function usePromptActions(
           },
         }));
       }
-
       try {
         if (enabled) {
           await promptsApi.enablePrompt(appId, id);
@@ -261,10 +221,18 @@ export function usePromptActions(
             toast.success(t("prompts.enableSuccess"), { closeButton: true });
           }
         } else {
-          await promptsApi.upsertPrompt(appId, id, {
-            ...visiblePrompts[id],
-            enabled: false,
-          });
+          await promptsApi.upsertPrompt(
+            appId,
+            id,
+            {
+              ...visiblePrompts[id],
+              enabled: false,
+            },
+            {
+              prompt: visiblePrompts[id] ?? null,
+              fileContent: visibleCurrentFileContent,
+            },
+          );
           if (notify) {
             toast.success(t("prompts.disableSuccess"), { closeButton: true });
           }
@@ -283,9 +251,16 @@ export function usePromptActions(
         throw error;
       }
     },
-    [appId, notify, reload, t, updatePromptsForApp, visiblePrompts],
+    [
+      appId,
+      notify,
+      reload,
+      t,
+      updatePromptsForApp,
+      visiblePrompts,
+      visibleCurrentFileContent,
+    ],
   );
-
   const importFromFile = useCallback(async () => {
     try {
       const id = await promptsApi.importFromFile(appId);
@@ -301,7 +276,6 @@ export function usePromptActions(
       throw error;
     }
   }, [appId, notify, reload, t]);
-
   /** 最近一次读到的当前应用列表；还没读过或读的是别的应用时返回 null。 */
   const getLatestPrompts = useCallback((): Record<string, Prompt> | null => {
     const latest = latestLoadedRef.current;
@@ -309,7 +283,6 @@ export function usePromptActions(
       ? latest.prompts
       : null;
   }, []);
-
   return {
     prompts: visiblePrompts,
     loading,

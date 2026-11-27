@@ -1,36 +1,34 @@
-import { useTranslation } from "react-i18next";
-import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { HelpTip } from "@/components/ui/help-tip";
-import { HoverTip } from "@/components/ui/hover-tip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FormLabel } from "@/components/ui/form";
+import { HelpTip } from "@/components/ui/help-tip";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Input } from "@/components/ui/input";
 import type { FetchedModel } from "@/lib/api/model-fetch";
 import type { ClaudeStackModel } from "@/types";
+import { Plus, Trash2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import {
   FetchedModelPicker,
   type FetchedModelSelection,
 } from "./FetchedModelPicker";
-import { ModelDropdown } from "./shared";
 import {
   hasClaudeOneMMarker,
   stripClaudeOneMMarker,
 } from "./hooks/useModelState";
-
+import { ModelDropdown } from "./shared";
 /** 表单里的一行：多一个只在前端用的行 id，删行时输入框不串位。 */
-export type ClaudeStackModelRow = ClaudeStackModel & { rowId: string };
-
+export type ClaudeStackModelRow = ClaudeStackModel & {
+  rowId: string;
+};
 let nextRowId = 0;
-
 export function createClaudeStackModelRow(
   seed?: Partial<ClaudeStackModel>,
 ): ClaudeStackModelRow {
   nextRowId += 1;
   return { model: "", ...seed, rowId: `stack-model-${nextRowId}` };
 }
-
 /**
  * 存进 `meta.stackModels` 的样子：去掉空行，模型名里写的 `[1M]` 换成 `oneM`，同名的合并
  * （有一处勾了 1M 就按 1M，显示名取第一个填了的）。
@@ -61,7 +59,6 @@ export function normalizeClaudeStackModels(
   }
   return result;
 }
-
 /** 模型映射里的字段：`ANTHROPIC_MODEL` 和各档，按后端 `mode::stack::mapped_models` 的顺序。 */
 const MAPPED_MODEL_FIELDS: Array<[string, string | null]> = [
   ["ANTHROPIC_MODEL", null],
@@ -70,7 +67,6 @@ const MAPPED_MODEL_FIELDS: Array<[string, string | null]> = [
   ["ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"],
   ["ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"],
 ];
-
 /**
  * 没配列表时后端发布的模型（和 `mode::stack::mapped_models` 一致）：模型映射里的主模型和
  * 各档，按去掉 1M 标记后的名字去重，有一处带标记就按 1M，显示名取对应档位的。
@@ -90,7 +86,6 @@ export function claudeStackModelsFromEnv(
   }
   return normalizeClaudeStackModels(rows);
 }
-
 interface ClaudeStackModelsFieldProps {
   rows: ClaudeStackModelRow[];
   onRowsChange: (rows: ClaudeStackModelRow[]) => void;
@@ -101,7 +96,6 @@ interface ClaudeStackModelsFieldProps {
   /** 供应商地址：选择弹窗按它查各模型的窗口等参数。 */
   baseUrl?: string;
 }
-
 /**
  * Stack 模式下这家发布到 Claude Code 模型选择器里的模型。第一个是这家的默认模型：这家被
  * 设为默认时，Claude Code 启动、后台任务和子代理别名都用它。
@@ -115,12 +109,10 @@ export function ClaudeStackModelsField({
   baseUrl = "",
 }: ClaudeStackModelsFieldProps) {
   const { t } = useTranslation();
-
   const updateRow = (rowId: string, patch: Partial<ClaudeStackModel>) =>
     onRowsChange(
       rows.map((row) => (row.rowId === rowId ? { ...row, ...patch } : row)),
     );
-
   const applyFetchedModels = ({ add, remove }: FetchedModelSelection) => {
     const removed = new Set(remove);
     const kept = rows.filter(
@@ -134,7 +126,6 @@ export function ClaudeStackModelsField({
       .map((id) => createClaudeStackModelRow({ model: id }));
     onRowsChange([...kept, ...additions]);
   };
-
   return (
     <div className="space-y-3">
       <div className="space-y-1">

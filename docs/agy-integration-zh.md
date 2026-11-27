@@ -4,14 +4,14 @@
 
 `agy` 是独立应用 ID，复用 CCS 的供应商、Skills、MCP、会话和用量页面。它与 Gemini CLI 的数据库标记、供应商选择和文件路径分别管理。此次在已有未完成实现上直接补齐；不迁移或覆盖 Gemini CLI 的配置。
 
-| 功能       | 实现                                                           | 数据来源 / 写入目标                                       |
-| ---------- | -------------------------------------------------------------- | --------------------------------------------------------- |
-| 供应商切换 | 官方登录切模型；第三方 Key 经「打开终端」用私有目录启动     | `~/.gemini/antigravity-cli/settings.json`、`~/.cc-switch/agy/<供应商>/` |
-| 模型选择   | 手动填写、第三方 Gemini models API、当前本机 `agy models`      | `config.model.name`，兼容 `env.GEMINI_MODEL`              |
-| Token 信息 | 输入、输出、缓存读写；会话消息元数据和统一用量面板             | `brain/<id>/.system_generated/logs/transcript_full.jsonl` |
-| MCP        | 导入、编辑、独立启用/禁用、删除、重新同步                      | `~/.gemini/config/mcp_config.json`                        |
-| Skills     | 扫描导入、安装、启用/禁用、更新、迁移存储、卸载                | `~/.gemini/config/skills/<name>/`                         |
-| 会话       | 列表、摘要、工作目录、消息预览、Token、恢复命令                | 只读 SQLite 索引和 JSONL 日志                             |
+| 功能       | 实现                                                      | 数据来源 / 写入目标                                                     |
+| ---------- | --------------------------------------------------------- | ----------------------------------------------------------------------- |
+| 供应商切换 | 官方登录切模型；第三方 Key 经「打开终端」用私有目录启动   | `~/.gemini/antigravity-cli/settings.json`、`~/.cc-switch/agy/<供应商>/` |
+| 模型选择   | 手动填写、第三方 Gemini models API、当前本机 `agy models` | `config.model.name`，兼容 `env.GEMINI_MODEL`                            |
+| Token 信息 | 输入、输出、缓存读写；会话消息元数据和统一用量面板        | `brain/<id>/.system_generated/logs/transcript_full.jsonl`               |
+| MCP        | 导入、编辑、独立启用/禁用、删除、重新同步                 | `~/.gemini/config/mcp_config.json`                                      |
+| Skills     | 扫描导入、安装、启用/禁用、更新、迁移存储、卸载           | `~/.gemini/config/skills/<name>/`                                       |
+| 会话       | 列表、摘要、工作目录、消息预览、Token、恢复命令、CLI 会话删除 | 只读 SQLite 索引和 JSONL 日志（CLI / IDE / ACP / T3 Code）              |
 
 本机 CLI 自带文档明确全局定制目录为 `~/.gemini/config/`。公开迁移文档存在不同历史路径，因此本次以安装版本的内置文档和隔离 HOME 实测为准。参考：[官方 MCP 说明](https://www.agy.dev/docs/cli/mcp)、[官方迁移说明](https://www.antigravity.google/docs/cli/gcli-migration/)。MCP 与 Skills 的全局目录可能被同机其他 Antigravity 产品共享，CCS 页面显示实际写入路径。
 
@@ -50,7 +50,7 @@ agy 只从进程环境读 Key 和端点，不读取任何文件里的 Key，`mod
 
 ## 数据持久化和兼容性
 
-数据库版本从 20 升至 21，为 `mcp_servers`、`skills` 分别增加 `enabled_agy BOOLEAN NOT NULL DEFAULT 0`。新建数据库与升级迁移均覆盖；其他应用的开关和数据不变。旧的导入 JSON 没有 `agy` 字段时默认关闭。
+`mcp_servers` 和 `skills` 各自用 `enabled_agy` 保存 Antigravity 开关；新建与升级路径由数据库 schema 和迁移测试覆盖。旧的导入 JSON 没有 `agy` 字段时默认关闭。
 
 MCP 支持 stdio 和 Streamable HTTP，兼容导入旧 `serverUrl`，拒绝 agy 不支持的 SSE。禁用写 `disabled: true`，保留本地选项；删除仍启用于 agy 的服务器会移除对应原生条目。数据库的关闭标记不记录托管历史，因此删除未启用于 agy 的服务器时保留原生配置，即使同名禁用条目的传输字段完全相同；如需删除保留的禁用条目，应在 agy 中操作。切换传输方式时清理旧传输字段，保留非传输选项和未托管服务器。数据库提交失败会恢复原文件；重新同步不会因为数据库中的默认关闭标记而删掉未托管条目。
 
@@ -58,13 +58,23 @@ Skills 复用既有 SSOT、下载、链接/复制和备份机制，新增独立�
 
 ## 会话和 Token 语义
 
-会话同时扫描 CLI 的 `~/.gemini/antigravity-cli/brain` 与 Antigravity IDE 的 `~/.gemini/antigravity/brain`（布局相同，各自带同级 `conversation_summaries.db`）；缺失的目录会被忽略，同一会话 ID 只计一次。
+会话同时扫描以下 `brain` 目录（各自带同级 `conversation_summaries.db`）：
+
+- Antigravity CLI：`~/.gemini/antigravity-cli/brain`
+- Antigravity IDE：`~/.gemini/antigravity/brain`
+- 独立 ACP：`~/.gemini/antigravity-acp/brain`
+- 第三方 Key 私有目录：`~/.cc-switch/agy/<供应商 ID>/antigravity-cli/brain`
+- T3 Code 隔离实例：`~/.t3/userdata/providers/antigravity/<instance>/antigravity-acp/brain` 及 `dev` 对应目录（支持 `$T3CODE_HOME`）
+
+缺失的目录会被忽略，同一会话 ID 只计一次。
 
 会话列表以只读方式打开 SQLite，读取 `conversation_summaries` 的标题、预览、工作目录和时间。列表优先使用索引，避免每次刷新都解析所有正文；没有索引时回退解析 JSONL。只有二进制记录、没有可读日志的会话仍可展示摘要和恢复命令，不伪造正文。
 
-JSONL 按 `step_index` 排序，同步骤重复写入取最后一条，容忍尾部未写完的数据。当前已实测 `USER_INPUT`、`PLANNER_RESPONSE`，其他步骤保留文本供预览。路径归属经过校验，目录中的链接不能将会话读取引向根目录外。
+JSONL 按 `step_index` 排序，同步骤重复写入取最后一条，容忍尾部未写完的数据。支持解析结构化工具/对话步骤，并过滤内部（如 `/btw` 旁白）或空会话。路径归属经过校验，目录中的链接不能将会话读取引向根目录外。
 
-恢复命令为 `agy --conversation=<id>`。CCS 不删除 agy 会话，因为正文、二进制存储和摘要索引需由 agy 一起维护；界面和后端均明确要求在原应用中删除。
+恢复命令：默认 CLI/IDE 会话为 `agy --conversation=<id>`，第三方 Key 私有目录会话为 `agy --gemini_dir=<私有目录> --conversation=<id>`，ACP / T3 Code 会话不提供命令行恢复。**删除权限**：CLI 会话（`antigravity-cli/brain`，含默认 CLI 与私钥目录）支持在 CC Switch 中删除，删除时会一并清理对话目录与 `conversation_summaries.db` 摘要索引；IDE（`antigravity/brain`）与 ACP（`antigravity-acp/brain`）会话仍需在原应用中删除。
+
+此外，在 macOS 上「授权中心」提供 Antigravity 账号管理，通过系统钥匙串保存和切换 `agy` 的官方登录账号。
 
 Token 用量只导入完成的模型响应。实测使用本地模拟 Gemini SSE 响应：输入总量 100、缓存 20、回答 5、思考 7，agy 导出的结果为：
 
@@ -76,54 +86,28 @@ Token 用量只导入完成的模型响应。实测使用本地模拟 Gemini SSE
 
 用量模型优先取 JSONL 响应中的模型字段或该步骤之前的 `Model Selection` 事件。两者均缺失时（例如子代理会话），从同一 CLI、IDE 或私有目录下的 `conversations/<id>.db` 只读查询：通过 `steps.metadata` 的生成记录编号，读取对应 `gen_metadata` 中的模型名称：优先取带档位的完整 ID（如 `gemini-4-argon-high`，与 `Model Selection` 得到的 ID 一致，计价时剥掉档位；旧版若记的是显示名也按同样规则转换），没有时回退到基础模型名（如 `gemini-3.8-flash-n`）。Protobuf 仅解析关联和模型字段，不通过对话正文或 `flash`、`pro` 档位猜测模型。数据库忙或不可读时继续导入 Token，保留已经恢复的模型名称；后续同步可补全仍保留的 `unknown` 明细。
 
-无法确定的模型仍记为 `unknown`。费用沿用现有模型价格表估算，不代表实际账单；查不到价格时为 0；只有基础模型名时，`-n`、`-tiered` 等原生后缀也沿用同一价格匹配规则，不按后缀推定价格。用量导入不从当前供应商反推历史模型，也不更改原生登录、订阅额度或计费。
+无法确定的模型仍记为 `unknown`。费用沿用现有模型价格表估算，不代表实际账单；查不到价格时为 0；Gemini Flash 的原生 `-tiered` 接口名（如 `gemini-3.8-flash-tiered`、`gemini-3.7-flash-tiered`）在没有独立自定义价格时精确回退到同名基础 `gemini-<版本>-flash` 价格估算（不会前缀匹配到 `-flash-lite` 等子型号），`-n` 等其他原生后缀仍沿用原有价格匹配规则。用量导入不从当前供应商反推历史模型，也不更改原生登录、订阅额度或计费。
 
-## 验证
+## 实现与回归入口
 
-连通性检查对第三方 agy 供应商读取 `env.GOOGLE_GEMINI_BASE_URL`（沿用 Gemini 的提取规则），未设置时使用 `https://generativelanguage.googleapis.com`；官方登录供应商不提供检测目标。
+配置及终端投影位于 `crates/cc-switch-core/src/agy_config.rs` 与供应商服务；MCP 适配位于 `crates/cc-switch-core/src/mcp/agy.rs`。账号桌面适配在 `src-tauri/src/services/agy_account/`。回归覆盖配置保留、禁用与删除、失败补偿、会话解析及账号取消行为。
 
-新增测试覆盖迁移与新建数据库、独立开关、MCP 格式与失败回滚、Skills 原生文件保护及失败恢复、终端启动的 Key 传递（不进命令行、rc 里的同名变量不覆盖、临时文件读完即删）、Key 卡切换不写凭据也不碰 shell 文件、私有目录与共享 config 的软链、旧版包装脚本和 PATH 片段只删带标记内容、真实 agy 的多位置解析、连通性检查、配置事务中断恢复、会话路径验证、JSONL 重写/残缺尾部、原生 Token 语义和持久去重。
+先按[测试指南](testing.md)设置隔离目录，然后按需运行：
 
-此外使用本机真实 agy，在临时 HOME 中验证 MCP add/disable 的原生格式、models 输出格式及本地模拟 SSE 请求。模拟端点运行在 `127.0.0.1`，凭据为固定测试值；不连接付费模型，也不修改实际登录状态。
-
-可复查命令：
-
-```sh
-pnpm typecheck
-pnpm test:unit
-cargo test --manifest-path src-tauri/Cargo.toml --lib agy -- --test-threads=1
-cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=1
-cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-pnpm build:renderer
+```bash
+cargo test --manifest-path crates/cc-switch-core/Cargo.toml --lib agy -- --test-threads=1
+cargo test --locked --manifest-path src-tauri/Cargo.toml --lib agy -- --test-threads=1
 ```
 
-此次不增加 agy 本地代理、故障转移或 Stack 模式；这些能力要求单独适配数据平面，不能仅通过复用 Gemini UI 宣称可用。
+真实 agy / API 联调不属于普通单元测试。`src-tauri/src/agy_smoke_tests.rs` 中的原生联网测试默认忽略，需要单独配置临时凭据和隔离目录；普通测试通过不能替代真实登录、模型可用性或工具权限验证。
 
-## 原生联网复核与回归
-
-补充复核发现并修复两处表单问题：
-
-- agy 只有 API Key、未覆盖端点时，模型查询应使用 `https://generativelanguage.googleapis.com`，不能要求用户额外填写默认地址。
-- agy 的模型输入框需要按后端相同的优先级读取 `config.model.name`，并在编辑时同步写回；否则旧的 `config.model.name` 会覆盖刚修改的 `GEMINI_MODEL`。Gemini CLI 保持原有环境变量行为。
-
-新增 `src-tauri/src/agy_smoke_tests.rs` 原生联网测试，默认 `ignore`，仅在明确授权调用 API 后手工运行。它要求 `CCS_AGY_SMOKE_CONFIG` 指向权限受限的临时供应商 JSON，`CCS_AGY_SMOKE_BIN` 指向真实 agy；测试本身不读取用户数据库。所有切换、文件、Skills 和会话写入均在临时 HOME 和临时工作目录中执行，结束后清理。
-
-已使用真实 Gemini API 完成以下验证：
-
-1. 配置投影及当前供应商指针生效；按「打开终端」的方式（私有 `--gemini_dir` 加子进程环境变量）启动的原生 agy 实际请求到配置的模型，CCS 写出的文件里都没有 Key。
-2. Skill 经 CCS 导入、禁用、重新启用后，被原生 agy 加载并返回预设标记 `CCS_AGY_SKILL_OK`。
-3. 原生 agy 识别 CCS 写出的 MCP 配置并完成本地测试服务的 `initialize` 与 `tools/list`；此测试验证连接和工具发现，不覆盖任意第三方 MCP 业务工具的执行。
-4. CCS 会话预览包含实际回答，导入完成响应的用量明细，重复导入不新增记录。
-
-无界面 `--print` 模式不会弹出权限确认。Skill 若需要 `read_file`，必须有对应读取许可，否则 CLI 可能退出为成功、JSON 的 response 却为空并带有 `denied_actions`。测试仅为临时 Skill 的实际路径及 SSOT 路径授予精确读取许可，保留正常运行时的用户权限决策。
-
-模型 ID 必须精确匹配所用接口。实测 Gemini API 接受 `gemini-3.8-flash`，而 `gemini-3-8-flash` 返回 404；不应通过全局替换连字符“修复”任意供应商模型名。原生 `agy models` 的档位别名与 Google API 模型列表也并不完全相同，表单按登录模式选择对应来源。
+无界面模式下应同时检查响应内容和权限拒绝信息，而不只看进程退出码。模型 ID 应以对应接口及原生工具返回值为准，不要通过全局替换连字符猜测模型名称。
 
 ## 深链接导入
 
 统一入口是 `ccswitch://v1/import`，agy 使用独立的 `app=agy` / `apps=agy`：
 
-- **供应商**：`resource=provider&app=agy`，支持 `name`、`apiKey`、`endpoint`、`model`、`config` 与 `apiFormat=gemini_native`。不支持 OpenAI/Anthropic 协议。确认框关闭「导入后立即切换」时只保存数据库，不创建原生配置；开启时走正常供应商切换。带 Key 的供应商导入后经卡片「打开终端」使用。
+- **供应商**：`resource=provider&app=agy`，支持 `name`、`apiKey`、`endpoint`、`model`、`config` 与 `apiFormat=gemini_native`。不支持 OpenAI/Anthropic 协议。深链接导入只保存供应商卡片，不因 `enabled` 自动切换 Antigravity 的原生登录配置。带 Key 的供应商导入后经卡片「打开终端」使用。
 - **内联配置**：`config` 是 Base64 编码 JSON，可用上文 CCS 的 `{env, config:{model:{name}}}` 结构，或扁平 `GEMINI_API_KEY`、`GOOGLE_GEMINI_BASE_URL`（兼容 `GEMINI_BASE_URL`）、`GEMINI_MODEL`。模型优先级为 URL 的 `model` > `config.model.name` > `GEMINI_MODEL`。只提取密钥、地址、模型，其他环境变量与原生选项不导入；预览中的密钥打码。远程 `configUrl` 仍不支持。
 - **MCP**：`resource=mcp&apps=agy`；`apps=agy,codex` 可同时指定多个应用。`config` 为 Base64 编码的 `{"mcpServers":{...}}`。同 ID 已存在时保留数据库中的服务器定义，仅合并应用开关，再走统一 MCP 同步；agy 不支持的 SSE 会报告导入失败。
 - **Prompt**：`resource=prompt&app=agy`，`content` 为 Base64 Markdown，确认后保存到 agy 提示词列表；启用时使用既有 Prompt 路径解析和写入逻辑。
@@ -136,7 +120,6 @@ ccswitch://v1/import?resource=provider&app=agy&name=Antigravity&endpoint=https%3
 ```
 
 深链接供应商沿用现有 API Key 导入规则，需要密钥和端点；不通过链接导入或接管 OAuth 登录。会话预览、Token 统计和会话恢复不是导入资源，没有新增对应 `resource` 类型。
-
 
 ### 原生登录与 API 凭据
 

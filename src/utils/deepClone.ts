@@ -2,17 +2,14 @@ export function deepClone<T>(value: T): T {
   if (typeof globalThis.structuredClone === "function") {
     return globalThis.structuredClone(value);
   }
-
   return deepCloneFallback(value);
 }
-
 function deepCloneFallback<T>(value: T): T {
   if (value === null || typeof value !== "object") return value;
   if (value instanceof Date) return new Date(value.getTime()) as T;
   if (Array.isArray(value)) {
     return value.map((item) => deepCloneFallback(item)) as T;
   }
-
   const cloned = {} as T;
   Object.keys(value).forEach((key) => {
     // `cloned["__proto__"] = …` 走的是 setter，会替换 cloned 自己的原型而不是

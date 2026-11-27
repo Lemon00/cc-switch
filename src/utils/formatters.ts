@@ -12,7 +12,6 @@ export function formatJSON(value: string): string {
   const parsed = JSON.parse(trimmed);
   return JSON.stringify(parsed, null, 2);
 }
-
 /**
  * 智能解析 MCP JSON 配置
  * 支持两种格式：
@@ -32,14 +31,11 @@ export function parseSmartMcpJson(jsonText: string): {
   if (!trimmed) {
     return { config: {}, formattedConfig: "" };
   }
-
   // 如果是键值对片段（"key": {...}），包装成完整对象
   if (trimmed.startsWith('"') && !trimmed.startsWith("{")) {
     trimmed = `{${trimmed}}`;
   }
-
   const parsed = JSON.parse(trimmed);
-
   // 如果是单键对象且值是对象，提取键名和配置
   const keys = Object.keys(parsed);
   if (
@@ -56,14 +52,12 @@ export function parseSmartMcpJson(jsonText: string): {
       formattedConfig: JSON.stringify(config, null, 2),
     };
   }
-
   // 否则直接使用
   return {
     config: parsed,
     formattedConfig: JSON.stringify(parsed, null, 2),
   };
 }
-
 /**
  * TOML 格式化功能已禁用
  *

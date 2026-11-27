@@ -53,11 +53,12 @@ async fn agy_live_provider_skill_session_and_tokens() {
     let home = temp.path();
     let _restore = RestoreHome(std::env::var_os("CC_SWITCH_TEST_HOME"));
     std::env::set_var("CC_SWITCH_TEST_HOME", home);
-    crate::settings::reload_settings().unwrap();
+    crate::settings::update_settings(Default::default())
+        .expect("initialize settings for isolated test home");
     fs::create_dir_all(home.join("workspace")).unwrap();
     let db = Arc::new(Database::memory().unwrap());
     let row = Provider::with_id("smoke".into(), "Smoke".into(), settings.clone(), None);
-    db.save_provider("agy", &row).unwrap();
+    db.save_provider(&AppType::Agy, &row).unwrap();
     let launch = crate::services::provider::agy_direct::terminal_launch(&row).unwrap();
     let private_settings = launch
         .gemini_dir

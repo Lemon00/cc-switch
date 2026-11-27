@@ -1,65 +1,86 @@
-import { memo, useMemo } from "react";
-
 import { cn } from "@/lib/utils";
 import type { ToolCallBlock } from "@/types";
+import { memo, useMemo } from "react";
 import { highlightText } from "../utils";
-
 /**
  * 改动渲染：unified diff / apply_patch 文本 →
  * 行号 + `+` success-soft / `-` danger-soft，hunk 之间用 `⋮` 隔开，多文件各有小标题。
  */
-
 export type DiffLine =
-  | { type: "file"; path: string }
-  | { type: "gap" }
+  | {
+      type: "file";
+      path: string;
+    }
+  | {
+      type: "gap";
+    }
   | {
       type: "add" | "del" | "context";
       text: string;
       oldNo?: number;
       newNo?: number;
     };
-
-const HUNK_HEADER = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 const PATCH_FILE = /^\*\*\* (?:Add|Update|Delete) File: (.+)$/;
-
 /** 解析 unified diff（git diff、Codex FileChange）与 Codex apply_patch 文本 */
 export const parseDiff = (text: string): DiffLine[] => {
   const lines: DiffLine[] = [];
   let oldNo: number | undefined;
   let newNo: number | undefined;
   let hunks = 0;
+  let inHunk = false;
+  let remaining:
+    | {
+        old: number;
+        next: number;
+      }
+    | undefined;
+  let newHeaderIndex = -1;
+  const consumeLine = (old: boolean, next: boolean) => {
+    if (!remaining) return;
+    if (old) remaining.old = Math.max(0, remaining.old - 1);
+    if (next) remaining.next = Math.max(0, remaining.next - 1);
+    inHunk = remaining.old > 0 || remaining.next > 0;
+  };
   const pushFile = (path: string) => {
+    oldNo = undefined;
+    newNo = undefined;
+    inHunk = false;
+    remaining = undefined;
     const last = lines[lines.length - 1];
     if (last?.type === "file" && last.path === path) return;
     lines.push({ type: "file", path });
     hunks = 0;
   };
-
   text
     .replace(/\r\n/g, "\n")
     .split("\n")
     .forEach((raw, index, all) => {
-      // `--- a` / `+++ b` 只在成对出现时算文件头，否则是内容以 `--`、`++` 开头的改动行
+      // Hunk contents may themselves look exactly like a pair of file headers.
       const fileHeaderOld =
-        raw.startsWith("--- ") && all[index + 1]?.startsWith("+++ ");
-      const fileHeaderNew =
-        raw.startsWith("+++ ") && all[index - 1]?.startsWith("--- ");
+        !inHunk && raw.startsWith("--- ") && all[index + 1]?.startsWith("+++ ");
       if (raw.startsWith("diff --git ")) {
         hunks = 0;
+        inHunk = false;
+        remaining = undefined;
+        oldNo = undefined;
+        newNo = undefined;
+        return;
+      }
+      if (fileHeaderOld) {
+        const nextPath = all[index + 1].slice(4).trim();
+        const path = nextPath === "/dev/null" ? raw.slice(4).trim() : nextPath;
+        if (path && path !== "/dev/null") pushFile(path.replace(/^[ab]\//, ""));
+        newHeaderIndex = index + 1;
         return;
       }
       if (
         (raw.startsWith("index ") && hunks === 0) ||
-        fileHeaderOld ||
+        index === newHeaderIndex ||
         raw.startsWith("*** Begin Patch") ||
         raw.startsWith("*** End Patch") ||
         raw.startsWith("\\ No newline")
       ) {
-        return;
-      }
-      if (fileHeaderNew) {
-        const path = raw.slice(4).replace(/^b\//, "").trim();
-        if (path && path !== "/dev/null") pushFile(path);
         return;
       }
       const patchFile = PATCH_FILE.exec(raw);
@@ -78,17 +99,23 @@ export const parseDiff = (text: string): DiffLine[] => {
         hunks += 1;
         const match = HUNK_HEADER.exec(raw);
         oldNo = match ? Number(match[1]) : undefined;
-        newNo = match ? Number(match[2]) : undefined;
+        newNo = match ? Number(match[3]) : undefined;
+        remaining = match
+          ? { old: Number(match[2] ?? 1), next: Number(match[4] ?? 1) }
+          : undefined;
+        inHunk = !remaining || remaining.old > 0 || remaining.next > 0;
         return;
       }
       if (raw.startsWith("+")) {
         lines.push({ type: "add", text: raw.slice(1), newNo });
         if (newNo !== undefined) newNo += 1;
+        consumeLine(false, true);
         return;
       }
       if (raw.startsWith("-")) {
         lines.push({ type: "del", text: raw.slice(1), oldNo });
         if (oldNo !== undefined) oldNo += 1;
+        consumeLine(true, false);
         return;
       }
       if (raw === "" && lines.length === 0) return;
@@ -100,8 +127,8 @@ export const parseDiff = (text: string): DiffLine[] => {
       });
       if (oldNo !== undefined) oldNo += 1;
       if (newNo !== undefined) newNo += 1;
+      consumeLine(true, true);
     });
-
   // 末尾的空上下文行（文本以换行结尾）不显示
   while (lines.length > 0) {
     const last = lines[lines.length - 1];
@@ -110,7 +137,6 @@ export const parseDiff = (text: string): DiffLine[] => {
   }
   return lines;
 };
-
 const pickString = (input: Record<string, unknown>, keys: string[]) => {
   for (const key of keys) {
     const value = input[key];
@@ -118,10 +144,32 @@ const pickString = (input: Record<string, unknown>, keys: string[]) => {
   }
   return undefined;
 };
-
 const splitLines = (text: string) =>
   text === "" ? [] : text.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
-
+const OLD_KEYS = [
+  "old_string",
+  "oldString",
+  "oldText",
+  "old_str",
+  "TargetContent",
+  "Target",
+];
+const NEW_KEYS = [
+  "new_string",
+  "newString",
+  "newText",
+  "new_str",
+  "ReplacementContent",
+  "Replacement",
+];
+const CONTENT_KEYS = [
+  "content",
+  "contents",
+  "file_text",
+  "text",
+  "Content",
+  "CodeContent",
+];
 /**
  * 没有 unified diff 全文时，从调用参数还原改动：Edit 类的 old/new 字符串、Write 类的 content。
  * 参数预览被截断（JSON 不完整）时返回 null。
@@ -137,32 +185,38 @@ export const buildInputDiff = (call: ToolCallBlock): string | null => {
   }
   if (!input || typeof input !== "object") return null;
   const record = input as Record<string, unknown>;
-  const pairs: { old: string; next: string }[] = [];
-  const edits = Array.isArray(record.edits) ? record.edits : [record];
-  edits.forEach((edit) => {
-    if (!edit || typeof edit !== "object") return;
-    const item = edit as Record<string, unknown>;
-    const oldText = pickString(item, [
-      "old_string",
-      "oldString",
-      "oldText",
-      "old_str",
-    ]);
-    const newText = pickString(item, [
-      "new_string",
-      "newString",
-      "newText",
-      "new_str",
-    ]);
-    if (oldText !== undefined || newText !== undefined) {
-      pairs.push({ old: oldText ?? "", next: newText ?? "" });
+  const pairs: {
+    old: string;
+    next: string;
+  }[] = [];
+  if (Array.isArray(record.ReplacementChunks)) {
+    for (const chunk of record.ReplacementChunks) {
+      if (!chunk || typeof chunk !== "object") return null;
+      const item = chunk as Record<string, unknown>;
+      const oldText = pickString(item, OLD_KEYS);
+      const newText = pickString(item, NEW_KEYS);
+      if (oldText === undefined || newText === undefined) return null;
+      pairs.push({ old: oldText, next: newText });
     }
-  });
+    if (pairs.length === 0) return null;
+  } else {
+    const edits = Array.isArray(record.edits) ? record.edits : [record];
+    edits.forEach((edit) => {
+      if (!edit || typeof edit !== "object") return;
+      const item = edit as Record<string, unknown>;
+      const oldText = pickString(item, OLD_KEYS);
+      const newText = pickString(item, NEW_KEYS);
+      if (oldText !== undefined || newText !== undefined) {
+        pairs.push({ old: oldText ?? "", next: newText ?? "" });
+      }
+    });
+  }
   if (pairs.length === 0) {
-    const content = pickString(record, ["content", "file_text", "text"]);
+    const content = pickString(record, CONTENT_KEYS);
     if (content === undefined) return null;
     pairs.push({ old: "", next: content });
   }
+  if (pairs.every(({ old, next }) => old === "" && next === "")) return null;
   return pairs
     .map(
       ({ old, next }) =>
@@ -173,15 +227,12 @@ export const buildInputDiff = (call: ToolCallBlock): string | null => {
     )
     .join("\n");
 };
-
 const ROW_TONE = {
   add: "bg-diff-add",
   del: "bg-diff-del",
   context: "",
 } as const;
-
 const SIGN = { add: "+", del: "−", context: " " } as const;
-
 export interface SessionDiffProps {
   /** unified diff / apply_patch 文本 */
   text: string;
@@ -190,7 +241,6 @@ export interface SessionDiffProps {
   formatPath?: (path: string) => string;
   className?: string;
 }
-
 /** unified diff 渲染：只读、横向滚动、最高 480px */
 export const SessionDiff = memo(function SessionDiff({
   text,
@@ -204,7 +254,6 @@ export const SessionDiff = memo(function SessionDiff({
       (line.type === "add" || line.type === "del" || line.type === "context") &&
       (line.oldNo !== undefined || line.newNo !== undefined),
   );
-
   return (
     <div
       tabIndex={0}

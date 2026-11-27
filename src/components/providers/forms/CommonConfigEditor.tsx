@@ -1,12 +1,11 @@
-import { useTranslation } from "react-i18next";
-import { useEffect, useState, useCallback, useMemo } from "react";
-import { Label } from "@/components/ui/label";
-import { HelpTip } from "@/components/ui/help-tip";
 import JsonEditor from "@/components/JsonEditor";
+import { HelpTip } from "@/components/ui/help-tip";
+import { Label } from "@/components/ui/label";
 import type { ProviderEditorInactiveField } from "@/lib/api/providers";
 import { CLAUDE_AUTO_MODE_SERVER_ENV } from "@/utils/claudeEditorOverlay";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { InactiveFieldsPanel } from "./InactiveFieldsPanel";
-
 /** 编辑框上方的快捷开关，顺序即显示顺序；文案在 `claudeConfig.<key>` 和 `claudeConfig.<key>Help`。 */
 const QUICK_TOGGLES = [
   "hideAttribution",
@@ -15,14 +14,12 @@ const QUICK_TOGGLES = [
   "disableArtifact",
   "disableAutoModeServer",
 ] as const;
-
 interface CommonConfigEditorProps {
   value: string;
   onChange: (value: string) => void;
   /** 行里保存着、但不随切换生效的字段；可以一键加进上方 JSON（保存后成为全局设置）。 */
   inactiveFields?: ProviderEditorInactiveField[];
 }
-
 /** 把一个字段写进 JSON 文本；解析不了就原样返回。 */
 const setFieldInConfig = (
   configText: string,
@@ -44,7 +41,6 @@ const setFieldInConfig = (
     return null;
   }
 };
-
 export function CommonConfigEditor({
   value,
   onChange,
@@ -52,30 +48,23 @@ export function CommonConfigEditor({
 }: CommonConfigEditorProps) {
   const { t } = useTranslation();
   const [isDarkMode, setIsDarkMode] = useState(false);
-
   useEffect(() => {
     setIsDarkMode(document.documentElement.classList.contains("dark"));
-
     const observer = new MutationObserver(() => {
       setIsDarkMode(document.documentElement.classList.contains("dark"));
     });
-
     observer.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ["class"],
     });
-
     return () => observer.disconnect();
   }, []);
-
   // Mirror value prop to local state so checkbox toggles and JsonEditor stay in sync
   // (parent uses form.getValues which doesn't trigger re-renders)
   const [localValue, setLocalValue] = useState(value);
-
   useEffect(() => {
     setLocalValue(value);
   }, [value]);
-
   const handleLocalChange = useCallback(
     (newValue: string) => {
       setLocalValue(newValue);
@@ -83,7 +72,6 @@ export function CommonConfigEditor({
     },
     [onChange],
   );
-
   const toggleStates = useMemo(() => {
     try {
       const config = JSON.parse(localValue);
@@ -115,12 +103,10 @@ export function CommonConfigEditor({
       };
     }
   }, [localValue]);
-
   const handleToggle = useCallback(
     (toggleKey: (typeof QUICK_TOGGLES)[number], checked: boolean) => {
       try {
         const config = JSON.parse(localValue || "{}");
-
         switch (toggleKey) {
           case "hideAttribution":
             if (checked) {
@@ -169,7 +155,6 @@ export function CommonConfigEditor({
             }
             break;
         }
-
         handleLocalChange(JSON.stringify(config, null, 2));
       } catch {
         // Don't modify if JSON is invalid
@@ -177,7 +162,6 @@ export function CommonConfigEditor({
     },
     [localValue, handleLocalChange],
   );
-
   const handleAddInactiveField = useCallback(
     (field: ProviderEditorInactiveField) => {
       const next = setFieldInConfig(localValue, field);
@@ -187,7 +171,6 @@ export function CommonConfigEditor({
     },
     [localValue, handleLocalChange],
   );
-
   const pendingInactiveFields = useMemo(() => {
     try {
       const config = JSON.parse(localValue || "{}") as Record<string, unknown>;
@@ -203,7 +186,6 @@ export function CommonConfigEditor({
       return inactiveFields;
     }
   }, [inactiveFields, localValue]);
-
   return (
     <div className="space-y-2">
       <Label htmlFor="settingsConfig">{t("provider.configJson")}</Label>

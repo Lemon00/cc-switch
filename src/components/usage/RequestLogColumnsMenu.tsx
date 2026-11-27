@@ -1,7 +1,7 @@
+import type { UsageDisplaySettings } from "@/types";
+import { Columns3 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Columns3 } from "lucide-react";
-import type { UsageDisplaySettings } from "@/types";
 import { ChecklistMenu } from "./ChecklistMenu";
 import {
   REQUEST_LOG_COLUMN_LABEL_KEYS,
@@ -10,12 +10,10 @@ import {
   TOGGLEABLE_REQUEST_LOG_COLUMNS,
   type RequestLogColumnId,
 } from "./requestLogColumns";
-
 interface RequestLogColumnsMenuProps {
   value: UsageDisplaySettings | undefined;
   onChange: (next: UsageDisplaySettings) => Promise<boolean> | boolean | void;
 }
-
 /** 请求日志工具栏的「显示的列」：只存改过的列；保存要等设置读回来，先按刚勾的显示 */
 export function RequestLogColumnsMenu({
   value,
@@ -33,7 +31,6 @@ export function RequestLogColumnsMenu({
     if (pendingSaves.current === 0) setColumnOverrides(savedColumns ?? {});
   }, [savedColumns]);
   const logColumns = resolveRequestLogColumns(columnOverrides);
-
   const saveColumnOverrides = async (next: Record<string, boolean>) => {
     setColumnOverrides(next);
     pendingSaves.current += 1;
@@ -47,7 +44,6 @@ export function RequestLogColumnsMenu({
       }
     }
   };
-
   return (
     <ChecklistMenu
       quiet

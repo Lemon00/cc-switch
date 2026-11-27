@@ -1,14 +1,13 @@
-import { useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { toast } from "@/lib/toast";
-import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   settingsApi,
-  type RectifierConfig,
   type OptimizerConfig,
+  type RectifierConfig,
 } from "@/lib/api/settings";
-
+import { toast } from "@/lib/toast";
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 export function RectifierConfigPanel() {
   const { t } = useTranslation();
   const [config, setConfig] = useState<RectifierConfig>({
@@ -24,7 +23,6 @@ export function RectifierConfigPanel() {
     cacheInjection: true,
   });
   const [isLoading, setIsLoading] = useState(true);
-
   useEffect(() => {
     settingsApi
       .getRectifierConfig()
@@ -36,7 +34,6 @@ export function RectifierConfigPanel() {
       .then(setOptimizerConfig)
       .catch((e) => console.error("Failed to load optimizer config:", e));
   }, []);
-
   const handleChange = async (updates: Partial<RectifierConfig>) => {
     const newConfig = { ...config, ...updates };
     setConfig(newConfig);
@@ -48,7 +45,6 @@ export function RectifierConfigPanel() {
       setConfig(config);
     }
   };
-
   const handleOptimizerChange = async (updates: Partial<OptimizerConfig>) => {
     const newConfig = { ...optimizerConfig, ...updates };
     setOptimizerConfig(newConfig);
@@ -60,9 +56,7 @@ export function RectifierConfigPanel() {
       setOptimizerConfig(optimizerConfig);
     }
   };
-
   if (isLoading) return null;
-
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">

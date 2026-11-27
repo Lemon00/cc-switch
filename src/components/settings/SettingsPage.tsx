@@ -1,12 +1,36 @@
+import { AboutSection } from "@/components/settings/AboutSection";
+import { BackupListSection } from "@/components/settings/BackupListSection";
+import { DirectoryInput } from "@/components/settings/DirectorySettings";
+import { GlobalProxySettings } from "@/components/settings/GlobalProxySettings";
+import { ImportExportSection } from "@/components/settings/ImportExportSection";
+import { LogConfigPanel } from "@/components/settings/LogConfigPanel";
+import { AppConfigSection } from "@/components/settings/sections/AppConfigSection";
+import { GeneralSection } from "@/components/settings/sections/GeneralSection";
+import { RoutingSection } from "@/components/settings/sections/RoutingSection";
 import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ComponentType,
-} from "react";
+  SettingsBlock,
+  SettingsBody,
+  SettingsCard,
+  SettingsRow,
+} from "@/components/settings/SettingsLayout";
+import { WebdavSyncSection } from "@/components/settings/WebdavSyncSection";
+import { AppPageHeader } from "@/components/shell/AppPageHeader";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { useImportExport } from "@/hooks/useImportExport";
+import type { SettingsFormState } from "@/hooks/useSettings";
+import { useSettings } from "@/hooks/useSettings";
+import { settingsApi, type AppId } from "@/lib/api";
+import type { SettingsSection } from "@/lib/navigation";
+import { useSettingsQuery } from "@/lib/query";
+import { toast } from "@/lib/toast";
+import { isTextEditableTarget } from "@/utils/domUtils";
 import {
   Database,
   Folder,
@@ -17,44 +41,22 @@ import {
   Route,
   SlidersHorizontal,
 } from "lucide-react";
-import { toast } from "@/lib/toast";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentType,
+} from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { settingsApi, type AppId } from "@/lib/api";
-import { useSettingsQuery } from "@/lib/query";
-import type { SettingsSection } from "@/lib/navigation";
-import { AppPageHeader } from "@/components/shell/AppPageHeader";
-import { DirectoryInput } from "@/components/settings/DirectorySettings";
-import { ImportExportSection } from "@/components/settings/ImportExportSection";
-import { BackupListSection } from "@/components/settings/BackupListSection";
-import { WebdavSyncSection } from "@/components/settings/WebdavSyncSection";
-import { AboutSection } from "@/components/settings/AboutSection";
-import { RoutingSection } from "@/components/settings/sections/RoutingSection";
-import { GlobalProxySettings } from "@/components/settings/GlobalProxySettings";
-import { LogConfigPanel } from "@/components/settings/LogConfigPanel";
-import { GeneralSection } from "@/components/settings/sections/GeneralSection";
-import { AppConfigSection } from "@/components/settings/sections/AppConfigSection";
-import {
-  SettingsBlock,
-  SettingsBody,
-  SettingsCard,
-  SettingsRow,
-} from "@/components/settings/SettingsLayout";
-import { useSettings } from "@/hooks/useSettings";
-import { useImportExport } from "@/hooks/useImportExport";
-import type { SettingsFormState } from "@/hooks/useSettings";
-import { isTextEditableTarget } from "@/utils/domUtils";
-
 const SECTION_ICON: Record<
   SettingsSection,
-  ComponentType<{ className?: string; strokeWidth?: number | string }>
+  ComponentType<{
+    className?: string;
+    strokeWidth?: number | string;
+  }>
 > = {
   general: SlidersHorizontal,
   appConfig: Folder,
@@ -63,7 +65,6 @@ const SECTION_ICON: Record<
   data: Database,
   about: Info,
 };
-
 interface SettingsPageProps {
   section: SettingsSection;
   /** 从应用页的「配置目录」进入时，定位到该应用的配置区域。 */
@@ -74,7 +75,6 @@ interface SettingsPageProps {
   /** 本地路由 →「正在使用路由的应用」的「前往」 */
   onOpenApp: (app: AppId) => void;
 }
-
 /**
  * 设置（v7）：侧栏换成设置目录，这里只渲染当前分组。设置里只放偏好，功能页都在侧栏。
  * 开关类即时保存；路径类改完点本节的「保存」。
@@ -108,7 +108,6 @@ export function SettingsPage({
     acknowledgeRestart,
   } = useSettings();
   const { data: savedSettings } = useSettingsQuery();
-
   const {
     selectedFile,
     status: importStatus,
@@ -121,34 +120,27 @@ export function SettingsPage({
     clearSelection,
     resetStatus,
   } = useImportExport({ onImportSuccess });
-
   const [showRestartPrompt, setShowRestartPrompt] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-
   useEffect(() => {
     resetStatus();
   }, [resetStatus]);
-
   useEffect(() => {
     if (requiresRestart) {
       setShowRestartPrompt(true);
     }
   }, [requiresRestart]);
-
   useLayoutEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = 0;
     }
   }, [section]);
-
   const hasSettings = !!settings;
   useEffect(() => {
     if (section !== "appConfig" || !appConfigScrollTarget || !hasSettings)
       return;
-
     const container = scrollRef.current;
     if (!container) return;
-
     let highlight: Animation | undefined;
     let frame = 0;
     const inputListeners = new AbortController();
@@ -183,7 +175,6 @@ export function SettingsPage({
       container.addEventListener(event, cancelNavigation, inputOptions);
     }
     window.addEventListener("keydown", handleScrollKey, inputOptions);
-
     // 等条目挂载后，仅滚动设置正文，避免 scrollIntoView 带动外层布局。
     frame = requestAnimationFrame(() => {
       const target = container.querySelector<HTMLElement>(
@@ -193,7 +184,6 @@ export function SettingsPage({
         inputListeners.abort();
         return;
       }
-
       const viewportTop =
         container.getBoundingClientRect().top + container.clientTop;
       const viewportBottom = viewportTop + container.clientHeight;
@@ -216,7 +206,6 @@ export function SettingsPage({
           container.scrollHeight - container.clientHeight,
         ),
       );
-
       // 定位后用两次描边闪烁提示目标，不改变条目尺寸或位置。
       const flashTarget = () => {
         highlight = target.animate?.(
@@ -241,7 +230,6 @@ export function SettingsPage({
         flashTarget();
         return;
       }
-
       // 使用同一帧循环完成缓出滚动，结束后再闪烁；切页时可一并取消。
       const startedAt = performance.now();
       let expectedTop = startTop;
@@ -263,14 +251,11 @@ export function SettingsPage({
       };
       frame = requestAnimationFrame(scrollToTarget);
     });
-
     return cancelNavigation;
   }, [section, appConfigScrollTarget, hasSettings]);
-
   const afterSave = useCallback(() => {
     acknowledgeRestart();
   }, [acknowledgeRestart]);
-
   // 路径类设置（配置目录、CC Switch 数据目录）点「保存」才写入；改了数据目录要重启
   const handleSave = useCallback(async () => {
     try {
@@ -285,12 +270,10 @@ export function SettingsPage({
       console.error("[SettingsPage] Failed to save settings", error);
     }
   }, [afterSave, saveSettings]);
-
   const handleRestartLater = useCallback(() => {
     setShowRestartPrompt(false);
     afterSave();
   }, [afterSave]);
-
   const handleRestartNow = useCallback(async () => {
     setShowRestartPrompt(false);
     if (import.meta.env.DEV) {
@@ -298,7 +281,6 @@ export function SettingsPage({
       afterSave();
       return;
     }
-
     try {
       await settingsApi.restart();
     } catch (error) {
@@ -308,7 +290,6 @@ export function SettingsPage({
       afterSave();
     }
   }, [afterSave, t]);
-
   const handleRevealLogFile = useCallback(async () => {
     try {
       await settingsApi.revealAppLogFile();
@@ -321,7 +302,6 @@ export function SettingsPage({
       );
     }
   }, [t]);
-
   // 通用设置即时保存（无需手动点击）
   // 使用 autoSaveSettings 避免误触发系统 API（开机自启、Claude 插件等）
   // 返回保存是否成功：需要在保存成功后追加动作的调用方（如统一会话历史
@@ -356,14 +336,11 @@ export function SettingsPage({
     },
     [autoSaveSettings, settings, t, updateSettings],
   );
-
   const isBusy = useMemo(() => isLoading && !settings, [isLoading, settings]);
   const SectionIcon = SECTION_ICON[section];
-
   const appConfigDirty =
     (appConfigDir?.trim() || undefined) !==
     (initialAppConfigDir?.trim() || undefined);
-
   const renderSection = () => {
     if (!settings) return null;
     switch (section) {
@@ -525,7 +502,6 @@ export function SettingsPage({
         return <AboutSection isPortable={isPortable} />;
     }
   };
-
   return (
     <>
       <AppPageHeader

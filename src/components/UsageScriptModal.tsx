@@ -1,43 +1,46 @@
-import React, { useState } from "react";
-import { Play, Wand2, Eye, EyeOff, Save, ExternalLink } from "lucide-react";
-import { toast } from "@/lib/toast";
-import { useTranslation } from "react-i18next";
-import { useQueryClient } from "@tanstack/react-query";
-import { Provider, UsageScript, UsageData, createUsageScript } from "@/types";
-import { usageApi, settingsApi, type AppId } from "@/lib/api";
-import { copilotGetUsage, copilotGetUsageForAccount } from "@/lib/api/copilot";
-import { useSettingsQuery } from "@/lib/query";
-import { resolveManagedAccountId } from "@/lib/authBinding";
-import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
-import { extractErrorMessage } from "@/utils/errorUtils";
-import { useDarkMode } from "@/hooks/useDarkMode";
-import {
-  extractCodexBaseUrl,
-  extractCodexExperimentalBearerToken,
-} from "@/utils/providerConfigUtils";
-import { parseGrokBuildConfig } from "@/utils/grokBuildConfig";
-import JsonEditor from "./JsonEditor";
-import * as prettier from "prettier/standalone";
-import * as parserBabel from "prettier/parser-babel";
-import * as pluginEstree from "prettier/plugins/estree";
+import { FullScreenPanel } from "@/components/common/FullScreenPanel";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { FullScreenPanel } from "@/components/common/FullScreenPanel";
-import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { cn } from "@/lib/utils";
 import {
-  TEMPLATE_TYPES,
-  PROVIDER_TYPES,
-  type TemplateType,
-} from "@/config/constants";
+  detectBalanceProvider,
+  matchingBalanceProviders,
+} from "@/config/balanceProviders";
 import {
   CODING_PLAN_PROVIDERS,
   detectCodingPlanProvider,
 } from "@/config/codingPlanProviders";
+import {
+  PROVIDER_TYPES,
+  TEMPLATE_TYPES,
+  type TemplateType,
+} from "@/config/constants";
+import { useDarkMode } from "@/hooks/useDarkMode";
+import { settingsApi, usageApi, type AppId } from "@/lib/api";
+import { copilotGetUsage, copilotGetUsageForAccount } from "@/lib/api/copilot";
+import { resolveManagedAccountId } from "@/lib/authBinding";
+import { useSettingsQuery } from "@/lib/query";
+import { usageKeys } from "@/lib/query/usage";
+import { toast } from "@/lib/toast";
+import { cn } from "@/lib/utils";
+import { Provider, UsageData, UsageScript, createUsageScript } from "@/types";
+import { extractErrorMessage } from "@/utils/errorUtils";
+import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
+import {
+  extractCodexBaseUrl,
+  extractCodexExperimentalBearerToken,
+} from "@/utils/providerConfigUtils";
 import { formatUsageDataSummary } from "@/utils/usageDisplay";
-
+import { useQueryClient } from "@tanstack/react-query";
+import { ExternalLink, Eye, EyeOff, Play, Save, Wand2 } from "lucide-react";
+import * as parserBabel from "prettier/parser-babel";
+import * as pluginEstree from "prettier/plugins/estree";
+import * as prettier from "prettier/standalone";
+import React, { useState } from "react";
+import { useTranslation } from "react-i18next";
+import JsonEditor from "./JsonEditor";
 /**
  * 火山引擎账号级 AccessKey 的密钥管理页（IAM）。
  * 用量查询走控制面 OpenAPI，需要 AK/SK 签名，与推理 API Key 是两套凭据，
@@ -47,7 +50,6 @@ const VOLCENGINE_KEY_CONSOLE_URL =
   "https://console.volcengine.com/iam/keymanage";
 // 智谱团队套餐用量页（组织 ID / 项目 ID 在此页 URL 或管理后台可见）
 const ZHIPU_TEAM_USAGE_URL = "https://bigmodel.cn/coding-plan/team/usage-stats";
-
 interface UsageScriptModalProps {
   provider: Provider;
   appId: AppId;
@@ -55,7 +57,6 @@ interface UsageScriptModalProps {
   onClose: () => void;
   onSave: (script: UsageScript) => void;
 }
-
 // 生成预设模板的函数（支持国际化）
 const generatePresetTemplates = (
   t: (key: string) => string,
@@ -73,7 +74,6 @@ const generatePresetTemplates = (
     };
   }
 })`,
-
   [TEMPLATE_TYPES.GENERAL]: `({
   request: {
     url: "{{baseUrl}}/user/balance",
@@ -91,7 +91,6 @@ const generatePresetTemplates = (
     };
   }
 })`,
-
   [TEMPLATE_TYPES.NEW_API]: `({
   request: {
     url: "{{baseUrl}}/api/user/self",
@@ -119,7 +118,6 @@ const generatePresetTemplates = (
     };
   },
 })`,
-
   // Sub2API 的 /v1/usage 用 API Key 认证；供应商地址带不带 /v1 都能拼出同一个地址。
   // 订阅分组不限量时 remaining 为 -1，不当作余额显示
   [TEMPLATE_TYPES.SUB2API]: `({
@@ -153,20 +151,15 @@ const generatePresetTemplates = (
     return result;
   },
 })`,
-
   // GitHub Copilot 模板不需要脚本，使用专用 API
   [TEMPLATE_TYPES.GITHUB_COPILOT]: "",
-
   // Coding Plan 模板不需要脚本，使用专用 Rust 查询
   [TEMPLATE_TYPES.TOKEN_PLAN]: "",
-
   // 官方余额查询模板不需要脚本，使用专用 Rust 查询
   [TEMPLATE_TYPES.BALANCE]: "",
-
   // 官方订阅额度查询不需要脚本，使用 CLI/OAuth 凭据调用官方 API
   [TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION]: "",
 });
-
 // 模板名称国际化键映射
 const TEMPLATE_NAME_KEYS: Record<string, string> = {
   [TEMPLATE_TYPES.CUSTOM]: "usageScript.templateCustom",
@@ -179,31 +172,10 @@ const TEMPLATE_NAME_KEYS: Record<string, string> = {
   [TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION]:
     "usageScript.templateOfficialSubscription",
 };
-
-/** 官方余额查询供应商检测 */
-const BALANCE_PROVIDERS = [
-  { id: "deepseek", label: "DeepSeek", pattern: /api\.deepseek\.com/i },
-  { id: "stepfun", label: "StepFun", pattern: /api\.stepfun\.(ai|com)/i },
-  {
-    id: "siliconflow",
-    label: "SiliconFlow",
-    pattern: /api\.siliconflow\.(cn|com)/i,
-  },
-  { id: "openrouter", label: "OpenRouter", pattern: /openrouter\.ai/i },
-  { id: "novita", label: "Novita AI", pattern: /api\.novita\.ai/i },
-] as const;
-
-/** 根据 Base URL 自动检测余额查询供应商 */
-function detectBalanceProvider(baseUrl: string | undefined): boolean {
-  if (!baseUrl) return false;
-  return BALANCE_PROVIDERS.some((bp) => bp.pattern.test(baseUrl));
-}
-
 function isOfficialSubscriptionProvider(provider: Provider, appId: AppId) {
   if (!["claude", "codex", "gemini", "grokbuild", "agy"].includes(appId))
     return false;
   if (provider.category === "official") return true;
-
   const config = provider.settingsConfig as Record<string, any>;
   if (appId === "claude") {
     const baseUrl = config?.env?.ANTHROPIC_BASE_URL;
@@ -220,7 +192,7 @@ function isOfficialSubscriptionProvider(provider: Provider, appId: AppId) {
       (!apiKey || (typeof apiKey === "string" && apiKey.trim() === ""))
     );
   }
-  if (appId === "gemini" || appId === "agy") {
+  if (appId === "agy") {
     const env = config?.env || {};
     const apiKey = env.GEMINI_API_KEY;
     const baseUrl = env.GOOGLE_GEMINI_BASE_URL;
@@ -237,14 +209,12 @@ function isOfficialSubscriptionProvider(provider: Provider, appId: AppId) {
   // 理由见 ProviderCard 中的注释。
   return false;
 }
-
 const NATIVE_USAGE_TEMPLATES = new Set<string>([
   TEMPLATE_TYPES.GITHUB_COPILOT,
   TEMPLATE_TYPES.TOKEN_PLAN,
   TEMPLATE_TYPES.BALANCE,
   TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION,
 ]);
-
 const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   provider,
   appId,
@@ -257,10 +227,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   const { data: settingsData } = useSettingsQuery();
   const [showUsageConfirm, setShowUsageConfirm] = useState(false);
   const isDarkMode = useDarkMode();
-
   // 生成带国际化的预设模板
   const PRESET_TEMPLATES = generatePresetTemplates(t);
-
   // 从 provider 的 settingsConfig 中提取 API Key 和 Base URL
   const getProviderCredentials = (): {
     apiKey: string | undefined;
@@ -275,9 +243,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       try {
         const config = provider.settingsConfig;
         if (!config) return { apiKey: undefined, baseUrl: undefined };
-
         // 处理不同应用的配置格式
-        if (appId === "claude" || appId === "claude-desktop") {
+        if (appId === "claude") {
           // Claude / Claude Desktop: { env: { ANTHROPIC_AUTH_TOKEN | ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL } }
           // Key fallbacks mirror the backend resolver (Provider::resolve_usage_credentials).
           const env = (config as any).env || {};
@@ -302,7 +269,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             apiKey,
             baseUrl: extractCodexBaseUrl(configToml),
           };
-        } else if (appId === "gemini" || appId === "agy") {
+        } else if (appId === "agy") {
           // Gemini: { env: { GEMINI_API_KEY, GOOGLE_GEMINI_BASE_URL } }
           // Key fallback mirrors the backend resolver (Provider::resolve_usage_credentials).
           const env = (config as any).env || {};
@@ -310,49 +277,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             apiKey: env.GEMINI_API_KEY || env.GOOGLE_API_KEY,
             baseUrl: env.GOOGLE_GEMINI_BASE_URL,
           };
-        } else if (appId === "grokbuild") {
-          const grokConfig = parseGrokBuildConfig(
-            (config as any).config,
-            provider.name,
-          );
-          return {
-            apiKey: grokConfig.apiKey,
-            baseUrl: grokConfig.baseUrl,
-          };
-        } else if (appId === "hermes") {
-          // Hermes: settingsConfig 顶层扁平（snake_case，对应 config.yaml）
-          return {
-            apiKey: (config as any).api_key,
-            baseUrl: (config as any).base_url,
-          };
-        } else if (appId === "kimi") {
-          // Kimi Code: 凭据在 provider.{base_url, api_key}（snake_case，对应 config.toml）
-          const kimiProvider = (config as any).provider || {};
-          return {
-            apiKey: kimiProvider.api_key,
-            baseUrl: kimiProvider.base_url,
-          };
-        } else if (appId === "pi" || appId === "omp") {
-          // Pi / Oh My Pi: provider values are camelCase; a model may override baseUrl.
-          const root = config as any;
-          const firstModel = Array.isArray(root.models)
-            ? root.models[0]
-            : undefined;
-          return {
-            apiKey: root.apiKey,
-            baseUrl: firstModel?.baseUrl || root.baseUrl,
-          };
-        } else if (appId === "openclaw") {
-          // OpenClaw: settingsConfig 顶层扁平（camelCase，对应 openclaw.json）
-          return {
-            apiKey: (config as any).apiKey,
-            baseUrl: (config as any).baseUrl,
-          };
-        } else if (
-          appId === "opencode" ||
-          appId === "dsh" ||
-          appId === "mcode"
-        ) {
+        } else if (appId === "opencode" || appId === "dsh") {
           // OpenCode / DeepSeek Harness / MiniMax Code: 凭据嵌在 options.{baseURL, apiKey}。
           const options = (config as any).options || {};
           return {
@@ -371,7 +296,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     // produces a double slash regardless of which path runs the query.
     return { apiKey: raw.apiKey, baseUrl: trimTrailingSlash(raw.baseUrl) };
   };
-
   const providerCredentials = getProviderCredentials();
   const isBoundCodexOfficial =
     resolveCodexOfficialIdentity(appId, provider) === "managed_account";
@@ -388,7 +312,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   // 绑了账号的官方卡没保存过开关时默认开（卡片和托盘同一规则）
   const defaultsToEnabled =
     isBoundCodexOfficial || Boolean(claudeBoundAccountId);
-
   const [script, setScript] = useState<UsageScript>(() => {
     const savedScript = provider.meta?.usage_script;
     if (savedScript) {
@@ -414,27 +337,21 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       }
       return normalizedScript;
     }
-
     const autoDetected = detectCodingPlanProvider(providerCredentials.baseUrl);
     if (autoDetected) {
       return createUsageScript({ codingPlanProvider: autoDetected });
     }
-
     if (detectBalanceProvider(providerCredentials.baseUrl)) {
       return createUsageScript();
     }
-
     if (isOfficialSubscription) {
       return createUsageScript({ enabled: defaultsToEnabled });
     }
-
     return createUsageScript({
       code: PRESET_TEMPLATES[TEMPLATE_TYPES.GENERAL],
     });
   });
-
   const [testing, setTesting] = useState(false);
-
   // {{apiKey}}/{{baseUrl}} 实际注入值，镜像后端 resolve_script_credentials 的
   // 优先级：脚本配置中的显式非空值优先（旧配置可能携带），否则回退供应商凭据。
   const effectiveScriptCredentials = {
@@ -442,7 +359,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     baseUrl:
       script.baseUrl?.trim().replace(/\/+$/, "") || providerCredentials.baseUrl,
   };
-
   // 🔧 失焦时的验证（严格）- 仅确保有效整数
   const validateTimeout = (value: string): number => {
     const num = Number(value);
@@ -462,7 +378,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     }
     return Math.floor(num);
   };
-
   // 🔧 失焦时的验证（严格）- 自动查询间隔
   const validateAndClampInterval = (value: string): number => {
     const num = Number(value);
@@ -489,7 +404,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     }
     return clamped;
   };
-
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(
     () => {
       const existingScript = provider.meta?.usage_script;
@@ -530,10 +444,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       return TEMPLATE_TYPES.GENERAL;
     },
   );
-
   const [showApiKey, setShowApiKey] = useState(false);
   const [showAccessToken, setShowAccessToken] = useState(false);
-
   const handleEnableToggle = (checked: boolean) => {
     if (checked && !settingsData?.usageConfirmed) {
       setShowUsageConfirm(true);
@@ -541,13 +453,11 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       setScript({ ...script, enabled: checked });
     }
   };
-
   const handleUsageConfirm = async () => {
     setShowUsageConfirm(false);
     try {
       if (settingsData) {
-        const { webdavSync: _, ...rest } = settingsData;
-        await settingsApi.save({ ...rest, usageConfirmed: true });
+        await settingsApi.save({ usageConfirmed: true });
         await queryClient.invalidateQueries({ queryKey: ["settings"] });
       }
     } catch (error) {
@@ -555,7 +465,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     }
     setScript({ ...script, enabled: true });
   };
-
   const handleSave = () => {
     // 专用模板不需要脚本验证
     if (!NATIVE_USAGE_TEMPLATES.has(selectedTemplate || "")) {
@@ -576,7 +485,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     onSave(scriptWithTemplate);
     onClose();
   };
-
   const handleTest = async () => {
     setTesting(true);
     try {
@@ -618,7 +526,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         }
         return;
       }
-
       // 官方余额查询模板使用专用 API
       if (selectedTemplate === TEMPLATE_TYPES.BALANCE) {
         const baseUrl = providerCredentials.baseUrl ?? "";
@@ -639,7 +546,10 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             duration: 3000,
             closeButton: true,
           });
-          queryClient.setQueryData(["usage", provider.id, appId], result);
+          queryClient.setQueryData(
+            usageKeys.script(provider.id, appId),
+            result,
+          );
         } else {
           toast.error(
             `${t("usageScript.testFailed")}: ${result.error || t("endpointTest.noResult")}`,
@@ -648,7 +558,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         }
         return;
       }
-
       // Coding Plan 模板使用专用 API
       if (selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN) {
         // ZenMux 手填 baseUrl/apiKey；火山是 native 供应商，baseUrl 走推理配置，
@@ -688,7 +597,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             used: tier.utilization,
             unit: "%",
           }));
-          queryClient.setQueryData(["usage", provider.id, appId], {
+          queryClient.setQueryData(usageKeys.script(provider.id, appId), {
             success: true,
             data: usageData,
           });
@@ -700,7 +609,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         }
         return;
       }
-
       // Copilot 模板使用专用 API
       if (selectedTemplate === TEMPLATE_TYPES.GITHUB_COPILOT) {
         const accountId = resolveManagedAccountId(
@@ -718,7 +626,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           closeButton: true,
         });
         // 更新缓存
-        queryClient.setQueryData(["usage", provider.id, appId], {
+        queryClient.setQueryData(usageKeys.script(provider.id, appId), {
           success: true,
           data: [
             {
@@ -732,7 +640,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         });
         return;
       }
-
       const result = await usageApi.testScript(
         provider.id,
         appId,
@@ -758,9 +665,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           duration: 3000,
           closeButton: true,
         });
-
         // 🔧 测试成功后，更新主界面列表的用量查询缓存
-        queryClient.setQueryData(["usage", provider.id, appId], result);
+        queryClient.setQueryData(usageKeys.script(provider.id, appId), result);
       } else {
         toast.error(
           `${t("usageScript.testFailed")}: ${result.error || t("endpointTest.noResult")}`,
@@ -782,7 +688,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       setTesting(false);
     }
   };
-
   const handleFormat = async () => {
     try {
       const formatted = await prettier.format(script.code, {
@@ -807,7 +712,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       );
     }
   };
-
   const handleUsePreset = (presetName: string) => {
     const preset = PRESET_TEMPLATES[presetName];
     if (preset !== undefined) {
@@ -898,14 +802,12 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       setSelectedTemplate(presetName);
     }
   };
-
   const shouldShowCredentialsConfig =
     selectedTemplate === TEMPLATE_TYPES.GENERAL ||
     selectedTemplate === TEMPLATE_TYPES.SUB2API ||
     selectedTemplate === TEMPLATE_TYPES.NEW_API ||
     (selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN &&
       script.codingPlanProvider === "zenmux");
-
   const footer = (
     <>
       <div className="flex gap-2">
@@ -947,7 +849,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       </div>
     </>
   );
-
   return (
     <FullScreenPanel
       isOpen={isOpen}
@@ -1097,16 +998,16 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                   {t("usageScript.balanceHint")}
                 </p>
                 <div className="flex gap-2 flex-wrap">
-                  {BALANCE_PROVIDERS.filter((bp) =>
-                    bp.pattern.test(providerCredentials.baseUrl || ""),
-                  ).map((bp) => (
-                    <span
-                      key={bp.id}
-                      className="inline-flex items-center px-2.5 py-1 rounded-md bg-primary/10 text-primary text-xs font-medium"
-                    >
-                      {bp.label}
-                    </span>
-                  ))}
+                  {matchingBalanceProviders(providerCredentials.baseUrl).map(
+                    (bp) => (
+                      <span
+                        key={bp.id}
+                        className="inline-flex items-center px-2.5 py-1 rounded-md bg-primary/10 text-primary text-xs font-medium"
+                      >
+                        {bp.label}
+                      </span>
+                    ),
+                  )}
                 </div>
               </div>
             )}
@@ -1712,5 +1613,4 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     </FullScreenPanel>
   );
 };
-
 export default UsageScriptModal;

@@ -1,7 +1,25 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+/// 限制 Linux glibc malloc arena 数量，避免 Tokio / spawn_blocking / GTK 多线程
+/// 各自保留未归还的堆页而抬高常驻 RSS。
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn tune_allocator() {
+    if std::env::var_os("MALLOC_ARENA_MAX").is_some() {
+        return;
+    }
+    // SAFETY: mallopt 是 glibc 线程安全接口，必须在后台线程和运行时创建前调用。
+    unsafe {
+        libc::mallopt(libc::M_ARENA_MAX, 2);
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn tune_allocator() {}
+
 fn main() {
+    tune_allocator();
+
     // 在 Linux 上设置 WebKit 环境变量以解决 DMA-BUF 渲染问题
     // 某些 Linux 系统（如 Debian 13.2、Nvidia GPU）上 WebKitGTK 的 DMA-BUF 渲染器可能导致白屏/黑屏
     // 参考: https://github.com/tauri-apps/tauri/issues/9394

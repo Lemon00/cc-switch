@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { Button } from "@/components/ui/button";
+import type { ImportStatus } from "@/hooks/useImportExport";
 import {
   AlertCircle,
   CheckCircle2,
@@ -7,10 +8,8 @@ import {
   Save,
   XCircle,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import type { ImportStatus } from "@/hooks/useImportExport";
-
 interface ImportExportSectionProps {
   status: ImportStatus;
   selectedFile: string;
@@ -22,7 +21,6 @@ interface ImportExportSectionProps {
   onExport: () => Promise<void>;
   onClear: () => void;
 }
-
 export function ImportExportSection({
   status,
   selectedFile,
@@ -35,13 +33,11 @@ export function ImportExportSection({
   onClear,
 }: ImportExportSectionProps) {
   const { t } = useTranslation();
-
   const selectedFileName = useMemo(() => {
     if (!selectedFile) return "";
     const segments = selectedFile.split(/[\\/]/);
     return segments[segments.length - 1] || selectedFile;
   }, [selectedFile]);
-
   return (
     <section className="space-y-4">
       <header className="space-y-2">
@@ -120,27 +116,22 @@ export function ImportExportSection({
     </section>
   );
 }
-
 interface ImportStatusMessageProps {
   status: ImportStatus;
   errorMessage: string | null;
   backupId: string | null;
 }
-
 function ImportStatusMessage({
   status,
   errorMessage,
   backupId,
 }: ImportStatusMessageProps) {
   const { t } = useTranslation();
-
   if (status === "idle") {
     return null;
   }
-
   const baseClass =
     "flex items-start gap-3 rounded-xl border p-4 text-sm leading-relaxed backdrop-blur-sm";
-
   if (status === "importing") {
     return (
       <div className={`${baseClass} border-border-strong bg-subtle text-fg-1 `}>
@@ -152,7 +143,6 @@ function ImportStatusMessage({
       </div>
     );
   }
-
   if (status === "success") {
     return (
       <div
@@ -171,7 +161,6 @@ function ImportStatusMessage({
       </div>
     );
   }
-
   if (status === "partial-success") {
     return (
       <div
@@ -185,9 +174,7 @@ function ImportStatusMessage({
       </div>
     );
   }
-
   const message = errorMessage || t("settings.importFailed");
-
   return (
     <div
       className={`${baseClass} border-transparent bg-danger-soft text-danger-text `}

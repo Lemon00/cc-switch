@@ -1,147 +1,144 @@
 import React, {
   createContext,
-  useContext,
-  useState,
-  useEffect,
   useCallback,
+  useContext,
+  useEffect,
+  useMemo,
   useRef,
+  useState,
 } from "react";
 import type { UpdateInfo } from "../lib/updater";
 import { checkForUpdate } from "../lib/updater";
 import { extractErrorMessage } from "../utils/errorUtils";
-
 interface UpdateContextValue {
   // 更新状态
   hasUpdate: boolean;
   updateInfo: UpdateInfo | null;
   isChecking: boolean;
   error: string | null;
-
   // 提示状态
   isDismissed: boolean;
   dismissUpdate: () => void;
-
   // 操作方法
   checkUpdate: () => Promise<boolean>;
   resetDismiss: () => void;
 }
-
 const UpdateContext = createContext<UpdateContextValue | undefined>(undefined);
-
+const DISMISSED_VERSION_KEY = "ccswitch:update:dismissedVersion";
+const LEGACY_DISMISSED_KEY = "dismissedUpdateVersion";
+function readDismissedVersion(): string | null {
+  let version: string | null = null;
+  try {
+    version = localStorage.getItem(DISMISSED_VERSION_KEY);
+    if (!version) {
+      version = localStorage.getItem(LEGACY_DISMISSED_KEY);
+      if (version) {
+        localStorage.setItem(DISMISSED_VERSION_KEY, version);
+        localStorage.removeItem(LEGACY_DISMISSED_KEY);
+      }
+    }
+  } catch (error) {
+    console.warn("Unable to read update notification preference", error);
+  }
+  return version;
+}
+function persistDismissedVersion(version: string | null): void {
+  try {
+    if (version) {
+      localStorage.setItem(DISMISSED_VERSION_KEY, version);
+    } else {
+      localStorage.removeItem(DISMISSED_VERSION_KEY);
+    }
+    localStorage.removeItem(LEGACY_DISMISSED_KEY);
+  } catch (error) {
+    console.warn("Unable to save update notification preference", error);
+  }
+}
 export function UpdateProvider({ children }: { children: React.ReactNode }) {
-  const DISMISSED_VERSION_KEY = "ccswitch:update:dismissedVersion";
-  const LEGACY_DISMISSED_KEY = "dismissedUpdateVersion"; // 兼容旧键
-
   const [hasUpdate, setHasUpdate] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [isChecking, setIsChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isDismissed, setIsDismissed] = useState(false);
-
-  // 从 localStorage 读取已关闭的版本
-  useEffect(() => {
-    const current = updateInfo?.availableVersion;
-    if (!current) return;
-
-    // 读取新键；若不存在，尝试迁移旧键
-    let dismissedVersion = localStorage.getItem(DISMISSED_VERSION_KEY);
-    if (!dismissedVersion) {
-      const legacy = localStorage.getItem(LEGACY_DISMISSED_KEY);
-      if (legacy) {
-        localStorage.setItem(DISMISSED_VERSION_KEY, legacy);
-        localStorage.removeItem(LEGACY_DISMISSED_KEY);
-        dismissedVersion = legacy;
-      }
-    }
-
-    setIsDismissed(dismissedVersion === current);
-  }, [updateInfo?.availableVersion]);
-
-  const isCheckingRef = useRef(false);
-
-  const checkUpdate = useCallback(async () => {
-    if (isCheckingRef.current) return false;
-    isCheckingRef.current = true;
+  const [dismissedVersion, setDismissedVersion] =
+    useState(readDismissedVersion);
+  const isDismissed =
+    updateInfo !== null && dismissedVersion === updateInfo.availableVersion;
+  const checkPromiseRef = useRef<Promise<boolean> | null>(null);
+  const checkUpdate = useCallback((): Promise<boolean> => {
+    if (checkPromiseRef.current) return checkPromiseRef.current;
     setIsChecking(true);
     setError(null);
-
-    try {
-      const result = await checkForUpdate({ timeout: 30000 });
-
-      if (result.status === "available") {
-        setHasUpdate(true);
-        setUpdateInfo(result.info);
-
-        // 检查是否已经关闭过这个版本的提醒
-        let dismissedVersion = localStorage.getItem(DISMISSED_VERSION_KEY);
-        if (!dismissedVersion) {
-          const legacy = localStorage.getItem(LEGACY_DISMISSED_KEY);
-          if (legacy) {
-            localStorage.setItem(DISMISSED_VERSION_KEY, legacy);
-            localStorage.removeItem(LEGACY_DISMISSED_KEY);
-            dismissedVersion = legacy;
-          }
+    const request = (async () => {
+      try {
+        const result = await checkForUpdate({ timeout: 30000 });
+        if (result.status === "available") {
+          setHasUpdate(true);
+          setUpdateInfo(result.info);
+          return true; // 有更新
+        } else {
+          setHasUpdate(false);
+          setUpdateInfo(null);
+          return false; // 已是最新
         }
-        setIsDismissed(dismissedVersion === result.info.availableVersion);
-        return true; // 有更新
-      } else {
+      } catch (err) {
+        console.error("检查更新失败:", err);
+        setError(extractErrorMessage(err) || "检查更新失败");
         setHasUpdate(false);
+        // 失败时一并清掉旧 updateInfo，避免 hasUpdate=false 仍挂着上次版本信息
         setUpdateInfo(null);
-        setIsDismissed(false);
-        return false; // 已是最新
+        throw err; // 抛出错误让调用方处理
+      } finally {
+        setIsChecking(false);
+        checkPromiseRef.current = null;
       }
-    } catch (err) {
-      console.error("检查更新失败:", err);
-      setError(extractErrorMessage(err) || "检查更新失败");
-      setHasUpdate(false);
-      throw err; // 抛出错误让调用方处理
-    } finally {
-      setIsChecking(false);
-      isCheckingRef.current = false;
-    }
+    })();
+    checkPromiseRef.current = request;
+    return request;
   }, []);
-
   const dismissUpdate = useCallback(() => {
-    setIsDismissed(true);
     if (updateInfo?.availableVersion) {
-      localStorage.setItem(DISMISSED_VERSION_KEY, updateInfo.availableVersion);
-      // 清理旧键
-      localStorage.removeItem(LEGACY_DISMISSED_KEY);
+      setDismissedVersion(updateInfo.availableVersion);
+      persistDismissedVersion(updateInfo.availableVersion);
     }
   }, [updateInfo?.availableVersion]);
-
   const resetDismiss = useCallback(() => {
-    setIsDismissed(false);
-    localStorage.removeItem(DISMISSED_VERSION_KEY);
-    localStorage.removeItem(LEGACY_DISMISSED_KEY);
+    setDismissedVersion(null);
+    persistDismissedVersion(null);
   }, []);
-
   // 应用启动时自动检查更新
   useEffect(() => {
     // 延迟1秒后检查，避免影响启动体验
     const timer = setTimeout(() => {
       checkUpdate().catch(console.error);
     }, 1000);
-
     return () => clearTimeout(timer);
   }, [checkUpdate]);
-
-  const value: UpdateContextValue = {
-    hasUpdate,
-    updateInfo,
-    isChecking,
-    error,
-    isDismissed,
-    dismissUpdate,
-    checkUpdate,
-    resetDismiss,
-  };
-
+  const value = useMemo<UpdateContextValue>(
+    () => ({
+      hasUpdate,
+      updateInfo,
+      isChecking,
+      error,
+      isDismissed,
+      dismissUpdate,
+      checkUpdate,
+      resetDismiss,
+    }),
+    [
+      hasUpdate,
+      updateInfo,
+      isChecking,
+      error,
+      isDismissed,
+      dismissUpdate,
+      checkUpdate,
+      resetDismiss,
+    ],
+  );
   return (
     <UpdateContext.Provider value={value}>{children}</UpdateContext.Provider>
   );
 }
-
 export function useUpdate() {
   const context = useContext(UpdateContext);
   if (!context) {

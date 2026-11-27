@@ -164,7 +164,7 @@ impl StreamCheckService {
     /// 没有 cc-switch 能可靠探测的目标——这类供应商的连通检测按钮在前端已隐藏
     /// （见 `ProviderCard.tsx`），故此处对其提取失败直接报错即可，不做官方端点回退。
     fn resolve_base_url(app_type: &AppType, provider: &Provider) -> Result<String, AppError> {
-        if provider.category.as_deref() == Some("official") {
+        if provider.has_official_category() {
             return Err(AppError::Message(
                 "Official providers do not expose a reachability-check target".to_string(),
             ));
@@ -174,13 +174,7 @@ impl StreamCheckService {
             // 累加模式应用的 settings_config 结构与 Claude/Codex/Gemini 不同，
             // 不走 adapter，直接按各自约定提取 base_url。
             AppType::OpenCode => Self::resolve_opencode_base_url(provider),
-            AppType::OpenClaw => Self::extract_openclaw_base_url(provider),
-            AppType::Hermes => Self::extract_hermes_base_url(provider),
-            AppType::Pi => crate::pi_config::provider_base_url(&provider.settings_config),
-            AppType::Omp => crate::omp_config::provider_base_url(&provider.settings_config),
-            AppType::ClaudeDesktop => ClaudeAdapter::new()
-                .extract_base_url(provider)
-                .map_err(|e| AppError::Message(format!("Failed to extract base_url: {e}"))),
+
             // agy 的 settings 与 Gemini 同形（env.GOOGLE_GEMINI_BASE_URL），借用 Gemini
             // adapter 提取；未配置端点时 agy 自身走 Google 默认端点，这里保持一致。
             AppType::Agy => {
@@ -300,42 +294,6 @@ impl StreamCheckService {
             .meta
             .as_ref()
             .and_then(|meta| meta.custom_user_agent_header().ok().flatten())
-    }
-
-    // ===== 各应用 base_url 提取（settings_config 结构互不相同）=====
-
-    /// OpenClaw: `{ baseUrl, apiKey, api, ... }`（camelCase）
-    fn extract_openclaw_base_url(provider: &Provider) -> Result<String, AppError> {
-        provider
-            .settings_config
-            .get("baseUrl")
-            .and_then(|v| v.as_str())
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| {
-                AppError::localized(
-                    "openclaw_base_url_missing",
-                    "OpenClaw 供应商缺少 baseUrl",
-                    "OpenClaw provider is missing `baseUrl`",
-                )
-            })
-    }
-
-    /// Hermes: `{ base_url, api_key, api_mode }`（snake_case）
-    fn extract_hermes_base_url(provider: &Provider) -> Result<String, AppError> {
-        provider
-            .settings_config
-            .get("base_url")
-            .and_then(|v| v.as_str())
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| {
-                AppError::localized(
-                    "hermes_base_url_missing",
-                    "Hermes 供应商缺少 base_url",
-                    "Hermes provider is missing `base_url`",
-                )
-            })
     }
 
     /// OpenCode V1: `{ npm, options: { baseURL, apiKey }, ... }`；
@@ -579,18 +537,6 @@ mod tests {
         assert_eq!(
             StreamCheckService::resolve_opencode_base_url(&p).unwrap(),
             "https://legacy.example/v1"
-        );
-    }
-
-    #[test]
-    fn test_extract_openclaw_base_url_missing_errors() {
-        let p = make_provider(serde_json::json!({ "apiKey": "k", "api": "openai-completions" }));
-        assert!(StreamCheckService::extract_openclaw_base_url(&p).is_err());
-
-        let p2 = make_provider(serde_json::json!({ "baseUrl": "https://api.deepseek.com/v1" }));
-        assert_eq!(
-            StreamCheckService::extract_openclaw_base_url(&p2).unwrap(),
-            "https://api.deepseek.com/v1"
         );
     }
 

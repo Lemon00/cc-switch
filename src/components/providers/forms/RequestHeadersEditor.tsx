@@ -1,21 +1,19 @@
-import { HelpTip } from "@/components/ui/help-tip";
-import { useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { HelpTip } from "@/components/ui/help-tip";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { Plus, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { REQUEST_HEADER_DRAFT_PREFIX } from "./helpers/requestHeaders";
-
 interface RequestHeadersEditorProps {
   headers: Record<string, string>;
   onHeadersChange: (headers: Record<string, string>) => void;
   className?: string;
 }
-
 function HeaderNameInput({
   headerName,
   onChange,
@@ -30,11 +28,9 @@ function HeaderNameInput({
   const isDraft = headerName.startsWith(REQUEST_HEADER_DRAFT_PREFIX);
   const displayValue = isDraft ? "" : headerName;
   const [localValue, setLocalValue] = useState(displayValue);
-
   useEffect(() => {
     setLocalValue(isDraft ? "" : headerName);
   }, [headerName, isDraft]);
-
   return (
     <Input
       value={localValue}
@@ -59,33 +55,28 @@ function HeaderNameInput({
     />
   );
 }
-
 function nextDraftKey(headers: Record<string, string>): string {
   let suffix = Date.now();
   while (`${REQUEST_HEADER_DRAFT_PREFIX}${suffix}` in headers) suffix += 1;
   return `${REQUEST_HEADER_DRAFT_PREFIX}${suffix}`;
 }
-
 export function RequestHeadersEditor({
   headers,
   onHeadersChange,
   className,
 }: RequestHeadersEditorProps) {
   const { t } = useTranslation();
-
   const addHeader = () => {
     onHeadersChange({
       ...headers,
       [nextDraftKey(headers)]: "",
     });
   };
-
   const removeHeader = (key: string) => {
     const next = { ...headers };
     delete next[key];
     onHeadersChange(next);
   };
-
   const renameHeader = (oldKey: string, newKey: string): boolean => {
     const normalizedKey = newKey.toLowerCase();
     if (
@@ -95,7 +86,6 @@ export function RequestHeadersEditor({
     ) {
       return false;
     }
-
     const next: Record<string, string> = {};
     for (const [key, value] of Object.entries(headers)) {
       next[key === oldKey ? newKey : key] = value;
@@ -103,11 +93,9 @@ export function RequestHeadersEditor({
     onHeadersChange(next);
     return true;
   };
-
   const updateHeader = (key: string, value: string) => {
     onHeadersChange({ ...headers, [key]: value });
   };
-
   return (
     <div className={cn("space-y-2 border-l border-border pl-3", className)}>
       <div className="flex items-start justify-between gap-3">

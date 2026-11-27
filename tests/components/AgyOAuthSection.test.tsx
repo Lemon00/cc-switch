@@ -2,12 +2,10 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AgyOAuthSection } from "@/components/providers/forms/AgyOAuthSection";
-
 const mocks = vi.hoisted(() => ({
   useManagedAuth: vi.fn(),
   openExternal: vi.fn(),
 }));
-
 vi.mock("@/components/providers/forms/hooks/useManagedAuth", () => ({
   useManagedAuth: mocks.useManagedAuth,
 }));
@@ -28,7 +26,6 @@ vi.mock("@/lib/api", async (importOriginal) => {
     settingsApi: { ...actual.settingsApi, openExternal: mocks.openExternal },
   };
 });
-
 const baseAuth = () => ({
   accounts: [] as unknown[],
   defaultAccountId: null as string | null,
@@ -48,7 +45,6 @@ const baseAuth = () => ({
   logout: vi.fn(),
   refetchStatus: vi.fn(),
 });
-
 const account = (id: string, login: string) => ({
   id,
   provider: "agy_oauth",
@@ -59,13 +55,11 @@ const account = (id: string, login: string) => ({
   github_domain: "google.com",
   requires_reauth: false,
 });
-
 describe("AgyOAuthSection", () => {
   beforeEach(() => {
     mocks.useManagedAuth.mockReset();
     mocks.openExternal.mockReset();
   });
-
   it("marks the account agy is signed in with and switches from the menu", async () => {
     const auth = baseAuth();
     auth.accounts = [
@@ -75,11 +69,9 @@ describe("AgyOAuthSection", () => {
     auth.defaultAccountId = "a";
     mocks.useManagedAuth.mockReturnValue(auth);
     render(<AgyOAuthSection />);
-
     expect(mocks.useManagedAuth).toHaveBeenCalledWith("agy_oauth");
     const current = screen.getByText("a@example.com").parentElement!;
     expect(within(current).getByText("agy 在用")).toBeInTheDocument();
-
     // 当前那个号的菜单里没有「切换」，另一个号有
     await userEvent.click(
       screen.getByRole("button", { name: "b@example.com 的更多操作" }),
@@ -89,7 +81,6 @@ describe("AgyOAuthSection", () => {
     );
     expect(auth.setDefaultAccount).toHaveBeenCalledWith("b");
   });
-
   it("shows the browser sign-in hint instead of a device code", async () => {
     const auth = baseAuth();
     Object.assign(auth, {
@@ -107,7 +98,6 @@ describe("AgyOAuthSection", () => {
     });
     mocks.useManagedAuth.mockReturnValue(auth);
     render(<AgyOAuthSection />);
-
     expect(
       screen.getByText(/已在浏览器打开 Antigravity 的登录页/),
     ).toBeInTheDocument();
@@ -121,7 +111,6 @@ describe("AgyOAuthSection", () => {
       "https://accounts.google.com/o/oauth2/v2/auth?x=1",
     );
   });
-
   it("shows quota for every account that can still sign in", () => {
     const auth = baseAuth();
     auth.accounts = [
@@ -132,8 +121,9 @@ describe("AgyOAuthSection", () => {
     auth.defaultAccountId = "a";
     mocks.useManagedAuth.mockReturnValue(auth);
     render(<AgyOAuthSection />);
-
-    const quotas = screen.getAllByTestId("agy-quota").map((el) => el.textContent);
+    const quotas = screen
+      .getAllByTestId("agy-quota")
+      .map((el) => el.textContent);
     // 不只是 agy 在用的号，其他号也查；登录失效的不查
     expect(quotas).toEqual(["a", "c"]);
   });

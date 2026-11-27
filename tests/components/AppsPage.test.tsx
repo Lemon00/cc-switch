@@ -25,9 +25,7 @@ import type {
 } from "@/lib/api/settings";
 import type { DndContextProps, DragEndEvent } from "@dnd-kit/core";
 import { APP_IDS } from "@/config/appConfig";
-
 type ToolVersions = Awaited<ReturnType<typeof settingsApi.getToolVersions>>;
-
 const mocks = vi.hoisted(() => ({
   getToolVersions: vi.fn(),
   probeToolInstallations: vi.fn(),
@@ -39,13 +37,15 @@ const mocks = vi.hoisted(() => ({
   success: vi.fn(),
   warning: vi.fn(),
   error: vi.fn(),
-  settings: {} as { visibleApps?: undefined; appOrder?: string[] },
+  settings: {} as {
+    visibleApps?: undefined;
+    appOrder?: string[];
+  },
   updateSettings: vi.fn(),
   autoSaveSettings: vi.fn(async () => null),
   dragEndHandlers: [] as ((event: DragEndEvent) => void)[],
   desktopStatus: { supported: true, installed: true, configured: true },
 }));
-
 vi.mock("@/lib/api", () => ({ settingsApi: mocks }));
 vi.mock("@/lib/api/providers", () => ({
   providersApi: {
@@ -72,7 +72,6 @@ vi.mock("@dnd-kit/core", async () => {
 });
 vi.mock("sonner", () => ({ toast: mocks }));
 vi.mock("@/lib/clipboard", () => ({ copyText: mocks.copyText }));
-
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (error: Error) => void;
@@ -82,7 +81,6 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
-
 function report(
   tool: string,
   overrides: Partial<ToolInstallationReport> = {},
@@ -98,7 +96,6 @@ function report(
     ...overrides,
   };
 }
-
 function uninstallPlan(tool: string): ToolUninstallPlan {
   return {
     tool,
@@ -109,7 +106,6 @@ function uninstallPlan(tool: string): ToolUninstallPlan {
     wsl_distro: null,
   };
 }
-
 function candidate(
   plan: ToolUninstallPlan | null,
   overrides: Partial<ToolUninstallCandidate> = {},
@@ -127,11 +123,9 @@ function candidate(
     ...overrides,
   };
 }
-
 const upgraded = new Set<string>();
 const outdated = new Set<string>();
 const missing = new Set<string>();
-
 function card(name: string) {
   return within(
     screen
@@ -139,7 +133,6 @@ function card(name: string) {
       .closest("[data-tool-row]") as HTMLElement,
   );
 }
-
 /** 已是最新：没有升级 / 安装按钮，显示新版本号。 */
 function isReady(name: string) {
   return (
@@ -148,7 +141,6 @@ function isReady(name: string) {
     }) === null && card(name).queryByText("2.0.0") !== null
   );
 }
-
 /** 某一组里各行的应用 ID，按显示顺序。 */
 function rowApps(region: string) {
   return Array.from(
@@ -158,12 +150,10 @@ function rowApps(region: string) {
     (row) => row.dataset.toolRow,
   );
 }
-
 /** 行尾「⋯」菜单（卸载在里面）。 */
 function rowMenu(name: string) {
   return card(name).getByRole("button", { name: "appPage.moreActions" });
 }
-
 async function openUninstall(name: string) {
   const user = userEvent.setup();
   await user.click(rowMenu(name));
@@ -171,11 +161,9 @@ async function openUninstall(name: string) {
     await screen.findByRole("menuitem", { name: "settings.toolUninstall" }),
   );
 }
-
 function updateButton(name: string) {
   return card(name).getByRole("button", { name: "settings.toolUpdate" });
 }
-
 function mountApps(AppsPage: () => JSX.Element) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -186,7 +174,6 @@ function mountApps(AppsPage: () => JSX.Element) {
     </QueryClientProvider>,
   );
 }
-
 async function renderApps() {
   // 安装 / 升级的状态放在模块级 store 里，跨挂载保留。
   const { AppsPage } = await import("@/components/apps/AppsPage");
@@ -200,10 +187,8 @@ async function renderApps() {
   );
   return view;
 }
-
 const updateAllButton = () =>
   screen.getByRole("button", { name: /settings\.updateAllTools/ });
-
 // Radix Select scrolls the focused option; jsdom does not implement scrolling.
 const originalScrollIntoView = Object.getOwnPropertyDescriptor(
   HTMLElement.prototype,
@@ -226,9 +211,8 @@ afterAll(() => {
     Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
   }
 });
-
-describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
-  beforeEach(() => {
+describe("AppsPage concurrent CLI upgrades", { timeout: 10000 }, () => {
+  beforeEach(async () => {
     vi.resetModules();
     upgraded.clear();
     outdated.clear();
@@ -243,7 +227,7 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     mocks.updateSettings.mockReset();
     mocks.autoSaveSettings.mockReset().mockResolvedValue(null);
     mocks.copyText.mockReset().mockResolvedValue(undefined);
-    outdated.add("claude").add("codex").add("gemini");
+    outdated.add("claude").add("codex").add("opencode");
     mocks.getToolVersions
       .mockReset()
       .mockImplementation(async (tools: string[]) =>
@@ -282,8 +266,9 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
         upgraded.add(tool);
         missing.delete(tool);
       });
-  });
-
+    // 首次转换整个页面可能慢于交互断言的超时，放在 setup 阶段完成。
+    await import("@/components/apps/AppsPage");
+  }, 60000);
   it("waits for Codex loading even while the check-updates label is hidden in the DOM", async () => {
     const getVersions = mocks.getToolVersions.getMockImplementation()!;
     const codexReady = deferred<void>();
@@ -309,7 +294,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     await loading;
     expect(updateButton("Codex")).toBeEnabled();
   });
-
   it("copies only the selected application's manual command and switches installation methods", async () => {
     const getVersions = mocks.getToolVersions.getMockImplementation()!;
     mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
@@ -338,7 +322,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     expect(mocks.copyText).toHaveBeenLastCalledWith(
       "npm uninstall -g @openai/codex",
     );
-
     expect(dialog.getByText("macOS")).toBeInTheDocument();
     expect(dialog.getAllByRole("combobox")).toHaveLength(2);
     await user.click(
@@ -367,7 +350,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
     await user.click(dialog.getByRole("button", { name: "common.close" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-
     await user.click(
       screen.getByRole("button", { name: "appsPage.moreActions" }),
     );
@@ -380,48 +362,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
       }),
     ).toBeInTheDocument();
   });
-
-  it.each([["Windows NT 10.0"], ["X11; Linux x86_64"]])(
-    "shows the official Hermes uninstall command for %s",
-    async (userAgent) => {
-      const platform = vi
-        .spyOn(navigator, "userAgent", "get")
-        .mockReturnValue(userAgent);
-      try {
-        const user = userEvent.setup();
-        await renderApps();
-        await user.click(
-          screen.getByRole("button", { name: "appsPage.moreActions" }),
-        );
-        await user.click(
-          await screen.findByRole("menuitem", {
-            name: "settings.manualUninstallCommands",
-          }),
-        );
-        const dialog = within(screen.getByRole("dialog"));
-        await user.click(
-          dialog.getByRole("combobox", {
-            name: "settings.manualUninstallMethod",
-          }),
-        );
-        await user.click(await screen.findByRole("option", { name: "Hermes" }));
-        expect(
-          within(dialog.getByRole("list")).getByText("Hermes"),
-        ).toBeInTheDocument();
-        expect(dialog.queryByText("Codex")).not.toBeInTheDocument();
-        await user.click(
-          dialog.getByRole("button", {
-            name: "settings.copyToolUninstallCommand",
-          }),
-        );
-        expect(mocks.copyText).toHaveBeenCalledWith("hermes uninstall --yes");
-        expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
-      } finally {
-        platform.mockRestore();
-      }
-    },
-  );
-
   it("keeps manual commands visible when copying fails", async () => {
     mocks.copyText.mockRejectedValueOnce(new Error("clipboard unavailable"));
     const user = userEvent.setup();
@@ -446,8 +386,7 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     expect(mocks.success).not.toHaveBeenCalled();
     expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
   });
-
-  it("automatically detects Windows and only shows documented pnpm and Bun clients", async () => {
+  it("automatically detects Windows and only shows documented pnpm clients", async () => {
     const platform = vi
       .spyOn(navigator, "userAgent", "get")
       .mockReturnValue("Windows NT 10.0");
@@ -465,17 +404,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
       const dialog = within(screen.getByRole("dialog"));
       expect(dialog.getByText("Windows")).toBeInTheDocument();
       expect(dialog.getAllByRole("combobox")).toHaveLength(2);
-      const chooseMethod = async (name: string) => {
-        await user.click(
-          dialog.getByRole("combobox", {
-            name: "settings.manualUninstallMethod",
-          }),
-        );
-        expect(
-          screen.queryByRole("option", { name: "Volta" }),
-        ).not.toBeInTheDocument();
-        await user.click(await screen.findByRole("option", { name }));
-      };
       await user.click(
         dialog.getByRole("combobox", {
           name: "settings.manualUninstallMethod",
@@ -488,34 +416,16 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
         screen.queryByRole("option", { name: "Homebrew (formula)" }),
       ).not.toBeInTheDocument();
       await user.click(await screen.findByRole("option", { name: "pnpm" }));
-      expect(dialog.getAllByRole("listitem")).toHaveLength(2);
+      expect(dialog.getAllByRole("listitem")).toHaveLength(1);
       expect(
         dialog.getByText("pnpm remove -g opencode-ai"),
       ).toBeInTheDocument();
-      expect(dialog.getByText("pnpm remove -g openclaw")).toBeInTheDocument();
-      expect(dialog.queryByText("Codex")).not.toBeInTheDocument();
-      await chooseMethod("bun");
-      expect(dialog.getAllByRole("listitem")).toHaveLength(2);
-      expect(dialog.getByText("bun remove -g openclaw")).toBeInTheDocument();
-      expect(
-        dialog.getByText("bun remove -g @oh-my-pi/pi-coding-agent"),
-      ).toBeInTheDocument();
-      expect(
-        dialog.queryByText("bun remove -g opencode-ai"),
-      ).not.toBeInTheDocument();
-      expect(
-        dialog.getByText("settings.manualUninstallOpenClawHint"),
-      ).toBeInTheDocument();
-      expect(
-        dialog.getByText("settings.manualUninstallBunLauncherHint"),
-      ).toBeInTheDocument();
-
+      expect(dialog.queryByText("OpenClaw")).not.toBeInTheDocument();
       expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
     } finally {
       platform.mockRestore();
     }
   });
-
   it.each([
     ["updates the detected environments and per-client WSL commands", false],
     ["preserves a manual environment selection during detection", true],
@@ -551,11 +461,10 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
           name: "settings.manualUninstallMethod",
         }),
       );
-      await user.click(await screen.findByRole("option", { name: "bun" }));
+      await user.click(await screen.findByRole("option", { name: "pnpm" }));
       expect(
-        dialog.queryByText("bun remove -g opencode-ai"),
-      ).not.toBeInTheDocument();
-
+        dialog.queryByText("pnpm remove -g opencode-ai"),
+      ).toBeInTheDocument();
       const chooseEnvironment = async (name: string) => {
         await user.click(environmentSelect);
         expect(
@@ -580,20 +489,15 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
       if (manualOverride) {
         expect(environmentSelect).toHaveTextContent(/^Windows$/);
         expect(
-          dialog.queryByText("bun remove -g opencode-ai"),
-        ).not.toBeInTheDocument();
+          dialog.queryByText("pnpm remove -g opencode-ai"),
+        ).toBeInTheDocument();
       } else {
         expect(environmentSelect).toHaveTextContent("Windows / WSL · Ubuntu");
         const opencodeRow = within(
-          dialog.getByText("bun remove -g opencode-ai").closest("li")!,
+          dialog.getByText("pnpm remove -g opencode-ai").closest("li")!,
         );
         expect(opencodeRow.getByText("WSL · Ubuntu")).toBeInTheDocument();
-        const openclawRow = within(
-          dialog.getByText("bun remove -g openclaw").closest("li")!,
-        );
-        expect(openclawRow.getByText("Windows")).toBeInTheDocument();
         expect(dialog.getAllByRole("combobox")).toHaveLength(2);
-
         await user.click(
           dialog.getByRole("combobox", {
             name: "settings.manualUninstallMethod",
@@ -615,7 +519,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
           dialog.queryByText("brew uninstall --formula gemini-cli"),
         ).not.toBeInTheDocument();
       }
-
       await chooseEnvironment("macOS");
       await user.click(
         dialog.getByRole("combobox", {
@@ -629,7 +532,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
         dialog.getByText("brew uninstall --cask codex"),
       ).toBeInTheDocument();
       expect(dialog.queryByText("WSL · Ubuntu")).not.toBeInTheDocument();
-
       // A manual switch also drops methods unsupported in the new environment.
       await chooseEnvironment("Windows");
       expect(
@@ -646,14 +548,15 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
           name: "settings.manualUninstallMethod",
         }),
       );
-      await user.click(await screen.findByRole("option", { name: "bun" }));
-      expect(dialog.getByText("bun remove -g opencode-ai")).toBeInTheDocument();
+      await user.click(await screen.findByRole("option", { name: "pnpm" }));
+      expect(
+        dialog.getByText("pnpm remove -g opencode-ai"),
+      ).toBeInTheDocument();
       expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
     } finally {
       platform.mockRestore();
     }
   });
-
   it("offers uninstall for installed tools and keeps missing tools installable", async () => {
     missing.add("codex");
     await renderApps();
@@ -676,7 +579,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
       card("Codex").getByRole("button", { name: "settings.toolInstall" }),
     ).toBeEnabled();
   });
-
   it("groups apps into installed and not installed sections", async () => {
     missing.add("codex");
     await renderApps();
@@ -687,63 +589,31 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
       screen.getByRole("region", { name: "appsPage.sectionNotInstalled" }),
     );
     expect(installed.getByText("Claude Code")).toBeInTheDocument();
-    expect(installed.getByText("Claude Desktop")).toBeInTheDocument();
+    expect(screen.queryByText("Claude Desktop")).not.toBeInTheDocument();
     expect(installed.queryByText("Codex")).toBeNull();
     expect(notInstalled.getByText("Codex")).toBeInTheDocument();
     expect(notInstalled.queryByText("Claude Code")).toBeNull();
   });
-
-  it("groups Claude Desktop by whether it is installed, not whether it is connected", async () => {
-    mocks.desktopStatus = {
-      supported: true,
-      installed: true,
-      configured: false,
-    };
-    await renderApps();
-    expect(rowApps("appsPage.sectionInstalled")).toContain("claude-desktop");
-    expect(
-      card("Claude Desktop").getByText("appsPage.desktopNotConnected"),
-    ).toBeInTheDocument();
-  });
-
-  it("puts Claude Desktop under not installed when it is not on this machine", async () => {
-    mocks.desktopStatus = {
-      supported: true,
-      installed: false,
-      configured: false,
-    };
-    await renderApps();
-    expect(rowApps("appsPage.sectionNotInstalled")).toEqual(["claude-desktop"]);
-  });
-
   it("orders rows by the saved app order within each section", async () => {
-    missing.add("codex").add("hermes");
+    missing.add("codex").add("agy");
     mocks.settings = {
       appOrder: [
-        "hermes",
-        "gemini",
+        "agy",
+        "opencode",
         "claude",
-        "claude-desktop",
         "codex",
         ...APP_IDS.filter(
-          (app) =>
-            !["hermes", "gemini", "claude", "claude-desktop", "codex"].includes(
-              app,
-            ),
+          (app) => !["agy", "opencode", "claude", "codex"].includes(app),
         ),
       ],
     };
     await renderApps();
-    expect(rowApps("appsPage.sectionInstalled").slice(0, 4)).toEqual([
-      "gemini",
+    expect(rowApps("appsPage.sectionInstalled").slice(0, 3)).toEqual([
+      "opencode",
       "claude",
-      "claude-desktop",
-      "grokbuild",
+      "dsh",
     ]);
-    expect(rowApps("appsPage.sectionNotInstalled")).toEqual([
-      "hermes",
-      "codex",
-    ]);
+    expect(rowApps("appsPage.sectionNotInstalled")).toEqual(["agy", "codex"]);
     // 只有已安装的能拖
     expect(
       within(
@@ -756,7 +626,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
       ).queryByRole("button", { name: "appsPage.dragHandle" }),
     ).toBeNull();
   });
-
   it("saves the new order when a row is dropped onto another in its section", async () => {
     await renderApps();
     // jsdom 不做布局，算不出拖动落点：直接调各组 DndContext 收到的 onDragEnd
@@ -769,17 +638,13 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
       } as unknown as DragEndEvent);
     });
     const next = [
-      "claude-desktop",
       "codex",
       "claude",
-      ...APP_IDS.filter(
-        (app) => !["claude", "claude-desktop", "codex"].includes(app),
-      ),
+      ...APP_IDS.filter((app) => !["claude", "codex"].includes(app)),
     ];
     expect(mocks.updateSettings).toHaveBeenCalledWith({ appOrder: next });
     expect(mocks.autoSaveSettings).toHaveBeenCalledWith({ appOrder: next });
   });
-
   it("shows the selected path and command while retaining the resolved target for uninstall validation", async () => {
     const pending = deferred<ToolUninstallCandidate[]>();
     mocks.prepareToolUninstall.mockReturnValueOnce(pending.promise);
@@ -818,7 +683,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
       ),
     );
   });
-
   it("offers only manual uninstall when a plan cannot be prepared", async () => {
     mocks.prepareToolUninstall.mockRejectedValueOnce(
       new Error("Unverified Homebrew owner: mise"),
@@ -843,21 +707,20 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     ).toBeInTheDocument();
     expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
   });
-
   it("lists every installation and uninstalls only the one the user picks", async () => {
     const native = {
-      ...uninstallPlan("grok"),
-      path: "/Users/me/.grok/bin/grok",
-      real_path: "/Users/me/.grok/bin/grok-1.0.50",
+      ...uninstallPlan("codex"),
+      path: "/Users/me/.codex/bin/codex",
+      real_path: "/Users/me/.codex/bin/codex-1.0.50",
       command:
-        "rm -- '/Users/me/.grok/bin/grok' '/Users/me/.grok/bin/grok-1.0.50'",
+        "rm -- '/Users/me/.codex/bin/codex' '/Users/me/.codex/bin/codex-1.0.50'",
       native: true,
     };
     const npm = {
-      ...uninstallPlan("grok"),
-      path: "/Users/me/.nvm/versions/node/v22/bin/grok",
+      ...uninstallPlan("codex"),
+      path: "/Users/me/.nvm/versions/node/v22/bin/codex",
       command:
-        "npm uninstall -g --prefix /Users/me/.nvm/versions/node/v22 @xai-official/grok",
+        "npm uninstall -g --prefix /Users/me/.nvm/versions/node/v22 @openai/codex",
     };
     mocks.prepareToolUninstall.mockResolvedValueOnce([
       candidate(native, { version: "1.0.50" }),
@@ -868,25 +731,25 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
         reinstalled_by_updater: true,
       }),
       candidate(null, {
-        path: "/opt/tools/grok",
+        path: "/opt/tools/codex",
         version: "0.9.0",
         is_path_default: false,
         unavailable_reason:
-          "Cannot automatically uninstall Grok Build at /opt/tools/grok.",
+          "Cannot automatically uninstall Codex at /opt/tools/codex.",
       }),
     ]);
     await renderApps();
-    await openUninstall("Grok Build");
+    await openUninstall("Codex");
     const dialog = within(screen.getByRole("dialog"));
     const npmRadio = await dialog.findByRole("radio", { name: npm.path });
     const nativeRadio = dialog.getByRole("radio", { name: native.path });
-    const manualRadio = dialog.getByRole("radio", { name: "/opt/tools/grok" });
+    const manualRadio = dialog.getByRole("radio", { name: "/opt/tools/codex" });
     expect(nativeRadio).not.toBeChecked();
     expect(npmRadio).not.toBeChecked();
     expect(manualRadio).toBeDisabled();
     expect(
       dialog.getByText(
-        "Cannot automatically uninstall Grok Build at /opt/tools/grok.",
+        "Cannot automatically uninstall Codex at /opt/tools/codex.",
       ),
     ).toBeInTheDocument();
     expect(
@@ -900,7 +763,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     });
     expect(confirm).toBeDisabled();
     expect(dialog.queryByText(native.command)).toBeNull();
-
     fireEvent.click(npmRadio);
     expect(dialog.getByText(npm.command)).toBeInTheDocument();
     expect(dialog.queryByText("settings.toolUninstallNativeHint")).toBeNull();
@@ -912,14 +774,13 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     fireEvent.click(confirm);
     await waitFor(() =>
       expect(mocks.runToolLifecycleAction).toHaveBeenCalledWith(
-        ["grok"],
+        ["codex"],
         "uninstall",
         {},
         native,
       ),
     );
   });
-
   it("discards a cancelled preview instead of showing it for another tool", async () => {
     const first = deferred<ToolUninstallCandidate[]>();
     mocks.prepareToolUninstall.mockReturnValueOnce(first.promise);
@@ -939,7 +800,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     expect(dialog.queryByText(uninstallPlan("claude").path)).toBeNull();
     expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
   });
-
   it("only offers valid Homebrew formula uninstall commands", async () => {
     const getVersions = mocks.getToolVersions.getMockImplementation()!;
     mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
@@ -967,8 +827,8 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
       await screen.findByRole("option", { name: "Homebrew (formula)" }),
     );
     expect(
-      dialog.getByText("brew uninstall --formula gemini-cli"),
-    ).toBeInTheDocument();
+      dialog.queryByText("brew uninstall --formula gemini-cli"),
+    ).not.toBeInTheDocument();
     expect(
       dialog.getByText("brew uninstall --formula opencode"),
     ).toBeInTheDocument();
@@ -979,7 +839,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     expect(dialog.queryByText("Claude Code")).toBeNull();
     expect(dialog.queryByText("Grok Build")).toBeNull();
   });
-
   it("confirms uninstall, preserves the running task across navigation and refreshes to install", async () => {
     const running = deferred<void>();
     mocks.runToolLifecycleAction.mockImplementation(
@@ -1035,7 +894,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     expect(mocks.success).toHaveBeenCalledOnce();
     expect(mocks.warning).not.toHaveBeenCalled();
   });
-
   it("keeps uninstall available for a broken installation", async () => {
     mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
       tools.map((name) => ({
@@ -1060,7 +918,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
       }),
     ).toBeNull();
   });
-
   it("reports uninstall failure and unlocks the tool for retry", async () => {
     mocks.runToolLifecycleAction.mockRejectedValueOnce(
       new Error("permission denied"),
@@ -1094,7 +951,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
       errorLog.mockRestore();
     }
   });
-
   it.each(["rejected", "empty"])(
     "warns when uninstall succeeds but installation diagnostics are %s",
     async (result) => {
@@ -1138,7 +994,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
       }
     },
   );
-
   it.each(["rejected", "empty"])(
     "warns when uninstall succeeds but the status refresh is %s",
     async (result) => {
@@ -1181,67 +1036,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
       }
     },
   );
-
-  it.each([
-    ["Windows NT 10.0", null, true],
-    ["Windows NT 10.0", "Ubuntu", false],
-    ["X11; Linux x86_64", null, false],
-  ])(
-    "warns about Hermes leftovers only on native Windows (%s, %s)",
-    async (userAgent, distro, warn) => {
-      const platform = vi
-        .spyOn(navigator, "userAgent", "get")
-        .mockReturnValue(userAgent);
-      try {
-        mocks.prepareToolUninstall.mockResolvedValueOnce([
-          candidate({
-            ...uninstallPlan("hermes"),
-            command: "hermes uninstall --yes",
-            wsl_distro: distro,
-          }),
-        ]);
-        mocks.runToolLifecycleAction.mockImplementationOnce(async () => {
-          missing.add("hermes");
-        });
-        await renderApps();
-        await openUninstall("Hermes");
-        const dialog = within(screen.getByRole("dialog"));
-        const confirm = await dialog.findByRole("button", {
-          name: "settings.toolUninstall",
-        });
-        expect(
-          dialog.queryByText("settings.toolUninstallHermesWindowsHint") !==
-            null,
-        ).toBe(warn);
-        expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
-        fireEvent.click(confirm);
-        await waitFor(() =>
-          expect(
-            card("Hermes").getByRole("button", {
-              name: "settings.toolInstall",
-            }),
-          ).toBeEnabled(),
-        );
-        if (warn) {
-          expect(mocks.warning).toHaveBeenCalledWith(
-            "settings.toolUninstallWarningTitle",
-            {
-              description: "settings.toolUninstallHermesWindowsHint",
-              closeButton: true,
-            },
-          );
-          expect(mocks.success).not.toHaveBeenCalled();
-        } else {
-          expect(mocks.warning).not.toHaveBeenCalled();
-          expect(mocks.success).toHaveBeenCalledOnce();
-        }
-        expect(mocks.error).not.toHaveBeenCalled();
-      } finally {
-        platform.mockRestore();
-      }
-    },
-  );
-
   it("refreshes the remaining installation after uninstall instead of reporting a broken install", async () => {
     await renderApps();
     mocks.probeToolInstallations.mockResolvedValueOnce([
@@ -1283,7 +1077,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     ).toBeEnabled();
     expect(mocks.warning).not.toHaveBeenCalled();
   });
-
   it("lets different tools preflight and submit together while blocking duplicate clicks", async () => {
     const claudeProbe = deferred<ToolInstallationReport[]>();
     const codexProbe = deferred<ToolInstallationReport[]>();
@@ -1299,7 +1092,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
       },
     );
     await renderApps();
-
     fireEvent.click(updateButton("Claude Code"));
     fireEvent.click(updateButton("Claude Code"));
     expect(updateButton("Claude Code")).toBeDisabled();
@@ -1309,7 +1101,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
       [["claude"]],
       [["codex"]],
     ]);
-
     await act(async () => {
       claudeProbe.resolve([report("claude")]);
       codexProbe.resolve([report("codex")]);
@@ -1317,8 +1108,7 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(2);
     expect(updateButton("Claude Code")).toBeDisabled();
     expect(updateButton("Codex")).toBeDisabled();
-    expect(updateButton("Gemini CLI")).toBeEnabled();
-
+    expect(updateButton("OpenCode")).toBeEnabled();
     await act(async () => codexRun.resolve());
     expect(isReady("Codex")).toBe(true);
     expect(updateButton("Claude Code")).toBeDisabled();
@@ -1326,10 +1116,9 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     expect(isReady("Claude Code")).toBe(true);
     expect(mocks.success).toHaveBeenCalledTimes(2);
   });
-
   it("submits the remaining tools while a single upgrade is already running", async () => {
     const runs = new Map(
-      ["claude", "codex", "gemini"].map((name) => [name, deferred<void>()]),
+      ["claude", "codex", "opencode"].map((name) => [name, deferred<void>()]),
     );
     mocks.runToolLifecycleAction.mockImplementation(
       async ([tool]: string[]) => {
@@ -1350,22 +1139,20 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     );
     expect(mocks.probeToolInstallations).toHaveBeenNthCalledWith(2, [
       "codex",
-      "gemini",
+      "opencode",
     ]);
     expect(
       mocks.runToolLifecycleAction.mock.calls.map(([tools]) => tools),
-    ).toEqual([["claude"], ["codex"], ["gemini"]]);
-
+    ).toEqual([["claude"], ["codex"], ["opencode"]]);
     await act(async () => {
-      runs.get("gemini")!.resolve();
+      runs.get("opencode")!.resolve();
       runs.get("codex")!.resolve();
     });
-    expect(isReady("Gemini CLI")).toBe(true);
+    expect(isReady("OpenCode")).toBe(true);
     expect(isReady("Codex")).toBe(true);
     expect(updateButton("Claude Code")).toBeDisabled();
     await act(async () => runs.get("claude")!.resolve());
   });
-
   it.each(["install", "update"] as const)(
     "restores an ongoing %s after remount and receives its completion",
     async (action) => {
@@ -1401,7 +1188,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
       expect(mocks.error).not.toHaveBeenCalled();
       expect(mocks.warning).not.toHaveBeenCalled();
       expect(mocks.success).not.toHaveBeenCalled();
-
       await act(async () => running.resolve());
       expect(isReady("Claude Code")).toBe(true);
       expect(
@@ -1410,7 +1196,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
       expect(mocks.success).toHaveBeenCalledTimes(1);
     },
   );
-
   it.each(["install", "update"] as const)(
     "shows an informational toast when the backend reports an ongoing %s",
     async (action) => {
@@ -1443,7 +1228,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
       expect(mocks.success).not.toHaveBeenCalled();
     },
   );
-
   it("ignores a late probe from the old page after the remounted page upgrades a tool", async () => {
     const stale = deferred<ToolVersions>();
     const getVersions = mocks.getToolVersions.getMockImplementation()!;
@@ -1467,7 +1251,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     const remounted = await renderApps();
     fireEvent.click(updateButton("Claude Code"));
     await waitFor(() => expect(isReady("Claude Code")).toBe(true));
-
     await act(async () => stale.resolve(oldResult));
     expect(isReady("Claude Code")).toBe(true);
     expect(card("Claude Code").queryByText("1.0.0")).not.toBeInTheDocument();
@@ -1475,7 +1258,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     await renderApps();
     expect(isReady("Claude Code")).toBe(true);
   });
-
   it("preserves WSL execution and refresh parameters when confirming a mixed batch after remount", async () => {
     const preflight = deferred<ToolInstallationReport[]>();
     const getVersions = mocks.getToolVersions.getMockImplementation()!;
@@ -1514,7 +1296,7 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
         preflight.resolve([
           report("claude"),
           report("codex", { needs_confirmation: true }),
-          report("gemini"),
+          report("opencode"),
         ]),
       );
       await renderApps();
@@ -1547,10 +1329,9 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
       }
     }
   });
-
   it("preserves batch progress across remounts and updates each completed tool", async () => {
     const runs = new Map(
-      ["claude", "codex", "gemini"].map((name) => [name, deferred<void>()]),
+      ["claude", "codex", "opencode"].map((name) => [name, deferred<void>()]),
     );
     mocks.runToolLifecycleAction.mockImplementation(
       async ([tool]: string[]) => {
@@ -1571,10 +1352,9 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     expect(updateAll).toHaveAttribute("aria-busy", "true");
     expect(isReady("Codex")).toBe(true);
     expect(updateButton("Claude Code")).toHaveAttribute("aria-busy", "true");
-    expect(updateButton("Gemini CLI")).toBeDisabled();
-
-    await act(async () => runs.get("gemini")!.resolve());
-    expect(isReady("Gemini CLI")).toBe(true);
+    expect(updateButton("OpenCode")).toBeDisabled();
+    await act(async () => runs.get("opencode")!.resolve());
+    expect(isReady("OpenCode")).toBe(true);
     expect(updateButton("Claude Code")).toBeDisabled();
     expect(updateAll).toHaveAttribute("aria-busy", "true");
     await act(async () => runs.get("claude")!.resolve());
@@ -1589,7 +1369,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(3);
     expect(mocks.success).toHaveBeenCalledTimes(1);
   });
-
   it("preserves preflight and its confirmation when navigating away and back", async () => {
     const preflight = deferred<ToolInstallationReport[]>();
     mocks.probeToolInstallations.mockImplementationOnce(
@@ -1617,7 +1396,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     fireEvent.click(updateButton("Claude Code"));
     await waitFor(() => expect(isReady("Claude Code")).toBe(true));
   });
-
   it("unlocks a failed background task after remount so it can be retried", async () => {
     const running = deferred<void>();
     mocks.runToolLifecycleAction.mockImplementationOnce(() => running.promise);
@@ -1643,7 +1421,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
       errorLog.mockRestore();
     }
   });
-
   it("does not report success or failure when all requested tools are already running", async () => {
     mocks.runToolLifecycleAction.mockRejectedValue("TOOL_ACTION_IN_PROGRESS");
     await renderApps();
@@ -1655,7 +1432,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     expect(mocks.warning).not.toHaveBeenCalled();
     expect(mocks.error).not.toHaveBeenCalled();
   });
-
   it("completes other tools without counting an ongoing task as a failure", async () => {
     mocks.runToolLifecycleAction.mockImplementation(
       async ([tool]: string[]) => {
@@ -1668,11 +1444,10 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     await waitFor(() => expect(mocks.success).toHaveBeenCalledTimes(1));
     expect(mocks.info).toHaveBeenCalledTimes(1);
     expect(isReady("Codex")).toBe(true);
-    expect(isReady("Gemini CLI")).toBe(true);
+    expect(isReady("OpenCode")).toBe(true);
     expect(mocks.warning).not.toHaveBeenCalled();
     expect(mocks.error).not.toHaveBeenCalled();
   });
-
   it("keeps genuine failures in the batch summary while excluding ongoing tasks", async () => {
     mocks.runToolLifecycleAction.mockImplementation(
       async ([tool]: string[]) => {
@@ -1699,7 +1474,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
       errorLog.mockRestore();
     }
   });
-
   it("releases a failed tool for retry without unlocking another running tool", async () => {
     const firstRun = deferred<void>();
     const retryRun = deferred<void>();
@@ -1746,7 +1520,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     expect(isReady("Claude Code")).toBe(true);
     errorLog.mockRestore();
   });
-
   it("queues concurrent confirmation requests and releases only the cancelled tool", async () => {
     const claudeProbe = deferred<ToolInstallationReport[]>();
     const codexProbe = deferred<ToolInstallationReport[]>();
@@ -1792,7 +1565,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     expect(updateButton("Claude Code")).toBeDisabled();
     await act(async () => claudeRun.resolve());
   });
-
   it.each(["double click", "held Enter", "held Space"])(
     "does not confirm the next queued plan with a %s",
     async (gesture) => {
@@ -1844,7 +1616,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
       await act(async () => run.resolve());
     },
   );
-
   it("does not cancel the next queued plan with a double click", async () => {
     const claudeProbe = deferred<ToolInstallationReport[]>();
     const codexProbe = deferred<ToolInstallationReport[]>();
@@ -1869,7 +1640,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     expect(updateButton("Claude Code")).toBeEnabled();
     expect(updateButton("Codex")).toBeEnabled();
   });
-
   it("does not block another installation submission while an upgrade is running", async () => {
     const claudeRun = deferred<void>();
     missing.add("codex");
@@ -1899,7 +1669,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     expect(updateButton("Claude Code")).toBeDisabled();
     await act(async () => claudeRun.resolve());
   });
-
   it("keeps a tool locked through version refresh and remount with an expired cache", async () => {
     const refreshed =
       deferred<Awaited<ReturnType<typeof mocks.getToolVersions>>>();
@@ -1942,7 +1711,7 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     // 不然机器慢时这几行还在加载
     await waitFor(() => {
       expect(updateButton("Codex")).toBeEnabled();
-      expect(updateButton("Gemini CLI")).toBeEnabled();
+      expect(updateButton("OpenCode")).toBeEnabled();
     });
     fireEvent.click(updateAllButton());
     await waitFor(() =>
@@ -1968,7 +1737,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     );
     expect(isReady("Claude Code")).toBe(true);
   });
-
   it("releases skipped unmanaged tools and runs the remaining batch", async () => {
     mocks.probeToolInstallations.mockImplementation(async (tools: string[]) =>
       tools.map((tool) => report(tool, { unmanaged: tool === "claude" })),
@@ -1976,11 +1744,11 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     await renderApps();
     fireEvent.click(updateAllButton());
     await waitFor(() => expect(isReady("Codex")).toBe(true));
-    expect(isReady("Gemini CLI")).toBe(true);
+    expect(isReady("OpenCode")).toBe(true);
     expect(updateButton("Claude Code")).toBeEnabled();
     expect(
       mocks.runToolLifecycleAction.mock.calls.map(([tools]) => tools),
-    ).toEqual([["codex"], ["gemini"]]);
+    ).toEqual([["codex"], ["opencode"]]);
     expect(
       screen.getByRole("button", { name: "appsPage.checkUpdates" }),
     ).toBeEnabled();
@@ -2012,7 +1780,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
       screen.getByRole("button", { name: "appsPage.checkUpdates" }),
     ).toBeEnabled();
   });
-
   it("withholds the upgrade when the new version needs a newer Node and leaves it out of update all", async () => {
     const defaultVersions = mocks.getToolVersions.getMockImplementation()!;
     mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
@@ -2039,10 +1806,10 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     ).toBeNull();
     fireEvent.click(updateAllButton());
     await waitFor(() => expect(isReady("Codex")).toBe(true));
-    expect(isReady("Gemini CLI")).toBe(true);
+    expect(isReady("OpenCode")).toBe(true);
     expect(
       mocks.runToolLifecycleAction.mock.calls.map(([tools]) => tools),
-    ).toEqual([["codex"], ["gemini"]]);
+    ).toEqual([["codex"], ["opencode"]]);
   });
   it("shows diagnosed conflicts on the row, refreshes the install report and says so", async () => {
     vi.resetModules();
@@ -2070,14 +1837,12 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     );
     await renderApps();
     expect(screen.queryByText("/opt/homebrew/bin/claude")).toBeNull();
-
     await userEvent.click(
       screen.getByRole("button", { name: "appsPage.moreActions" }),
     );
     await userEvent.click(
       await screen.findByRole("menuitem", { name: "settings.toolDiagnose" }),
     );
-
     // 冲突列表直接在行里展开，入口「另有 1 处安装」也刷新出来，并有一条提示
     expect(
       await card("Claude Code").findByText("/opt/homebrew/bin/claude"),
@@ -2094,7 +1859,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10_000 }, () => {
     expect(mocks.info).not.toHaveBeenCalled();
   });
 });
-
 describe("AppsPage visibility column", () => {
   it("renders the sidebar visibility switches small with the action color", async () => {
     vi.resetModules();

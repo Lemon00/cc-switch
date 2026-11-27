@@ -1,6 +1,13 @@
-import type { ReactNode } from "react";
-import { useTranslation } from "react-i18next";
-import { ChevronRight, Loader2 } from "lucide-react";
+import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
+import { Button } from "@/components/ui/button";
+import { HelpTip } from "@/components/ui/help-tip";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Sheet,
   SheetBody,
@@ -9,25 +16,17 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { Button } from "@/components/ui/button";
-import { HelpTip } from "@/components/ui/help-tip";
 import { Switch } from "@/components/ui/switch";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import type { UsageDisplaySettings } from "@/types";
 import { useGlobalProxyConfig } from "@/lib/query/proxy";
-import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
-import { KNOWN_APP_TYPES } from "@/types/usage";
 import { cn } from "@/lib/utils";
+import type { UsageDisplaySettings } from "@/types";
+import { KNOWN_APP_TYPES } from "@/types/usage";
+import { ChevronRight, Loader2 } from "lucide-react";
+import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { getResolvedLang, joinNames } from "./format";
-import { UsageDisplaySection } from "./UsageDisplaySection";
 import { settingsCardClass, settingsGroupTitleClass } from "./settingsStyles";
-
+import { UsageDisplaySection } from "./UsageDisplaySection";
 interface UsageSettingsSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -54,7 +53,6 @@ interface UsageSettingsSheetProps {
   /** 打开定价对话框（抽屉先关掉） */
   onOpenPricing: () => void;
 }
-
 /** 抽屉里的一组：小标题 + 内容 */
 function SettingsGroup({
   title,
@@ -70,7 +68,6 @@ function SettingsGroup({
     </section>
   );
 }
-
 /** 标题行：标题和「?」在左，开关 / 状态 / 按钮在右 */
 function RowHeader({
   title,
@@ -78,7 +75,10 @@ function RowHeader({
   trailing,
 }: {
   title: string;
-  help: { title: string; body: string };
+  help: {
+    title: string;
+    body: string;
+  };
   trailing?: ReactNode;
 }) {
   return (
@@ -95,7 +95,6 @@ function RowHeader({
     </div>
   );
 }
-
 /** 一组里的一行设置：同组几行放进一张卡，行间一道分隔线（不是每个字段一道） */
 function SettingsRow({
   title,
@@ -104,7 +103,10 @@ function SettingsRow({
   children,
 }: {
   title: string;
-  help: { title: string; body: string };
+  help: {
+    title: string;
+    body: string;
+  };
   trailing?: ReactNode;
   children?: ReactNode;
 }) {
@@ -115,7 +117,6 @@ function SettingsRow({
     </section>
   );
 }
-
 function LoggingStatus() {
   const { t } = useTranslation();
   const { data: config, isLoading } = useGlobalProxyConfig();
@@ -133,7 +134,6 @@ function LoggingStatus() {
     </span>
   );
 }
-
 /**
  * 用量页唯一的设置入口：数据来源（会话日志扫描与间隔、路由请求日志、Codex 用量维护）、
  * 显示（币种、侧栏「今日」、趋势图样式）、定价（打开定价对话框）。
@@ -164,7 +164,6 @@ export function UsageSettingsSheet({
   const cadence = sessionAutoSyncEnabled
     ? t("usage.sources.cadenceOn")
     : t("usage.sources.cadenceOff");
-
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent

@@ -1,4 +1,5 @@
 use super::*;
+use crate::app_config::AppType;
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -8,67 +9,11 @@ fn provider(id: &str) -> Provider {
 }
 
 #[test]
-fn provider_list_batches_endpoints_without_crossing_apps_or_changing_order() {
-    let db = Database::memory().unwrap();
-    let mut first = provider("z");
-    first.sort_index = Some(0);
-    let mut second = provider("a");
-    second.sort_index = Some(1);
-    db.save_provider("claude", &second).unwrap();
-    db.save_provider("claude", &first).unwrap();
-    db.save_provider("codex", &first).unwrap();
-    {
-        let conn = db.conn.lock().unwrap();
-        // Old metadata is not authoritative, even for a provider with no endpoints.
-        conn.execute(
-            "UPDATE providers SET meta = ?1 WHERE app_type = 'claude' AND id = 'a'",
-            [json!({"custom_endpoints": {"stale": {"url": "stale", "addedAt": 1}}}).to_string()],
-        )
-        .unwrap();
-        conn.execute_batch(
-            "INSERT INTO provider_endpoints (provider_id, app_type, url, added_at) VALUES
-             ('z', 'claude', 'https://shared', 20),
-             ('z', 'claude', 'https://shared', 10),
-             ('z', 'claude', 'https://null', NULL),
-             ('z', 'codex', 'https://other-app', 30);",
-        )
-        .unwrap();
-    }
-    let providers = db.get_all_providers("claude").unwrap();
-    assert_eq!(
-        providers.keys().map(String::as_str).collect::<Vec<_>>(),
-        ["z", "a"]
-    );
-    let endpoints = &providers["z"].meta.as_ref().unwrap().custom_endpoints;
-    assert_eq!(endpoints.len(), 2);
-    assert_eq!(endpoints["https://shared"].added_at, 20);
-    assert_eq!(endpoints["https://shared"].url, "https://shared");
-    assert_eq!(endpoints["https://null"].added_at, 0);
-    assert_eq!(endpoints["https://shared"].last_used, None);
-    assert!(providers["a"]
-        .meta
-        .as_ref()
-        .unwrap()
-        .custom_endpoints
-        .is_empty());
-    assert!(db.get_all_providers("gemini").unwrap().is_empty());
-    assert_eq!(
-        db.get_all_providers("codex").unwrap()["z"]
-            .meta
-            .as_ref()
-            .unwrap()
-            .custom_endpoints
-            .len(),
-        1
-    );
-}
-
-#[test]
 fn unchanged_provider_save_does_not_emit_a_database_change() {
     let db = Database::memory().unwrap();
     let mut provider = provider("same");
-    db.save_provider("claude", &provider).unwrap();
-    db.add_custom_endpoint("claude", "same", "https://endpoint")
+    db.save_provider(&AppType::Claude, &provider).unwrap();
+    db.add_custom_endpoint(&AppType::Claude, "same", "https://endpoint")
         .unwrap();
     {
         let conn = db.conn.lock().unwrap();
@@ -89,15 +34,15 @@ fn unchanged_provider_save_does_not_emit_a_database_change() {
     ));
 
     for _ in 0..5 {
-        db.save_provider("claude", &provider).unwrap();
+        db.save_provider(&AppType::Claude, &provider).unwrap();
     }
     assert_eq!(updates.load(Ordering::Relaxed), 0);
 
     // NULL <-> value transitions and normal edits must still be persisted.
     provider.notes = Some("updated".into());
-    db.save_provider("claude", &provider).unwrap();
+    db.save_provider(&AppType::Claude, &provider).unwrap();
     assert_eq!(
-        db.get_provider_by_id("same", "claude")
+        db.get_provider_by_id("same", &AppType::Claude)
             .unwrap()
             .unwrap()
             .notes,
@@ -106,11 +51,11 @@ fn unchanged_provider_save_does_not_emit_a_database_change() {
     provider.notes = None;
     provider.name = "renamed".into();
     provider.settings_config = json!({"env": {"key": "changed"}});
-    db.save_provider("claude", &provider).unwrap();
-    db.save_provider("claude", &provider).unwrap();
+    db.save_provider(&AppType::Claude, &provider).unwrap();
+    db.save_provider(&AppType::Claude, &provider).unwrap();
     assert_eq!(updates.load(Ordering::Relaxed), 2);
     let loaded = db
-        .get_all_providers("claude")
+        .get_all_providers(&AppType::Claude)
         .unwrap()
         .swap_remove("same")
         .unwrap();
@@ -134,6 +79,25 @@ fn unchanged_provider_save_does_not_emit_a_database_change() {
 }
 
 #[test]
+fn provider_save_does_not_restore_removed_endpoints_or_drop_new_ones() {
+    let db = Database::memory().unwrap();
+    db.save_provider(&AppType::Claude, &provider("stale"))
+        .unwrap();
+    db.add_custom_endpoint(&AppType::Claude, "stale", "https://old")
+        .unwrap();
+    let stale = db.get_all_providers(&AppType::Claude).unwrap()["stale"].clone();
+    db.remove_custom_endpoint(&AppType::Claude, "stale", "https://old")
+        .unwrap();
+    db.add_custom_endpoint(&AppType::Claude, "stale", "https://new")
+        .unwrap();
+    db.save_provider(&AppType::Claude, &stale).unwrap();
+    let saved = db.get_all_providers(&AppType::Claude).unwrap();
+    let endpoints = &saved["stale"].meta.as_ref().unwrap().custom_endpoints;
+    assert_eq!(endpoints.len(), 1);
+    assert!(endpoints.contains_key("https://new"));
+}
+
+#[test]
 fn unchanged_metadata_maps_do_not_emit_database_changes_after_reload() {
     let db = Database::memory().unwrap();
     let mut provider = provider("metadata");
@@ -146,7 +110,7 @@ fn unchanged_metadata_maps_do_not_emit_database_changes_after_reload() {
         }))
         .unwrap(),
     );
-    db.save_provider("claude", &provider).unwrap();
+    db.save_provider(&AppType::Claude, &provider).unwrap();
     {
         let conn = db.conn.lock().unwrap();
         let stored: String = conn
@@ -185,13 +149,13 @@ fn unchanged_metadata_maps_do_not_emit_database_changes_after_reload() {
             }
         },
     ));
-    db.save_provider("claude", &provider).unwrap();
+    db.save_provider(&AppType::Claude, &provider).unwrap();
     for _ in 0..5 {
         provider = db
-            .get_provider_by_id("metadata", "claude")
+            .get_provider_by_id("metadata", &AppType::Claude)
             .unwrap()
             .unwrap();
-        db.save_provider("claude", &provider).unwrap();
+        db.save_provider(&AppType::Claude, &provider).unwrap();
     }
     assert_eq!(updates.load(Ordering::Relaxed), 0);
 
@@ -204,10 +168,10 @@ fn unchanged_metadata_maps_do_not_emit_database_changes_after_reload() {
         .unwrap()
         .headers
         .insert("X-First".into(), "changed".into());
-    db.save_provider("claude", &provider).unwrap();
+    db.save_provider(&AppType::Claude, &provider).unwrap();
     assert_eq!(updates.load(Ordering::Relaxed), 1);
     let loaded = db
-        .get_provider_by_id("metadata", "claude")
+        .get_provider_by_id("metadata", &AppType::Claude)
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -228,16 +192,20 @@ fn benchmark_provider_list() {
         let db = Database::memory().unwrap();
         for i in 0..count {
             let id = format!("provider-{i:04}");
-            db.save_provider("claude", &provider(&id)).unwrap();
+            db.save_provider(&AppType::Claude, &provider(&id)).unwrap();
             for endpoint in 0..3 {
-                db.add_custom_endpoint("claude", &id, &format!("https://endpoint-{endpoint}"))
-                    .unwrap();
+                db.add_custom_endpoint(
+                    &AppType::Claude,
+                    &id,
+                    &format!("https://endpoint-{endpoint}"),
+                )
+                .unwrap();
             }
         }
         let mut samples = Vec::new();
         for _ in 0..25 {
             let start = std::time::Instant::now();
-            let result = db.get_all_providers("claude").unwrap();
+            let result = db.get_all_providers(&AppType::Claude).unwrap();
             assert_eq!(result.len(), count);
             std::hint::black_box(result);
             samples.push(start.elapsed());
@@ -249,4 +217,102 @@ fn benchmark_provider_list() {
             samples[samples.len() / 2].as_micros()
         );
     }
+}
+
+/// 新版本写入、本版本认不出的 meta（比如新增的枚举值）：读出来要报错点名，不能换成默认值，
+/// 库里的原文一个字节都不能动；列表读取把读不出来的行单独列出，其余照常。
+#[test]
+fn unreadable_stored_json_is_reported_and_left_untouched() {
+    let db = Database::memory().unwrap();
+    for id in ["good", "broken"] {
+        db.save_provider(&AppType::Claude, &provider(id)).unwrap();
+    }
+    let raw = |id: &str| -> (String, String) {
+        db.conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT settings_config, meta FROM providers WHERE app_type = 'claude' AND id = ?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap()
+    };
+    db.conn
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE providers SET settings_config = '{\"env\":' WHERE app_type = 'claude' AND id = 'broken'",
+            [],
+        )
+        .unwrap();
+    let stored = raw("broken");
+
+    // 严格读取停在读不出的行并点名它，不写回任何默认值。
+    let error = db
+        .get_all_providers(&AppType::Claude)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("broken") && error.contains("settings_config"),
+        "{error}"
+    );
+    let error = db
+        .get_provider_by_id("broken", &AppType::Claude)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("broken") && error.contains("settings_config"),
+        "{error}"
+    );
+
+    // 列表读取：能读的照常返回，读不出的单独列出。
+    let rows = db.get_provider_rows(&AppType::Claude).unwrap();
+    assert_eq!(rows.readable.keys().collect::<Vec<_>>(), ["good"]);
+    assert_eq!(rows.unreadable.len(), 1);
+    assert_eq!(rows.unreadable[0].id, "broken");
+    assert!(rows.get("broken").is_err());
+    assert!(rows.get("good").unwrap().is_some());
+    assert!(db
+        .get_unreadable_provider(&AppType::Claude, "broken")
+        .unwrap()
+        .is_some());
+    assert!(db
+        .get_unreadable_provider(&AppType::Claude, "good")
+        .unwrap()
+        .is_none());
+
+    // 只问存不存在的地方不解析 JSON。
+    assert!(db.provider_exists("broken", &AppType::Claude).unwrap());
+    assert!(db
+        .get_provider_by_id("good", &AppType::Claude)
+        .unwrap()
+        .is_some());
+    assert_eq!(raw("broken"), stored);
+}
+
+/// 故障转移路由只读、不写：队列里读不出的成员被跳过，其余照常。
+#[test]
+fn failover_queue_skips_an_unreadable_member() {
+    let db = Database::memory().unwrap();
+    for id in ["a", "b"] {
+        db.save_provider(&AppType::Claude, &provider(id)).unwrap();
+        db.add_to_failover_queue(&AppType::Claude, id).unwrap();
+    }
+    db.conn
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE providers SET meta = '{' WHERE app_type = 'claude' AND id = 'a'",
+            [],
+        )
+        .unwrap();
+
+    let ids: Vec<String> = db
+        .get_failover_providers(&AppType::Claude)
+        .unwrap()
+        .into_iter()
+        .map(|p| p.id)
+        .collect();
+    assert_eq!(ids, ["b"]);
 }

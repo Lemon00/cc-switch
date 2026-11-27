@@ -1,30 +1,27 @@
-import { memo, useCallback, useMemo, useState } from "react";
-import { Copy } from "lucide-react";
-import { useTranslation } from "react-i18next";
-
 import { HoverTip } from "@/components/ui/hover-tip";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import { cn } from "@/lib/utils";
+import { Copy } from "lucide-react";
+import { memo, useCallback, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { highlightText } from "../utils";
 import { useReaderContext } from "./context";
-import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import { useReaderT } from "./i18n";
-import {
-  COLLAPSE_THRESHOLD,
-  COLLAPSED_LENGTH,
-  CollapseToggle,
-  rowIconButton,
-} from "./SessionQuestion";
 import { SessionImage, SessionImageGrid } from "./SessionImage";
 import {
   createCollapsedMarkdownPreview,
   hasHighlightableMarkdownMatch,
   SessionMarkdown,
 } from "./SessionMarkdown";
+import {
+  COLLAPSE_THRESHOLD,
+  COLLAPSED_LENGTH,
+  CollapseToggle,
+  rowIconButton,
+} from "./SessionQuestion";
 import { formatTokens } from "./toolSummary";
 import type { TurnFinal } from "./turns";
-
 const SNIPPET_RADIUS = 60;
-
 /** 原文中命中处前后各 60 字（命中藏在链接地址等不可见位置时兜底展示） */
 const rawSnippets = (text: string, query: string, limit = 3) => {
   const haystack = text.toLowerCase();
@@ -41,13 +38,11 @@ const rawSnippets = (text: string, query: string, limit = 3) => {
   }
   return snippets;
 };
-
 export interface SessionFinalReplyProps {
   final: TurnFinal;
   /** 查找命中：长回复自动展开（规则 11） */
   forceExpanded: boolean;
 }
-
 /**
  * 最终回复：角色行（glyph + Agent 名 + 时间 + 模型）、Markdown 正文（视觉重点，无底色）、
  * 超过 3000 字折叠到 1500 字、复制。
@@ -68,14 +63,12 @@ export const SessionFinalReply = memo(function SessionFinalReply({
     long && !open
       ? createCollapsedMarkdownPreview(text, COLLAPSED_LENGTH)
       : text;
-
   const hiddenMatches = useMemo(() => {
     const query = searchQuery?.trim();
     if (!query || !text.toLowerCase().includes(query.toLowerCase())) return [];
     if (hasHighlightableMarkdownMatch(text, query, projectDir)) return [];
     return rawSnippets(text, query);
   }, [projectDir, searchQuery, text]);
-
   const renderLocalImage = useCallback(
     (path: string, alt: string) => (
       <SessionImage
@@ -92,9 +85,7 @@ export const SessionFinalReply = memo(function SessionFinalReply({
     ),
     [],
   );
-
   const cost = style.showStepCost ? final.cost : undefined;
-
   return (
     <div className="group/final relative min-w-0 px-1.5 py-1">
       {/* Agent 名、时间、模型已在头像旁那一行显示；这里只留悬停出现的复制 */}

@@ -1,8 +1,12 @@
-import { useTranslation } from "react-i18next";
-import { ChevronRight, Monitor, Moon, Sun } from "lucide-react";
-import type { SettingsFormState } from "@/hooks/useSettings";
+import {
+  SettingsBlock,
+  SettingsCard,
+  SettingsRow,
+  SettingsSwitchRow,
+} from "@/components/settings/SettingsLayout";
+import { TerminalSelect } from "@/components/settings/TerminalSettings";
 import { useTheme } from "@/components/theme-provider";
-import { SegmentedControl } from "@/components/ui/segmented-control";
+import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -10,32 +14,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Button } from "@/components/ui/button";
+import type { Language } from "@/i18n/language";
+import { SegmentedControl } from "@/components/ui/segmented-control";
+import type { SettingsFormState } from "@/hooks/useSettings";
 import { isLinux } from "@/lib/platform";
-import { TerminalSelect } from "@/components/settings/TerminalSettings";
-import {
-  SettingsBlock,
-  SettingsCard,
-  SettingsRow,
-  SettingsSwitchRow,
-} from "@/components/settings/SettingsLayout";
-
-type Language = SettingsFormState["language"];
-
-const LANGUAGES: { value: Language; labelKey: string }[] = [
-  { value: "zh", labelKey: "settings.languageOptionChinese" },
-  { value: "zh-TW", labelKey: "settings.languageOptionTraditionalChinese" },
-  { value: "en", labelKey: "settings.languageOptionEnglish" },
-  { value: "ja", labelKey: "settings.languageOptionJapanese" },
-  { value: "tr", labelKey: "settings.languageOptionTurkish" },
-];
-
+import { ChevronRight, Monitor, Moon, Sun } from "lucide-react";
+import { useTranslation } from "react-i18next";
 interface GeneralSectionProps {
   settings: SettingsFormState;
   onAutoSave: (updates: Partial<SettingsFormState>) => Promise<boolean>;
   onOpenApps: () => void;
 }
-
 export function GeneralSection({
   settings,
   onAutoSave,
@@ -43,7 +32,6 @@ export function GeneralSection({
 }: GeneralSectionProps) {
   const { t } = useTranslation();
   const { theme, setTheme } = useTheme();
-
   return (
     <>
       <SettingsBlock title={t("settings.general.appearance")}>
@@ -64,11 +52,8 @@ export function GeneralSection({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {LANGUAGES.map((language) => (
-                    <SelectItem key={language.value} value={language.value}>
-                      {t(language.labelKey)}
-                    </SelectItem>
-                  ))}
+                  <SelectItem value="zh">简体中文</SelectItem>
+                  <SelectItem value="en">English</SelectItem>
                 </SelectContent>
               </Select>
             }

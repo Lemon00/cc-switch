@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { extractProviderBaseUrl } from "@/utils/providerConfigUtils";
-
 describe("extractProviderBaseUrl", () => {
   it.each([
     [
@@ -44,7 +43,6 @@ describe("extractProviderBaseUrl", () => {
   ])("reads the %s shape", (_app, settingsConfig, expected) => {
     expect(extractProviderBaseUrl(settingsConfig)).toBe(expected);
   });
-
   it("returns undefined for official providers without an address", () => {
     expect(extractProviderBaseUrl({ env: {} })).toBeUndefined();
     expect(extractProviderBaseUrl({ auth: {}, config: "" })).toBeUndefined();

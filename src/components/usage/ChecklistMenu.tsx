@@ -1,8 +1,3 @@
-import { useTranslation } from "react-i18next";
-import type { ReactNode } from "react";
-import { Check, ChevronDown } from "lucide-react";
-import { fieldClass } from "@/components/ui/input";
-import { HoverTip } from "@/components/ui/hover-tip";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,8 +5,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { HoverTip } from "@/components/ui/hover-tip";
+import { fieldClass } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-
+import { Check, ChevronDown } from "lucide-react";
+import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 export interface ChecklistItem {
   id: string;
   label: string;
@@ -19,7 +18,6 @@ export interface ChecklistItem {
   /** 勾满上限时没勾的项灰掉 */
   disabled?: boolean;
 }
-
 /**
  * 下拉勾选清单：按钮上写当前选了什么，点开逐项勾；勾一项菜单不关，可以接着勾。
  * 有 onReset 时底部给「恢复默认」，有 note 时底部写一行说明。

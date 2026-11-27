@@ -1,12 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
-import { listen } from "@tauri-apps/api/event";
-import {
-  DeepLinkImportRequest,
-  PendingDeepLink,
-  deeplinkApi,
-} from "@/lib/api/deeplink";
-import { providersApi } from "@/lib/api";
-import { parseDeepLinkConfigPreview } from "@/utils/deepLinkConfigPreview";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -15,14 +7,27 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { getAppLabel, isAdditiveAppId } from "@/config/appConfig";
+import {
+  CODING_PLAN_PROVIDERS,
+  codingPlanEnabledByDefault,
+  detectCodingPlanProvider,
+} from "@/config/codingPlanProviders";
+import { invalidateSkillsDiscoverCache } from "@/hooks/useSkills";
+import { providersApi } from "@/lib/api";
+import {
+  DeepLinkImportRequest,
+  PendingDeepLink,
+  deeplinkApi,
+} from "@/lib/api/deeplink";
+import { promptKeys } from "@/lib/query/prompts";
+import { invalidateProviderCaches } from "@/lib/query/providerCache";
+import { cleanupTauriListener } from "@/lib/tauriEventCleanup";
 import { toast } from "@/lib/toast";
-import { useTranslation } from "react-i18next";
-import { useQueryClient } from "@tanstack/react-query";
-import { PromptConfirmation } from "./deeplink/PromptConfirmation";
-import { McpConfirmation } from "./deeplink/McpConfirmation";
-import { SkillConfirmation } from "./deeplink/SkillConfirmation";
-import { ProviderIcon } from "./ProviderIcon";
+import { decodeBase64Utf8 } from "@/lib/utils/base64";
+import { normalizeIconDataUri } from "@/utils/customIcon";
+import { parseDeepLinkConfigPreview } from "@/utils/deepLinkConfigPreview";
 import {
   classifyEndpoint,
   classifyEnvKey,
@@ -30,16 +35,17 @@ import {
   maskValue,
   riskI18nKey,
 } from "@/utils/deeplinkRisk";
-import { decodeBase64Utf8 } from "@/lib/utils/base64";
-import { Switch } from "@/components/ui/switch";
-import { getAppLabel, isAdditiveAppId } from "@/config/appConfig";
-import { normalizeIconDataUri } from "@/utils/customIcon";
+import { useQueryClient } from "@tanstack/react-query";
+import { listen } from "@tauri-apps/api/event";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
-  CODING_PLAN_PROVIDERS,
-  codingPlanEnabledByDefault,
-  detectCodingPlanProvider,
-} from "@/config/codingPlanProviders";
-
+  McpConfirmation,
+  parseMcpDeepLinkConfig,
+} from "./deeplink/McpConfirmation";
+import { PromptConfirmation } from "./deeplink/PromptConfirmation";
+import { SkillConfirmation } from "./deeplink/SkillConfirmation";
+import { ProviderIcon } from "./ProviderIcon";
 const API_FORMAT_LABELS: Record<
   NonNullable<DeepLinkImportRequest["apiFormat"]>,
   string
@@ -49,7 +55,6 @@ const API_FORMAT_LABELS: Record<
   openai_responses: "OpenAI Responses",
   gemini_native: "Gemini",
 };
-
 /**
  * 下载链接里的 `iconUrl`，按上传图标的流程重新编码成 96×96 PNG。
  * 任何一步失败都返回 undefined，确认框退回链接里的内置图标或首字母，不提示用户。
@@ -63,7 +68,6 @@ async function loadLinkIcon(url: string): Promise<string | undefined> {
     return undefined;
   }
 }
-
 /**
  * 「导入后立即生效」开关的初始值：链接里的 `enabled` 只是建议，导入时以开关为准。
  *
@@ -82,18 +86,18 @@ function initialActivation(request: DeepLinkImportRequest): boolean {
   }
   return request.enabled === true;
 }
-
 export function DeepLinkImportDialog() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [request, setRequest] = useState<DeepLinkImportRequest | null>(null);
   const [isImporting, setIsImporting] = useState(false);
+  const importingRef = useRef(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [activateAfterImport, setActivateAfterImport] = useState(false);
   // 当前显示的请求：导入是异步的，期间可能来了新链接把确认框换掉，
   // 导入结束时只在确认框仍显示这条请求时才关闭，否则新链接的确认框会被一起关掉
   const shownRequestRef = useRef<DeepLinkImportRequest | null>(null);
-
   // 链接带 iconUrl 时，确认框一打开就下载图标并直接预览，不再单独询问；
   // 导入时等这次下载结束（最多几秒），拿到的图标随请求交给后端，后端保存时再完整校验
   const [linkIcon, setLinkIcon] = useState<string>();
@@ -114,14 +118,16 @@ export function DeepLinkImportDialog() {
       stale = true;
     };
   }, [request]);
-
   // 容错判断：MCP 导入结果可能缺少 type 字段
   const isMcpImportResult = (
     value: unknown,
   ): value is {
     importedCount: number;
     importedIds: string[];
-    failed: Array<{ id: string; error: string }>;
+    failed: Array<{
+      id: string;
+      error: string;
+    }>;
     type?: "mcp";
   } => {
     if (!value || typeof value !== "object") return false;
@@ -132,7 +138,6 @@ export function DeepLinkImportDialog() {
       Array.isArray(v.failed)
     );
   };
-
   // effect 只随挂载/卸载运行，不能依赖 t：启动时校正语言会换掉 t，effect 一重建，
   // 正在处理的链接就被丢下。翻译函数从 ref 读最新值。
   const tRef = useRef(t);
@@ -141,47 +146,47 @@ export function DeepLinkImportDialog() {
   }, [t]);
   // 已显示过的链接编号：同一条链接的重复通知只弹一次框
   const shownIdRef = useRef<number | null>(null);
-
   useEffect(() => {
     let disposed = false;
     // 串行处理：同一时间只有一次读取在进行，期间来的通知只记一笔，处理完再读一次。
     // 并发读取的话，迟到的旧结果会盖掉已经显示并清除的新链接，新链接就再也取不回来了
     let running = false;
     let rerun = false;
-
     // 返回是否真的显示了；被卸载打断时返回 false，链接留在后端等下次读取
     const showPending = async (pending: PendingDeepLink): Promise<boolean> => {
       if (pending.kind === "error") {
         if (disposed) return false;
-        console.error("Deep link error:", pending);
+        console.error("Deep link error:", pending.error);
         toast.error(tRef.current("deeplink.parseError"), {
           description: pending.error,
         });
         return true;
       }
-
       const incoming = pending.request;
       let next = incoming;
+      let mergeError: string | null = null;
       // If config is present, merge it to get the complete configuration
       if (incoming.config) {
         try {
           next = await deeplinkApi.mergeDeeplinkConfig(incoming);
         } catch (error) {
+          if (disposed) return false;
           console.error("Failed to merge config:", error);
+          mergeError = error instanceof Error ? error.message : String(error);
           toast.error(tRef.current("deeplink.configMergeError"), {
-            description: error instanceof Error ? error.message : String(error),
+            description: mergeError,
           });
         }
       }
       if (disposed) return false;
       // 与请求一起初始化，避免弹窗先显示旧开关状态，再由 effect 更新。
       setActivateAfterImport(initialActivation(next));
+      setPreviewError(mergeError);
       shownRequestRef.current = next;
       setRequest(next);
       setIsOpen(true);
       return true;
     };
-
     // 读取不清除，显示之后才按编号确认清除：读到后、显示前被打断，链接也不会丢
     const processOnce = async () => {
       try {
@@ -200,7 +205,6 @@ export function DeepLinkImportDialog() {
         console.error("Failed to process pending deep link:", error);
       }
     };
-
     const processPending = async () => {
       if (disposed) return;
       if (running) {
@@ -217,19 +221,23 @@ export function DeepLinkImportDialog() {
         running = false;
       }
     };
-
     const unlisten = listen("deeplink-pending", () => {
       void processPending();
     });
     // 冷启动或窗口重建时，链接早于本组件挂载到达，挂载后主动读一次
-    void unlisten.then(() => processPending());
-
+    void unlisten
+      .then(() => processPending())
+      .catch((error) => {
+        console.error("Failed to subscribe to pending deep links", error);
+        void processPending();
+      });
     return () => {
       disposed = true;
-      unlisten.then((fn) => fn());
+      void unlisten
+        .then((fn) => cleanupTauriListener(fn, "deeplink-pending"))
+        .catch(() => {});
     };
   }, []);
-
   // 托盘列出供应商和当前项，导入（以及打开开关时的切换）后要重建
   const refreshTrayMenu = async () => {
     try {
@@ -241,12 +249,11 @@ export function DeepLinkImportDialog() {
       );
     }
   };
-
   const handleImport = async () => {
-    if (!request) return;
-
+    if (!request || previewError || importingRef.current) return;
+    importingRef.current = true;
     setIsImporting(true);
-
+    let imported = false;
     try {
       // 供应商和提示词的「立即生效」由用户在确认框里决定，覆盖链接里的值
       let payload: DeepLinkImportRequest =
@@ -262,10 +269,14 @@ export function DeepLinkImportDialog() {
         };
       }
       const result = await deeplinkApi.importFromDeeplink(payload);
+      imported = true;
       const refreshMcp = async (summary: {
         importedCount: number;
         importedIds: string[];
-        failed: Array<{ id: string; error: string }>;
+        failed: Array<{
+          id: string;
+          error: string;
+        }>;
       }) => {
         // 强制刷新 MCP 相关缓存，确保管理页重新从数据库加载
         await queryClient.invalidateQueries({
@@ -276,7 +287,6 @@ export function DeepLinkImportDialog() {
           queryKey: ["mcp", "all"],
           type: "all",
         });
-
         if (summary.failed.length > 0) {
           toast.warning(t("deeplink.mcpPartialSuccess"), {
             description: t("deeplink.mcpPartialSuccessDescription", {
@@ -293,20 +303,18 @@ export function DeepLinkImportDialog() {
           });
         }
       };
-
       // Handle different result types
-      if ("type" in result) {
+      if (typeof result === "object" && result !== null && "type" in result) {
         if (result.type === "provider") {
-          await queryClient.invalidateQueries({
-            queryKey: ["providers", request.app],
-          });
-          if (request.app === "opencode") {
-            await queryClient.invalidateQueries({
-              queryKey: ["opencodeLiveProviderIds"],
-            });
-            await queryClient.invalidateQueries({
-              queryKey: ["opencode", "runtime-models"],
-            });
+          if (request.app) {
+            await invalidateProviderCaches(queryClient, request.app, "add");
+            if (payload.enabled && !isAdditiveAppId(request.app)) {
+              await invalidateProviderCaches(
+                queryClient,
+                request.app,
+                "switch",
+              );
+            }
           }
           await refreshTrayMenu();
           toast.success(t("deeplink.importSuccess"), {
@@ -316,7 +324,12 @@ export function DeepLinkImportDialog() {
             closeButton: true,
           });
         } else if (result.type === "prompt") {
-          // Prompts don't use React Query, trigger a custom event for refresh
+          // Header badges/counts use Query; the prompt editor also keeps a local draft.
+          if (request.app) {
+            const queryKey = promptKeys.list(request.app);
+            await queryClient.cancelQueries({ queryKey });
+            await queryClient.invalidateQueries({ queryKey });
+          }
           window.dispatchEvent(
             new CustomEvent("prompt-imported", {
               detail: { app: request.app },
@@ -331,7 +344,8 @@ export function DeepLinkImportDialog() {
         } else if (result.type === "mcp") {
           await refreshMcp(result);
         } else if (result.type === "skill") {
-          // Refresh Skills with aggressive strategy
+          // 先 bump discover generation，再整体刷新，避免进行中的旧发现盖掉新仓
+          invalidateSkillsDiscoverCache(queryClient);
           queryClient.invalidateQueries({
             queryKey: ["skills"],
             refetchType: "all",
@@ -352,9 +366,8 @@ export function DeepLinkImportDialog() {
         await refreshMcp(result);
       } else {
         // Legacy return type (string ID) - assume provider
-        await queryClient.invalidateQueries({
-          queryKey: ["providers", request.app],
-        });
+        if (request.app)
+          await invalidateProviderCaches(queryClient, request.app, "add");
         await refreshTrayMenu();
         toast.success(t("deeplink.importSuccess"), {
           description: t("deeplink.importSuccessDescription", {
@@ -363,29 +376,37 @@ export function DeepLinkImportDialog() {
           closeButton: true,
         });
       }
-
       // Close dialog after all refreshes complete, unless a newer link replaced it meanwhile
       if (shownRequestRef.current === request) setIsOpen(false);
     } catch (error) {
-      console.error("Failed to import from deep link:", error);
-      toast.error(t("deeplink.importError"), {
-        description: error instanceof Error ? error.message : String(error),
-      });
+      if (imported) {
+        // The write already succeeded. Do not leave a retry button that imports it again.
+        if (shownRequestRef.current === request) setIsOpen(false);
+        console.error("Failed to refresh after deep link import:", error);
+        toast.warning(
+          t("deeplink.refreshError", {
+            defaultValue: "导入已完成，但界面刷新失败。请重新打开此页面。",
+          }),
+        );
+      } else {
+        console.error("Failed to import from deep link:", error);
+        toast.error(t("deeplink.importError"), {
+          description: error instanceof Error ? error.message : String(error),
+        });
+      }
     } finally {
+      importingRef.current = false;
       setIsImporting(false);
     }
   };
-
   const handleCancel = () => {
     setIsOpen(false);
   };
-
   // Mask API key for display (show first 4 chars + ***)
   const maskedApiKey =
     request?.apiKey && request.apiKey.length > 4
       ? `${request.apiKey.substring(0, 4)}${"*".repeat(20)}`
       : "****";
-
   // 主地址是套餐地址且链接没带脚本时，按套餐额度查询（与后端 `link_coding_plan_provider`
   // 一致：所有应用都认，只有 ZenMux 限 Claude）
   const detectedCodingPlan = detectCodingPlanProvider(
@@ -397,14 +418,12 @@ export function DeepLinkImportDialog() {
     (detectedCodingPlan !== "zenmux" || request?.app === "claude")
       ? CODING_PLAN_PROVIDERS.find((cp) => cp.id === detectedCodingPlan)
       : undefined;
-
   // 导入后用量查询是否启用：链接写了 usageEnabled 就照办；没写时带脚本或是套餐地址即启用
   // （火山要另填 AccessKey，套餐地址也不启用；与后端一致）
   const usageWillBeEnabled =
     request?.usageEnabled ??
     (Boolean(request?.usageScript) ||
       (codingPlan ? codingPlanEnabledByDefault(codingPlan.id) : false));
-
   // Check if config file is present
   const hasConfigFile = !!(request?.config || request?.configUrl);
   const configSource = request?.config
@@ -412,12 +431,10 @@ export function DeepLinkImportDialog() {
     : request?.configUrl
       ? "url"
       : null;
-
   const parsedConfig = useMemo(
     () => (request ? parseDeepLinkConfigPreview(request) : null),
     [request],
   );
-
   /**
    * env 行：值经 `maskValue` 脱敏，键命中加载器控制变量时标记。
    *
@@ -428,9 +445,7 @@ export function DeepLinkImportDialog() {
     return (
       <div className="grid grid-cols-2 gap-2 text-xs">
         <span
-          className={`font-mono break-all ${
-            risk ? "text-warning-text font-semibold" : "text-fg-2"
-          }`}
+          className={`font-mono break-all ${risk ? "text-warning-text font-semibold" : "text-fg-2"}`}
         >
           {risk && <span aria-hidden="true">⚠ </span>}
           {envKey}
@@ -439,7 +454,15 @@ export function DeepLinkImportDialog() {
       </div>
     );
   };
-
+  const mcpImportBlocked = useMemo(() => {
+    if (!request || request.resource !== "mcp") return false;
+    const parsed = parseMcpDeepLinkConfig(request.config);
+    return (
+      Boolean(parsed.error) ||
+      !parsed.servers ||
+      Object.keys(parsed.servers).length === 0
+    );
+  }, [request]);
   const getTitle = () => {
     if (!request) return t("deeplink.confirmImport");
     switch (request.resource) {
@@ -453,7 +476,6 @@ export function DeepLinkImportDialog() {
         return t("deeplink.confirmImport");
     }
   };
-
   const getDescription = () => {
     if (!request) return t("deeplink.confirmImportDescription");
     switch (request.resource) {
@@ -467,7 +489,6 @@ export function DeepLinkImportDialog() {
         return t("deeplink.confirmImportDescription");
     }
   };
-
   return (
     <Dialog open={isOpen && !!request} onOpenChange={setIsOpen}>
       <DialogContent className="sm:max-w-[500px]" zIndex="top">
@@ -803,12 +824,12 @@ export function DeepLinkImportDialog() {
                   )}
 
                   {/*
-                    Usage Script Configuration (v3.9+)
-                    区块门槛必须与后端 `build_provider_meta` 的持久化条件对齐：
-                    任一 usage 字段存在即落库。若只按 usageScript 开门，一条仅携带
-                    usageAccessToken/usageUserId 等字段的链接会在对话框毫无展示的
-                    情况下把凭据写进供应商配置——展示是用户同意机制的承重部分。
-                  */}
+      Usage Script Configuration (v3.9+)
+      区块门槛必须与后端 `build_provider_meta` 的持久化条件对齐：
+      任一 usage 字段存在即落库。若只按 usageScript 开门，一条仅携带
+      usageAccessToken/usageUserId 等字段的链接会在对话框毫无展示的
+      情况下把凭据写进供应商配置——展示是用户同意机制的承重部分。
+    */}
                   {(request.usageScript ||
                     codingPlan ||
                     request.usageEnabled !== undefined ||
@@ -829,10 +850,10 @@ export function DeepLinkImportDialog() {
                           </div>
                           <div className="col-span-2 text-sm">
                             {/*
-                            与后端 `build_provider_meta` 严格对齐：链接写了就照办，
-                            没写时带脚本或是套餐地址即启用。徽章必须显示实际会发生
-                            的事，不能比后端更乐观，也不能更保守。
-                          */}
+与后端 `build_provider_meta` 严格对齐：链接写了就照办，
+没写时带脚本或是套餐地址即启用。徽章必须显示实际会发生
+的事，不能比后端更乐观，也不能更保守。
+*/}
                             <span
                               className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium ${
                                 usageWillBeEnabled
@@ -863,10 +884,10 @@ export function DeepLinkImportDialog() {
                       {request.usageScript && (
                         <>
                           {/*
-                        脚本正文必须完整展示。这段是会执行的 JavaScript，而 payload
-                        常常整条藏在中间——`whitespace-pre-wrap break-all` + 可滚动容器，
-                        不用 truncate，任何字符都不得被 CSS 藏起来。
-                      */}
+          脚本正文必须完整展示。这段是会执行的 JavaScript，而 payload
+          常常整条藏在中间——`whitespace-pre-wrap break-all` + 可滚动容器，
+          不用 truncate，任何字符都不得被 CSS 藏起来。
+        */}
                           <div className="space-y-1">
                             <div className="font-medium text-sm text-fg-2">
                               {t("deeplink.usageScriptCode")}
@@ -880,10 +901,10 @@ export function DeepLinkImportDialog() {
                           </div>
 
                           {/*
-                        无条件显示，不看 `usageEnabled`：代码无论启用与否都会被写入供应商
-                        配置，用户之后在应用内一键即可开启。挂条件等于让攻击者省略参数就能
-                        关掉这条警告。
-                      */}
+          无条件显示，不看 `usageEnabled`：代码无论启用与否都会被写入供应商
+          配置，用户之后在应用内一键即可开启。挂条件等于让攻击者省略参数就能
+          关掉这条警告。
+        */}
                           <div className="text-warning-text text-sm flex items-start gap-2">
                             <span aria-hidden="true">⚠️</span>
                             <span>{t("deeplink.usageScriptWarning")}</span>
@@ -977,20 +998,18 @@ export function DeepLinkImportDialog() {
                   {request.app !== "agy" && (
                     <>
                       {/*
-                        导入后是否立即生效由用户决定，链接里的 enabled 只是初始值。切换式应用打开后
-                        会立即切到这家，客户端流量随之改走链接里的地址，所以打开时要给出提示。
-                      */}
+          导入后是否立即生效由用户决定，链接里的 enabled 只是初始值。切换式应用打开后
+          会立即切到这家，客户端流量随之改走链接里的地址，所以打开时要给出提示。
+        */}
                       <div className="flex items-center justify-between gap-4 pt-2 border-t border-border">
                         <label
                           htmlFor="deeplink-activate-after-import"
                           className="text-sm font-medium"
                         >
                           {request.app && isAdditiveAppId(request.app)
-                            ? request.app === "pi"
-                              ? t("deeplink.enableInPiAfterImport")
-                              : t("deeplink.addToAppAfterImport", {
-                                  app: getAppLabel(request.app),
-                                })
+                            ? t("deeplink.addToAppAfterImport", {
+                                app: getAppLabel(request.app),
+                              })
                             : t("deeplink.switchAfterImport")}
                         </label>
                         <Switch
@@ -1017,6 +1036,11 @@ export function DeepLinkImportDialog() {
               )}
             </div>
 
+            {previewError && (
+              <p role="alert" className="text-sm text-danger-text">
+                {previewError}
+              </p>
+            )}
             <DialogFooter>
               <Button
                 variant="outline"
@@ -1025,7 +1049,10 @@ export function DeepLinkImportDialog() {
               >
                 {t("common.cancel")}
               </Button>
-              <Button onClick={handleImport} disabled={isImporting}>
+              <Button
+                onClick={handleImport}
+                disabled={isImporting || mcpImportBlocked || !!previewError}
+              >
                 {isImporting ? t("deeplink.importing") : t("deeplink.import")}
               </Button>
             </DialogFooter>

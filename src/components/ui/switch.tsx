@@ -1,13 +1,11 @@
-import * as React from "react";
-import * as SwitchPrimitives from "@radix-ui/react-switch";
 import { cn } from "@/lib/utils";
-
+import * as SwitchPrimitives from "@radix-ui/react-switch";
+import * as React from "react";
 export interface SwitchProps
   extends React.ComponentPropsWithoutRef<typeof SwitchPrimitives.Root> {
   /** default：30×18；sm：26×16，给表格里成排的开关用 */
   size?: "default" | "sm";
 }
-
 const Switch = React.forwardRef<
   React.ElementRef<typeof SwitchPrimitives.Root>,
   SwitchProps
@@ -35,5 +33,4 @@ const Switch = React.forwardRef<
   </SwitchPrimitives.Root>
 ));
 Switch.displayName = SwitchPrimitives.Root.displayName;
-
 export { Switch };

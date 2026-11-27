@@ -1,17 +1,15 @@
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import type { SettingsFormState } from "@/hooks/useSettings";
+import { toast } from "@/lib/toast";
 import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { SettingsFormState } from "@/hooks/useSettings";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { toast } from "@/lib/toast";
 import { SettingsRow, SettingsSwitchRow } from "./SettingsLayout";
-
 export const DEFAULT_CODEX_QUOTA_PROTECTION = {
   enabled: false,
   fiveHourThreshold: 95,
   weeklyThreshold: 98,
 };
-
 export function CodexQuotaProtectionSettings({
   settings,
   onChange,
@@ -37,7 +35,6 @@ export function CodexQuotaProtectionSettings({
   const dirty =
     Number(fiveHour) !== config.fiveHourThreshold ||
     Number(weekly) !== config.weeklyThreshold;
-
   const save = async (next: typeof DEFAULT_CODEX_QUOTA_PROTECTION) => {
     setSaving(true);
     try {
@@ -52,7 +49,6 @@ export function CodexQuotaProtectionSettings({
       setSaving(false);
     }
   };
-
   return (
     <>
       <SettingsSwitchRow

@@ -4,10 +4,11 @@
 
 use super::parser::TokenUsage;
 use rust_decimal::Decimal;
+#[cfg(test)]
 use std::str::FromStr;
 
 /// 成本明细
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CostBreakdown {
     pub input_cost: Decimal,
     pub output_cost: Decimal,
@@ -16,39 +17,12 @@ pub struct CostBreakdown {
     pub total_cost: Decimal,
 }
 
-/// 模型定价信息
-#[derive(Debug, Clone)]
-pub struct ModelPricing {
-    pub input_cost_per_million: Decimal,
-    pub output_cost_per_million: Decimal,
-    pub cache_read_cost_per_million: Decimal,
-    pub cache_creation_cost_per_million: Decimal,
-}
+pub use crate::pricing::ModelPricing;
 
 /// 成本计算器
 pub struct CostCalculator;
 
 impl CostCalculator {
-    /// 计算请求成本
-    ///
-    /// # 参数
-    /// - `usage`: Token 使用量
-    /// - `pricing`: 模型定价
-    /// - `cost_multiplier`: 成本倍数 (provider 自定义)
-    ///
-    /// # 计算逻辑
-    /// - input_cost: input_tokens × 输入价格
-    /// - cache_read_cost: cache_read_tokens × 缓存读取价格
-    /// - Claude/Anthropic 的 input_tokens 已经不包含 cache_read_tokens
-    /// - total_cost: 各项成本之和 × 倍率（倍率只作用于最终总价）
-    pub fn calculate(
-        usage: &TokenUsage,
-        pricing: &ModelPricing,
-        cost_multiplier: Decimal,
-    ) -> CostBreakdown {
-        Self::calculate_with_cache_semantics(usage, pricing, cost_multiplier, false)
-    }
-
     /// 按 app_type 选择输入 token 语义后计算成本。
     ///
     /// Codex/OpenAI Responses 与 Gemini 的输入 token 字段包含 cache read 部分；
@@ -59,13 +33,13 @@ impl CostCalculator {
         pricing: &ModelPricing,
         cost_multiplier: Decimal,
     ) -> CostBreakdown {
-        let input_includes_cache_read =
-            crate::services::sql_helpers::is_cache_inclusive_app(app_type);
-        Self::calculate_with_cache_semantics(
-            usage,
-            pricing,
-            cost_multiplier,
-            input_includes_cache_read,
+        Self::try_calculate_for_app(app_type, usage, Some(pricing), cost_multiplier).unwrap_or_else(
+            || {
+                log::warn!(
+                    "Invalid or overflowing usage cost; preserving tokens for later repricing"
+                );
+                CostBreakdown::default()
+            },
         )
     }
 
@@ -74,7 +48,19 @@ impl CostCalculator {
         pricing: &ModelPricing,
         cost_multiplier: Decimal,
         input_includes_cache_read: bool,
-    ) -> CostBreakdown {
+    ) -> Option<CostBreakdown> {
+        if [
+            pricing.input_cost_per_million,
+            pricing.output_cost_per_million,
+            pricing.cache_read_cost_per_million,
+            pricing.cache_creation_cost_per_million,
+            cost_multiplier,
+        ]
+        .iter()
+        .any(|value| *value < Decimal::ZERO)
+        {
+            return None;
+        }
         let million = Decimal::from(1_000_000);
 
         // OpenAI/Gemini 风格的 input_tokens 包含缓存读取和写入，需要扣除后再按输入价计费；
@@ -89,12 +75,15 @@ impl CostCalculator {
         };
 
         // 各项基础成本（不含倍率）
-        let input_cost =
-            Decimal::from(billable_input_tokens) * pricing.input_cost_per_million / million;
-        let output_cost =
-            Decimal::from(usage.output_tokens) * pricing.output_cost_per_million / million;
-        let cache_read_cost =
-            Decimal::from(usage.cache_read_tokens) * pricing.cache_read_cost_per_million / million;
+        let input_cost = Decimal::from(billable_input_tokens)
+            .checked_mul(pricing.input_cost_per_million)?
+            / million;
+        let output_cost = Decimal::from(usage.output_tokens)
+            .checked_mul(pricing.output_cost_per_million)?
+            / million;
+        let cache_read_cost = Decimal::from(usage.cache_read_tokens)
+            .checked_mul(pricing.cache_read_cost_per_million)?
+            / million;
         // Anthropic 5 分钟缓存写入为输入价 1.25 倍、1 小时写入为 2 倍；定价表的
         // cache_creation 单价对应 5 分钟写入，1 小时写入按其 1.6 倍计。
         let cache_creation_1h_tokens = usage
@@ -103,20 +92,23 @@ impl CostCalculator {
         let cache_creation_cost =
             (Decimal::from(usage.cache_creation_tokens - cache_creation_1h_tokens)
                 + Decimal::from(cache_creation_1h_tokens) * Decimal::new(16, 1))
-                * pricing.cache_creation_cost_per_million
+            .checked_mul(pricing.cache_creation_cost_per_million)?
                 / million;
 
         // 总成本 = 各项基础成本之和 × 倍率
-        let base_total = input_cost + output_cost + cache_read_cost + cache_creation_cost;
-        let total_cost = base_total * cost_multiplier;
+        let base_total = input_cost
+            .checked_add(output_cost)?
+            .checked_add(cache_read_cost)?
+            .checked_add(cache_creation_cost)?;
+        let total_cost = base_total.checked_mul(cost_multiplier)?;
 
-        CostBreakdown {
+        Some(CostBreakdown {
             input_cost,
             output_cost,
             cache_read_cost,
             cache_creation_cost,
             total_cost,
-        }
+        })
     }
 
     pub fn try_calculate_for_app(
@@ -125,30 +117,54 @@ impl CostCalculator {
         pricing: Option<&ModelPricing>,
         cost_multiplier: Decimal,
     ) -> Option<CostBreakdown> {
-        pricing.map(|p| Self::calculate_for_app(app_type, usage, p, cost_multiplier))
-    }
-}
-
-impl ModelPricing {
-    /// 从字符串创建定价信息
-    pub fn from_strings(
-        input: &str,
-        output: &str,
-        cache_read: &str,
-        cache_creation: &str,
-    ) -> Result<Self, rust_decimal::Error> {
-        Ok(Self {
-            input_cost_per_million: Decimal::from_str(input)?,
-            output_cost_per_million: Decimal::from_str(output)?,
-            cache_read_cost_per_million: Decimal::from_str(cache_read)?,
-            cache_creation_cost_per_million: Decimal::from_str(cache_creation)?,
-        })
+        Self::calculate_with_cache_semantics(
+            usage,
+            pricing?,
+            cost_multiplier,
+            crate::database::sql_helpers::is_cache_inclusive_app(app_type),
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalid_or_overflowing_prices_do_not_panic_or_produce_negative_costs() {
+        let usage = TokenUsage {
+            input_tokens: u32::MAX,
+            ..Default::default()
+        };
+        for input in [Decimal::MAX, Decimal::NEGATIVE_ONE] {
+            let pricing = ModelPricing {
+                input_cost_per_million: input,
+                output_cost_per_million: Decimal::ZERO,
+                cache_read_cost_per_million: Decimal::ZERO,
+                cache_creation_cost_per_million: Decimal::ZERO,
+            };
+            assert!(CostCalculator::try_calculate_for_app(
+                "claude",
+                &usage,
+                Some(&pricing),
+                Decimal::ONE
+            )
+            .is_none());
+            assert_eq!(
+                CostCalculator::calculate_for_app("claude", &usage, &pricing, Decimal::ONE)
+                    .total_cost,
+                Decimal::ZERO
+            );
+        }
+        let pricing = ModelPricing::from_strings("1", "0", "0", "0").unwrap();
+        assert!(CostCalculator::try_calculate_for_app(
+            "claude",
+            &usage,
+            Some(&pricing),
+            Decimal::MAX
+        )
+        .is_none());
+    }
 
     #[test]
     fn test_cost_calculation() {
@@ -165,7 +181,7 @@ mod tests {
         let pricing = ModelPricing::from_strings("3.0", "15.0", "0.3", "3.75").unwrap();
         let multiplier = Decimal::from_str("1.0").unwrap();
 
-        let cost = CostCalculator::calculate(&usage, &pricing, multiplier);
+        let cost = CostCalculator::calculate_for_app("claude", &usage, &pricing, multiplier);
 
         // Claude/Anthropic 语义：input_tokens 已经不含 cache_read_tokens
         // input: 1000 * 3.0 / 1M = 0.003
@@ -210,7 +226,12 @@ mod tests {
             TokenUsage::from_claude_response(&response),
             TokenUsage::from_claude_stream_events(&events),
         ] {
-            let cost = CostCalculator::calculate(&parsed.unwrap(), &pricing, Decimal::ONE);
+            let cost = CostCalculator::calculate_for_app(
+                "claude",
+                &parsed.unwrap(),
+                &pricing,
+                Decimal::ONE,
+            );
             // 400 × 6.25 / 1M + 600 × 10 / 1M = 0.0085
             assert_eq!(
                 cost.cache_creation_cost,
@@ -282,7 +303,7 @@ mod tests {
         let pricing = ModelPricing::from_strings("3.0", "15.0", "0", "0").unwrap();
         let multiplier = Decimal::from_str("1.5").unwrap();
 
-        let cost = CostCalculator::calculate(&usage, &pricing, multiplier);
+        let cost = CostCalculator::calculate_for_app("claude", &usage, &pricing, multiplier);
 
         // input_cost: 基础价格（不含倍率）= 1000 * 3.0 / 1M = 0.003
         assert_eq!(cost.input_cost, Decimal::from_str("0.003").unwrap());
@@ -305,7 +326,7 @@ mod tests {
         let pricing = ModelPricing::from_strings("0.075", "0.3", "0.01875", "0.075").unwrap();
         let multiplier = Decimal::from_str("1.0").unwrap();
 
-        let cost = CostCalculator::calculate(&usage, &pricing, multiplier);
+        let cost = CostCalculator::calculate_for_app("claude", &usage, &pricing, multiplier);
 
         // 验证高精度计算
         assert!(cost.total_cost > Decimal::ZERO);

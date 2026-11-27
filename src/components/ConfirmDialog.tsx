@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -7,11 +8,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { AlertTriangle, Info } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-
 interface ConfirmDialogProps {
   isOpen: boolean;
   title: string;
@@ -27,7 +26,6 @@ interface ConfirmDialogProps {
   onConfirm: (checkboxChecked: boolean) => void;
   onCancel: () => void;
 }
-
 export function ConfirmDialog({
   isOpen,
   title,
@@ -46,17 +44,14 @@ export function ConfirmDialog({
   const [checkboxChecked, setCheckboxChecked] = useState(
     checkboxDefaultChecked,
   );
-
   useEffect(() => {
     if (isOpen) {
       setCheckboxChecked(checkboxDefaultChecked);
     }
   }, [isOpen, checkboxDefaultChecked]);
-
   const IconComponent = variant === "info" ? Info : AlertTriangle;
   const iconClass =
     variant === "info" ? "h-5 w-5 text-fg-1" : "h-5 w-5 text-destructive";
-
   return (
     <Dialog
       open={isOpen}

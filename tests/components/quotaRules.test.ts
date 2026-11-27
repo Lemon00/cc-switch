@@ -13,7 +13,6 @@ import {
   tierLine,
   toneForLeft,
 } from "@/components/quota/quotaRules";
-
 const t = ((key: string, options?: Record<string, unknown>) => {
   const templates: Record<string, string> = {
     "quota.tierLeft": "{{labelSp}}剩余 {{value}}%",
@@ -40,8 +39,23 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     String(options?.[name] ?? ""),
   );
 }) as unknown as TFunction;
-
 describe("quota lines", () => {
+  it("does not present missing or invalid usage as full quota", () => {
+    for (const utilization of [undefined, null, NaN, Infinity, -1]) {
+      const line = tierLine(
+        t,
+        {
+          name: "five_hour",
+          utilization: utilization as number,
+          resetsAt: null,
+        },
+        "5 小时",
+      );
+      expect(line.tone).toBe("danger");
+      expect(line.text).toBe("quota.failed");
+      expect(barPercent(line)).toBe(0);
+    }
+  });
   it("writes what is left, quiet until under 10%", () => {
     expect(
       tierLine(
@@ -79,7 +93,6 @@ describe("quota lines", () => {
     expect(toneForLeft(20)).toBe("normal");
     expect(toneForLeft(19)).toBe("warning");
   });
-
   it("writes what is used when chosen, colored and picked by what is left", () => {
     const used = (name: string, utilization: number, label = "每周") =>
       tierLine(t, { name, utilization, resetsAt: null }, label, {
@@ -112,7 +125,6 @@ describe("quota lines", () => {
       ),
     ).toEqual(["b", "c"]);
   });
-
   it("draws the bar along with the number shown", () => {
     const tier = { name: "five_hour", utilization: 30, resetsAt: null };
     expect(barPercent(tierLine(t, tier, "5 小时"))).toBe(70);
@@ -123,7 +135,6 @@ describe("quota lines", () => {
     expect(barPercent(balanceLine(t, { remaining: 5, total: 100 }))).toBe(5);
     expect(barPercent(balanceLine(t, { remaining: 5 }))).toBe(100);
   });
-
   it("only colors a balance once it runs out, even when nearly gone", () => {
     expect(balanceLine(t, { remaining: 82.1, unit: "¥" })).toMatchObject({
       text: "余额 82.10 ¥",
@@ -147,7 +158,6 @@ describe("quota lines", () => {
     expect(balanceLine(t, { remaining: -0 }).text).toBe("余额 0.00");
     expect(balanceLine(t, { remaining: -0.004 }).text).toBe("余额 0.00");
   });
-
   it("shows a failed query as a red line plus a gray reason", () => {
     expect(failedLines(t, "登录已过期")).toEqual([
       expect.objectContaining({ text: "quota.failed", tone: "danger" }),
@@ -155,7 +165,6 @@ describe("quota lines", () => {
     ]);
     expect(expiredLine(t).tone).toBe("danger");
   });
-
   it("keeps the two tiers with the least left, in their original order", () => {
     const lines = [
       tierLine(t, { name: "a", utilization: 10, resetsAt: null }, "A"),
@@ -164,13 +173,11 @@ describe("quota lines", () => {
     ];
     expect(pickLines(lines, 2).map((line) => line.key)).toEqual(["b", "c"]);
   });
-
   it("pins the shortest window on the card and merges the other tiers", () => {
     const tier = (name: string, utilization: number) =>
       tierLine(t, { name, utilization, resetsAt: null }, name, { short: name });
     const keys = (rows: ReturnType<typeof cardRows>) =>
       rows.map((row) => row.map((line) => line.key));
-
     // 两档以内一档一行
     expect(
       keys(cardRows([tier("seven_day", 20), tier("five_hour", 10)])),
@@ -205,12 +212,10 @@ describe("quota lines", () => {
     expect(keys(cardRows(plain))).toEqual([["b"], ["c"]]);
   });
 });
-
 describe("saved limit resets", () => {
   const now = Date.parse("2026-10-04T00:00:00Z");
   const day = 24 * 60 * 60 * 1000;
   const at = (ms: number) => new Date(ms).toISOString();
-
   it("is hidden when there is no usable reset", () => {
     expect(resetCreditsLine(t, undefined, { now, locale: "en" })).toBeNull();
     expect(
@@ -225,7 +230,6 @@ describe("saved limit resets", () => {
       ),
     ).toBeNull();
   });
-
   it("counts what is left and writes the earliest expiry where the bar would be", () => {
     const line = resetCreditsLine(
       t,
@@ -244,7 +248,6 @@ describe("saved limit resets", () => {
       resetCreditsLine(t, { expiresAt: [null] }, { now, locale: "en" }),
     ).toMatchObject({ caption: "不会过期", tone: "normal" });
   });
-
   it("lists every expiry once there is more than one, same day grouped", () => {
     // 只有一次：行里写全了，不给明细
     expect(
@@ -254,12 +257,11 @@ describe("saved limit resets", () => {
         { now, locale: "en" },
       )?.breakdown,
     ).toBeUndefined();
-
     const soon = now + 2 * day;
     const later = now + 20 * day;
     const breakdown = resetCreditsLine(
       t,
-      { expiresAt: [at(soon), at(soon + 60_000), at(later), null] },
+      { expiresAt: [at(soon), at(soon + 60000), at(later), null] },
       { now, locale: "en-US" },
     )?.breakdown;
     expect(breakdown?.title).toBe("存下的限额重置");
@@ -272,7 +274,6 @@ describe("saved limit resets", () => {
     ]);
     expect(breakdown?.items[2].label).toBe("不会过期");
   });
-
   it("stands out when the earliest one expires within three days", () => {
     expect(
       resetCreditsLine(
@@ -282,7 +283,6 @@ describe("saved limit resets", () => {
       )?.tone,
     ).toBe("warning");
   });
-
   it("joins the weekly tier on the card's second row", () => {
     const fiveHour = tierLine(
       t,
@@ -313,7 +313,6 @@ describe("saved limit resets", () => {
     ]);
   });
 });
-
 describe("reset time in hints", () => {
   const now = Date.parse("2026-10-04T10:00:00Z");
   const fiveHour = tierLine(
@@ -325,7 +324,6 @@ describe("reset time in hints", () => {
     },
     "5 小时",
   );
-
   it("counts down from the render time, not when the line was built", () => {
     expect(fiveHour.detail).toBeUndefined();
     expect(lineHint(t, fiveHour, now)).toBe("5 小时 · 2h30m后重置");
@@ -333,7 +331,6 @@ describe("reset time in hints", () => {
       "5 小时 · 1h30m后重置",
     );
   });
-
   it("keeps the extra detail in front and falls back to the line itself", () => {
     expect(lineHint(t, { ...fiveHour, detail: "Pro" }, now)).toBe(
       "Pro · 5 小时 · 2h30m后重置",
@@ -344,7 +341,6 @@ describe("reset time in hints", () => {
     );
   });
 });
-
 describe("Codex Credits balance", () => {
   it("is hidden without a positive balance", () => {
     expect(creditsLine(t, undefined, { locale: "en" })).toBeNull();
@@ -352,7 +348,6 @@ describe("Codex Credits balance", () => {
     expect(creditsLine(t, 0, { locale: "en" })).toBeNull();
     expect(creditsLine(t, Number.NaN, { locale: "en" })).toBeNull();
   });
-
   it("counts credits and converts to whole dollars at $0.04 each", () => {
     const line = creditsLine(t, 62500, { locale: "en" })!;
     expect(line.caption).toBe("62,500");
@@ -363,7 +358,6 @@ describe("Codex Credits balance", () => {
     expect(line.tone).toBe("normal");
     expect(creditsLine(t, 1234.5, { locale: "en" })!.short).toBe("$49");
   });
-
   it("says under a dollar instead of rounding a small balance to zero", () => {
     expect(creditsLine(t, 10, { locale: "en" })!.short).toBe("<$1");
   });

@@ -1,25 +1,22 @@
-import { HelpTip } from "@/components/ui/help-tip";
-import { useState } from "react";
-import { useTranslation } from "react-i18next";
-import { toast } from "@/lib/toast";
-import { Save, Plus, Globe } from "lucide-react";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { Button } from "@/components/ui/button";
+import { HelpTip } from "@/components/ui/help-tip";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useUpdateModelPricing } from "@/lib/query/usage";
+import { toast } from "@/lib/toast";
 import { isNonNegativeDecimalString, type ModelPricing } from "@/types/usage";
+import { Globe, Plus, Save } from "lucide-react";
+import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ModelsDevPickerDialog } from "./ModelsDevPickerDialog";
-
 interface PricingEditModalProps {
   open: boolean;
   model: ModelPricing;
   isNew?: boolean;
   onClose: () => void;
 }
-
 const PRICE_INPUT_STEP = "0.0001";
-
 export function PricingEditModal({
   open,
   model,
@@ -29,7 +26,6 @@ export function PricingEditModal({
   const { t } = useTranslation();
   const updatePricing = useUpdateModelPricing();
   const [isPickerOpen, setIsPickerOpen] = useState(false);
-
   const [formData, setFormData] = useState({
     modelId: model.modelId,
     displayName: model.displayName,
@@ -38,16 +34,13 @@ export function PricingEditModal({
     cacheReadCost: model.cacheReadCostPerMillion,
     cacheCreationCost: model.cacheCreationCostPerMillion,
   });
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
     // 验证模型 ID
     if (isNew && !formData.modelId.trim()) {
       toast.error(t("usage.modelIdRequired", "模型 ID 不能为空"));
       return;
     }
-
     // 验证非负数
     const values = [
       formData.inputCost,
@@ -55,14 +48,12 @@ export function PricingEditModal({
       formData.cacheReadCost,
       formData.cacheCreationCost,
     ];
-
     for (const value of values) {
       if (!isNonNegativeDecimalString(value)) {
         toast.error(t("usage.invalidPrice", "价格必须为非负数"));
         return;
       }
     }
-
     try {
       await updatePricing.mutateAsync({
         modelId: isNew ? formData.modelId : model.modelId,
@@ -72,20 +63,17 @@ export function PricingEditModal({
         cacheReadCost: formData.cacheReadCost,
         cacheCreationCost: formData.cacheCreationCost,
       });
-
       toast.success(
         isNew
           ? t("usage.pricingAdded", "定价已添加")
           : t("usage.pricingUpdated", "定价已更新"),
         { closeButton: true },
       );
-
       onClose();
     } catch (error) {
       toast.error(String(error));
     }
   };
-
   return (
     <FullScreenPanel
       isOpen={open}

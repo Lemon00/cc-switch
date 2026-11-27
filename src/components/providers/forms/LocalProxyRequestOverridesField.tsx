@@ -1,12 +1,11 @@
-import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
-import { Textarea } from "@/components/ui/textarea";
 import { HelpTip } from "@/components/ui/help-tip";
+import { Textarea } from "@/components/ui/textarea";
 import {
   parseBodyOverrideJson,
   parseHeaderOverrideJson,
 } from "@/lib/requestOverrides";
-
+import { useTranslation } from "react-i18next";
 interface LocalProxyRequestOverridesFieldProps {
   headersJson: string;
   bodyJson: string;
@@ -15,7 +14,6 @@ interface LocalProxyRequestOverridesFieldProps {
   /** 字段名后「?」里的说明；「只在路由、聚合模式下生效」由调用方在分组开头说一次。 */
   help: string;
 }
-
 export function LocalProxyRequestOverridesField({
   headersJson,
   bodyJson,
@@ -29,7 +27,6 @@ export function LocalProxyRequestOverridesField({
   });
   const headerError = parseHeaderOverrideJson(headersJson).error;
   const bodyError = parseBodyOverrideJson(bodyJson).error;
-
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-0.5">

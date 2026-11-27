@@ -4,7 +4,6 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import { dshApi, type DshAccountStatus } from "@/lib/api/dsh";
 import { createTestQueryClient } from "../utils/testQueryClient";
-
 vi.mock("@/lib/api/dsh", () => ({
   dshApi: {
     accountStatus: vi.fn(),
@@ -32,7 +31,6 @@ vi.mock("@/components/providers/KimiAccountLogin", () => ({
 vi.mock("@/components/JsonEditor", () => ({
   default: () => null,
 }));
-
 beforeAll(() => {
   Element.prototype.scrollIntoView ??= vi.fn();
   window.matchMedia ??= vi.fn().mockReturnValue({
@@ -41,7 +39,6 @@ beforeAll(() => {
     removeEventListener: vi.fn(),
   });
 });
-
 const signedOut: DshAccountStatus = {
   signedIn: false,
   expired: false,
@@ -53,12 +50,10 @@ const signedOut: DshAccountStatus = {
   topUpUrl: null,
   error: null,
 };
-
 describe("DeepSeek account entry in the DeepSeek Harness add-provider dialog", () => {
   beforeEach(() => {
     vi.mocked(dshApi.accountStatus).mockResolvedValue(signedOut);
   });
-
   it("directs official sign-in to Auth Center without provider fields or an add footer", async () => {
     const onSubmit = vi.fn();
     render(
@@ -71,7 +66,6 @@ describe("DeepSeek account entry in the DeepSeek Harness add-provider dialog", (
         />
       </QueryClientProvider>,
     );
-
     fireEvent.click(
       await screen.findByRole("button", { name: "dsh.account.presetName" }),
     );
@@ -82,7 +76,6 @@ describe("DeepSeek account entry in the DeepSeek Harness add-provider dialog", (
       screen.queryByRole("button", { name: "common.add" }),
     ).not.toBeInTheDocument();
     expect(screen.queryByLabelText("API Key")).not.toBeInTheDocument();
-
     fireEvent.click(manage);
     expect(
       await screen.findByRole("region", { name: "DeepSeek Harness" }),

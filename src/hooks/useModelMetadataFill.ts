@@ -1,18 +1,16 @@
-import { useCallback, useEffect, useRef } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { useTranslation } from "react-i18next";
-import { toast } from "@/lib/toast";
-import { modelsDevQueryOptions, type ModelsDevResponse } from "@/lib/modelsDev";
 import {
   resolveModelMetadata,
   type ModelMetadataSource,
   type PresetModelSource,
   type ResolvedModelMetadata,
 } from "@/lib/modelMetadata";
+import { modelsDevQueryOptions, type ModelsDevResponse } from "@/lib/modelsDev";
+import { toast } from "@/lib/toast";
+import { useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { useLatestRef } from "./useLatestRef";
-
 const FILLED_TOAST_ID = "model-metadata-filled";
-
 /**
  * 表单从拉取列表里选中模型后，调 `fill(modelId, apply)` 补这一行空着的参数。
  *
@@ -41,17 +39,21 @@ export function useModelMetadataFill({
   useEffect(() => {
     if (prefetch) void queryClient.prefetchQuery(modelsDevQueryOptions);
   }, [prefetch, queryClient]);
-
   const baseUrlRef = useLatestRef(baseUrl);
   const presetsRef = useLatestRef(presets);
-
+  const lifetime = useRef<object | null>(null);
+  useEffect(() => {
+    lifetime.current = {};
+    return () => {
+      lifetime.current = null;
+    };
+  }, []);
   const pending = useRef<{
     models: Set<string>;
     sources: Set<ModelMetadataSource>;
     timer?: ReturnType<typeof setTimeout>;
   }>({ models: new Set(), sources: new Set() });
   useEffect(() => () => clearTimeout(pending.current.timer), []);
-
   const notify = useCallback(
     (modelId: string, sources: readonly ModelMetadataSource[]) => {
       const batch = pending.current;
@@ -94,7 +96,6 @@ export function useModelMetadataFill({
     },
     [t],
   );
-
   return useCallback(
     (
       modelId: string,
@@ -105,18 +106,27 @@ export function useModelMetadataFill({
         silent?: boolean;
       },
     ): void => {
+      const requestLifetime = lifetime.current;
+      const formBaseUrl = baseUrlRef.current;
+      const requestBaseUrl = options?.baseUrl ?? formBaseUrl;
+      const requestPresets = presetsRef.current();
       const resolve = (modelsDev?: ModelsDevResponse) =>
         resolveModelMetadata(modelId, {
-          baseUrl: options?.baseUrl || baseUrlRef.current,
-          presets: presetsRef.current(),
+          baseUrl: requestBaseUrl,
+          presets: requestPresets,
           modelsDev,
         });
       const run = (metadata: ResolvedModelMetadata | null) => {
+        if (
+          !requestLifetime ||
+          lifetime.current !== requestLifetime ||
+          baseUrlRef.current !== formBaseUrl
+        )
+          return;
         if (metadata && apply(metadata) && !options?.silent) {
           notify(modelId, metadata.sources);
         }
       };
-
       const cached = queryClient.getQueryData(modelsDevQueryOptions.queryKey);
       run(resolve(cached));
       if (cached) return;

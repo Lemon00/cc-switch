@@ -10,6 +10,7 @@
 //! - `Ok(success:false)` = 确定性失败（空 key/未知供应商/鉴权/非 2xx/响应体非法 JSON），
 //!   立即透出错误文案。判定按 reqwest 错误种类在折叠点完成，不依赖错误文案匹配。
 
+use super::usage_http::{parse_f64, parse_provider_url, send_for_json, JsonReply};
 use crate::provider::{UsageData, UsageResult};
 use std::time::Duration;
 
@@ -25,18 +26,19 @@ enum BalanceProvider {
 }
 
 fn detect_provider(base_url: &str) -> Option<BalanceProvider> {
-    let url = base_url.to_lowercase();
-    if url.contains("api.deepseek.com") {
+    let url = parse_provider_url(base_url)?;
+    let host = url.host_str()?.trim_end_matches('.');
+    if host == "api.deepseek.com" {
         Some(BalanceProvider::DeepSeek)
-    } else if url.contains("api.stepfun.ai") || url.contains("api.stepfun.com") {
+    } else if matches!(host, "api.stepfun.ai" | "api.stepfun.com") {
         Some(BalanceProvider::StepFun)
-    } else if url.contains("api.siliconflow.cn") {
+    } else if host == "api.siliconflow.cn" {
         Some(BalanceProvider::SiliconFlow)
-    } else if url.contains("api.siliconflow.com") {
+    } else if host == "api.siliconflow.com" {
         Some(BalanceProvider::SiliconFlowEn)
-    } else if url.contains("openrouter.ai") {
+    } else if host == "openrouter.ai" {
         Some(BalanceProvider::OpenRouter)
-    } else if url.contains("api.novita.ai") {
+    } else if host == "api.novita.ai" {
         Some(BalanceProvider::NovitaAI)
     } else {
         None
@@ -75,37 +77,15 @@ fn make_auth_error(status: reqwest::StatusCode) -> UsageResult {
 async fn query_deepseek(api_key: &str) -> Result<UsageResult, String> {
     let client = crate::proxy::http_client::get();
 
-    let resp = client
+    let request = client
         .get("https://api.deepseek.com/user/balance")
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
-        .timeout(Duration::from_secs(15))
-        .send()
-        .await;
-
-    let resp = match resp {
-        Ok(r) => r,
-        Err(e) => return Err(format!("Network error: {e}")),
-    };
-
-    let status = resp.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Ok(make_auth_error(status));
-    }
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
-    }
-
-    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
-    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
-    let raw = match resp.bytes().await {
-        Ok(b) => b,
-        Err(e) => return Err(format!("Failed to read response: {e}")),
-    };
-    let body: serde_json::Value = match serde_json::from_slice(&raw) {
-        Ok(v) => v,
-        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
+        .timeout(Duration::from_secs(15));
+    let body = match send_for_json(request).await? {
+        JsonReply::Body(body) => body,
+        JsonReply::Denied(status) => return Ok(make_auth_error(status)),
+        JsonReply::Failed(message) => return Ok(make_error(message)),
     };
 
     Ok(parse_deepseek_balance(&body))
@@ -123,10 +103,13 @@ fn parse_deepseek_balance(body: &serde_json::Value) -> UsageResult {
                 .and_then(|v| v.as_str())
                 .unwrap_or("CNY");
             let total = parse_f64_field(info, "total_balance");
+            let Some(total) = total else {
+                continue;
+            };
 
             data.push(UsageData {
                 plan_name: Some(currency.to_string()),
-                remaining: total,
+                remaining: Some(total),
                 total: None,
                 used: None,
                 unit: Some(currency.to_string()),
@@ -143,6 +126,9 @@ fn parse_deepseek_balance(body: &serde_json::Value) -> UsageResult {
         data.retain(|d| d.remaining.is_none_or(|v| v > 0.0));
     }
 
+    if data.is_empty() {
+        return make_error("Missing or invalid balance amounts".to_string());
+    }
     UsageResult {
         success: true,
         data: if data.is_empty() { None } else { Some(data) },
@@ -157,42 +143,26 @@ fn parse_deepseek_balance(body: &serde_json::Value) -> UsageResult {
 async fn query_stepfun(api_key: &str) -> Result<UsageResult, String> {
     let client = crate::proxy::http_client::get();
 
-    let resp = client
+    let request = client
         .get("https://api.stepfun.com/v1/accounts")
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
-        .timeout(Duration::from_secs(15))
-        .send()
-        .await;
-
-    let resp = match resp {
-        Ok(r) => r,
-        Err(e) => return Err(format!("Network error: {e}")),
+        .timeout(Duration::from_secs(15));
+    let body = match send_for_json(request).await? {
+        JsonReply::Body(body) => body,
+        JsonReply::Denied(status) => return Ok(make_auth_error(status)),
+        JsonReply::Failed(message) => return Ok(make_error(message)),
     };
 
-    let status = resp.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Ok(make_auth_error(status));
-    }
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
-    }
+    Ok(parse_stepfun_balance(&body))
+}
 
-    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
-    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
-    let raw = match resp.bytes().await {
-        Ok(b) => b,
-        Err(e) => return Err(format!("Failed to read response: {e}")),
-    };
-    let body: serde_json::Value = match serde_json::from_slice(&raw) {
-        Ok(v) => v,
-        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
+fn parse_stepfun_balance(body: &serde_json::Value) -> UsageResult {
+    let Some(balance) = parse_f64_field(body, "balance") else {
+        return make_error("Missing or invalid balance amount".to_string());
     };
 
-    let balance = parse_f64_field(&body, "balance").unwrap_or(0.0);
-
-    Ok(UsageResult {
+    UsageResult {
         success: true,
         data: Some(vec![UsageData {
             plan_name: Some("StepFun".to_string()),
@@ -205,7 +175,7 @@ async fn query_stepfun(api_key: &str) -> Result<UsageResult, String> {
             extra: None,
         }]),
         error: None,
-    })
+    }
 }
 
 // ── SiliconFlow ─────────────────────────────────────────────
@@ -222,45 +192,29 @@ async fn query_siliconflow(api_key: &str, is_cn: bool) -> Result<UsageResult, St
     };
     let url = format!("https://{domain}/v1/user/info");
 
-    let resp = client
+    let request = client
         .get(&url)
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
-        .timeout(Duration::from_secs(15))
-        .send()
-        .await;
-
-    let resp = match resp {
-        Ok(r) => r,
-        Err(e) => return Err(format!("Network error: {e}")),
+        .timeout(Duration::from_secs(15));
+    let body = match send_for_json(request).await? {
+        JsonReply::Body(body) => body,
+        JsonReply::Denied(status) => return Ok(make_auth_error(status)),
+        JsonReply::Failed(message) => return Ok(make_error(message)),
     };
 
-    let status = resp.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Ok(make_auth_error(status));
-    }
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
-    }
+    Ok(parse_siliconflow_balance(&body, is_cn))
+}
 
-    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
-    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
-    let raw = match resp.bytes().await {
-        Ok(b) => b,
-        Err(e) => return Err(format!("Failed to read response: {e}")),
-    };
-    let body: serde_json::Value = match serde_json::from_slice(&raw) {
-        Ok(v) => v,
-        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
-    };
-
+fn parse_siliconflow_balance(body: &serde_json::Value, is_cn: bool) -> UsageResult {
     let data = match body.get("data") {
         Some(d) => d,
-        None => return Ok(make_error("Missing 'data' field in response".to_string())),
+        None => return make_error("Missing 'data' field in response".to_string()),
     };
 
-    let total_balance = parse_f64_field(data, "totalBalance").unwrap_or(0.0);
+    let Some(total_balance) = parse_f64_field(data, "totalBalance") else {
+        return make_error("Missing or invalid balance amount".to_string());
+    };
 
     let unit = if is_cn { "CNY" } else { "USD" };
     let plan_name = if is_cn {
@@ -269,7 +223,7 @@ async fn query_siliconflow(api_key: &str, is_cn: bool) -> Result<UsageResult, St
         "SiliconFlow (EN)"
     };
 
-    Ok(UsageResult {
+    UsageResult {
         success: true,
         data: Some(vec![UsageData {
             plan_name: Some(plan_name.to_string()),
@@ -282,7 +236,7 @@ async fn query_siliconflow(api_key: &str, is_cn: bool) -> Result<UsageResult, St
             extra: None,
         }]),
         error: None,
-    })
+    }
 }
 
 // ── OpenRouter ──────────────────────────────────────────────
@@ -293,37 +247,15 @@ async fn query_siliconflow(api_key: &str, is_cn: bool) -> Result<UsageResult, St
 async fn query_openrouter(api_key: &str) -> Result<UsageResult, String> {
     let client = crate::proxy::http_client::get();
 
-    let resp = client
+    let request = client
         .get("https://openrouter.ai/api/v1/credits")
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
-        .timeout(Duration::from_secs(15))
-        .send()
-        .await;
-
-    let resp = match resp {
-        Ok(r) => r,
-        Err(e) => return Err(format!("Network error: {e}")),
-    };
-
-    let status = resp.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Ok(make_auth_error(status));
-    }
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
-    }
-
-    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
-    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
-    let raw = match resp.bytes().await {
-        Ok(b) => b,
-        Err(e) => return Err(format!("Failed to read response: {e}")),
-    };
-    let body: serde_json::Value = match serde_json::from_slice(&raw) {
-        Ok(v) => v,
-        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
+        .timeout(Duration::from_secs(15));
+    let body = match send_for_json(request).await? {
+        JsonReply::Body(body) => body,
+        JsonReply::Denied(status) => return Ok(make_auth_error(status)),
+        JsonReply::Failed(message) => return Ok(make_error(message)),
     };
 
     Ok(parse_openrouter_balance(&body))
@@ -369,37 +301,15 @@ fn parse_openrouter_balance(body: &serde_json::Value) -> UsageResult {
 async fn query_novita(api_key: &str) -> Result<UsageResult, String> {
     let client = crate::proxy::http_client::get();
 
-    let resp = client
+    let request = client
         .get("https://api.novita.ai/v3/user/balance")
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
-        .timeout(Duration::from_secs(15))
-        .send()
-        .await;
-
-    let resp = match resp {
-        Ok(r) => r,
-        Err(e) => return Err(format!("Network error: {e}")),
-    };
-
-    let status = resp.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Ok(make_auth_error(status));
-    }
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
-    }
-
-    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
-    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
-    let raw = match resp.bytes().await {
-        Ok(b) => b,
-        Err(e) => return Err(format!("Failed to read response: {e}")),
-    };
-    let body: serde_json::Value = match serde_json::from_slice(&raw) {
-        Ok(v) => v,
-        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
+        .timeout(Duration::from_secs(15));
+    let body = match send_for_json(request).await? {
+        JsonReply::Body(body) => body,
+        JsonReply::Denied(status) => return Ok(make_auth_error(status)),
+        JsonReply::Failed(message) => return Ok(make_error(message)),
     };
 
     Ok(parse_novita_balance(&body))
@@ -443,11 +353,22 @@ fn parse_novita_balance(body: &serde_json::Value) -> UsageResult {
 // 只给智谱 token_plan 卡「账户没有 Coding Plan」时回落用（commands::provider），
 // 不进 detect_provider：智谱卡默认注入 token_plan 模板，余额模板再自动认智谱会和它抢。
 
+fn zhipu_is_cn(base_url: &str) -> bool {
+    parse_provider_url(base_url)
+        .and_then(|url| {
+            url.host_str().map(|host| {
+                let host = host.trim_end_matches('.');
+                host == "bigmodel.cn" || host.ends_with(".bigmodel.cn")
+            })
+        })
+        .unwrap_or(false)
+}
+
 pub(crate) async fn query_zhipu_balance(
     base_url: &str,
     api_key: &str,
 ) -> Result<UsageResult, String> {
-    let is_cn = base_url.to_lowercase().contains("bigmodel.cn");
+    let is_cn = zhipu_is_cn(base_url);
     let host = if is_cn {
         "https://open.bigmodel.cn"
     } else {
@@ -455,40 +376,18 @@ pub(crate) async fn query_zhipu_balance(
     };
     let client = crate::proxy::http_client::get();
 
-    let resp = client
+    let request = client
         .get(format!(
             "{host}/api/biz/account/query-customer-account-report"
         ))
         .header("Authorization", api_key) // 与套餐接口一致，不加 Bearer
         .header("Accept", "application/json")
         .header("Accept-Language", "en-US,en")
-        .timeout(Duration::from_secs(15))
-        .send()
-        .await;
-
-    let resp = match resp {
-        Ok(r) => r,
-        Err(e) => return Err(format!("Network error: {e}")),
-    };
-
-    let status = resp.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Ok(make_auth_error(status));
-    }
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
-    }
-
-    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
-    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
-    let raw = match resp.bytes().await {
-        Ok(b) => b,
-        Err(e) => return Err(format!("Failed to read response: {e}")),
-    };
-    let body: serde_json::Value = match serde_json::from_slice(&raw) {
-        Ok(v) => v,
-        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
+        .timeout(Duration::from_secs(15));
+    let body = match send_for_json(request).await? {
+        JsonReply::Body(body) => body,
+        JsonReply::Denied(status) => return Ok(make_auth_error(status)),
+        JsonReply::Failed(message) => return Ok(make_error(message)),
     };
 
     Ok(parse_zhipu_balance(&body, is_cn))
@@ -532,10 +431,7 @@ fn parse_zhipu_balance(body: &serde_json::Value, is_cn: bool) -> UsageResult {
 
 /// 解析 JSON 字段为 f64，兼容数字和字符串格式
 fn parse_f64_field(obj: &serde_json::Value, field: &str) -> Option<f64> {
-    obj.get(field).and_then(|v| {
-        v.as_f64()
-            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-    })
+    obj.get(field).and_then(parse_f64)
 }
 
 // ── 公开入口 ────────────────────────────────────────────────
@@ -574,6 +470,29 @@ pub async fn get_balance(base_url: &str, api_key: &str) -> Result<UsageResult, S
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn missing_balance_is_an_error_while_zero_and_debt_are_valid() {
+        for body in [
+            serde_json::json!({}),
+            serde_json::json!({"balance":"NaN", "data":{"totalBalance":"invalid"}}),
+        ] {
+            assert!(!parse_stepfun_balance(&body).success);
+            assert!(!parse_siliconflow_balance(&body, true).success);
+            assert!(!parse_deepseek_balance(&body).success);
+        }
+        for value in [0.0, -2.5] {
+            let result = parse_stepfun_balance(&serde_json::json!({"balance": value}));
+            assert!(result.success);
+            assert_eq!(result.data.unwrap()[0].remaining, Some(value));
+            let result = parse_siliconflow_balance(
+                &serde_json::json!({"data":{"totalBalance":value}}),
+                true,
+            );
+            assert!(result.success);
+            assert_eq!(result.data.unwrap()[0].remaining, Some(value));
+        }
+    }
+
     use super::*;
     use serde_json::json;
 
@@ -603,6 +522,30 @@ mod tests {
             assert_eq!(balance.is_valid, Some(true));
             assert!(balance.invalid_message.is_none());
         }
+    }
+
+    #[test]
+    fn balance_provider_detection_uses_the_actual_http_host() {
+        for base_url in [
+            "https://api.deepseek.com.evil.example/v1",
+            "https://proxy.example/api.stepfun.ai/v1",
+            "https://evil.example/?upstream=openrouter.ai",
+            "https://api.siliconflow.cn@evil.example/v1",
+            "ftp://api.novita.ai/v3/openai",
+        ] {
+            assert!(super::detect_provider(base_url).is_none(), "{base_url}");
+        }
+        assert!(matches!(
+            super::detect_provider("https://API.DEEPSEEK.COM.:8443/v1"),
+            Some(super::BalanceProvider::DeepSeek)
+        ));
+        assert!(matches!(
+            super::detect_provider("openrouter.ai/api/v1"),
+            Some(super::BalanceProvider::OpenRouter)
+        ));
+        assert!(super::zhipu_is_cn("HTTPS://OPEN.BIGMODEL.CN/api/paas/v4"));
+        assert!(!super::zhipu_is_cn("https://api.z.ai/v1?next=bigmodel.cn"));
+        assert!(!super::zhipu_is_cn("https://bigmodel.cn.evil.example/v1"));
     }
 
     #[test]

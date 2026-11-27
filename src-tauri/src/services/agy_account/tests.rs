@@ -5,6 +5,22 @@ use serde_json::json;
 
 use super::*;
 
+#[tokio::test]
+async fn failed_removal_preserves_accounts_and_dismissal_state() {
+    let (dir, _login, manager) = manager();
+    add(&manager, "alice").await;
+    let path = dir.path().join(STORE_FILENAME);
+    // Use a directory at the file path to fail deterministically on all platforms.
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    assert!(manager.remove("alice").await.is_err());
+    assert!(manager.remove_all().await.is_err());
+    let store = manager.store.lock().await;
+    assert!(store.accounts.contains_key("alice"));
+    assert!(store.dismissed.is_empty());
+    assert!(store.dismissed_emails.is_empty());
+}
+
 #[derive(Default)]
 struct MemoryLogin {
     value: StdMutex<Option<String>>,

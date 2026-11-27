@@ -15,7 +15,6 @@ const NAVIGATION_KEYS = new Set([
   "PageUp",
   "PageDown",
 ]);
-
 export function initializeInputModality() {
   const root = document.documentElement;
   window.addEventListener(
@@ -34,7 +33,6 @@ export function initializeInputModality() {
     true,
   );
 }
-
 /** 最近一次操作是不是键盘（按过导航键、之后没再点鼠标） */
 export function isKeyboardModality() {
   return document.documentElement.hasAttribute("data-keyboard");

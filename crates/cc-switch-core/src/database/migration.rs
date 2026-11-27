@@ -28,8 +28,8 @@ impl Database {
     pub fn migrate_from_json_dry_run(config: &MultiAppConfig) -> Result<(), AppError> {
         let mut conn =
             Connection::open_in_memory().map_err(|e| AppError::Database(e.to_string()))?;
-        Self::create_tables_on_conn(&conn)?;
-        Self::apply_schema_migrations_on_conn(&conn)?;
+        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+        Self::initialize_schema_on_conn(&conn)?;
 
         let tx = conn
             .transaction()
@@ -139,7 +139,7 @@ impl Database {
                         to_json_string(&server.tags)?,
                         server.apps.claude,
                         server.apps.codex,
-                        server.apps.gemini,
+                        false,
                     ],
                 )
                 .map_err(|e| AppError::Database(format!("Migrate mcp server failed: {e}")))?;

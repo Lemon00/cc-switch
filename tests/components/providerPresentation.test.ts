@@ -11,25 +11,21 @@ import {
   type ProviderSection,
   type SwitchModeInput,
 } from "@/components/providers/presentation";
-
 const t = ((key: string, options?: Record<string, unknown>) =>
   options && "count" in options
     ? `${key}:${String(options.count)}`
     : key) as unknown as TFunction;
-
 const provider = (id: string, overrides: Partial<Provider> = {}): Provider => ({
   id,
   name: id,
   settingsConfig: {},
   ...overrides,
 });
-
 const official = provider("official", { category: "official" });
 const relay = provider("relay");
 const backup = provider("backup");
 /** Claude 下走 OpenAI 格式：需要路由 */
 const converted = provider("converted", { meta: { apiFormat: "openai_chat" } });
-
 function actions() {
   return {
     switchDirect: vi.fn(),
@@ -44,9 +40,11 @@ function actions() {
     stackSetDefault: vi.fn(),
   };
 }
-
 function build(
-  overrides: Partial<SwitchModeInput> & { active: AppMode; view: AppMode },
+  overrides: Partial<SwitchModeInput> & {
+    active: AppMode;
+    view: AppMode;
+  },
 ) {
   const input: SwitchModeInput = {
     app: "claude",
@@ -64,7 +62,6 @@ function build(
   };
   return { sections: buildSwitchSections(input), input };
 }
-
 const item = (sections: ProviderSection[], id: string) => {
   for (const section of sections) {
     const found = section.items.find((entry) => entry.provider.id === id);
@@ -72,13 +69,11 @@ const item = (sections: ProviderSection[], id: string) => {
   }
   throw new Error(`no card for ${id}`);
 };
-
 const button = (sections: ProviderSection[], id: string, key: string) => {
   const found = item(sections, id).buttons.find((b) => b.key === key);
   if (!found) throw new Error(`no ${key} button on ${id}`);
   return found;
 };
-
 /** 「更多」菜单里的「设为默认」 */
 const setDefaultItem = (sections: ProviderSection[], id: string) => {
   const found = item(sections, id).menuItems?.find(
@@ -87,11 +82,9 @@ const setDefaultItem = (sections: ProviderSection[], id: string) => {
   if (!found) throw new Error(`no setDefault menu item on ${id}`);
   return found;
 };
-
 describe("buildSwitchSections — direct", () => {
   it("marks the direct provider in use and asks before switching to one that needs routing", () => {
     const { sections, input } = build({ active: "direct", view: "direct" });
-
     expect(item(sections, "relay")).toMatchObject({
       tone: "direct",
       status: { label: "providerCard.status.inUse", dot: "direct" },
@@ -99,21 +92,18 @@ describe("buildSwitchSections — direct", () => {
     });
     button(sections, "backup", "switch").onClick();
     expect(input.actions.switchDirect).toHaveBeenCalledWith(backup);
-
     button(sections, "converted", "switch").onClick();
     expect(input.actions.needsRouteDialog).toHaveBeenCalledWith(converted);
     expect(item(sections, "converted").chips.map((c) => c.key)).toContain(
       "needsRoute",
     );
   });
-
   it("offers back-to-direct while viewing direct from routing, except for providers that need routing", () => {
     const { sections, input } = build({
       active: "route",
       view: "direct",
       routeId: "backup",
     });
-
     expect(item(sections, "relay").chips.map((c) => c.key)).toContain("direct");
     button(sections, "backup", "exitAndUse").onClick();
     expect(input.actions.exitAndUse).toHaveBeenCalledWith(backup);
@@ -122,7 +112,6 @@ describe("buildSwitchSections — direct", () => {
     ).toBeTruthy();
   });
 });
-
 describe("buildSwitchSections — delete guard", () => {
   // 后端 is_referenced：直连指针、路由 / 聚合模式下的当前路由都删不掉，哪个视图都要标出来
   it("disables delete on the direct provider in every view", () => {
@@ -134,7 +123,6 @@ describe("buildSwitchSections — delete guard", () => {
       expect(item(sections, "backup").deleteDisabledReason).toBeUndefined();
     }
   });
-
   it("also disables delete on the provider being routed to while routing", () => {
     const { sections } = build({
       active: "route",
@@ -149,7 +137,6 @@ describe("buildSwitchSections — delete guard", () => {
       "providerCard.reason.inUseCannotDelete",
     );
     expect(item(sections, "converted").deleteDisabledReason).toBeUndefined();
-
     // 直连时 routeId 只是上次的路由，不算在用
     const direct = build({
       active: "direct",
@@ -161,7 +148,6 @@ describe("buildSwitchSections — delete guard", () => {
     ).toBeUndefined();
   });
 });
-
 describe("buildSwitchSections — route", () => {
   it("routes to a provider and keeps official subscriptions out", () => {
     const { sections, input } = build({
@@ -169,7 +155,6 @@ describe("buildSwitchSections — route", () => {
       view: "route",
       routeId: "backup",
     });
-
     expect(item(sections, "backup")).toMatchObject({
       tone: "route",
       status: { label: "providerCard.status.routing" },
@@ -183,7 +168,6 @@ describe("buildSwitchSections — route", () => {
       "providerCard.reason.noRoute",
     );
   });
-
   it("splits the failover queue from the rest and only moves within the queue", () => {
     const { sections, input } = build({
       active: "route",
@@ -192,7 +176,6 @@ describe("buildSwitchSections — route", () => {
       failoverOn: true,
       queue: ["relay", "backup"],
     });
-
     expect(sections.map((s) => [s.key, s.items.length])).toEqual([
       ["queue", 2],
       ["rest", 2],
@@ -206,12 +189,10 @@ describe("buildSwitchSections — route", () => {
     item(sections, "relay").move?.onDown?.();
     expect(input.actions.queueMove).toHaveBeenCalledWith(relay, 1);
     expect(item(sections, "backup").move?.onDown).toBeUndefined();
-
     button(sections, "converted", "queueAdd").onClick();
     expect(input.actions.queueAdd).toHaveBeenCalledWith(converted);
     button(sections, "backup", "queueRemove").onClick();
     expect(input.actions.queueRemove).toHaveBeenCalledWith(backup);
-
     // 直连那家不在队列里时也不标「直连时使用」
     const outside = build({
       active: "route",
@@ -225,7 +206,6 @@ describe("buildSwitchSections — route", () => {
       chips: [],
     });
   });
-
   it("numbers the queue by its full order and marks the recorded route, not the first visible card", () => {
     // 搜索把 P1 过滤掉了：剩下的卡序号、上下移仍按完整队列算
     const { sections, input } = build({
@@ -236,7 +216,6 @@ describe("buildSwitchSections — route", () => {
       queue: ["relay", "backup", "converted"],
       providers: [backup, converted],
     });
-
     expect(item(sections, "backup").chips).toEqual([
       { key: "priority", label: "P2", tone: "outline" },
     ]);
@@ -244,14 +223,12 @@ describe("buildSwitchSections — route", () => {
     item(sections, "backup").move?.onUp?.();
     expect(input.actions.queueMove).toHaveBeenCalledWith(backup, -1);
     expect(item(sections, "converted").move?.onDown).toBeUndefined();
-
     // 转移成功后后端记下的路由是 backup：「路由中」在它身上，不在队首
     expect(item(sections, "backup")).toMatchObject({
       tone: "route",
       status: { label: "providerCard.status.routing" },
     });
     expect(item(sections, "converted").status).toBeUndefined();
-
     // 记下的路由已不在队列里：退回队首
     const fallback = build({
       active: "route",
@@ -263,7 +240,6 @@ describe("buildSwitchSections — route", () => {
     expect(item(fallback.sections, "relay").tone).toBe("route");
     expect(item(fallback.sections, "backup").tone).toBeUndefined();
   });
-
   it("keeps Codex official accounts out of the failover queue with a reason", () => {
     // 后端 require_failover_provider 会拒绝；卡上要先说清楚，而不是点了没反应
     const managed = provider("managed", {
@@ -285,7 +261,6 @@ describe("buildSwitchSections — route", () => {
       queue: ["relay"],
       providers: [relay, backup, managed],
     });
-
     expect(item(sections, "managed").dim).toBe(true);
     expect(button(sections, "managed", "blocked").disabledReason).toBe(
       "providerCard.reason.noFailover",
@@ -293,14 +268,12 @@ describe("buildSwitchSections — route", () => {
     button(sections, "backup", "queueAdd").onClick();
     expect(input.actions.queueAdd).toHaveBeenCalledWith(backup);
   });
-
   it("offers no row action while previewing route from direct", () => {
     const { sections } = build({
       active: "direct",
       view: "route",
       routeId: "backup",
     });
-
     // 进入路由只有通知条一个入口（目标在确认框里选、预选上次那家），行上没有主操作，
     // 也不标上次路由的那家和直连那家
     for (const id of ["relay", "backup", "converted"]) {
@@ -316,7 +289,6 @@ describe("buildSwitchSections — route", () => {
     });
   });
 });
-
 describe("buildSwitchSections — stack", () => {
   it("shows the default, members and available providers", () => {
     const { sections, input } = build({
@@ -328,7 +300,6 @@ describe("buildSwitchSections — stack", () => {
         ["backup", 0],
       ]),
     });
-
     expect(sections.map((s) => [s.key, s.items.length])).toEqual([
       ["default", 1],
       ["members", 1],
@@ -356,7 +327,6 @@ describe("buildSwitchSections — stack", () => {
     });
     setDefaultItem(sections, "backup").onSelect();
     expect(input.actions.stackSetDefault).toHaveBeenCalledWith(backup);
-
     button(sections, "converted", "add").onClick();
     expect(input.actions.stackAdd).toHaveBeenCalledWith(converted);
     // 还没添加的也能直接设为默认
@@ -370,7 +340,6 @@ describe("buildSwitchSections — stack", () => {
     );
     expect(item(sections, "official").menuItems).toBeUndefined();
   });
-
   it("previews the stack outside Stack mode: rows only edit the list", () => {
     const { sections, input } = build({
       active: "direct",
@@ -378,7 +347,6 @@ describe("buildSwitchSections — stack", () => {
       routeId: null,
       stackMembers: new Map([["backup", 1]]),
     });
-
     // 没有路由目标时，默认那家落在直连那家
     expect(item(sections, "relay")).toMatchObject({
       section: "default",
@@ -402,7 +370,6 @@ describe("buildSwitchSections — stack", () => {
     setDefaultItem(sections, "converted").onSelect();
     expect(input.actions.stackSetDefault).toHaveBeenCalledWith(converted);
   });
-
   it("does not let the Stack default change from the preview while routing", () => {
     // 默认和路由目标是同一个指针：路由中改它就是当场换路由
     const { sections } = build({
@@ -411,7 +378,6 @@ describe("buildSwitchSections — stack", () => {
       routeId: "relay",
       stackMembers: new Map([["backup", 1]]),
     });
-
     expect(item(sections, "relay").section).toBe("default");
     for (const id of ["backup", "converted"]) {
       expect(setDefaultItem(sections, id).disabledReason).toBe(
@@ -419,7 +385,6 @@ describe("buildSwitchSections — stack", () => {
       );
     }
   });
-
   it("shows a Codex official account outside Stack mode with only the reason it cannot be added", () => {
     const account = provider("account", {
       category: "official",
@@ -431,7 +396,6 @@ describe("buildSwitchSections — stack", () => {
       view: "stack",
       providers: [relay, account],
     });
-
     expect(item(sections, "account").section).toBe("available");
     expect(item(sections, "account").buttons.map((b) => b.key)).toEqual([
       "add",
@@ -442,7 +406,6 @@ describe("buildSwitchSections — stack", () => {
     // 它能做默认
     expect(setDefaultItem(sections, "account").disabledReason).toBeUndefined();
   });
-
   it("never lets ChatGPT accounts be added in Codex Stack mode, even legacy cards without a category", () => {
     const managed = provider("managed", {
       settingsConfig: { auth: {}, config: "" },
@@ -462,7 +425,6 @@ describe("buildSwitchSections — stack", () => {
       routeId: "relay",
       stackMembers: new Map([["relay", 1]]),
     });
-
     expect(item(sections, "managed").chips.map((c) => c.key)).toContain(
       "official",
     );
@@ -473,7 +435,6 @@ describe("buildSwitchSections — stack", () => {
     expect(input.actions.stackSetDefault).toHaveBeenCalledWith(managed);
   });
 });
-
 describe("buildAdditiveSections", () => {
   const additiveActions = () => ({
     add: vi.fn(),
@@ -481,7 +442,6 @@ describe("buildAdditiveSections", () => {
     disableOmo: vi.fn(),
     setDefault: vi.fn(),
   });
-
   it("splits added and available providers and keeps OMO to one at a time", () => {
     const omo = provider("omo", { category: "omo" });
     const otherOmo = provider("omo-2", { category: "omo" });
@@ -494,7 +454,6 @@ describe("buildAdditiveSections", () => {
       currentOmoId: "omo",
       actions,
     });
-
     expect(sections.map((s) => [s.key, s.items.length])).toEqual([
       ["added", 2],
       ["available", 2],
@@ -514,51 +473,6 @@ describe("buildAdditiveSections", () => {
       "enable",
     ]);
   });
-
-  it("lets OpenClaw pick the default model and protects the current default", () => {
-    const multi = provider("multi", {
-      settingsConfig: {
-        models: [{ id: "m-1", name: "Model 1" }, { id: "m-2" }],
-      },
-    });
-    const actions = additiveActions();
-    const sections = buildAdditiveSections({
-      app: "openclaw",
-      t,
-      providers: [relay, multi],
-      isInConfig: () => true,
-      defaultModel: { providerId: "relay", model: "gpt" },
-      defaultModelOptions: (p) =>
-        (p.settingsConfig as { models?: { id: string; name?: string }[] })
-          .models ?? [],
-      actions,
-    });
-
-    expect(item(sections, "relay")).toMatchObject({
-      tone: "direct",
-      status: { label: "providerCard.status.default" },
-    });
-    expect(item(sections, "multi").tone).toBeUndefined();
-    expect(item(sections, "multi").status).toBeUndefined();
-    expect(button(sections, "relay", "remove").disabledReason).toBe(
-      "providerCard.reason.defaultCannotRemove",
-    );
-    // 「设为默认」在「更多」菜单里，卡片主操作位只剩「移除」
-    expect(item(sections, "multi").buttons.map((b) => b.key)).toEqual([
-      "remove",
-    ]);
-    const setDefault = setDefaultItem(sections, "multi");
-    expect(setDefault.submenu?.options.map((o) => [o.label, o.detail])).toEqual(
-      [
-        ["Model 1", "m-1"],
-        ["m-2", undefined],
-      ],
-    );
-    setDefault.submenu?.options[1].onSelect();
-    expect(actions.setDefault).toHaveBeenCalledWith(multi, "m-2");
-    expect(item(sections, "relay").menuItems).toBeUndefined();
-  });
-
   it("lets OpenCode set the top-level default model without blocking removal", () => {
     const multi = provider("multi");
     const actions = additiveActions();
@@ -572,7 +486,6 @@ describe("buildAdditiveSections", () => {
         p.id === "multi" ? [{ id: "m-1", name: "Model 1" }, { id: "m-2" }] : [],
       actions,
     });
-
     expect(item(sections, "relay")).toMatchObject({
       tone: "direct",
       status: { label: "providerCard.status.default" },
@@ -599,7 +512,6 @@ describe("buildAdditiveSections", () => {
     expect(item(other, "relay").buttons.map((b) => b.key)).toEqual(["remove"]);
     expect(item(other, "relay").menuItems).toBeUndefined();
   });
-
   it("reads OpenCode models from a stored full config as the backend does", () => {
     const models = {
       "m-1": { name: "Model 1" },
@@ -625,200 +537,7 @@ describe("buildAdditiveSections", () => {
     ).toEqual(["legacy"]);
     expect(getOpencodeDeclaredModels("relay", { options: {} })).toEqual([]);
   });
-
-  it("keeps Hermes-managed providers read-only", () => {
-    const managed = provider("managed");
-    const sections = buildAdditiveSections({
-      app: "hermes",
-      t,
-      providers: [relay, managed],
-      isInConfig: () => true,
-      hermesCurrentId: "relay",
-      isHermesManaged: (p) => p.id === "managed",
-      actions: additiveActions(),
-    });
-
-    expect(button(sections, "relay", "remove").disabledReason).toBe(
-      "providerCard.reason.defaultCannotRemove",
-    );
-    expect(item(sections, "relay").tone).toBe("direct");
-    expect(item(sections, "managed").tone).toBeUndefined();
-    expect(item(sections, "managed")).toMatchObject({
-      dim: true,
-      editDisabledReason: "provider.managedByHermesHint",
-      deleteDisabledReason: "provider.managedByHermesHint",
-    });
-    expect(
-      item(sections, "managed").menuItems?.find(
-        (action) => action.key === "setDefault",
-      )?.disabledReason,
-    ).toBe("provider.managedByHermesHint");
-  });
-
-  it("puts Hermes set-default in the more menu like other additive apps", () => {
-    const other = provider("other");
-    const actions = additiveActions();
-    const sections = buildAdditiveSections({
-      app: "hermes",
-      t,
-      providers: [relay, other],
-      isInConfig: () => true,
-      hermesCurrentId: "relay",
-      actions,
-    });
-
-    expect(item(sections, "relay").status?.label).toBe(
-      "providerCard.status.default",
-    );
-    expect(item(sections, "relay").menuItems).toBeUndefined();
-    expect(item(sections, "other").buttons.map((b) => b.key)).toEqual([
-      "remove",
-    ]);
-    item(sections, "other")
-      .menuItems?.find((action) => action.key === "setDefault")
-      ?.onSelect();
-    expect(actions.setDefault).toHaveBeenCalledWith(other);
-  });
-
-  it("lets official Kimi accounts edit models and leave Kimi, but not be deleted while there", () => {
-    const accounts = ["managed:kimi-code", "kimi-code-ccs-second"].map((id) =>
-      provider(id, {
-        settingsConfig: {
-          provider: { type: "kimi", oauth: { key: `oauth/${id}` } },
-        },
-      }),
-    );
-    const sections = buildAdditiveSections({
-      app: "kimi",
-      t,
-      providers: [...accounts, relay],
-      isInConfig: () => true,
-      kimiCurrentId: accounts[0].id,
-      actions: additiveActions(),
-    });
-    for (const account of accounts) {
-      const presentation = item(sections, account.id);
-      expect(presentation.editDisabledReason).toBeUndefined();
-      expect(presentation.deleteDisabledReason).toBe("kimi.oauth.managedHint");
-    }
-    // 只有正在用的那个号不能移除
-    expect(button(sections, accounts[0].id, "remove").disabledReason).toBe(
-      "providerCard.reason.defaultCannotRemove",
-    );
-    expect(
-      button(sections, accounts[1].id, "remove").disabledReason,
-    ).toBeUndefined();
-    expect(
-      item(sections, accounts[1].id).menuItems?.find(
-        (action) => action.key === "setDefault",
-      )?.disabledReason,
-    ).toBeUndefined();
-    expect(item(sections, "relay").editDisabledReason).toBeUndefined();
-  });
-
-  it("allows deleting a saved official Kimi account after its native node is removed", () => {
-    const account = provider("managed:kimi-code", {
-      settingsConfig: {
-        provider: { type: "kimi", oauth: { key: "oauth/kimi-code" } },
-      },
-    });
-    const sections = buildAdditiveSections({
-      app: "kimi",
-      t,
-      providers: [account],
-      isInConfig: () => false,
-      kimiCurrentId: account.id,
-      actions: additiveActions(),
-    });
-    const presentation = item(sections, account.id);
-    expect(presentation.deleteDisabledReason).toBeUndefined();
-    expect(presentation.menuItems).toBeUndefined();
-    expect(presentation.status).toBeUndefined();
-    expect(presentation.buttons.map((b) => b.key)).toEqual(["add"]);
-  });
-
-  it("gives Kimi add and remove buttons and a set-default menu item", () => {
-    const current = provider("current");
-    const other = provider("other");
-    const saved = provider("saved");
-    const actions = additiveActions();
-    const sections = buildAdditiveSections({
-      app: "kimi",
-      t,
-      providers: [current, other, saved],
-      isInConfig: (p) => p.id !== "saved",
-      kimiCurrentId: "current",
-      actions,
-    });
-
-    // 未添加：只有「添加」，不顺带切换
-    expect(sections[1].items.map((entry) => entry.provider.id)).toEqual([
-      "saved",
-    ]);
-    button(sections, "saved", "add").onClick();
-    expect(actions.add).toHaveBeenCalledWith(saved);
-    expect(actions.setDefault).not.toHaveBeenCalled();
-
-    // 已添加、不在用：卡上只有「移除」，「设为默认」在「更多」菜单里
-    expect(item(sections, "other").buttons.map((b) => b.key)).toEqual([
-      "remove",
-    ]);
-    item(sections, "other")
-      .menuItems?.find((action) => action.key === "setDefault")
-      ?.onSelect();
-    expect(actions.setDefault).toHaveBeenCalledWith(other);
-    button(sections, "other", "remove").onClick();
-    expect(actions.remove).toHaveBeenCalledWith(other);
-
-    // 在用的那家：不能移除
-    expect(item(sections, "current").buttons.map((b) => b.key)).toEqual([
-      "remove",
-    ]);
-    expect(button(sections, "current", "remove").disabledReason).toBe(
-      "providerCard.reason.defaultCannotRemove",
-    );
-    expect(item(sections, "current").menuItems).toBeUndefined();
-  });
-
-  it("blocks every Pi change while Pi's current state is unavailable", () => {
-    const sections = buildAdditiveSections({
-      app: "pi",
-      t,
-      providers: [relay],
-      isInConfig: () => false,
-      piStateUnavailable: true,
-      actions: additiveActions(),
-    });
-
-    expect(button(sections, "relay", "add")).toMatchObject({
-      label: "providerCard.action.enable",
-      disabledReason: "pi.current.stateUnavailableHint",
-    });
-    expect(item(sections, "relay").deleteDisabledReason).toBe(
-      "pi.current.stateUnavailableHint",
-    );
-  });
-
-  it("blocks every Oh My Pi change while its current state is unavailable", () => {
-    const sections = buildAdditiveSections({
-      app: "omp",
-      t,
-      providers: [relay],
-      isInConfig: () => false,
-      piStateUnavailable: true,
-      actions: additiveActions(),
-    });
-
-    expect(button(sections, "relay", "add")).toMatchObject({
-      label: "providerCard.action.enable",
-      disabledReason: "omp.current.stateUnavailableHint",
-    });
-    expect(item(sections, "relay").deleteDisabledReason).toBe(
-      "omp.current.stateUnavailableHint",
-    );
-  });
 });
-
 describe("queueMoveSortUpdates", () => {
   it("swaps the two positions of a sorted queue", () => {
     expect(
@@ -836,7 +555,6 @@ describe("queueMoveSortUpdates", () => {
       { id: "a", sortIndex: 4 },
     ]);
   });
-
   it("keeps positions distinct when sort indexes tie", () => {
     expect(
       queueMoveSortUpdates(
@@ -853,7 +571,6 @@ describe("queueMoveSortUpdates", () => {
       { id: "a", sortIndex: 3 },
     ]);
   });
-
   it("keeps positions distinct when an unsorted provider falls back onto a used index", () => {
     // b 没有 sortIndex，用下标 1 兜底，正好撞上 a 的 1
     expect(
@@ -868,7 +585,6 @@ describe("queueMoveSortUpdates", () => {
       { id: "a", sortIndex: 2 },
     ]);
   });
-
   it("returns null when the move would leave the queue", () => {
     const items = [
       { providerId: "a", sortIndex: 0 },
@@ -879,7 +595,6 @@ describe("queueMoveSortUpdates", () => {
     expect(queueMoveSortUpdates(items, {}, "x", 1)).toBeNull();
   });
 });
-
 describe("buildLaunchSections", () => {
   it("gives every Antigravity card Open Terminal instead of enable or in use", () => {
     const openTerminal = vi.fn();

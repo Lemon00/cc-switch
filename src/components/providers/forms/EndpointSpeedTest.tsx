@@ -1,38 +1,26 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { Zap, Loader2, Plus, X, AlertCircle, Save } from "lucide-react";
-import type { AppId } from "@/lib/api";
-import { vscodeApi } from "@/lib/api/vscode";
+import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { FullScreenPanel } from "@/components/common/FullScreenPanel";
+import type { AppId } from "@/lib/api";
+import { vscodeApi } from "@/lib/api/vscode";
 import type { CustomEndpoint, EndpointCandidate } from "@/types";
-
+import { AlertCircle, Loader2, Plus, Save, X, Zap } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 // 端点测速超时配置（秒）
 const ENDPOINT_TIMEOUT_SECS: Record<AppId, number> = {
   codex: 12,
   claude: 8,
-  "claude-desktop": 8,
-  gemini: 8,
-  grokbuild: 12,
   opencode: 8,
-  openclaw: 8,
-  hermes: 8,
-  pi: 8,
-  mcode: 8,
-  kimi: 8,
   dsh: 8,
   agy: 8,
-  omp: 8,
 };
-
 interface TestResult {
   url: string;
   latency: number | null;
   status?: number;
   error?: string | null;
 }
-
 interface EndpointSpeedTestProps {
   appId: AppId;
   providerId?: string;
@@ -47,19 +35,15 @@ interface EndpointSpeedTestProps {
   // 编辑模式：不使用此回调，端点直接保存到后端
   onCustomEndpointsChange?: (urls: string[]) => void;
 }
-
 interface EndpointEntry extends EndpointCandidate {
   id: string;
   latency: number | null;
   status?: number;
   error?: string | null;
 }
-
 const randomId = () => `ep_${Math.random().toString(36).slice(2, 9)}`;
-
 const normalizeEndpointUrl = (url: string): string =>
   url.trim().replace(/\/+$/, "");
-
 const buildInitialEntries = (
   candidates: EndpointCandidate[],
   selected: string,
@@ -69,7 +53,6 @@ const buildInitialEntries = (
     const sanitized = candidate.url ? normalizeEndpointUrl(candidate.url) : "";
     if (!sanitized) return;
     if (map.has(sanitized)) return;
-
     map.set(sanitized, {
       id: candidate.id ?? randomId(),
       url: sanitized,
@@ -79,17 +62,13 @@ const buildInitialEntries = (
       error: null,
     });
   };
-
   candidates.forEach(addCandidate);
-
   const selectedUrl = normalizeEndpointUrl(selected);
   if (selectedUrl && !map.has(selectedUrl)) {
     addCandidate({ url: selectedUrl, isCustom: true });
   }
-
   return Array.from(map.values());
 };
-
 const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
   appId,
   providerId,
@@ -111,61 +90,48 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
   const [isTesting, setIsTesting] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-
   // 记录初始的自定义端点，用于对比变化
   const [initialCustomUrls, setInitialCustomUrls] = useState<Set<string>>(
     new Set(),
   );
-
   const normalizedSelected = normalizeEndpointUrl(value);
-
   const hasEndpoints = entries.length > 0;
   const isEditMode = Boolean(providerId); // 编辑模式有 providerId
-
   // 编辑模式：加载已保存的自定义端点
   useEffect(() => {
     let cancelled = false;
-
     const loadCustomEndpoints = async () => {
       try {
         if (!providerId) return; // 新建模式不加载
-
         const customEndpoints = await vscodeApi.getCustomEndpoints(
           appId,
           providerId,
         );
-
         if (cancelled) return;
-
         const candidates: EndpointCandidate[] = customEndpoints.map(
           (ep: CustomEndpoint) => ({
             url: ep.url,
             isCustom: true,
           }),
         );
-
         // 记录初始的自定义端点
         const customUrls = new Set(
           customEndpoints.map((ep) => normalizeEndpointUrl(ep.url)),
         );
         setInitialCustomUrls(customUrls);
-
         // 合并自定义端点与初始端点
         setEntries((prev) => {
           const map = new Map<string, EndpointEntry>();
-
           // 先添加现有端点（来自预设，isCustom 可能为 false）
           prev.forEach((entry) => {
             map.set(entry.url, entry);
           });
-
           // 合并从后端加载的自定义端点
           // 关键：如果 URL 已存在（与预设重合），需要将 isCustom 更新为 true
           // 因为它存在于数据库中，需要在 handleSave 时被正确识别
           candidates.forEach((candidate) => {
             const sanitized = normalizeEndpointUrl(candidate.url);
             if (!sanitized) return;
-
             const existing = map.get(sanitized);
             if (existing) {
               // URL 已存在，更新 isCustom 为 true（因为它在数据库中）
@@ -182,7 +148,6 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
               });
             }
           });
-
           return Array.from(map.values());
         });
       } catch (error) {
@@ -191,17 +156,14 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
         }
       }
     };
-
     // 只在编辑模式下加载
     if (providerId) {
       loadCustomEndpoints();
     }
-
     return () => {
       cancelled = true;
     };
   }, [appId, providerId, t, initialEndpoints]);
-
   // 新建模式：将自定义端点变化透传给父组件（仅限 isCustom）
   // 编辑模式：不使用此回调，端点已通过 API 直接保存
   useEffect(() => {
@@ -220,7 +182,6 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
       // ignore
     }
   }, [entries, onCustomEndpointsChange, isEditMode]);
-
   const sortedEntries = useMemo(() => {
     return entries.slice().sort((a: TestResult, b: TestResult) => {
       const aLatency = a.latency ?? Number.POSITIVE_INFINITY;
@@ -231,15 +192,12 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
       return aLatency - bLatency;
     });
   }, [entries]);
-
   const handleAddEndpoint = useCallback(async () => {
     const candidate = customUrl.trim();
     let errorMsg: string | null = null;
-
     if (!candidate) {
       errorMsg = t("endpointTest.enterValidUrl");
     }
-
     let parsed: URL | null = null;
     if (!errorMsg) {
       try {
@@ -248,13 +206,11 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
         errorMsg = t("endpointTest.invalidUrlFormat");
       }
     }
-
     // 明确只允许 http: 和 https:
     const allowedProtocols = ["http:", "https:"];
     if (!errorMsg && parsed && !allowedProtocols.includes(parsed.protocol)) {
       errorMsg = t("endpointTest.onlyHttps");
     }
-
     let sanitized = "";
     if (!errorMsg && parsed) {
       sanitized = normalizeEndpointUrl(parsed.toString());
@@ -264,15 +220,12 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
         errorMsg = t("endpointTest.urlExists");
       }
     }
-
     if (errorMsg) {
       setAddError(errorMsg);
       return;
     }
-
     setAddError(null);
     setLastError(null);
-
     // 更新本地状态（延迟保存，点击保存按钮时统一处理）
     setEntries((prev) => {
       if (prev.some((e) => e.url === sanitized)) return prev;
@@ -288,19 +241,15 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
         },
       ];
     });
-
     if (!normalizedSelected) {
       onChange(sanitized);
     }
-
     setCustomUrl("");
   }, [customUrl, entries, normalizedSelected, onChange, t]);
-
   const handleRemoveEndpoint = useCallback(
     (entry: EndpointEntry) => {
       // 清空之前的错误提示
       setLastError(null);
-
       // 更新本地状态（延迟保存，点击保存按钮时统一处理）
       setEntries((prev) => {
         const next = prev.filter((item) => item.id !== entry.id);
@@ -313,17 +262,14 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
     },
     [normalizedSelected, onChange],
   );
-
   const runSpeedTest = useCallback(async () => {
     const urls = entries.map((entry) => entry.url);
     if (urls.length === 0) {
       setLastError(t("endpointTest.pleaseAddEndpoint"));
       return;
     }
-
     setIsTesting(true);
     setLastError(null);
-
     // 清空所有延迟数据，显示 loading 状态
     setEntries((prev) =>
       prev.map((entry) => ({
@@ -333,16 +279,13 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
         error: null,
       })),
     );
-
     try {
       const results = await vscodeApi.testApiEndpoints(urls, {
         timeoutSecs: ENDPOINT_TIMEOUT_SECS[appId],
       });
-
       const resultMap = new Map(
         results.map((item) => [normalizeEndpointUrl(item.url), item]),
       );
-
       setEntries((prev) =>
         prev.map((entry) => {
           const match = resultMap.get(entry.url);
@@ -365,7 +308,6 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
           };
         }),
       );
-
       if (autoSelect) {
         const successful = results
           .filter(
@@ -387,7 +329,6 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
       setIsTesting(false);
     }
   }, [entries, autoSelect, appId, normalizedSelected, onChange, t]);
-
   const handleSelect = useCallback(
     (url: string) => {
       if (!url || url === normalizedSelected) return;
@@ -395,14 +336,12 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
     },
     [normalizedSelected, onChange],
   );
-
   // 保存端点变更
   const handleSave = useCallback(async () => {
     // 编辑模式：对比初始端点和当前端点，批量保存变更
     if (isEditMode && providerId) {
       setIsSaving(true);
       setLastError(null);
-
       try {
         // 获取当前的自定义端点
         const currentCustomUrls = new Set(
@@ -410,27 +349,22 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
             .filter((e) => e.isCustom)
             .map((e) => normalizeEndpointUrl(e.url)),
         );
-
         // 找出新增的端点
         const toAdd = Array.from(currentCustomUrls).filter(
           (url) => !initialCustomUrls.has(url),
         );
-
         // 找出删除的端点
         const toRemove = Array.from(initialCustomUrls).filter(
           (url) => !currentCustomUrls.has(url),
         );
-
         // 批量添加
         for (const url of toAdd) {
           await vscodeApi.addCustomEndpoint(appId, providerId, url);
         }
-
         // 批量删除
         for (const url of toRemove) {
           await vscodeApi.removeCustomEndpoint(appId, providerId, url);
         }
-
         // 更新初始端点列表
         setInitialCustomUrls(currentCustomUrls);
       } catch (error) {
@@ -443,13 +377,10 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
         setIsSaving(false);
       }
     }
-
     // 关闭弹窗
     onClose();
   }, [isEditMode, providerId, entries, initialCustomUrls, appId, onClose, t]);
-
   if (!visible) return null;
-
   const footer = (
     <div className="flex items-center gap-2">
       <Button
@@ -483,7 +414,6 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
       </Button>
     </div>
   );
-
   return (
     <FullScreenPanel
       isOpen={visible}
@@ -571,7 +501,6 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
             {sortedEntries.map((entry) => {
               const isSelected = normalizedSelected === entry.url;
               const latency = entry.latency;
-
               return (
                 <div
                   key={entry.id}
@@ -585,9 +514,7 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
                   <div className="flex min-w-0 flex-1 items-center gap-3">
                     {/* 选择指示器 */}
                     <div
-                      className={`h-1.5 w-1.5 flex-shrink-0 rounded-full transition ${
-                        isSelected ? "bg-action" : "bg-subtle"
-                      }`}
+                      className={`h-1.5 w-1.5 flex-shrink-0 rounded-full transition ${isSelected ? "bg-action" : "bg-subtle"}`}
                     />
 
                     {/* 内容 */}
@@ -658,5 +585,4 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
     </FullScreenPanel>
   );
 };
-
 export default EndpointSpeedTest;

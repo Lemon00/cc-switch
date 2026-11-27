@@ -61,7 +61,7 @@ fn app() -> &'static str {
 /// 官方卡：`category == "official"`，或按 `is_codex_official_provider` 认出来的（早期
 /// 绑定托管账号时没存 category 的卡）。
 pub fn is_official(provider: &Provider) -> bool {
-    provider.category.as_deref() == Some("official")
+    provider.has_official_category()
         || crate::proxy::providers::is_codex_official_provider(provider)
 }
 
@@ -474,7 +474,7 @@ fn row_facts(db: &Database) -> Result<RowFacts, AppError> {
         third_party_keys: Vec::new(),
         official_logins: Vec::new(),
     };
-    for provider in db.get_all_providers(app())?.values() {
+    for provider in db.get_all_providers(&AppType::Codex)?.values() {
         let auth = provider.settings_config.get("auth");
         if is_official(provider) {
             if managed_account(provider).is_none() {
@@ -587,7 +587,7 @@ pub fn plan(
     let provider = target_provider(target);
     let projection = provider.map(project).transpose()?;
 
-    let (top, mut nested, mut exclusive) = match (&projection, provider) {
+    let (mut top, mut nested, mut exclusive) = match (&projection, provider) {
         (Some(projection), Some(provider)) => (
             projection.top.clone(),
             projection.nested.clone(),
@@ -698,14 +698,33 @@ pub fn plan(
         _ => None,
     };
     if let Some(catalog) = stack_catalog.as_mut() {
+        // The configured default must refer to the public catalog too.
+        if let Some(route) = provider.filter(|route| !is_official(route)) {
+            let pools = crate::mode::stack::model_pools(&AppType::Codex, stack);
+            for (key, value) in top.iter_mut().chain(exclusive.iter_mut()) {
+                if key == "model" {
+                    if let Some(pool) = pools.iter().find(|pool| {
+                        value.as_str() == Some(pool.model.as_str())
+                            && pool
+                                .members
+                                .iter()
+                                .any(|&index| stack[index].provider.id == route.id)
+                    }) {
+                        *value = TomlValue::from(pool.id.clone());
+                    }
+                }
+            }
+        }
         // 聚合下的自动审批模型用聚合设置里的（卡上的只在直连、路由下用），不在合并目录里就
         // 不写，用 Codex 的默认。
         if let Some(model) = crate::settings::codex_stack_auto_review_model() {
+            let model = public_stack_selection(stack, &model);
             apply_codex_auto_review_model(catalog, &model);
         }
     }
     if let Some(catalog) = &stack_catalog {
         let (model, effort) = crate::settings::codex_stack_subagent();
+        let model = model.map(|model| public_stack_selection(stack, &model));
         nested.extend(stack_subagent_nested(
             catalog,
             model.as_deref(),
@@ -863,8 +882,11 @@ fn stack_subagent_nested(
 /// 带上它在合并目录里的推理强度档位。和 [`stack_catalog`] 用同一份行（只算本地，不取官方
 /// 列表），配置坏掉的成员同样跳过。
 pub fn stack_subagent_choices(members: &[Member]) -> Vec<crate::mode::stack::StackSubagentModel> {
-    let mut choices = Vec::new();
+    let mut rows = Vec::new();
     for member in members {
+        if is_official(&member.provider) {
+            continue;
+        }
         let Ok(projection) = project(&member.provider) else {
             continue;
         };
@@ -877,27 +899,92 @@ pub fn stack_subagent_choices(members: &[Member]) -> Vec<crate::mode::stack::Sta
         let Ok(entries) = codex_stack_third_party_rows(&row) else {
             continue;
         };
-        for entry in &entries {
+        for mut entry in entries {
             let Some(model) = entry.get("slug").and_then(Value::as_str) else {
                 continue;
             };
-            let display = entry
-                .get("display_name")
-                .and_then(Value::as_str)
-                .unwrap_or(model);
-            choices.push(crate::mode::stack::StackSubagentModel {
-                id: crate::mode::stack::encode(&AppType::Codex, &member.key, model, false),
-                provider_id: member.provider.id.clone(),
-                display_name: crate::mode::stack::display_name(display, &member.provider.name),
+            entry["slug"] = Value::String(crate::mode::stack::encode(
+                &AppType::Codex,
+                &member.key,
+                model,
+                false,
+            ));
+            rows.push(entry);
+        }
+    }
+    let mut catalog = serde_json::json!({ "models": rows });
+    crate::mode::stack::group_codex_catalog(&mut catalog, members);
+    let pools = crate::mode::stack::model_pools(&AppType::Codex, members);
+    catalog["models"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let id = entry["slug"].as_str()?;
+            let pool = pools.iter().find(|pool| pool.id == id)?;
+            Some(crate::mode::stack::StackSubagentModel {
+                id: id.to_string(),
+                aliases: pool
+                    .members
+                    .iter()
+                    .flat_map(|&index| {
+                        [
+                            crate::mode::stack::encode(
+                                &AppType::Codex,
+                                &members[index].key,
+                                &pool.model,
+                                false,
+                            ),
+                            format!(
+                                "{}/{}",
+                                crate::mode::stack::account_namespace(&members[index].key),
+                                pool.model
+                            ),
+                        ]
+                    })
+                    .chain(std::iter::once(format!("group/{}", pool.model)))
+                    .filter(|alias| alias != id)
+                    .collect(),
+                provider_id: if pool.members.len() == 1 {
+                    members[pool.members[0]].provider.id.clone()
+                } else {
+                    String::new()
+                },
+                display_name: id.to_string(),
                 efforts: catalog_entry_efforts(entry).map(str::to_string).collect(),
                 default_effort: entry
                     .get("default_reasoning_level")
                     .and_then(Value::as_str)
                     .map(str::to_string),
-            });
+            })
+        })
+        .collect()
+}
+
+/// Saved selections made with the old per-account ids follow the new catalog.
+fn public_stack_selection(members: &[Member], selected: &str) -> String {
+    let pools = crate::mode::stack::model_pools(&AppType::Codex, members);
+    if let Some((namespace, model)) = selected.split_once('/') {
+        if let Some(pool) = pools.iter().find(|pool| {
+            pool.model == model
+                && (namespace == "group"
+                    || pool.members.iter().any(|&index| {
+                        crate::mode::stack::account_namespace(&members[index].key) == namespace
+                    }))
+        }) {
+            return pool.id.clone();
         }
     }
-    choices
+    if let crate::mode::stack::Decoded::Stack { key, model, .. } =
+        crate::mode::stack::decode(&AppType::Codex, selected)
+    {
+        if let Some(pool) = pools.into_iter().find(|pool| {
+            pool.model == model && pool.members.iter().any(|&index| members[index].key == key)
+        }) {
+            return pool.id;
+        }
+    }
+    selected.to_string()
 }
 
 /// 目录条目支持的推理强度（`supported_reasoning_levels[].effort`）。
@@ -957,6 +1044,7 @@ fn stack_catalog(
     // 路由、启动时接上这些 Codex 写入全部失败。
     let inputs: Vec<_> = stack
         .iter()
+        .filter(|member| member.provider.id != route.id)
         .filter_map(|member| match project(&member.provider) {
             Ok(projection) => Some((
                 member,
@@ -984,12 +1072,32 @@ fn stack_catalog(
             },
         })
         .collect();
-    plan_codex_stack_catalog(
+    let mut catalog = plan_codex_stack_catalog(
         route_row,
         &members,
         crate::settings::codex_stack_classic_tools(),
-    )
-    .map(Some)
+    )?;
+    // The planner puts the default account's raw rows first. Encode them before
+    // grouping too, so an upstream id such as `ccs-b/model` cannot be mistaken
+    // for another account's intermediate row.
+    if let Some(member) = stack.iter().find(|member| member.provider.id == route.id) {
+        if !is_official(route) {
+            if let Some(rows) = catalog["models"].as_array_mut() {
+                for row in rows.iter_mut().take(member.model_ids.len()) {
+                    if let Some(model) = row["slug"].as_str() {
+                        row["slug"] = Value::String(crate::mode::stack::encode(
+                            &AppType::Codex,
+                            &member.key,
+                            model,
+                            false,
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    crate::mode::stack::group_codex_catalog(&mut catalog, stack);
+    Ok(Some(catalog))
 }
 
 fn table_text(table: &Table) -> String {

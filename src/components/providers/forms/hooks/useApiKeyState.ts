@@ -1,11 +1,10 @@
-import { useEffect, useState, useCallback } from "react";
 import type { ProviderCategory } from "@/types";
 import {
   getApiKeyFromConfig,
-  setApiKeyInConfig,
   hasApiKeyField,
+  setApiKeyInConfig,
 } from "@/utils/providerConfigUtils";
-
+import { useCallback, useEffect, useState } from "react";
 interface UseApiKeyStateProps {
   initialConfig?: string;
   onConfigChange: (config: string) => void;
@@ -19,7 +18,6 @@ interface UseApiKeyStateProps {
   appType?: string;
   apiKeyField?: string;
 }
-
 /**
  * 管理 API Key 输入状态
  * 自动同步 API Key 和 JSON 配置
@@ -39,29 +37,24 @@ export function useApiKeyState({
     }
     return "";
   });
-
   // 当外部通过 form.reset / 读取 live 等方式更新配置时，同步回 API Key 状态
   // - 仅在 JSON 可解析时同步，避免用户编辑 JSON 过程中因临时无效导致输入框闪烁
   useEffect(() => {
     if (!initialConfig) return;
-
     try {
       JSON.parse(initialConfig);
     } catch {
       return;
     }
-
     // 从配置中提取 API Key（如果不存在则返回空字符串）
     const extracted = getApiKeyFromConfig(initialConfig, appType);
     if (extracted !== apiKey) {
       setApiKey(extracted);
     }
   }, [initialConfig, appType, apiKey]);
-
   const handleApiKeyChange = useCallback(
     (key: string) => {
       setApiKey(key);
-
       const configString = setApiKeyInConfig(
         getConfig ? getConfig() || "{}" : initialConfig || "{}",
         key.trim(),
@@ -76,7 +69,6 @@ export function useApiKeyState({
           apiKeyField,
         },
       );
-
       onConfigChange(configString);
     },
     [
@@ -89,7 +81,6 @@ export function useApiKeyState({
       onConfigChange,
     ],
   );
-
   const showApiKey = useCallback(
     (config: string, isEditMode: boolean) => {
       return (
@@ -102,7 +93,6 @@ export function useApiKeyState({
     },
     [selectedPresetId, category, appType],
   );
-
   return {
     apiKey,
     setApiKey,

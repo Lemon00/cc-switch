@@ -1,4 +1,10 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -15,7 +21,8 @@ import { server } from "../msw/server";
 import { peekPendingDeepLink, setPendingDeepLink } from "../msw/state";
 import { pngDataUri } from "../fixtures/customIcon";
 import { toast } from "@/lib/toast";
-
+import { deeplinkApi } from "@/lib/api/deeplink";
+import { parseMcpDeepLinkConfig } from "@/components/deeplink/McpConfirmation";
 // jsdom 没有 canvas，重新编码这一步换成可控的假实现
 const { normalizeIconDataUri } = vi.hoisted(() => ({
   normalizeIconDataUri: vi.fn<(dataUri: string) => Promise<string>>(),
@@ -24,13 +31,11 @@ vi.mock("@/utils/customIcon", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/utils/customIcon")>()),
   normalizeIconDataUri,
 }));
-
 // 模拟后端：先暂存链接，再发 deeplink-pending 通知前端来取
 const deliverDeepLink = (request: Record<string, unknown>) => {
   setPendingDeepLink({ kind: "import", request });
   emitTauriEvent("deeplink-pending", null);
 };
-
 vi.mock("@/components/ui/dialog", () => ({
   // 内容始终渲染，开关状态记在属性上，供断言确认框是否仍打开
   Dialog: ({
@@ -60,14 +65,149 @@ vi.mock("@/components/ui/dialog", () => ({
     <div>{children}</div>
   ),
 }));
-
 const Wrapper = ({ children }: { children: React.ReactNode }) => (
   <QueryClientProvider client={new QueryClient()}>
     {children}
   </QueryClientProvider>
 );
-
 describe("DeepLinkImportDialog", () => {
+  it("refreshes prompt badges even when the prompt editor is not mounted", async () => {
+    const client = new QueryClient();
+    const key = ["prompts", "list", "claude"];
+    client.setQueryData(key, {});
+    const importing = vi
+      .spyOn(deeplinkApi, "importFromDeeplink")
+      .mockResolvedValue({ type: "prompt", id: "created" });
+    render(
+      <QueryClientProvider client={client}>
+        <DeepLinkImportDialog />
+      </QueryClientProvider>,
+    );
+    act(() =>
+      deliverDeepLink({
+        version: "v1",
+        resource: "prompt",
+        app: "claude",
+        name: "New prompt",
+        content: btoa("Instructions"),
+      }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "deeplink.import" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("deeplink-dialog")).toHaveAttribute(
+        "data-open",
+        "false",
+      ),
+    );
+    expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+    importing.mockRestore();
+    client.clear();
+  });
+  const reviewLink = {
+    version: "v1",
+    resource: "provider",
+    app: "claude",
+    name: "Review link",
+    endpoint: "https://example.com/v1",
+    apiKey: "test-key",
+  };
+  it("blocks import after a failed preview and clears the error for the next link", async () => {
+    const merge = vi
+      .spyOn(deeplinkApi, "mergeDeeplinkConfig")
+      .mockRejectedValue(new Error("Invalid config"));
+    const importing = vi.spyOn(deeplinkApi, "importFromDeeplink");
+    render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+    act(() => deliverDeepLink({ ...reviewLink, config: btoa("{}") }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Invalid config",
+    );
+    expect(
+      screen.getByRole("button", { name: "deeplink.import" }),
+    ).toBeDisabled();
+    expect(importing).not.toHaveBeenCalled();
+    act(() => deliverDeepLink({ ...reviewLink, name: "Valid next link" }));
+    await screen.findByText("Valid next link");
+    expect(
+      screen.getByRole("button", { name: "deeplink.import" }),
+    ).toBeEnabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    merge.mockRestore();
+    importing.mockRestore();
+  });
+  it("does not import twice when clicked twice before React commits the busy state", async () => {
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const importing = vi
+      .spyOn(deeplinkApi, "importFromDeeplink")
+      .mockImplementation(async () => {
+        await gate;
+        return { type: "provider", id: "created" };
+      });
+    render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+    act(() => deliverDeepLink(reviewLink));
+    const button = await screen.findByRole("button", {
+      name: "deeplink.import",
+    });
+    act(() => {
+      fireEvent.click(button);
+      fireEvent.click(button);
+    });
+    expect(importing).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      finish();
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("deeplink-dialog")).toHaveAttribute(
+        "data-open",
+        "false",
+      ),
+    );
+    importing.mockRestore();
+  });
+  it("closes a successful import even if cache refresh fails", async () => {
+    const client = new QueryClient();
+    const refresh = vi
+      .spyOn(client, "cancelQueries")
+      .mockRejectedValue(new Error("Refresh failed"));
+    const importing = vi
+      .spyOn(deeplinkApi, "importFromDeeplink")
+      .mockResolvedValue({ type: "provider", id: "created" });
+    const warning = vi.spyOn(toast, "warning");
+    render(
+      <QueryClientProvider client={client}>
+        <DeepLinkImportDialog />
+      </QueryClientProvider>,
+    );
+    act(() => deliverDeepLink(reviewLink));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "deeplink.import" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("deeplink-dialog")).toHaveAttribute(
+        "data-open",
+        "false",
+      ),
+    );
+    expect(importing).toHaveBeenCalledTimes(1);
+    expect(warning).toHaveBeenCalled();
+    refresh.mockRestore();
+    importing.mockRestore();
+    warning.mockRestore();
+    client.clear();
+  });
+  it.each([[], [{ command: "npx" }], null, "invalid"])(
+    "rejects a non-object MCP server map: %j",
+    (servers) => {
+      expect(
+        parseMcpDeepLinkConfig(btoa(JSON.stringify({ mcpServers: servers })))
+          .error,
+      ).not.toBeNull();
+    },
+  );
   it.each([
     { app: "opencode", enabled: true, fails: false, refreshes: true },
     { app: "opencode", enabled: false, fails: false, refreshes: true },
@@ -172,10 +312,8 @@ describe("DeepLinkImportDialog", () => {
       failure.mockRestore();
     },
   );
-
   it("renders masked usage access token and user id for provider imports", async () => {
     render(<DeepLinkImportDialog />, { wrapper: Wrapper });
-
     act(() => {
       deliverDeepLink({
         version: "v1",
@@ -194,23 +332,19 @@ describe("DeepLinkImportDialog", () => {
         usageAutoInterval: 60,
       });
     });
-
     await waitFor(() => {
       expect(screen.getByText("用量访问令牌")).toBeInTheDocument();
     });
-
     expect(screen.getByText("用量用户 ID")).toBeInTheDocument();
     expect(screen.getByText("user-12345")).toBeInTheDocument();
     // Masked: first 4 chars + 12 stars
     expect(screen.getByText("pat-************")).toBeInTheDocument();
   });
-
   it("shows usage credentials even when the deeplink carries no usageScript", async () => {
     // 后端 build_provider_meta 在任一 usage 字段存在时即持久化（含 access_token
     // 与 user_id）。若对话框只在 usageScript 存在时开门，这条链接会把凭据静默
     // 写进供应商配置。撤销门槛 widening（恢复只按 usageScript 开门）本测试即失败。
     render(<DeepLinkImportDialog />, { wrapper: Wrapper });
-
     act(() => {
       deliverDeepLink({
         version: "v1",
@@ -224,11 +358,9 @@ describe("DeepLinkImportDialog", () => {
         usageUserId: "user-12345",
       });
     });
-
     await waitFor(() => {
       expect(screen.getByText("用量访问令牌")).toBeInTheDocument();
     });
-
     expect(screen.getByText("pat-************")).toBeInTheDocument();
     expect(screen.getByText("用量用户 ID")).toBeInTheDocument();
     expect(screen.getByText("user-12345")).toBeInTheDocument();
@@ -240,7 +372,6 @@ describe("DeepLinkImportDialog", () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByText("脚本代码")).not.toBeInTheDocument();
   });
-
   // 徽章要和后端 `usage_enabled.unwrap_or(!code.is_empty())` 一致：
   // 链接写了 usageEnabled 就照办，没写时带脚本即启用
   it.each([
@@ -251,7 +382,6 @@ describe("DeepLinkImportDialog", () => {
     "shows the usage badge as $expected when usageEnabled is $usageEnabled and a script is attached",
     async ({ usageEnabled, expected }) => {
       render(<DeepLinkImportDialog />, { wrapper: Wrapper });
-
       act(() => {
         deliverDeepLink({
           version: "v1",
@@ -265,13 +395,11 @@ describe("DeepLinkImportDialog", () => {
           ...(usageEnabled === undefined ? {} : { usageEnabled }),
         });
       });
-
       await waitFor(() => {
         expect(screen.getByText(expected)).toBeInTheDocument();
       });
     },
   );
-
   // 套餐地址、不带脚本：后端按套餐额度查询并默认启用，徽章与后端一致
   it.each([
     {
@@ -290,7 +418,6 @@ describe("DeepLinkImportDialog", () => {
     "shows the plan quota badge as $expected for $app with usageEnabled $usageEnabled",
     async ({ app, endpoint, usageEnabled, expected }) => {
       render(<DeepLinkImportDialog />, { wrapper: Wrapper });
-
       act(() => {
         deliverDeepLink({
           version: "v1",
@@ -303,17 +430,14 @@ describe("DeepLinkImportDialog", () => {
           ...(usageEnabled === undefined ? {} : { usageEnabled }),
         });
       });
-
       await waitFor(() => {
         expect(screen.getByText(expected)).toBeInTheDocument();
       });
       expect(screen.getByText("套餐额度：Kimi For Coding")).toBeInTheDocument();
     },
   );
-
   it("does not show a usage row for ZenMux outside Claude", async () => {
     render(<DeepLinkImportDialog />, { wrapper: Wrapper });
-
     act(() => {
       deliverDeepLink({
         version: "v1",
@@ -325,13 +449,11 @@ describe("DeepLinkImportDialog", () => {
         apiKey: "sk-provider-key",
       });
     });
-
     await waitFor(() => {
       expect(screen.getByText("ZenMux Provider")).toBeInTheDocument();
     });
     expect(screen.queryByText("用量查询")).not.toBeInTheDocument();
   });
-
   it("shows a link that arrived before the dialog mounted (cold start)", async () => {
     // 冷启动时链接早于前端监听到达，后端已暂存；组件挂载后必须主动取一次
     setPendingDeepLink({
@@ -346,17 +468,13 @@ describe("DeepLinkImportDialog", () => {
         apiKey: "sk-provider-key",
       },
     });
-
     render(<DeepLinkImportDialog />, { wrapper: Wrapper });
-
     await waitFor(() => {
       expect(screen.getByText("Cold Start Provider")).toBeInTheDocument();
     });
   });
-
   it("warns that enabled=true switches to the provider right after import", async () => {
     render(<DeepLinkImportDialog />, { wrapper: Wrapper });
-
     act(() => {
       deliverDeepLink({
         version: "v1",
@@ -369,17 +487,14 @@ describe("DeepLinkImportDialog", () => {
         enabled: true,
       });
     });
-
     await waitFor(() => {
       expect(
         screen.getByText("deeplink.providerEnabledWarning"),
       ).toBeInTheDocument();
     });
   });
-
   it("does not show the switch warning when enabled is absent", async () => {
     render(<DeepLinkImportDialog />, { wrapper: Wrapper });
-
     act(() => {
       deliverDeepLink({
         version: "v1",
@@ -391,7 +506,6 @@ describe("DeepLinkImportDialog", () => {
         apiKey: "sk-provider-key",
       });
     });
-
     await waitFor(() => {
       expect(screen.getByText("Add Only Provider")).toBeInTheDocument();
     });
@@ -399,7 +513,6 @@ describe("DeepLinkImportDialog", () => {
       screen.queryByText("deeplink.providerEnabledWarning"),
     ).not.toBeInTheDocument();
   });
-
   describe("the activate-after-import switch", () => {
     // 记下导入请求里的 enabled：开关的值必须覆盖链接里的 enabled
     const captureImport = () => {
@@ -422,7 +535,6 @@ describe("DeepLinkImportDialog", () => {
       );
       return sent;
     };
-
     const providerLink = (extra: Record<string, unknown>) => ({
       version: "v1",
       resource: "provider",
@@ -432,7 +544,6 @@ describe("DeepLinkImportDialog", () => {
       apiKey: "sk-provider-key",
       ...extra,
     });
-
     it.each([
       {
         resource: "provider",
@@ -463,13 +574,11 @@ describe("DeepLinkImportDialog", () => {
           { wrapper: Wrapper },
         );
         act(() => deliverDeepLink(providerLink(link)));
-
         await screen.findByRole("switch");
         expect(renderedStates.length).toBeGreaterThan(0);
         expect(new Set(renderedStates)).toEqual(new Set(["true"]));
       },
     );
-
     it("starts from the link's enabled and lets the user turn switching off", async () => {
       const sent = captureImport();
       const user = userEvent.setup();
@@ -477,36 +586,30 @@ describe("DeepLinkImportDialog", () => {
       act(() =>
         deliverDeepLink(providerLink({ app: "claude", enabled: true })),
       );
-
       const toggle = await screen.findByRole("switch");
       expect(toggle).toBeChecked();
       expect(
         screen.getByText("deeplink.providerEnabledWarning"),
       ).toBeInTheDocument();
-
       await user.click(toggle);
       expect(toggle).not.toBeChecked();
       expect(
         screen.queryByText("deeplink.providerEnabledWarning"),
       ).not.toBeInTheDocument();
-
       await user.click(screen.getByRole("button", { name: "deeplink.import" }));
       await waitFor(() => expect(sent).toHaveLength(1));
       expect(sent[0].enabled).toBe(false);
     });
-
     it("lets the user opt into switching when the link does not ask for it", async () => {
       const sent = captureImport();
       const user = userEvent.setup();
       render(<DeepLinkImportDialog />, { wrapper: Wrapper });
       act(() => deliverDeepLink(providerLink({ app: "codex" })));
-
       const toggle = await screen.findByRole("switch");
       expect(toggle).not.toBeChecked();
       expect(
         screen.getByText("deeplink.switchAfterImport"),
       ).toBeInTheDocument();
-
       await user.click(toggle);
       expect(
         screen.getByText("deeplink.providerEnabledWarning"),
@@ -515,13 +618,11 @@ describe("DeepLinkImportDialog", () => {
       await waitFor(() => expect(sent).toHaveLength(1));
       expect(sent[0].enabled).toBe(true);
     });
-
     it("only imports Antigravity providers, even when the link asks to enable", async () => {
       const sent = captureImport();
       const user = userEvent.setup();
       render(<DeepLinkImportDialog />, { wrapper: Wrapper });
       act(() => deliverDeepLink(providerLink({ app: "agy", enabled: true })));
-
       const importButton = await screen.findByRole("button", {
         name: "deeplink.import",
       });
@@ -534,11 +635,9 @@ describe("DeepLinkImportDialog", () => {
       await waitFor(() => expect(sent).toHaveLength(1));
       expect(sent[0].enabled).toBe(false);
     });
-
     it("adds additive-app providers to the app config unless the link opts out", async () => {
       render(<DeepLinkImportDialog />, { wrapper: Wrapper });
       act(() => deliverDeepLink(providerLink({ app: "opencode" })));
-
       const toggle = await screen.findByRole("switch");
       expect(toggle).toBeChecked();
       expect(
@@ -549,7 +648,6 @@ describe("DeepLinkImportDialog", () => {
         screen.queryByText("deeplink.providerEnabledWarning"),
       ).not.toBeInTheDocument();
     });
-
     it("lets the user decide whether an imported prompt is enabled", async () => {
       const sent = captureImport();
       const user = userEvent.setup();
@@ -564,24 +662,20 @@ describe("DeepLinkImportDialog", () => {
           enabled: true,
         }),
       );
-
       const toggle = await screen.findByRole("switch");
       expect(toggle).toBeChecked();
       expect(
         screen.getByText("deeplink.prompt.enabledWarning"),
       ).toBeInTheDocument();
-
       await user.click(toggle);
       await user.click(screen.getByRole("button", { name: "deeplink.import" }));
       await waitFor(() => expect(sent).toHaveLength(1));
       expect(sent[0].enabled).toBe(false);
     });
   });
-
   describe("the link's iconUrl", () => {
     const DOWNLOADED = "data:image/svg+xml;base64,PHN2Zy8+";
     const NORMALIZED = pngDataUri(96, 96);
-
     const iconLink = (extra: Record<string, unknown> = {}) => ({
       version: "v1",
       resource: "provider",
@@ -592,7 +686,6 @@ describe("DeepLinkImportDialog", () => {
       iconUrl: "https://cdn.example.com/logo.svg",
       ...extra,
     });
-
     // 记下下载请求和导入请求；download 决定后端返回什么
     const mockBackend = (download: () => Promise<string | null>) => {
       const fetched: string[] = [];
@@ -601,7 +694,9 @@ describe("DeepLinkImportDialog", () => {
         http.post(
           "http://tauri.local/fetch_deeplink_icon",
           async ({ request }) => {
-            const { url } = (await request.json()) as { url: string };
+            const { url } = (await request.json()) as {
+              url: string;
+            };
             fetched.push(url);
             return HttpResponse.json(await download());
           },
@@ -619,35 +714,29 @@ describe("DeepLinkImportDialog", () => {
       );
       return { fetched, sent };
     };
-
     afterEach(() => {
       normalizeIconDataUri.mockReset();
     });
-
     it("downloads the icon on open, previews it and imports it without asking", async () => {
       normalizeIconDataUri.mockResolvedValue(NORMALIZED);
       const { fetched, sent } = mockBackend(async () => DOWNLOADED);
       const user = userEvent.setup();
       render(<DeepLinkImportDialog />, { wrapper: Wrapper });
       act(() => deliverDeepLink(iconLink({ icon: "deepseek" })));
-
       const preview = await screen.findByAltText("Icon Provider");
       expect(preview).toHaveAttribute("src", NORMALIZED);
       expect(fetched).toEqual(["https://cdn.example.com/logo.svg"]);
       expect(normalizeIconDataUri).toHaveBeenCalledWith(DOWNLOADED);
-
       await user.click(screen.getByRole("button", { name: "deeplink.import" }));
       await waitFor(() => expect(sent).toHaveLength(1));
       expect(sent[0].icon).toBe(NORMALIZED);
       expect(sent[0]).not.toHaveProperty("iconUrl");
     });
-
     it("falls back to the built-in icon when the download fails", async () => {
       const { sent } = mockBackend(async () => null);
       const user = userEvent.setup();
       render(<DeepLinkImportDialog />, { wrapper: Wrapper });
       act(() => deliverDeepLink(iconLink({ icon: "deepseek" })));
-
       await user.click(
         await screen.findByRole("button", { name: "deeplink.import" }),
       );
@@ -655,21 +744,18 @@ describe("DeepLinkImportDialog", () => {
       expect(sent[0].icon).toBe("deepseek");
       expect(normalizeIconDataUri).not.toHaveBeenCalled();
     });
-
     it("imports without an icon when re-encoding fails and there is no fallback", async () => {
       normalizeIconDataUri.mockRejectedValue(new Error("tainted canvas"));
       const { sent } = mockBackend(async () => DOWNLOADED);
       const user = userEvent.setup();
       render(<DeepLinkImportDialog />, { wrapper: Wrapper });
       act(() => deliverDeepLink(iconLink()));
-
       // 首字母占位
       expect(await screen.findByText("IP")).toBeInTheDocument();
       await user.click(screen.getByRole("button", { name: "deeplink.import" }));
       await waitFor(() => expect(sent).toHaveLength(1));
       expect(sent[0].icon).toBeUndefined();
     });
-
     it("waits for a download still in flight when the user imports", async () => {
       normalizeIconDataUri.mockResolvedValue(NORMALIZED);
       let finishDownload!: (value: string) => void;
@@ -680,30 +766,25 @@ describe("DeepLinkImportDialog", () => {
       const user = userEvent.setup();
       render(<DeepLinkImportDialog />, { wrapper: Wrapper });
       act(() => deliverDeepLink(iconLink()));
-
       await waitFor(() => expect(fetched).toHaveLength(1));
       await user.click(screen.getByRole("button", { name: "deeplink.import" }));
       // 下载没完成之前不提交
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(sent).toHaveLength(0);
-
       finishDownload(DOWNLOADED);
       await waitFor(() => expect(sent).toHaveLength(1));
       expect(sent[0].icon).toBe(NORMALIZED);
     });
-
     it("does not download for links without iconUrl", async () => {
       const { fetched } = mockBackend(async () => DOWNLOADED);
       render(<DeepLinkImportDialog />, { wrapper: Wrapper });
       act(() =>
         deliverDeepLink(iconLink({ iconUrl: undefined, icon: "deepseek" })),
       );
-
       await screen.findByRole("button", { name: "deeplink.import" });
       expect(fetched).toHaveLength(0);
     });
   });
-
   describe("when processing is interrupted after the link was read", () => {
     const coldStartLink = {
       kind: "import",
@@ -717,7 +798,6 @@ describe("DeepLinkImportDialog", () => {
         apiKey: "sk-provider-key",
       },
     };
-
     // 让 peek 的响应停在半路：返回 hit（请求已到达）与 release（放行响应）
     const holdPeek = () => {
       let release!: () => void;
@@ -734,50 +814,41 @@ describe("DeepLinkImportDialog", () => {
       );
       return { hit, release };
     };
-
     afterEach(async () => {
       await act(async () => {
         await i18n.changeLanguage("zh");
       });
     });
-
     it("still shows the link when the language changes mid-read", async () => {
       // 启动时按后端设置校正语言会换掉 t；effect 若随 t 重建，读到一半的链接就被丢下
       setPendingDeepLink(coldStartLink);
       const { hit, release } = holdPeek();
-
       render(<DeepLinkImportDialog />, { wrapper: Wrapper });
       await hit;
       await act(async () => {
         await i18n.changeLanguage("en");
       });
       release();
-
       await waitFor(() => {
         expect(screen.getByText("Interrupted Provider")).toBeInTheDocument();
       });
       await waitFor(() => expect(peekPendingDeepLink()).toBeNull());
     });
-
     it("keeps the link for the next mount when unmounted mid-read", async () => {
       // 窗口销毁重建：旧实例读到了但没显示，链接必须留在后端给新实例
       setPendingDeepLink(coldStartLink);
       const { hit, release } = holdPeek();
-
       const first = render(<DeepLinkImportDialog />, { wrapper: Wrapper });
       await hit;
       first.unmount();
       release();
       server.resetHandlers();
-
       expect(peekPendingDeepLink()).not.toBeNull();
       render(<DeepLinkImportDialog />, { wrapper: Wrapper });
-
       await waitFor(() => {
         expect(screen.getByText("Interrupted Provider")).toBeInTheDocument();
       });
     });
-
     it("does not let a late read of an older link replace a newer one", async () => {
       // A 的读取响应迟到；期间 B 到达。若读取可以并发，B 先显示并被清除，
       // A 随后返回把 B 盖掉，B 从界面消失、后端也取不回来了
@@ -786,7 +857,6 @@ describe("DeepLinkImportDialog", () => {
         request: { ...coldStartLink.request, name },
       });
       setPendingDeepLink(providerLink("Older Provider"));
-
       let release!: () => void;
       const gate = new Promise<void>((resolve) => (release = resolve));
       let markHit!: () => void;
@@ -802,7 +872,6 @@ describe("DeepLinkImportDialog", () => {
           return HttpResponse.json(entry);
         }),
       );
-
       render(<DeepLinkImportDialog />, { wrapper: Wrapper });
       await hit;
       act(() => {
@@ -811,14 +880,12 @@ describe("DeepLinkImportDialog", () => {
       // 给并发读取（如果有）留出完成的时间
       await new Promise((resolve) => setTimeout(resolve, 30));
       release();
-
       await waitFor(() => {
         expect(screen.getByText("Newer Provider")).toBeInTheDocument();
       });
       await waitFor(() => expect(peekPendingDeepLink()).toBeNull());
       expect(screen.queryByText("Older Provider")).not.toBeInTheDocument();
     });
-
     it("shows the newer link when it arrives while the older one is merging its config", async () => {
       // 读取已返回 A，A 带 config 正在合并（异步），此时 B 到达：最终必须停在 B
       setPendingDeepLink({
@@ -829,7 +896,6 @@ describe("DeepLinkImportDialog", () => {
           config: btoa('{"env":{}}'),
         },
       });
-
       let release!: () => void;
       const gate = new Promise<void>((resolve) => (release = resolve));
       let markHit!: () => void;
@@ -847,7 +913,6 @@ describe("DeepLinkImportDialog", () => {
           },
         ),
       );
-
       render(<DeepLinkImportDialog />, { wrapper: Wrapper });
       await hit;
       act(() => {
@@ -858,14 +923,12 @@ describe("DeepLinkImportDialog", () => {
       });
       await new Promise((resolve) => setTimeout(resolve, 30));
       release();
-
       await waitFor(() => {
         expect(screen.getByText("Arrived During Merge")).toBeInTheDocument();
       });
       await waitFor(() => expect(peekPendingDeepLink()).toBeNull());
       expect(screen.queryByText("Merging Provider")).not.toBeInTheDocument();
     });
-
     it("keeps a newer link's confirmation open when an older import finishes", async () => {
       // A 导入中（响应挂起）时 B 到达并显示、后端已清除 B；A 完成后不能把 B 的确认框关掉
       const user = userEvent.setup();
@@ -883,7 +946,9 @@ describe("DeepLinkImportDialog", () => {
           "http://tauri.local/import_from_deeplink_unified",
           async ({ request }) => {
             const body = (await request.json()) as {
-              request: { name: string };
+              request: {
+                name: string;
+              };
             };
             imported.push(body.request.name);
             if (imported.length === 1) {
@@ -894,18 +959,15 @@ describe("DeepLinkImportDialog", () => {
           },
         ),
       );
-
       render(<DeepLinkImportDialog />, { wrapper: Wrapper });
       act(() => deliverDeepLink(providerLink("First Provider")));
       await user.click(
         await screen.findByRole("button", { name: "deeplink.import" }),
       );
       await hit;
-
       act(() => deliverDeepLink(providerLink("Second Provider")));
       await screen.findByText("Second Provider");
       await waitFor(() => expect(peekPendingDeepLink()).toBeNull());
-
       release();
       await waitFor(() =>
         expect(
@@ -915,7 +977,6 @@ describe("DeepLinkImportDialog", () => {
       const dialog = screen.getByTestId("deeplink-dialog");
       expect(dialog).toHaveAttribute("data-open", "true");
       expect(screen.getByText("Second Provider")).toBeInTheDocument();
-
       // B 自己导入完成后照常关闭
       await user.click(screen.getByRole("button", { name: "deeplink.import" }));
       await waitFor(() => expect(dialog).toHaveAttribute("data-open", "false"));
@@ -923,7 +984,6 @@ describe("DeepLinkImportDialog", () => {
     });
   });
 });
-
 it("previews agy model and masks its key before confirmation", async () => {
   server.use(
     http.post(

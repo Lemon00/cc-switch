@@ -1,10 +1,9 @@
-//! GUI 前端给核心的钩子实现：事件转发、OAuth 状态读取、故障转移回调。
+//! GUI 前端给核心的钩子实现：事件转发、OAuth 状态读取、核心故障转移执行器。
 //!
 //! 核心（cc-switch-core）不碰 Tauri；这些实现把 Tauri 的 AppHandle
-//! 适配成核心的 EventSink / OAuthStateProvider / failover_notify。
+//! 适配成核心的 EventSink / OAuthStateProvider。
 
 use cc_switch_core::events::{EventSink, FrontendHooks, OAuthStateProvider};
-use cc_switch_core::proxy::failover_switch::request_failover_switch;
 use cc_switch_core::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use cc_switch_core::proxy::providers::copilot_auth::CopilotAuthManager;
 use cc_switch_core::proxy::providers::xai_oauth_auth::XaiOAuthManager;
@@ -46,54 +45,17 @@ impl OAuthStateProvider for TauriOAuthStateProvider {
     }
 }
 
-/// 组装一套完整的 GUI 钩子：事件 sink、OAuth 读取、托盘刷新、故障转移回调。
-pub fn tauri_hooks(app: &tauri::AppHandle) -> FrontendHooks {
+/// 组装一套完整的 GUI 钩子：事件 sink、OAuth 读取、托盘刷新、核心故障转移执行器。
+pub fn tauri_hooks(app: &tauri::AppHandle, state: &AppState) -> FrontendHooks {
     let sink: Arc<dyn EventSink> = Arc::new(TauriEventSink(app.clone()));
     let tray_app = app.clone();
     let tray_refresh: Option<Arc<dyn Fn() + Send + Sync>> = Some(Arc::new(move || {
         crate::tray::refresh_tray_menu(&tray_app);
     }));
-    let failover_notify = tauri_failover_notify(app.clone(), sink.clone(), tray_refresh.clone());
-    FrontendHooks {
+    FrontendHooks::with_state_and_tray(
         sink,
-        oauth: Arc::new(TauriOAuthStateProvider(app.clone())),
+        Arc::new(TauriOAuthStateProvider(app.clone())),
         tray_refresh,
-        failover_state: None,
-        failover_notify: Some(failover_notify),
-    }
-}
-
-/// 故障转移回调：forwarder 调它时只传三个 id；这里在 Tauri 任务里从
-/// State 取 AppState，再调核心的 request_failover_switch 执行切换。
-/// 不直接用 Weak<AppState>，因为 Tauri StateManager 存的不是 Arc。
-fn tauri_failover_notify(
-    app: tauri::AppHandle,
-    sink: Arc<dyn EventSink>,
-    tray_refresh: Option<Arc<dyn Fn() + Send + Sync>>,
-) -> Arc<dyn Fn(&str, &str, &str) + Send + Sync> {
-    Arc::new(move |app_type, provider_id, provider_name| {
-        let app = app.clone();
-        let sink = sink.clone();
-        let tray_refresh = tray_refresh.clone();
-        let app_type = app_type.to_string();
-        let provider_id = provider_id.to_string();
-        let provider_name = provider_name.to_string();
-        tauri::async_runtime::spawn(async move {
-            let state = app.state::<AppState>();
-            // 切换失败必须落日志：以前 `let _ =` 吞掉 DB/mode/路由错误，
-            // 用户只看到「没切过去」却查不到原因。
-            if let Err(error) = request_failover_switch(
-                &state,
-                sink.as_ref(),
-                tray_refresh,
-                &app_type,
-                &provider_id,
-                &provider_name,
-            )
-            .await
-            {
-                log::warn!("[Failover] {app_type} 自动切换到 {provider_name} 失败: {error}");
-            }
-        });
-    })
+        state,
+    )
 }

@@ -1,6 +1,18 @@
 use crate::error::AppError;
 use auto_launch::{AutoLaunch, AutoLaunchBuilder};
 
+// AppImage's current_exe points inside an ephemeral mount. Persist the launcher instead.
+#[cfg(any(target_os = "linux", test))]
+fn linux_launch_path(
+    exe: std::path::PathBuf,
+    appimage: Option<std::ffi::OsString>,
+) -> std::path::PathBuf {
+    appimage
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .unwrap_or(exe)
+}
+
 /// 获取 macOS 上的 .app bundle 路径
 /// 将 `/path/to/CC Switch.app/Contents/MacOS/CC Switch` 转换为 `/path/to/CC Switch.app`
 #[cfg(target_os = "macos")]
@@ -25,7 +37,10 @@ fn get_auto_launch() -> Result<AutoLaunch, AppError> {
     #[cfg(target_os = "macos")]
     let app_path = get_macos_app_bundle_path(&exe_path).unwrap_or(exe_path);
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    let app_path = linux_launch_path(exe_path, std::env::var_os("APPIMAGE"));
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let app_path = exe_path;
 
     // 使用 AutoLaunchBuilder 消除平台差异
@@ -72,6 +87,21 @@ pub fn is_auto_launch_enabled() -> Result<bool, AppError> {
 mod tests {
     #[allow(unused_imports)]
     use super::*;
+
+    #[test]
+    fn appimage_autostart_uses_the_persistent_launcher_path() {
+        let exe = std::env::temp_dir().join(".mount_AppImage/usr/bin/cc-switch");
+        let launcher = std::env::temp_dir().join("My Apps/CC Switch.AppImage");
+        assert_eq!(
+            linux_launch_path(exe.clone(), Some(launcher.clone().into_os_string())),
+            launcher
+        );
+        assert_eq!(linux_launch_path(exe.clone(), None), exe);
+        assert_eq!(
+            linux_launch_path(exe.clone(), Some("relative.AppImage".into())),
+            exe
+        );
+    }
 
     #[cfg(target_os = "macos")]
     #[test]

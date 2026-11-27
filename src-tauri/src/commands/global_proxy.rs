@@ -7,7 +7,47 @@ use crate::proxy::http_client;
 use crate::store::AppState;
 use serde::Serialize;
 use std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
+
+// The HTTP clients are process-wide, so their persisted configuration and
+// runtime update must share one lock across all command invocations.
+static PROXY_CONFIG_UPDATE: Mutex<()> = Mutex::new(());
+
+/// Rebuild outbound clients from the restored database under the same lock as
+/// interactive proxy saves. Do not rewrite the restored value on failure.
+pub(crate) fn reload_proxy_from_database(db: &crate::database::Database) -> Result<(), String> {
+    let _guard = PROXY_CONFIG_UPDATE
+        .lock()
+        .map_err(|_| "Global proxy configuration lock poisoned".to_string())?;
+    let url = db
+        .get_global_proxy_url()
+        .map_err(|error| error.to_string())?;
+    http_client::validate_proxy(url.as_deref())?;
+    http_client::apply_proxy(url.as_deref())
+}
+
+fn save_and_apply_proxy(
+    db: &crate::database::Database,
+    url: Option<&str>,
+    apply: impl FnOnce(Option<&str>) -> Result<(), String>,
+) -> Result<(), String> {
+    http_client::validate_proxy(url)?;
+    let _guard = PROXY_CONFIG_UPDATE
+        .lock()
+        .map_err(|_| "Global proxy configuration lock poisoned".to_string())?;
+    let previous = db.get_global_proxy_url().map_err(|e| e.to_string())?;
+    db.set_global_proxy_url(url).map_err(|e| e.to_string())?;
+    if let Err(error) = apply(url) {
+        return match db.set_global_proxy_url(previous.as_deref()) {
+            Ok(()) => Err(error),
+            Err(restore) => Err(format!(
+                "{error}; failed to restore proxy configuration: {restore}"
+            )),
+        };
+    }
+    Ok(())
+}
 
 /// 获取全局代理 URL
 ///
@@ -53,33 +93,112 @@ pub async fn set_global_proxy_url(
     let url_opt = if url.trim().is_empty() {
         None
     } else {
-        Some(url.as_str())
+        Some(url.trim().to_string())
     };
 
-    // 1. 先验证代理配置是否有效（不应用）
-    http_client::validate_proxy(url_opt)?;
-
-    // 2. 验证成功后保存到数据库
-    let stored = url_opt.map(str::to_owned);
+    // Both steps run in the same blocking task: cancellation cannot stop after
+    // persistence but before the runtime update, and concurrent saves serialize.
     run_db_task(&state, move |state| {
-        state
-            .db
-            .set_global_proxy_url(stored.as_deref())
-            .map_err(|e| e.to_string())
+        save_and_apply_proxy(&state.db, url_opt.as_deref(), http_client::apply_proxy)?;
+        log::info!(
+            "[GlobalProxy] [GP-009] Configuration updated: {}",
+            url_opt
+                .as_deref()
+                .map(http_client::mask_url)
+                .unwrap_or_else(|| "direct connection".to_string())
+        );
+        Ok(())
     })
-    .await?;
+    .await
+}
 
-    // 3. DB 写入成功后再应用到运行态
-    http_client::apply_proxy(url_opt)?;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::Database;
+    use std::sync::{mpsc, Arc};
 
-    log::info!(
-        "[GlobalProxy] [GP-009] Configuration updated: {}",
-        url_opt
-            .map(http_client::mask_url)
-            .unwrap_or_else(|| "direct connection".to_string())
-    );
+    #[test]
+    fn failed_runtime_update_restores_the_persisted_proxy() {
+        let db = Database::memory().unwrap();
+        db.set_global_proxy_url(Some("http://old.example:8080"))
+            .unwrap();
+        let error = save_and_apply_proxy(&db, Some("http://new.example:8080"), |_| {
+            Err("client construction failed".to_string())
+        })
+        .unwrap_err();
+        assert_eq!(error, "client construction failed");
+        assert_eq!(
+            db.get_global_proxy_url().unwrap().as_deref(),
+            Some("http://old.example:8080")
+        );
+    }
 
-    Ok(())
+    #[test]
+    fn invalid_proxy_is_neither_persisted_nor_applied() {
+        let db = Database::memory().unwrap();
+        assert!(
+            save_and_apply_proxy(&db, Some("ftp://invalid.example"), |_| {
+                panic!("invalid configuration must never be applied")
+            })
+            .is_err()
+        );
+        assert_eq!(db.get_global_proxy_url().unwrap(), None);
+    }
+
+    #[test]
+    fn concurrent_saves_keep_runtime_and_database_in_the_same_order() {
+        let db = Arc::new(Database::memory().unwrap());
+        let runtime = Arc::new(Mutex::new(None));
+        let (applying_tx, applying_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let db_first = db.clone();
+            let runtime_first = runtime.clone();
+            let first = scope.spawn(move || {
+                save_and_apply_proxy(&db_first, Some("http://first.example:8080"), |url| {
+                    applying_tx.send(()).unwrap();
+                    release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                    *runtime_first.lock().unwrap() = url.map(str::to_owned);
+                    Ok(())
+                })
+            });
+            applying_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            let db_second = db.clone();
+            let runtime_second = runtime.clone();
+            let second = scope.spawn(move || {
+                started_tx.send(()).unwrap();
+                let result =
+                    save_and_apply_proxy(&db_second, Some("http://second.example:8080"), |url| {
+                        *runtime_second.lock().unwrap() = url.map(str::to_owned);
+                        Ok(())
+                    });
+                finished_tx.send(()).unwrap();
+                result
+            });
+            started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            let second_finished = finished_rx.recv_timeout(Duration::from_millis(100));
+            let persisted_while_applying = db.get_global_proxy_url().unwrap();
+            release_tx.send(()).unwrap();
+            first.join().unwrap().unwrap();
+            second.join().unwrap().unwrap();
+            assert!(matches!(
+                second_finished,
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ));
+            assert_eq!(
+                persisted_while_applying.as_deref(),
+                Some("http://first.example:8080")
+            );
+        });
+        assert_eq!(db.get_global_proxy_url().unwrap(), *runtime.lock().unwrap());
+        assert_eq!(
+            runtime.lock().unwrap().as_deref(),
+            Some("http://second.example:8080")
+        );
+    }
 }
 
 /// 代理测试结果
@@ -178,7 +297,7 @@ pub fn get_upstream_proxy_status() -> UpstreamProxyStatus {
     let url = http_client::get_current_proxy_url();
     UpstreamProxyStatus {
         enabled: url.is_some(),
-        proxy_url: url,
+        proxy_url: url.as_deref().map(http_client::mask_url),
     }
 }
 

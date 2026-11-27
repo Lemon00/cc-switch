@@ -1,5 +1,3 @@
-import type { ReactNode } from "react";
-import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import {
@@ -9,15 +7,17 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import { useRequestDetail } from "@/lib/query/usage";
+import { cn } from "@/lib/utils";
 import {
   getFreshInputTokens,
   isUnpricedUsage,
   type RequestLog,
 } from "@/types/usage";
-import { cn } from "@/lib/utils";
-import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import {
   SPEED_ESTIMATE_MIN_OUTPUT_TOKENS,
   SPEED_MIN_OUTPUT_TOKENS,
@@ -28,15 +28,13 @@ import {
   getResolvedLang,
   parseFiniteNumber,
 } from "./format";
-import { appDisplayName } from "./RequestLogTable";
 import { getUsageProviderLabel } from "./providerLabel";
-
+import { appDisplayName } from "./RequestLogTable";
 interface RequestDetailPanelProps {
   /** 要看的请求；null 时抽屉关闭 */
   requestId: string | null;
   onClose: () => void;
 }
-
 interface DetailRow {
   key: string;
   label: string;
@@ -46,7 +44,6 @@ interface DetailRow {
   muted?: boolean;
   title?: string;
 }
-
 function DetailSection({ title, rows }: { title: string; rows: DetailRow[] }) {
   return (
     <section className="flex flex-col gap-2">
@@ -82,7 +79,6 @@ function DetailSection({ title, rows }: { title: string; rows: DetailRow[] }) {
     </section>
   );
 }
-
 function useDetailSections(request: RequestLog) {
   const { t, i18n } = useTranslation();
   const { money, moneyTitle } = useMoneyFormat();
@@ -97,7 +93,6 @@ function useDetailSections(request: RequestLog) {
   const estimatedTps = formatEstimatedTokensPerSecond(request);
   const latency = parseFiniteNumber(request.latencyMs);
   const firstToken = parseFiniteNumber(request.firstTokenMs);
-
   const basic: DetailRow[] = [
     {
       key: "time",
@@ -155,7 +150,6 @@ function useDetailSections(request: RequestLog) {
     value: request.requestId,
     mono: true,
   });
-
   const tokens: DetailRow[] = [
     {
       key: "fresh",
@@ -180,7 +174,6 @@ function useDetailSections(request: RequestLog) {
       value: fmtInt(request.cacheCreationTokens, locale),
     },
   ];
-
   const cost: DetailRow[] = [
     {
       key: "input",
@@ -221,7 +214,6 @@ function useDetailSections(request: RequestLog) {
     muted: unpriced,
     title: unpriced ? undefined : moneyTitle(request.totalCostUsd, 6),
   });
-
   let performance: DetailRow[];
   if (!isProxy) {
     // 会话日志的耗时和首字是导入时按日志时间戳估的（耗时 0 = 没估出来）
@@ -312,10 +304,8 @@ function useDetailSections(request: RequestLog) {
       });
     }
   }
-
   return { basic, tokens, cost, performance };
 }
-
 function RequestDetailBody({ request }: { request: RequestLog }) {
   const { t } = useTranslation();
   const { currency } = useMoneyFormat();
@@ -348,7 +338,6 @@ function RequestDetailBody({ request }: { request: RequestLog }) {
     </div>
   );
 }
-
 /** 请求详情抽屉（v7 S6：点表格一行打开）。 */
 export function RequestDetailPanel({
   requestId,
@@ -361,7 +350,6 @@ export function RequestDetailPanel({
     error,
     refetch,
   } = useRequestDetail(requestId ?? "");
-
   return (
     <Sheet
       open={requestId != null}

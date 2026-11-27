@@ -17,6 +17,7 @@ use crate::live::patch::toml::TomlPatch;
 use crate::live::patch::KeyPath;
 use crate::mode::operation::{AppWrite, FileChange};
 use crate::mode::state::{op, PendingTarget};
+#[cfg(feature = "session-monitor")]
 use crate::session_manager::providers::codex::session_roots;
 
 const FEATURE_KEY: &str = "local_thread_store_compression";
@@ -64,7 +65,8 @@ fn patch(enabled: bool) -> TomlPatch {
 }
 
 /// Codex 会话目录（`sessions/` + `archived_sessions/`）当前占用的字节数。
-pub fn sessions_disk_usage() -> u64 {
+#[cfg(feature = "session-monitor")]
+pub fn sessions_disk_usage() -> Result<u64, crate::error::AppError> {
     session_roots()
         .iter()
         .map(|root| crate::services::backup_storage::path_size(root))

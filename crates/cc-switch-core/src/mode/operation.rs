@@ -274,7 +274,28 @@ pub fn recover(
         publish(file)?;
     }
     failpoint::hit("recover:target")?;
-    commit_target(&pending.target)?;
+    let files_publish_complete = positions.iter().all(|at| !matches!(at, At::Pre));
+    match commit_target(&pending.target) {
+        Ok(()) => {}
+        Err(err)
+            if pending.published
+                && files_publish_complete
+                && is_permanent_commit_target_failure(&err) =>
+        {
+            // Files are already live; a permanent commit_target failure (e.g.
+            // deleted provider) would otherwise block every future write.
+            log::error!(
+                "[{}] 文件已发布但状态无法落定（{err}），清除 pending 以免永久阻断后续写入",
+                guard.app()
+            );
+            discard_pending_files(&pending);
+            state::set_pending(store, guard.app(), None)?;
+            return Err(AppError::Message(format!(
+                "文件已写入，但状态更新失败且无法自动补完: {err}"
+            )));
+        }
+        Err(err) => return Err(err),
+    }
     // 发布过的临时文件已经换进去了；剩下的（被外部改过、内容不对）不再有用。
     discard_pending_files(&pending);
     state::set_pending(store, guard.app(), None)?;
@@ -402,6 +423,15 @@ pub fn recover_all(
         .collect()
 }
 
+fn is_permanent_commit_target_failure(err: &AppError) -> bool {
+    // Prefer precise markers from set_current_provider / provider lookups.
+    // Avoid matching generic English "not found" which can appear in transient I/O.
+    let text = err.to_string();
+    text.contains("不存在，无法设为当前")
+        || text.contains("供应商不存在")
+        || text.contains("Provider not found")
+}
+
 /// 落定目标状态。必须可以重复执行（崩溃恢复可能再跑一次）。
 ///
 /// - 直连指针：设备本地的 `current_provider_*` 和 DB 的 `is_current`，和现有切换用的是
@@ -417,7 +447,7 @@ pub fn commit_target(
     if let Some(id) = target.pointer.as_deref() {
         let app_type: crate::app_config::AppType = app.parse()?;
         crate::settings::set_current_provider(&app_type, Some(id))?;
-        db.set_current_provider(app, id)?;
+        db.set_current_provider(&app_type, id)?;
     }
     // 模式、写入记录和 Stack 模型在同一次状态文件写入里落定。
     if target.state.is_some() || target.written.is_some() || target.stack.is_some() {
@@ -447,17 +477,18 @@ pub fn mirror_proxy_flag(
     proxy: bool,
 ) -> Result<(), AppError> {
     // Claude Desktop 没有 `proxy_config` 行（表的 CHECK 也不允许），旧版不认它的模式。
-    if !app
+    let Some(app) = app
         .parse::<crate::app_config::AppType>()
-        .is_ok_and(|app| app.supports_local_proxy())
-    {
+        .ok()
+        .filter(|app| app.supports_local_proxy())
+    else {
         return Ok(());
-    }
-    let (enabled, auto_failover) = db.get_proxy_flags_sync(app);
+    };
+    let (enabled, auto_failover) = db.get_proxy_flags_sync(&app);
     if enabled == proxy {
         return Ok(());
     }
-    db.set_proxy_flags_sync(app, proxy, auto_failover)
+    db.set_proxy_flags_sync(&app, proxy, auto_failover)
 }
 
 /// 启动时调用：补完上次崩溃留下的客户端文件写入。要在任何写客户端文件的启动步骤之前。

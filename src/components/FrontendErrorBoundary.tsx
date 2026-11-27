@@ -1,23 +1,19 @@
-import React from "react";
-import { RefreshCw, TriangleAlert } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import i18n from "@/i18n";
 import { reportFrontendError } from "@/lib/frontendLogger";
-import { Button } from "@/components/ui/button";
-
+import { RefreshCw, TriangleAlert } from "lucide-react";
+import React from "react";
 interface FrontendErrorBoundaryState {
   hasError: boolean;
 }
-
 export class FrontendErrorBoundary extends React.Component<
   React.PropsWithChildren,
   FrontendErrorBoundaryState
 > {
   state: FrontendErrorBoundaryState = { hasError: false };
-
   static getDerivedStateFromError(): FrontendErrorBoundaryState {
     return { hasError: true };
   }
-
   componentDidCatch(error: Error, info: React.ErrorInfo): void {
     reportFrontendError(
       "react.error_boundary",
@@ -25,12 +21,10 @@ export class FrontendErrorBoundary extends React.Component<
       info.componentStack ?? undefined,
     );
   }
-
   render(): React.ReactNode {
     if (!this.state.hasError) {
       return this.props.children;
     }
-
     return (
       <main className="flex min-h-screen items-center justify-center bg-surface p-6 text-fg-1">
         <section

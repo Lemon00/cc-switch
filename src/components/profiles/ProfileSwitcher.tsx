@@ -1,18 +1,4 @@
-import { useState } from "react";
-import { useTranslation } from "react-i18next";
-import {
-  Check,
-  ChevronsUpDown,
-  FolderCog,
-  FolderOpen,
-  Plus,
-  X,
-} from "lucide-react";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import { Button } from "@/components/ui/button";
 import {
   Command,
   CommandEmpty,
@@ -29,9 +15,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { cn } from "@/lib/utils";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import type { CurrentProfileIds, ProfileScope } from "@/lib/api/profiles";
 import type { AppId } from "@/lib/api/types";
 import {
   useApplyProfileMutation,
@@ -39,69 +29,89 @@ import {
   useCreateProfileMutation,
   useProfilesQuery,
 } from "@/lib/query/profiles";
+import { cn } from "@/lib/utils";
+import {
+  Check,
+  ChevronsUpDown,
+  FolderCog,
+  FolderOpen,
+  Plus,
+  X,
+} from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ProfileManageDialog } from "./ProfileManageDialog";
 import { APP_PROFILE_SCOPE, hasScopeSnapshot } from "./scope";
-import type { CurrentProfileIds, ProfileScope } from "@/lib/api/profiles";
-
 const CURRENT_ID_KEY: Record<ProfileScope, keyof CurrentProfileIds> = {
   claude: "claude",
   "claude-desktop": "claudeDesktop",
   codex: "codex",
 };
-
 interface ProfileSwitcherProps {
   activeApp: AppId;
 }
-
 /**
  * 项目 Profile 切换器（header 左侧入口）
  *
  * 项目列表全应用共享（用户拥有的项目就那几个），但切换按分组进行：
- * Claude 组（Claude Code 的供应商/MCP/Skills/记忆文件 + Claude Desktop
- * 的供应商）与 Codex 组各自指向自己的当前项目、只应用组内快照。
+ * Claude Code、Claude Desktop 与 Codex 各自指向自己的当前项目，
+ * 只应用各自分组内的快照。
  * 与侧栏的应用列表（只切换查看的应用）语义不同。
  */
 export function ProfileSwitcher({ activeApp }: ProfileSwitcherProps) {
+  return <ProfileSwitcherSession key={activeApp} activeApp={activeApp} />;
+}
+function ProfileSwitcherSession({ activeApp }: ProfileSwitcherProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isManageOpen, setIsManageOpen] = useState(false);
   const [newName, setNewName] = useState("");
-
+  const createSession = useMemo(() => Symbol("profile-create"), [isCreateOpen]);
+  const currentCreateSession = useRef(createSession);
+  currentCreateSession.current = createSession;
+  const savingSession = useRef<symbol | null>(null);
   const { data } = useProfilesQuery();
   const applyMutation = useApplyProfileMutation();
   const clearMutation = useClearProfileMutation();
   const createMutation = useCreateProfileMutation();
-
   // Profile 仅作用于受支持的应用——在其他应用的标签页展示会误导用户
   // 以为当前应用也被切换了，因此只在有所属分组的应用页面渲染
   const scope = APP_PROFILE_SCOPE[activeApp];
   if (!scope) {
     return null;
   }
-
   const profiles = data?.profiles ?? [];
   const currentId = data?.currentIds?.[CURRENT_ID_KEY[scope]] ?? null;
   const currentProfile = profiles.find((p) => p.id === currentId);
-
   const handleApply = (id: string) => {
     setOpen(false);
     if (id !== currentId) {
       applyMutation.mutate({ id, scope });
     }
   };
-
   const closeCreateDialog = () => {
     setIsCreateOpen(false);
     setNewName("");
   };
-
   const handleCreate = () => {
     const name = newName.trim();
-    if (!name) return;
-    createMutation.mutate({ name, scope }, { onSuccess: closeCreateDialog });
+    if (!name || savingSession.current === createSession) return;
+    savingSession.current = createSession;
+    createMutation.mutate(
+      { name, scope },
+      {
+        onSuccess: () => {
+          if (currentCreateSession.current === createSession)
+            closeCreateDialog();
+        },
+        onSettled: () => {
+          if (savingSession.current === createSession)
+            savingSession.current = null;
+        },
+      },
+    );
   };
-
   return (
     <>
       <Popover open={open} onOpenChange={setOpen}>

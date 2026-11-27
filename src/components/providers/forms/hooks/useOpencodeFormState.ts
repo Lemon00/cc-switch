@@ -1,14 +1,13 @@
-import { useState, useCallback } from "react";
 import type { OpenCodeModel, OpenCodeProviderConfig } from "@/types";
+import { useCallback, useState } from "react";
 import {
-  OPENCODE_DEFAULT_NPM,
   OPENCODE_DEFAULT_CONFIG,
+  OPENCODE_DEFAULT_NPM,
   OPENCODE_HEADER_DRAFT_PREFIX,
   mergeOpencodeExtraOptionRows,
   parseOpencodeConfig,
   toOpencodeExtraOptions,
 } from "../helpers/opencodeFormUtils";
-
 interface UseOpencodeFormStateParams {
   initialData?: {
     settingsConfig?: Record<string, unknown>;
@@ -18,7 +17,6 @@ interface UseOpencodeFormStateParams {
   onSettingsConfigChange: (config: string) => void;
   getSettingsConfig: () => string;
 }
-
 export interface OpencodeFormState {
   opencodeProviderKey: string;
   setOpencodeProviderKey: (key: string) => void;
@@ -36,7 +34,6 @@ export interface OpencodeFormState {
   handleOpencodeExtraOptionsChange: (options: Record<string, string>) => void;
   resetOpencodeState: (config?: OpenCodeProviderConfig) => void;
 }
-
 export function useOpencodeFormState({
   initialData,
   appId,
@@ -49,29 +46,24 @@ export function useOpencodeFormState({
       ? parseOpencodeConfig(initialData?.settingsConfig)
       : null;
   const initialOpencodeOptions = initialOpencodeConfig?.options || {};
-
   const [opencodeProviderKey, setOpencodeProviderKey] = useState<string>(() => {
     if (appId !== "opencode") return "";
     return providerId || "";
   });
-
   const [opencodeNpm, setOpencodeNpm] = useState<string>(() => {
     if (appId !== "opencode") return OPENCODE_DEFAULT_NPM;
     return initialOpencodeConfig?.npm ?? OPENCODE_DEFAULT_NPM;
   });
-
   const [opencodeApiKey, setOpencodeApiKey] = useState<string>(() => {
     if (appId !== "opencode") return "";
     const value = initialOpencodeOptions.apiKey;
     return typeof value === "string" ? value : "";
   });
-
   const [opencodeBaseUrl, setOpencodeBaseUrl] = useState<string>(() => {
     if (appId !== "opencode") return "";
     const value = initialOpencodeOptions.baseURL;
     return typeof value === "string" ? value : "";
   });
-
   const [opencodeHeaders, setOpencodeHeaders] = useState<
     Record<string, string>
   >(() => {
@@ -81,21 +73,18 @@ export function useOpencodeFormState({
       ? (headers as Record<string, string>)
       : {};
   });
-
   const [opencodeModels, setOpencodeModels] = useState<
     Record<string, OpenCodeModel>
   >(() => {
     if (appId !== "opencode") return {};
     return initialOpencodeConfig?.models || {};
   });
-
   const [opencodeExtraOptions, setOpencodeExtraOptions] = useState<
     Record<string, string>
   >(() => {
     if (appId !== "opencode") return {};
     return toOpencodeExtraOptions(initialOpencodeOptions);
   });
-
   const updateOpencodeSettings = useCallback(
     (updater: (config: Record<string, any>) => void) => {
       try {
@@ -108,7 +97,6 @@ export function useOpencodeFormState({
     },
     [getSettingsConfig, onSettingsConfigChange],
   );
-
   const handleOpencodeNpmChange = useCallback(
     (npm: string) => {
       setOpencodeNpm(npm);
@@ -118,7 +106,6 @@ export function useOpencodeFormState({
     },
     [updateOpencodeSettings],
   );
-
   const handleOpencodeApiKeyChange = useCallback(
     (apiKey: string) => {
       setOpencodeApiKey(apiKey);
@@ -129,7 +116,6 @@ export function useOpencodeFormState({
     },
     [updateOpencodeSettings],
   );
-
   const handleOpencodeBaseUrlChange = useCallback(
     (baseUrl: string) => {
       setOpencodeBaseUrl(baseUrl);
@@ -140,13 +126,11 @@ export function useOpencodeFormState({
     },
     [updateOpencodeSettings],
   );
-
   const handleOpencodeHeadersChange = useCallback(
     (headers: Record<string, string>) => {
       setOpencodeHeaders(headers);
       updateOpencodeSettings((config) => {
         if (!config.options) config.options = {};
-
         const nextHeaders: Record<string, string> = {};
         for (const [key, value] of Object.entries(headers)) {
           const trimmedKey = key.trim();
@@ -154,7 +138,6 @@ export function useOpencodeFormState({
             nextHeaders[trimmedKey] = value;
           }
         }
-
         if (Object.keys(nextHeaders).length > 0) {
           config.options.headers = nextHeaders;
         } else {
@@ -164,7 +147,6 @@ export function useOpencodeFormState({
     },
     [updateOpencodeSettings],
   );
-
   const handleOpencodeModelsChange = useCallback(
     (models: Record<string, OpenCodeModel>) => {
       setOpencodeModels(models);
@@ -174,7 +156,6 @@ export function useOpencodeFormState({
     },
     [updateOpencodeSettings],
   );
-
   const handleOpencodeExtraOptionsChange = useCallback(
     (options: Record<string, string>) => {
       setOpencodeExtraOptions(options);
@@ -185,7 +166,6 @@ export function useOpencodeFormState({
     },
     [updateOpencodeSettings],
   );
-
   const resetOpencodeState = useCallback((config?: OpenCodeProviderConfig) => {
     setOpencodeProviderKey("");
     setOpencodeNpm(config?.npm ?? OPENCODE_DEFAULT_NPM);
@@ -195,7 +175,6 @@ export function useOpencodeFormState({
     setOpencodeModels(config?.models || {});
     setOpencodeExtraOptions(toOpencodeExtraOptions(config?.options || {}));
   }, []);
-
   return {
     opencodeProviderKey,
     setOpencodeProviderKey,

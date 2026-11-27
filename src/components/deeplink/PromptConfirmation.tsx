@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next";
 import { DeepLinkImportRequest } from "../../lib/api/deeplink";
 import { decodeBase64Utf8 } from "../../lib/utils/base64";
 import { Switch } from "../ui/switch";
-
 export function PromptConfirmation({
   request,
   enableAfterImport,
@@ -15,12 +14,10 @@ export function PromptConfirmation({
   onEnableAfterImportChange: (enabled: boolean) => void;
 }) {
   const { t } = useTranslation();
-
   const decodedContent = useMemo(() => {
     if (!request.content) return "";
     return decodeBase64Utf8(request.content);
   }, [request.content]);
-
   return (
     <div className="space-y-4">
       <h3 className="text-lg font-semibold">{t("deeplink.prompt.title")}</h3>

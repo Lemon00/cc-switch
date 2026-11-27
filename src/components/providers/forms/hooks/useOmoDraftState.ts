@@ -1,16 +1,14 @@
-import { useState, useCallback, useMemo } from "react";
 import {
-  buildOmoSlimProfilePreview,
   buildOmoProfilePreview,
+  buildOmoSlimProfilePreview,
 } from "@/types/omo";
-
+import { useCallback, useMemo, useState } from "react";
 interface UseOmoDraftStateParams {
   initialOmoSettings: Record<string, unknown> | undefined;
   isEditMode: boolean;
   appId: string;
   category?: string;
 }
-
 export interface OmoDraftState {
   omoAgents: Record<string, Record<string, unknown>>;
   setOmoAgents: React.Dispatch<
@@ -25,13 +23,11 @@ export interface OmoDraftState {
   mergedOmoJsonPreview: string;
   resetOmoDraftState: () => void;
 }
-
 export function useOmoDraftState({
   initialOmoSettings,
   category,
 }: UseOmoDraftStateParams): OmoDraftState {
   const isSlim = category === "omo-slim";
-
   const [omoAgents, setOmoAgents] = useState<
     Record<string, Record<string, unknown>>
   >(
@@ -52,7 +48,6 @@ export function useOmoDraftState({
     const otherFields = initialOmoSettings?.otherFields;
     return otherFields ? JSON.stringify(otherFields, null, 2) : "";
   });
-
   const mergedOmoJsonPreview = useMemo(() => {
     if (isSlim) {
       return JSON.stringify(
@@ -67,13 +62,11 @@ export function useOmoDraftState({
       2,
     );
   }, [omoAgents, omoCategories, omoOtherFieldsStr, isSlim]);
-
   const resetOmoDraftState = useCallback(() => {
     setOmoAgents({});
     setOmoCategories({});
     setOmoOtherFieldsStr("");
   }, []);
-
   return {
     omoAgents,
     setOmoAgents,

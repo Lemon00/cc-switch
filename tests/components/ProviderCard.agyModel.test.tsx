@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from "vitest";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import type { Provider } from "@/types";
 import { createTestQueryClient } from "../utils/testQueryClient";
-
 vi.mock("@/components/providers/ProviderCardActions", () => ({
   ProviderCardActions: () => null,
 }));
@@ -34,8 +33,7 @@ vi.mock("@/lib/query/failover", () => ({
 vi.mock("@/lib/query/queries", () => ({
   useUsageQuery: () => ({ data: undefined }),
 }));
-
-function renderCard(provider: Provider, appId: "agy" | "gemini" = "agy") {
+function renderCard(provider: Provider, appId: "agy" = "agy") {
   return render(
     <QueryClientProvider client={createTestQueryClient()}>
       <ProviderCard
@@ -52,7 +50,6 @@ function renderCard(provider: Provider, appId: "agy" | "gemini" = "agy") {
     </QueryClientProvider>,
   );
 }
-
 const relay: Provider = {
   id: "relay",
   name: "Relay",
@@ -64,7 +61,6 @@ const relay: Provider = {
     config: { model: { name: "Gemini 3.1 Pro (High)" } },
   },
 };
-
 describe("ProviderCard Antigravity model", () => {
   it("shows the configured model instead of the endpoint", () => {
     renderCard(relay);
@@ -73,7 +69,6 @@ describe("ProviderCard Antigravity model", () => {
       screen.queryByText("https://relay.example.com"),
     ).not.toBeInTheDocument();
   });
-
   it("falls back to GEMINI_MODEL and leaves other apps alone", () => {
     renderCard({
       ...relay,
@@ -81,13 +76,7 @@ describe("ProviderCard Antigravity model", () => {
     });
     expect(screen.getByText("Gemini 3.8 Flash (Low)")).toBeInTheDocument();
   });
-
-  it("keeps showing the endpoint for Gemini CLI cards", () => {
-    renderCard(relay, "gemini");
-    expect(screen.queryByText("Gemini 3.1 Pro (High)")).not.toBeInTheDocument();
-  });
 });
-
 describe("ProviderCard Antigravity official quota", () => {
   const official: Provider = {
     id: "official",
@@ -103,12 +92,10 @@ describe("ProviderCard Antigravity official quota", () => {
       },
     },
   };
-
   it("shows the signed-in quota once official usage is turned on", () => {
     renderCard(official);
     expect(screen.getByTestId("subscription-quota")).toHaveTextContent("agy");
   });
-
   it("stays hidden while usage is off", () => {
     renderCard({
       ...official,
@@ -118,7 +105,6 @@ describe("ProviderCard Antigravity official quota", () => {
     });
     expect(screen.queryByTestId("subscription-quota")).not.toBeInTheDocument();
   });
-
   const bound: Provider = {
     ...official,
     meta: {
@@ -130,14 +116,12 @@ describe("ProviderCard Antigravity official quota", () => {
       },
     },
   };
-
   it("shows the bound account's quota, not agy's current sign-in", () => {
     platform.mac = true;
     renderCard(bound);
     expect(screen.getByTestId("agy-account-quota")).toHaveTextContent("sub-b");
     expect(screen.queryByTestId("subscription-quota")).not.toBeInTheDocument();
   });
-
   it("ignores the binding where accounts cannot be switched", () => {
     platform.mac = false;
     renderCard(bound);

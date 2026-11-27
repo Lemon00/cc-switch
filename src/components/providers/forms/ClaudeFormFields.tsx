@@ -1,15 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
-import { HelpTip } from "@/components/ui/help-tip";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { toast } from "@/lib/toast";
-import { Checkbox } from "@/components/ui/checkbox";
 import { FormLabel } from "@/components/ui/form";
+import { HelpTip } from "@/components/ui/help-tip";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -19,13 +16,59 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  providerPresets,
+  type TemplateValueConfig,
+} from "@/config/claudeProviderPresets";
+import type { ManagedAuthProvider } from "@/lib/api";
+import type { CopilotModel } from "@/lib/api/copilot";
+import {
+  copilotGetModels,
+  copilotGetModelsForAccount,
+} from "@/lib/api/copilot";
+import {
+  claudeModelFetchApiFormat,
+  fetchCodexOauthModels,
+  fetchModelsForConfig,
+  fetchXaiOauthModels,
+  modelFetchRequestHeaders,
+  showFetchModelsError,
+  type FetchedModel,
+} from "@/lib/api/model-fetch";
+import { toast } from "@/lib/toast";
+import type {
+  ClaudeApiFormat,
+  ClaudeApiKeyField,
+  ProviderCategory,
+} from "@/types";
+import {
   ChevronDown,
   ChevronRight,
   Download,
   Loader2,
   Wand2,
 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import {
+  ClaudeReasoningEffortField,
+  type ClaudeReasoningEffortChoice,
+} from "./ClaudeReasoningEffortField";
+import {
+  ClaudeStackModelsField,
+  type ClaudeStackModelRow,
+} from "./ClaudeStackModelsField";
+import { CodexOAuthSection } from "./CodexOAuthSection";
+import { CopilotAuthSection } from "./CopilotAuthSection";
+import { CustomUserAgentField } from "./CustomUserAgentField";
 import EndpointSpeedTest from "./EndpointSpeedTest";
+import {
+  copilotOneMAvailable,
+  hasClaudeOneMMarker,
+  setClaudeOneMMarker,
+  stripClaudeOneMMarker,
+  type ClaudeModelEnvField,
+} from "./hooks/useModelState";
+import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
 import {
   ApiKeySection,
   DirectModeFormatWarning,
@@ -35,54 +78,10 @@ import {
   ModelInputWithFetch,
   type DirectModeFormatNotice,
 } from "./shared";
-import { CopilotAuthSection } from "./CopilotAuthSection";
-import { CodexOAuthSection } from "./CodexOAuthSection";
 import { XaiOAuthSection } from "./XaiOAuthSection";
-import {
-  copilotGetModels,
-  copilotGetModelsForAccount,
-} from "@/lib/api/copilot";
-import type { CopilotModel } from "@/lib/api/copilot";
-import {
-  fetchCodexOauthModels,
-  fetchXaiOauthModels,
-  claudeModelFetchApiFormat,
-  fetchModelsForConfig,
-  modelFetchRequestHeaders,
-  showFetchModelsError,
-  type FetchedModel,
-} from "@/lib/api/model-fetch";
-import { CustomUserAgentField } from "./CustomUserAgentField";
-import {
-  ClaudeStackModelsField,
-  type ClaudeStackModelRow,
-} from "./ClaudeStackModelsField";
-import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
-import {
-  ClaudeReasoningEffortField,
-  type ClaudeReasoningEffortChoice,
-} from "./ClaudeReasoningEffortField";
-import type {
-  ProviderCategory,
-  ClaudeApiFormat,
-  ClaudeApiKeyField,
-} from "@/types";
-import type { ManagedAuthProvider } from "@/lib/api";
-import {
-  hasClaudeOneMMarker,
-  setClaudeOneMMarker,
-  stripClaudeOneMMarker,
-  type ClaudeModelEnvField,
-} from "./hooks/useModelState";
-import {
-  providerPresets,
-  type TemplateValueConfig,
-} from "@/config/claudeProviderPresets";
-
 interface EndpointCandidate {
   url: string;
 }
-
 interface ClaudeFormFieldsProps {
   providerId?: string;
   // API Key
@@ -94,7 +93,6 @@ interface ClaudeFormFieldsProps {
   websiteUrl: string;
   isPartner?: boolean;
   partnerPromotionKey?: string;
-
   // GitHub Copilot OAuth
   isCopilotPreset?: boolean;
   usesOAuth?: boolean;
@@ -105,7 +103,6 @@ interface ClaudeFormFieldsProps {
   onGitHubAccountSelect?: (accountId: string | null) => void;
   /** 打开托管账号管理入口 */
   onManageAuthAccounts?: (target: ManagedAuthProvider) => void;
-
   // Codex OAuth (ChatGPT Plus/Pro)
   isCodexOauthPreset?: boolean;
   isCodexOauthAuthenticated?: boolean;
@@ -113,19 +110,16 @@ interface ClaudeFormFieldsProps {
   onCodexAccountSelect?: (accountId: string | null) => void;
   codexFastMode?: boolean;
   onCodexFastModeChange?: (enabled: boolean) => void;
-
   // xAI OAuth
   isXaiOauthPreset?: boolean;
   isXaiOauthAuthenticated?: boolean;
   selectedXaiAccountId?: string | null;
   onXaiAccountSelect?: (accountId: string | null) => void;
-
   // Template Values
   templateValueEntries: Array<[string, TemplateValueConfig]>;
   templateValues: Record<string, TemplateValueConfig>;
   templatePresetName: string;
   onTemplateValueChange: (key: string, value: string) => void;
-
   // Base URL
   shouldShowSpeedTest: boolean;
   baseUrl: string;
@@ -136,7 +130,6 @@ interface ClaudeFormFieldsProps {
   autoSelect: boolean;
   onAutoSelectChange: (checked: boolean) => void;
   showEndpointTools?: boolean;
-
   // Model Selector
   shouldShowModelSelector: boolean;
   claudeModel: string;
@@ -150,25 +143,20 @@ interface ClaudeFormFieldsProps {
   defaultFableModelName: string;
   subagentModel: string;
   onModelChange: (field: ClaudeModelEnvField, value: string) => void;
-
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
-
   // API Format (for Claude-compatible providers that need request/response conversion)
   apiFormat: ClaudeApiFormat;
   onApiFormatChange: (format: ClaudeApiFormat) => void;
   // 转成 OpenAI Chat / Responses 时思考档位的发法
   reasoningEffort: ClaudeReasoningEffortChoice;
   onReasoningEffortChange: (value: ClaudeReasoningEffortChoice) => void;
-
   // Auth Field (ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY)
   apiKeyField: ClaudeApiKeyField;
   onApiKeyFieldChange: (field: ClaudeApiKeyField) => void;
-
   // Full URL mode
   isFullUrl: boolean;
   onFullUrlChange: (value: boolean) => void;
-
   // Local proxy User-Agent override
   customUserAgent: string;
   onCustomUserAgentChange: (value: string) => void;
@@ -176,7 +164,6 @@ interface ClaudeFormFieldsProps {
   onLocalProxyHeadersOverrideChange: (value: string) => void;
   localProxyBodyOverride: string;
   onLocalProxyBodyOverrideChange: (value: string) => void;
-
   /**
    * 布局：`classic` 是直连 / 路由用的完整表单；`stack` 是 Stack 模式的简化面板（连接 +
    * 模型列表 + 高级），不显示模型映射。
@@ -188,12 +175,10 @@ interface ClaudeFormFieldsProps {
   stackModelRows?: ClaudeStackModelRow[];
   onStackModelRowsChange?: (rows: ClaudeStackModelRow[]) => void;
 }
-
 /** 清空列表的 state 更新：已经是空的就原样返回，React 不会因此重渲染 */
 function keepEmpty<T>(prev: T[]): T[] {
   return prev.length === 0 ? prev : [];
 }
-
 export function ClaudeFormFields({
   providerId,
   shouldShowApiKey,
@@ -286,7 +271,6 @@ export function ClaudeFormFields({
   const [advancedExpanded, setAdvancedExpanded] = useState(
     isXaiOauthPreset ? false : hasAnyAdvancedValue,
   );
-
   // 预设填充高级值后自动展开（仅从折叠→展开，不会自动折叠）
   useEffect(() => {
     if (isXaiOauthPreset) {
@@ -295,31 +279,25 @@ export function ClaudeFormFields({
       setAdvancedExpanded(true);
     }
   }, [hasAnyAdvancedValue, isXaiOauthPreset]);
-
   // Stack 布局的高级区只有完整 URL、User-Agent 和请求覆盖，开了或填了才展开。
   const [stackAdvancedExpanded, setStackAdvancedExpanded] = useState(
     isFullUrl || !!customUserAgent || hasRequestOverrides,
   );
-
   // Copilot 可用模型列表
   const [copilotModels, setCopilotModels] = useState<CopilotModel[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const copilotModelsRequestRef = useRef(0);
-
   // Codex OAuth 可用模型列表
   const [codexOauthModels, setCodexOauthModels] = useState<FetchedModel[]>([]);
   const [codexOauthModelsLoading, setCodexOauthModelsLoading] = useState(false);
   const codexOauthModelsRequestRef = useRef(0);
-
   const [xaiOauthModels, setXaiOauthModels] = useState<FetchedModel[]>([]);
   const [xaiOauthModelsLoading, setXaiOauthModelsLoading] = useState(false);
   const xaiOauthModelsRequestRef = useRef(0);
   const fallbackUsesOneM = hasClaudeOneMMarker(claudeModel);
-
   // 通用模型获取（非 Copilot 供应商）
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
-
   // 聚合布局的模型列表拉取成功后直接打开选择弹窗，不再提示成功。
   const opensModelPicker = variant === "stack" && !!onStackModelRowsChange;
   const showModelFetchResult = useCallback(
@@ -332,7 +310,6 @@ export function ClaudeFormFields({
     },
     [opensModelPicker, t],
   );
-
   const handleFetchModels = useCallback(() => {
     if (!baseUrl || !apiKey) {
       showFetchModelsError(null, t, {
@@ -344,11 +321,14 @@ export function ClaudeFormFields({
     // 当 baseURL 仍是某预设的默认值时，优先使用预设上的 modelsUrl 覆写
     // 避免多走一次失败的候选请求（如 DeepSeek 把 /models 挂在根，而不是 /anthropic 子路径下）
     const matchedPreset = providerPresets.find((p) => {
-      const env = (p.settingsConfig as { env?: Record<string, string> })?.env;
+      const env = (
+        p.settingsConfig as {
+          env?: Record<string, string>;
+        }
+      )?.env;
       return env?.ANTHROPIC_BASE_URL === baseUrl;
     });
     const modelsUrl = matchedPreset?.modelsUrl;
-
     setIsFetchingModels(true);
     fetchModelsForConfig(
       baseUrl,
@@ -380,7 +360,6 @@ export function ClaudeFormFields({
     showModelFetchResult,
     t,
   ]);
-
   const handleFetchCopilotModels = useCallback(() => {
     if (!isCopilotAuthenticated) {
       toast.error(
@@ -390,14 +369,12 @@ export function ClaudeFormFields({
       );
       return;
     }
-
     const requestId = copilotModelsRequestRef.current + 1;
     copilotModelsRequestRef.current = requestId;
     setModelsLoading(true);
     const fetchModels = selectedGitHubAccountId
       ? copilotGetModelsForAccount(selectedGitHubAccountId)
       : copilotGetModels();
-
     fetchModels
       .then((models) => {
         if (copilotModelsRequestRef.current !== requestId) return;
@@ -429,7 +406,6 @@ export function ClaudeFormFields({
     showModelFetchResult,
     t,
   ]);
-
   const handleFetchCodexOauthModels = useCallback(() => {
     if (!isCodexOauthAuthenticated) {
       toast.error(
@@ -439,7 +415,6 @@ export function ClaudeFormFields({
       );
       return;
     }
-
     const requestId = codexOauthModelsRequestRef.current + 1;
     codexOauthModelsRequestRef.current = requestId;
     setCodexOauthModelsLoading(true);
@@ -465,7 +440,6 @@ export function ClaudeFormFields({
     showModelFetchResult,
     t,
   ]);
-
   const handleFetchXaiOauthModels = useCallback(() => {
     if (!isXaiOauthAuthenticated) {
       toast.error(
@@ -475,7 +449,6 @@ export function ClaudeFormFields({
       );
       return;
     }
-
     const requestId = xaiOauthModelsRequestRef.current + 1;
     xaiOauthModelsRequestRef.current = requestId;
     setXaiOauthModelsLoading(true);
@@ -496,26 +469,22 @@ export function ClaudeFormFields({
         }
       });
   }, [isXaiOauthAuthenticated, selectedXaiAccountId, showModelFetchResult, t]);
-
   // 已经是空列表时保留原数组：挂载时新建的 [] 会让表单白白多渲染一轮
   useEffect(() => {
     copilotModelsRequestRef.current += 1;
     setCopilotModels(keepEmpty);
     setModelsLoading(false);
   }, [isCopilotPreset, isCopilotAuthenticated, selectedGitHubAccountId]);
-
   useEffect(() => {
     codexOauthModelsRequestRef.current += 1;
     setCodexOauthModels(keepEmpty);
     setCodexOauthModelsLoading(false);
   }, [isCodexOauthPreset, isCodexOauthAuthenticated, selectedCodexAccountId]);
-
   useEffect(() => {
     xaiOauthModelsRequestRef.current += 1;
     setXaiOauthModels(keepEmpty);
     setXaiOauthModelsLoading(false);
   }, [isXaiOauthPreset, isXaiOauthAuthenticated, selectedXaiAccountId]);
-
   const modelFetchLoading = isCopilotPreset
     ? modelsLoading
     : isCodexOauthPreset
@@ -530,7 +499,6 @@ export function ClaudeFormFields({
       : isXaiOauthPreset
         ? handleFetchXaiOauthModels
         : handleFetchModels;
-
   // 模型输入框：支持手动输入 + 下拉选择
   const renderModelInput = (
     id: string,
@@ -541,7 +509,6 @@ export function ClaudeFormFields({
   ) => {
     const updateValue =
       onValueChange ?? ((next: string) => onModelChange(field, next));
-
     if (isCodexOauthPreset) {
       return (
         <ModelInputWithFetch
@@ -554,7 +521,6 @@ export function ClaudeFormFields({
         />
       );
     }
-
     if (isXaiOauthPreset) {
       return (
         <ModelInputWithFetch
@@ -567,14 +533,12 @@ export function ClaudeFormFields({
         />
       );
     }
-
     if (isCopilotPreset && copilotModels.length > 0) {
       // Reuse the searchable dropdown by mapping Copilot models to FetchedModel.
       const copilotFetchedModels: FetchedModel[] = copilotModels.map((m) => ({
         id: m.id,
         ownedBy: m.vendor || null,
       }));
-
       return (
         <div className="flex gap-1">
           <Input
@@ -590,7 +554,6 @@ export function ClaudeFormFields({
         </div>
       );
     }
-
     if (isCopilotPreset && modelsLoading) {
       return (
         <div className="flex gap-1">
@@ -609,7 +572,6 @@ export function ClaudeFormFields({
         </div>
       );
     }
-
     if (isCopilotPreset) {
       return (
         <Input
@@ -622,7 +584,6 @@ export function ClaudeFormFields({
         />
       );
     }
-
     // 普通供应商: 使用 ModelInputWithFetch（获取按钮在 section 标题旁）
     return (
       <ModelInputWithFetch
@@ -635,7 +596,6 @@ export function ClaudeFormFields({
       />
     );
   };
-
   type ModelRoleRow = {
     role: "sonnet" | "opus" | "fable" | "haiku" | "subagent";
     label: string;
@@ -645,7 +605,6 @@ export function ClaudeFormFields({
     displayNameField?: ClaudeModelEnvField;
     inputId: string;
   };
-
   const modelRoleRows: ModelRoleRow[] = [
     {
       role: "sonnet",
@@ -693,7 +652,6 @@ export function ClaudeFormFields({
       inputId: "claudeCodeSubagentModel",
     },
   ];
-
   const handleRoleModelChange = (row: ModelRoleRow, value: string) => {
     const oldModelBase = stripClaudeOneMMarker(row.model).trim();
     const nextModelBase = stripClaudeOneMMarker(value).trim();
@@ -704,11 +662,27 @@ export function ClaudeFormFields({
       onModelChange(row.displayNameField, nextModelBase);
     }
   };
-
   const handleRoleOneMChange = (row: ModelRoleRow, enabled: boolean) => {
     handleRoleModelChange(row, setClaudeOneMMarker(row.model, enabled));
   };
-
+  // Copilot 取到模型列表后才知道哪些模型有 1M 版本；没有的不让勾，已勾的提示取消。
+  const copilotLacksOneM = (model: string) =>
+    isCopilotPreset && copilotOneMAvailable(model, copilotModels) === false;
+  // 兜底模型常和某一档相同，去重后再列。
+  const copilotOneMMismatches = [
+    ...new Set(
+      [...modelRoleRows.map((row) => row.model), claudeModel]
+        .filter(
+          (model) => hasClaudeOneMMarker(model) && copilotLacksOneM(model),
+        )
+        .map((model) => stripClaudeOneMMarker(model).trim()),
+    ),
+  ];
+  const fallbackOneMBlocked =
+    !fallbackUsesOneM && copilotLacksOneM(claudeModel);
+  const copilotOneMUnavailableTip = t("providerForm.copilotOneMUnavailable", {
+    defaultValue: "Copilot 没有这个模型的 1M 版本",
+  });
   const oauthSections = (
     <>
       {/* GitHub Copilot OAuth 认证 */}
@@ -749,7 +723,6 @@ export function ClaudeFormFields({
       )}
     </>
   );
-
   const apiKeySection = (
     <>
       {/* API Key 输入框（非 OAuth 预设时显示） */}
@@ -767,7 +740,6 @@ export function ClaudeFormFields({
       )}
     </>
   );
-
   const templateSection = (
     <>
       {/* 模板变量输入 */}
@@ -806,7 +778,6 @@ export function ClaudeFormFields({
       )}
     </>
   );
-
   // 字段说明一律收进字段名后的「?」（和 Codex 表单一致），页面上只留后果提示。
   const endpointHint =
     apiFormat === "openai_responses"
@@ -816,7 +787,6 @@ export function ClaudeFormFields({
         : apiFormat === "gemini_native"
           ? t("providerForm.apiHintGeminiNative")
           : t("providerForm.apiHint");
-
   const endpointSection = (
     <>
       {/* Base URL 输入框；Codex / xAI 托管账号卡的上游地址由后端固定，不显示 */}
@@ -836,7 +806,6 @@ export function ClaudeFormFields({
       )}
     </>
   );
-
   const speedTestModal = (
     <>
       {/* 端点测速弹窗 */}
@@ -856,18 +825,15 @@ export function ClaudeFormFields({
       )}
     </>
   );
-
   const copilotRoutingNotice = isCopilotPreset && (
     <p className="text-xs leading-relaxed text-fg-2">
       {t("copilot.automaticFormatHint")}
     </p>
   );
-
   // 上游格式、认证字段：经典布局放在高级选项里，Stack 布局放在连接区。
   const apiFormatLabel = t("providerForm.apiFormat", {
     defaultValue: "上游格式",
   });
-
   const apiFormatField = (
     <>
       {/* 上游格式选择（仅非云服务商显示；xAI、Codex 托管账号卡的格式由后端固定） */}
@@ -935,7 +901,6 @@ export function ClaudeFormFields({
         )}
     </>
   );
-
   // 认证字段选择器
   const authFieldLabel = t("providerForm.authField", {
     defaultValue: "认证字段",
@@ -973,7 +938,6 @@ export function ClaudeFormFields({
       </Select>
     </div>
   );
-
   const fallbackModelLabel = t("providerForm.fallbackModelLabel", {
     defaultValue: "默认兜底模型",
   });
@@ -983,7 +947,6 @@ export function ClaudeFormFields({
   const fallbackModelMissing =
     usesThirdPartyEndpoint &&
     !(directModeFormatNotice ? defaultHaikuModel : claudeModel).trim();
-
   // 完整 URL 跟着地址框：托管账号卡的地址由后端固定，没有这个开关。
   const fullUrlToggle = shouldShowSpeedTest &&
     showEndpointTools &&
@@ -995,7 +958,6 @@ export function ClaudeFormFields({
         geminiNative={apiFormat === "gemini_native"}
       />
     );
-
   // 两项都只在路由、聚合模式下生效：在分组开头说一次，各自的作用收进字段名后的「?」。
   const userAgentAndOverrides = (
     <>
@@ -1025,7 +987,6 @@ export function ClaudeFormFields({
       </div>
     </>
   );
-
   if (variant === "stack") {
     // 批量勾选模型用当前预设对应的那份上游列表。
     const stackFetchedModels: FetchedModel[] = isCopilotPreset
@@ -1042,7 +1003,6 @@ export function ClaudeFormFields({
       !isCodexOauthPreset &&
       !isXaiOauthPreset &&
       apiFormat === "anthropic";
-
     return (
       <>
         {oauthSections}
@@ -1075,7 +1035,7 @@ export function ClaudeFormFields({
             <CollapsibleTrigger asChild>
               <Button
                 type="button"
-                variant={null}
+                variant={undefined}
                 size="sm"
                 className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70 active:scale-100"
               >
@@ -1100,7 +1060,6 @@ export function ClaudeFormFields({
       </>
     );
   }
-
   return (
     <>
       {oauthSections}
@@ -1119,7 +1078,7 @@ export function ClaudeFormFields({
           <CollapsibleTrigger asChild>
             <Button
               type="button"
-              variant={null}
+              variant={undefined}
               size="sm"
               className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70 active:scale-100"
             >
@@ -1245,7 +1204,7 @@ export function ClaudeFormFields({
               {modelRoleRows.map((row) => {
                 const modelBase = stripClaudeOneMMarker(row.model);
                 const usesOneM = hasClaudeOneMMarker(row.model);
-
+                const oneMBlocked = !usesOneM && copilotLacksOneM(row.model);
                 return (
                   <div
                     key={row.role}
@@ -1289,9 +1248,15 @@ export function ClaudeFormFields({
                           setClaudeOneMMarker(value, usesOneM),
                         ),
                     )}
-                    <label className="flex h-9 items-center gap-2 text-sm text-fg-2">
+                    <label
+                      className={`flex h-9 items-center gap-2 text-sm text-fg-2${oneMBlocked ? " opacity-50" : ""}`}
+                      title={
+                        oneMBlocked ? copilotOneMUnavailableTip : undefined
+                      }
+                    >
                       <Checkbox
                         checked={usesOneM}
+                        disabled={oneMBlocked}
                         onCheckedChange={(checked) =>
                           handleRoleOneMChange(row, checked === true)
                         }
@@ -1303,6 +1268,15 @@ export function ClaudeFormFields({
                   </div>
                 );
               })}
+              {copilotOneMMismatches.length > 0 && (
+                <p className="text-xs leading-relaxed text-warning-text">
+                  {t("providerForm.copilotOneMMismatch", {
+                    models: copilotOneMMismatches.join(", "),
+                    defaultValue:
+                      "Copilot 没有 {{models}} 的 1M 版本：请求会退回普通版本，但 Claude Code 仍按 1M 规划上下文，长会话可能超出上限。建议取消勾选 1M。",
+                  })}
+                </p>
+              )}
             </div>
 
             <div className="space-y-2 border-t border-border pt-4">
@@ -1335,9 +1309,15 @@ export function ClaudeFormFields({
                       setClaudeOneMMarker(value, fallbackUsesOneM),
                     ),
                 )}
-                <label className="flex h-9 items-center gap-2 text-sm text-fg-2">
+                <label
+                  className={`flex h-9 items-center gap-2 text-sm text-fg-2${fallbackOneMBlocked ? " opacity-50" : ""}`}
+                  title={
+                    fallbackOneMBlocked ? copilotOneMUnavailableTip : undefined
+                  }
+                >
                   <Checkbox
                     checked={fallbackUsesOneM}
+                    disabled={fallbackOneMBlocked}
                     onCheckedChange={(checked) => {
                       const base = stripClaudeOneMMarker(claudeModel).trim();
                       if (!base) return;

@@ -77,6 +77,9 @@ impl<'a> Iterator for SseBlocks<'a> {
     }
 }
 
+/// 单个未完成 SSE 事件（及 pending 总缓冲）的字节上限，防止恶意/异常上游无分隔符灌爆内存。
+pub(crate) const MAX_SSE_PENDING_BYTES: usize = 16 * 1024 * 1024;
+
 /// Incremental SSE framer for a streamed body.
 ///
 /// Events are handed out as slices of the internal buffer; consumed text is
@@ -98,16 +101,34 @@ impl SseBuffer {
         Self::default()
     }
 
-    /// Append raw bytes; multi-byte characters split across chunks are held
-    /// back until complete (see [`append_utf8_safe`]).
-    pub(crate) fn push_bytes(&mut self, bytes: &[u8]) {
-        self.compact();
-        append_utf8_safe(&mut self.text, &mut self.utf8_remainder, bytes);
+    fn ensure_budget(&self, incoming: usize) -> Result<(), std::io::Error> {
+        let pending = self.text.len().saturating_sub(self.consumed) + self.utf8_remainder.len();
+        if pending.saturating_add(incoming) > MAX_SSE_PENDING_BYTES {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "SSE pending buffer exceeded",
+            ))
+        } else {
+            Ok(())
+        }
     }
 
-    pub(crate) fn push_str(&mut self, text: &str) {
+    /// Append raw bytes; multi-byte characters split across chunks are held
+    /// back until complete (see [`append_utf8_safe`]).
+    /// 超过 [`MAX_SSE_PENDING_BYTES`] 时返回错误，不追加本次数据。
+    pub(crate) fn push_bytes(&mut self, bytes: &[u8]) -> Result<(), std::io::Error> {
         self.compact();
+        self.ensure_budget(bytes.len())?;
+        append_utf8_safe(&mut self.text, &mut self.utf8_remainder, bytes);
+        Ok(())
+    }
+
+    /// 同 [`Self::push_bytes`]，字符串入口。
+    pub(crate) fn push_str(&mut self, text: &str) -> Result<(), std::io::Error> {
+        self.compact();
+        self.ensure_budget(text.len())?;
         self.text.push_str(text);
+        Ok(())
     }
 
     /// Next complete event (without its delimiter), or `None` until more data
@@ -264,7 +285,7 @@ mod tests {
             "data: {\"ok\":true}\r\n\r\nrest",
         ] {
             let mut sse = SseBuffer::new();
-            sse.push_str(input);
+            sse.push_str(input).unwrap();
 
             assert_eq!(drain_blocks(&mut sse), ["data: {\"ok\":true}"]);
             assert_eq!(sse.pending(), "rest");
@@ -282,7 +303,7 @@ mod tests {
                 let mut sse = SseBuffer::new();
                 let mut blocks = Vec::new();
                 for chunk in [&input[..split], &input[split..]] {
-                    sse.push_bytes(chunk.as_bytes());
+                    sse.push_bytes(chunk.as_bytes()).unwrap();
                     blocks.extend(drain_blocks(&mut sse));
                 }
                 assert_eq!(
@@ -295,7 +316,7 @@ mod tests {
 
             // A complete mixed delimiter must dispatch without another event.
             let mut sse = SseBuffer::new();
-            sse.push_str(&format!("{first}{delimiter}"));
+            sse.push_str(&format!("{first}{delimiter}")).unwrap();
             assert_eq!(drain_blocks(&mut sse), [first]);
             assert!(sse.pending().is_empty());
 
@@ -322,7 +343,7 @@ mod tests {
         let mut sse = SseBuffer::new();
         let mut blocks = Vec::new();
         for byte in input.as_bytes() {
-            sse.push_bytes(std::slice::from_ref(byte));
+            sse.push_bytes(std::slice::from_ref(byte)).unwrap();
             blocks.extend(drain_blocks(&mut sse));
         }
         assert_eq!(blocks, expected);
@@ -332,21 +353,21 @@ mod tests {
     #[test]
     fn sse_buffer_tail_and_clear() {
         let mut sse = SseBuffer::new();
-        sse.push_bytes(b"data: a\n\ndata: b");
+        sse.push_bytes(b"data: a\n\ndata: b").unwrap();
         assert_eq!(drain_blocks(&mut sse), ["data: a"]);
         // An incomplete multi-byte tail is held back until the stream ends.
-        sse.push_bytes(&"中".as_bytes()[..2]);
+        sse.push_bytes(&"中".as_bytes()[..2]).unwrap();
         assert_eq!(sse.pending(), "data: b");
         assert_eq!(sse.take_tail(), "data: b\u{FFFD}");
         assert!(sse.pending().is_empty());
 
         // `clear` drops pending text but keeps the incomplete character.
-        sse.push_bytes(b"{\"partial\"");
-        sse.push_bytes(&"中".as_bytes()[..1]);
+        sse.push_bytes(b"{\"partial\"").unwrap();
+        sse.push_bytes(&"中".as_bytes()[..1]).unwrap();
         sse.clear();
         assert!(sse.pending().is_empty());
-        sse.push_bytes(&"中".as_bytes()[1..]);
-        sse.push_str("\n\n");
+        sse.push_bytes(&"中".as_bytes()[1..]).unwrap();
+        sse.push_str("\n\n").unwrap();
         assert_eq!(drain_blocks(&mut sse), ["中"]);
     }
 

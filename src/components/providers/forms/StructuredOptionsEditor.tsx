@@ -1,11 +1,10 @@
-import { HelpTip } from "@/components/ui/help-tip";
-import { useEffect, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { HelpTip } from "@/components/ui/help-tip";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-
+import { Plus, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
 interface StructuredOptionsEditorProps {
   id: string;
   title: string;
@@ -21,13 +20,11 @@ interface StructuredOptionsEditorProps {
   onOptionsChange: (options: Record<string, unknown>) => void;
   className?: string;
 }
-
 interface DraftOption {
   id: string;
   key: string;
   value: string;
 }
-
 function parseOptionValue(value: string): unknown {
   try {
     return JSON.parse(value);
@@ -35,7 +32,6 @@ function parseOptionValue(value: string): unknown {
     return value;
   }
 }
-
 function formatOptionValue(value: unknown): string {
   if (typeof value === "string") return value;
   try {
@@ -44,7 +40,6 @@ function formatOptionValue(value: unknown): string {
     return String(value);
   }
 }
-
 function OptionKeyInput({
   optionKey,
   onChange,
@@ -57,11 +52,9 @@ function OptionKeyInput({
   placeholder: string;
 }) {
   const [localValue, setLocalValue] = useState(optionKey);
-
   useEffect(() => {
     setLocalValue(optionKey);
   }, [optionKey]);
-
   return (
     <Input
       value={localValue}
@@ -85,7 +78,6 @@ function OptionKeyInput({
     />
   );
 }
-
 export function StructuredOptionsEditor({
   id,
   title,
@@ -102,7 +94,6 @@ export function StructuredOptionsEditor({
   className,
 }: StructuredOptionsEditorProps) {
   const [drafts, setDrafts] = useState<DraftOption[]>([]);
-
   const addOption = () => {
     setDrafts((current) => [
       ...current,
@@ -113,17 +104,14 @@ export function StructuredOptionsEditor({
       },
     ]);
   };
-
   const removeOption = (key: string) => {
     const next = { ...options };
     delete next[key];
     onOptionsChange(next);
   };
-
   const renameOption = (oldKey: string, newKey: string): boolean => {
     if (oldKey === newKey) return true;
     if (Object.prototype.hasOwnProperty.call(options, newKey)) return false;
-
     const next: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(options)) {
       next[key === oldKey ? newKey : key] = value;
@@ -131,14 +119,12 @@ export function StructuredOptionsEditor({
     onOptionsChange(next);
     return true;
   };
-
   const updateOption = (key: string, value: string) => {
     onOptionsChange({
       ...options,
       [key]: parseOptionValue(value),
     });
   };
-
   const updateDraft = (id: string, update: Partial<DraftOption>) => {
     setDrafts((current) =>
       current.map((draft) =>
@@ -146,11 +132,9 @@ export function StructuredOptionsEditor({
       ),
     );
   };
-
   const removeDraft = (id: string) => {
     setDrafts((current) => current.filter((draft) => draft.id !== id));
   };
-
   const commitDraft = (draft: DraftOption): boolean => {
     const key = draft.key.trim();
     if (!key || Object.prototype.hasOwnProperty.call(options, key))
@@ -162,9 +146,7 @@ export function StructuredOptionsEditor({
     removeDraft(draft.id);
     return true;
   };
-
   const hasRows = Object.keys(options).length > 0 || drafts.length > 0;
-
   return (
     <div
       id={id}

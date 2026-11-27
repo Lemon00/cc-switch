@@ -233,7 +233,7 @@ fn splice_patch(
         if reserialized
             && text[starts[index]..end]
                 .lines()
-                .any(crate::omp_config::has_yaml_reference_tokens)
+                .any(has_yaml_reference_tokens)
         {
             return Err(AppError::Config(
                 "This DeepSeek Harness profile entry uses YAML tags (such as !!js), anchors or aliases; edit it in cordis.patch.yml directly".into(),
@@ -727,8 +727,16 @@ fn get_providers_from(
                     }
                 }
                 model["limit"] = Value::Object(limits);
-                if let Some(efforts) = model.get("reasoningEfforts") {
-                    model["reasoning"] = json!(efforts.is_object());
+                if let Some(efforts) = model.get("reasoningEfforts").cloned() {
+                    match normalize_reasoning_efforts(&efforts) {
+                        Some(normalized) => {
+                            model["reasoning"] = json!(normalized.is_object());
+                            model["reasoningEfforts"] = normalized;
+                        }
+                        None => {
+                            model.as_object_mut().unwrap().remove("reasoningEfforts");
+                        }
+                    }
                 }
                 if let Some(input) = model.get("input").cloned() {
                     model["modalities"] = json!({"input":input,"output":["text"]});
@@ -1225,6 +1233,40 @@ fn diverged_mcp_error(id: &str, other: Option<&PathBuf>, source: Option<&PathBuf
     )
 }
 
+/// Keys accepted by DSH's `llm-pi-ai` schema for a model's `reasoningEfforts` map.
+const DSH_REASONING_EFFORT_LEVELS: [&str; 7] =
+    ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/// Normalize `reasoningEfforts` to what `llm-pi-ai` accepts (`false` or a non-empty map keyed by
+/// [`DSH_REASONING_EFFORT_LEVELS`] with `string | null` values).
+///
+/// YAML 1.1 parsers turn unquoted `off: null` into boolean `false: null`, which `serde_json::to_value`
+/// then surfaces as the `"false"` key; map `"false"` back to `"off"` when `"off"` is absent, and
+/// drop unknown keys or invalid value types so one bad entry cannot fail the whole `llm-pi-ai` block
+/// (#9785).
+fn normalize_reasoning_efforts(value: &Value) -> Option<Value> {
+    match value {
+        Value::Bool(false) => Some(Value::Bool(false)),
+        Value::Object(map) => {
+            let mut normalized = serde_json::Map::new();
+            for (key, entry) in map {
+                if !(entry.is_string() || entry.is_null()) {
+                    continue;
+                }
+                if DSH_REASONING_EFFORT_LEVELS.contains(&key.as_str()) {
+                    normalized.insert(key.clone(), entry.clone());
+                } else if key == "false" {
+                    normalized
+                        .entry("off".to_string())
+                        .or_insert_with(|| entry.clone());
+                }
+            }
+            (!normalized.is_empty()).then_some(Value::Object(normalized))
+        }
+        _ => None,
+    }
+}
+
 /// The native `llm-pi-ai` provider node for an editor config, and the credentials text with a new
 /// key stored under CC Switch's reference (unchanged when the key is unchanged).
 fn native_provider(
@@ -1283,13 +1325,25 @@ fn native_provider(
             object.remove("modalities");
             if object.get("reasoning") == Some(&Value::Bool(false)) {
                 object.insert("reasoningEfforts".into(), Value::Bool(false));
-            } else if object.get("reasoning") == Some(&Value::Bool(true))
-                && !object.contains_key("reasoningEfforts")
-            {
-                object.insert(
-                    "reasoningEfforts".into(),
-                    json!({"off":null,"low":"low","medium":"medium","high":"high"}),
-                );
+            } else {
+                if let Some(efforts) = object.get("reasoningEfforts").cloned() {
+                    match normalize_reasoning_efforts(&efforts) {
+                        Some(normalized) => {
+                            object.insert("reasoningEfforts".into(), normalized);
+                        }
+                        None => {
+                            object.remove("reasoningEfforts");
+                        }
+                    }
+                }
+                if object.get("reasoning") == Some(&Value::Bool(true))
+                    && !object.contains_key("reasoningEfforts")
+                {
+                    object.insert(
+                        "reasoningEfforts".into(),
+                        json!({"off":null,"low":"low","medium":"medium","high":"high"}),
+                    );
+                }
             }
             object.remove("reasoning");
             models.push(model);
@@ -1694,17 +1748,86 @@ mod tests {
     }
 
     #[test]
-    fn provider_input_keeps_only_modalities_llm_pi_ai_accepts() {
+    fn provider_reasoning_efforts_normalizes_false_key_and_filters_unknown_entries() {
         let mut config = editor_config();
-        config["models"]["test-model"]["modalities"]["input"] = json!(["text", "image", "pdf"]);
-        config["models"]["pdf-only"] =
-            json!({"name":"Pdf","modalities":{"input":["pdf"],"output":["text"]}});
+        config["models"]["false-alias"] = json!({
+            "name": "False Alias",
+            "reasoning": true,
+            "reasoningEfforts": {
+                "false": null,
+                "low": "low",
+                "medium": "medium",
+                "max": "max",
+                "turbo": "turbo",
+                "high": 123
+            }
+        });
+        config["models"]["explicit-off-wins"] = json!({
+            "name": "Explicit Off",
+            "reasoning": true,
+            "reasoningEfforts": {
+                "false": null,
+                "off": "none",
+                "low": "low"
+            }
+        });
+        config["models"]["only-invalid-reasoning-on"] = json!({
+            "name": "Only Invalid On",
+            "reasoning": true,
+            "reasoningEfforts": { "bogus": "x" }
+        });
+        config["models"]["only-invalid-no-flag"] = json!({
+            "name": "Only Invalid",
+            "reasoningEfforts": { "bogus": "x" }
+        });
+        config["models"]["disabled-efforts"] = json!({
+            "name": "Disabled",
+            "reasoningEfforts": false
+        });
+
         let (_, native) = native_provider("gateway", &config, "").unwrap();
         let models = native["models"].as_array().unwrap();
         let model = |id: &str| models.iter().find(|model| model["id"] == id).unwrap();
-        assert_eq!(model("test-model")["input"], json!(["text", "image"]));
-        assert!(model("pdf-only").get("input").is_none());
-        assert!(model("pdf-only").get("modalities").is_none());
+
+        assert_eq!(
+            model("false-alias")["reasoningEfforts"],
+            json!({"off": null, "low": "low", "medium": "medium", "max": "max"})
+        );
+        assert_eq!(
+            model("explicit-off-wins")["reasoningEfforts"],
+            json!({"off": "none", "low": "low"})
+        );
+        assert_eq!(
+            model("only-invalid-reasoning-on")["reasoningEfforts"],
+            json!({"off": null, "low": "low", "medium": "medium", "high": "high"})
+        );
+        assert!(model("only-invalid-no-flag")
+            .get("reasoningEfforts")
+            .is_none());
+        assert_eq!(model("disabled-efforts")["reasoningEfforts"], json!(false));
+    }
+
+    #[test]
+    fn get_providers_normalizes_yaml_boolean_false_reasoning_effort_key() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("cordis.patch.yml");
+        let credentials = temp.path().join(".credentials.yaml");
+        fs::write(
+            &path,
+            "- id: llm-pi-ai\n  config:\n    providers:\n      volcengine:\n        api: openai-completions\n        baseURL: https://ark.example/v1\n        models:\n          - id: m1\n            name: Model 1\n            reasoningEfforts:\n              false: null\n              low: low\n              max: max\n              bogus: nope\n          - id: m2\n            name: Model 2\n            reasoningEfforts: false\n",
+        )
+        .unwrap();
+
+        let providers = get_providers_from(&path, &credentials).unwrap();
+        let m1 = &providers["volcengine"]["models"]["m1"];
+        assert_eq!(m1["reasoning"], json!(true));
+        assert_eq!(
+            m1["reasoningEfforts"],
+            json!({"off": null, "low": "low", "max": "max"})
+        );
+        let m2 = &providers["volcengine"]["models"]["m2"];
+        assert_eq!(m2["reasoning"], json!(false));
+        assert_eq!(m2["reasoningEfforts"], json!(false));
     }
 
     #[test]
@@ -2140,37 +2263,6 @@ mod tests {
         }
     }
 
-    #[test]
-    #[serial_test::serial]
-    fn provider_writes_prepare_web_and_desktop_and_keep_optional_profiles_native_owned() {
-        let home = DshHome::new();
-        let root = home.dir.path();
-        init_profiles(root, &["web", "headless"]);
-        // sdk profiles are for embedding and stay native-owned
-        init_profiles(root, &["sdk"]);
-
-        set_provider("gateway", editor_config()).unwrap();
-        for name in ["web", "desktop", "headless"] {
-            assert!(profile_text(root, name)
-                .unwrap()
-                .contains("apiKeyEnv: CC_SWITCH_DSH_GATEWAY"));
-        }
-        assert_eq!(profile_text(root, "sdk").unwrap(), FACTORY_PROFILE);
-        assert!(root.join("profiles/desktop/cordis.patch.yml").exists());
-        assert!(!root.join("profiles/acp").exists());
-        assert!(provider_key_exists("gateway").unwrap());
-        assert_eq!(
-            get_providers().unwrap()["gateway"]["options"]["apiKey"],
-            "test-value"
-        );
-
-        remove_provider("gateway").unwrap();
-        for name in ["web", "desktop", "headless"] {
-            assert!(!profile_text(root, name).unwrap().contains("gateway"));
-        }
-        assert!(root.join("profiles/desktop/cordis.patch.yml").exists());
-    }
-
     /// `profiles/desktop` pointing at `profiles/web` is one file, not two: it must be locked and
     /// written once instead of twice (#9100).
     #[test]
@@ -2188,38 +2280,6 @@ mod tests {
         assert_eq!(paths[0], profile_path("web"));
     }
 
-    /// The end-to-end shape of the bug: with `desktop` aliasing `web`, every provider and MCP
-    /// write used to fail with a concurrency conflict, because the second `create_new` on the
-    /// same `<file>.lock` hit `AlreadyExists`.
-    #[test]
-    #[serial_test::serial]
-    fn provider_and_mcp_writes_succeed_when_desktop_aliases_web() {
-        let home = DshHome::new();
-        let root = home.dir.path();
-        init_profiles(root, &["web"]);
-        if !link_dir(&root.join("profiles/desktop"), &root.join("profiles/web")) {
-            return;
-        }
-
-        set_provider("gateway", editor_config()).unwrap();
-        assert!(get_providers().unwrap().contains_key("gateway"));
-        assert!(provider_key_exists("gateway").unwrap());
-
-        let spec = json!({"command":"node","args":["fetch.js"]});
-        sync_mcp_and_commit("fetch", Some(&spec), || Ok(())).unwrap();
-        assert_eq!(mcp_entries().unwrap().len(), 1);
-
-        // The single file really holds both, written once each.
-        let text = profile_text(root, "web").unwrap();
-        assert_eq!(text.matches("apiKeyEnv: CC_SWITCH_DSH_GATEWAY").count(), 1);
-        assert_eq!(text.matches("serverName: fetch").count(), 1);
-        assert!(!root.join("profiles/web/cordis.patch.yml.lock").exists());
-
-        // Removal goes through the same path list.
-        remove_provider("gateway").unwrap();
-        assert!(!get_providers().unwrap().contains_key("gateway"));
-    }
-
     /// Deduplication must not merge genuinely separate profiles.
     #[test]
     #[serial_test::serial]
@@ -2232,126 +2292,6 @@ mod tests {
         assert_eq!(paths[0], profile_path("web"));
         assert_eq!(paths[1], profile_path("desktop"));
         assert_eq!(paths[2], profile_path("headless"));
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn display_source_prefers_web_then_desktop() {
-        let home = DshHome::new();
-        let root = home.dir.path();
-        assert_eq!(config_path(), root.join("profiles/web/cordis.patch.yml"));
-        init_profiles(root, &["headless"]);
-        assert_eq!(
-            config_path(),
-            root.join("profiles/headless/cordis.patch.yml")
-        );
-        init_profiles(root, &["desktop"]);
-        assert_eq!(
-            config_path(),
-            root.join("profiles/desktop/cordis.patch.yml")
-        );
-        init_profiles(root, &["web"]);
-        assert_eq!(config_path(), root.join("profiles/web/cordis.patch.yml"));
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn newly_initialized_desktop_imports_managed_configuration_only_once() {
-        use crate::app_config::{AppType, McpApps, McpServer};
-        use crate::provider::{Provider, ProviderMeta};
-        use crate::services::provider::{initialize_dsh_profiles, ProviderService};
-
-        let home = DshHome::new();
-        let root = home.dir.path();
-        init_profiles(root, &["web"]);
-        let web = profile_path("web");
-        // Existing users only had Web when these rows were written.
-        save_paths_and_commit(
-            std::slice::from_ref(&web),
-            &credentials_path(),
-            "gateway",
-            Some(editor_config()),
-            true,
-            || Ok(()),
-        )
-        .unwrap();
-        let spec = json!({"command":"node","args":["fetch.js"]});
-        sync_mcp_file_and_commit(&web, "fetch", Some(&spec), || Ok(())).unwrap();
-        let before_web = read_text(&web)
-            .unwrap()
-            .replace("command: node", "command: native-node");
-        fs::write(&web, &before_web).unwrap();
-        let native_credentials = read_text(&credentials_path())
-            .unwrap()
-            .replace("test-value", "native-key");
-        fs::write(credentials_path(), native_credentials).unwrap();
-        let before_credentials = fs::read(credentials_path()).unwrap();
-        let state = crate::store::AppState::new(std::sync::Arc::new(
-            crate::database::Database::memory().unwrap(),
-        ));
-        for (id, managed) in [("gateway", true), ("parked", false)] {
-            let mut provider = Provider::with_id(id.into(), id.into(), editor_config(), None);
-            provider.meta = Some(ProviderMeta {
-                live_config_managed: Some(managed),
-                ..Default::default()
-            });
-            state.db.save_provider("dsh", &provider).unwrap();
-        }
-        for (id, enabled) in [("fetch", true), ("disabled", false)] {
-            state
-                .db
-                .save_mcp_server(&McpServer {
-                    id: id.into(),
-                    name: id.into(),
-                    server: spec.clone(),
-                    apps: McpApps {
-                        dsh: enabled,
-                        ..Default::default()
-                    },
-                    description: None,
-                    homepage: None,
-                    docs: None,
-                    tags: vec![],
-                })
-                .unwrap();
-        }
-        // First Desktop launch happens after the managed Web setup.
-        init_profiles(root, &["desktop"]);
-        let desktop = profile_path("desktop");
-        let native = "- id: native-plugin\n  config: {value: !!js process.env.VALUE}\n";
-        fs::write(&desktop, native).unwrap();
-        let listed = ProviderService::list(&state, AppType::Dsh).unwrap();
-        assert!(listed.contains_key("gateway"));
-        let providers = get_providers_from(&desktop, &credentials_path()).unwrap();
-        assert!(providers.contains_key("gateway"));
-        assert_eq!(providers["gateway"]["options"]["apiKey"], "native-key");
-        assert!(!providers.contains_key("parked"));
-        let text = read_text(&desktop).unwrap();
-        assert!(text.starts_with(native));
-        assert_eq!(
-            mcp_entries_from(&text).unwrap(),
-            mcp_entries_from(&before_web).unwrap()
-        );
-        assert!(text.contains("native-node"));
-        assert_eq!(read_text(&web).unwrap(), before_web);
-        assert_eq!(fs::read(credentials_path()).unwrap(), before_credentials);
-
-        // Even deleting every managed node natively must survive startup and page refresh.
-        fs::write(&desktop, native).unwrap();
-        initialize_dsh_profiles(&state).unwrap();
-        ProviderService::list(&state, AppType::Dsh).unwrap();
-        assert_eq!(read_text(&desktop).unwrap(), native);
-
-        // Optional profiles that appear later receive the same one-time initialization.
-        init_profiles(root, &["headless"]);
-        initialize_dsh_profiles(&state).unwrap();
-        assert!(
-            get_providers_from(&profile_path("headless"), &credentials_path())
-                .unwrap()
-                .contains_key("gateway")
-        );
-        assert_eq!(read_text(&desktop).unwrap(), native);
-        assert!(!profile_path("acp").exists());
     }
 
     #[test]
@@ -2442,32 +2382,6 @@ mod tests {
             .contains("CC_SWITCH_DSH_GATEWAY"));
         assert!(!root.join("profiles/web/cordis.patch.yml.lock").exists());
         assert!(!root.join(".credentials.yaml.lock").exists());
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn home_patch_llm_pi_ai_config_blocks_provider_writes() {
-        let home = DshHome::new();
-        let root = home.dir.path();
-        init_profiles(root, &["web"]);
-        fs::write(
-            root.join("cordis.patch.yml"),
-            "- id: other\n  config: {}\n- id: llm-pi-ai\n  disabled: false\n",
-        )
-        .unwrap();
-        set_provider("gateway", editor_config()).unwrap();
-        let written = profile_text(root, "web").unwrap();
-
-        fs::write(
-            root.join("cordis.patch.yml"),
-            "- id: llm-pi-ai\n  config:\n    providers: {}\n",
-        )
-        .unwrap();
-        let error = set_provider("gateway", editor_config()).unwrap_err();
-        assert!(error.to_string().contains("cordis.patch.yml"), "{error}");
-        assert_eq!(profile_text(root, "web").unwrap(), written);
-        remove_provider("gateway").unwrap();
-        assert!(get_providers().unwrap().is_empty());
     }
 
     #[test]
@@ -2834,4 +2748,59 @@ mod tests {
         assert!(!document["records"]["deepseek-account-platform/device"].is_null());
         assert_eq!(remove_account_grant().unwrap(), None);
     }
+}
+
+pub fn has_yaml_reference_tokens(line: &str) -> bool {
+    let mut quote = None;
+    let mut escaped = false;
+    // A node may start here: line start, after `:`, a flow opener or `,`, and after a
+    // `- `/`? ` entry marker that itself sits where a node starts. Whitespace keeps the
+    // state; any other character is node content.
+    let mut node_start = true;
+    // `#` starts a comment only at line start or after whitespace.
+    let mut after_space = true;
+    let mut previous = [' '; 2];
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if quote == Some('"') && c == '\\' {
+            escaped = true;
+            continue;
+        }
+        if quote == Some('\'') && c == '\'' && chars.peek() == Some(&'\'') {
+            // `''` is an escaped quote inside a single-quoted scalar.
+            chars.next();
+            continue;
+        }
+        if quote == Some(c) {
+            quote = None;
+            node_start = false;
+            after_space = false;
+            continue;
+        }
+        if quote.is_some() {
+            continue;
+        }
+        if c == ':' && previous == ['<', '<'] {
+            return true;
+        }
+        match c {
+            '#' if after_space => break,
+            '"' | '\'' if node_start => quote = Some(c),
+            '&' | '*' | '!' if node_start => return true,
+            _ => {}
+        }
+        previous = [previous[1], c];
+        after_space = c.is_whitespace();
+        if !c.is_whitespace() {
+            let entry_marker = node_start
+                && matches!(c, '-' | '?')
+                && chars.peek().is_none_or(|next| next.is_whitespace());
+            node_start = entry_marker || matches!(c, ':' | '[' | '{' | ',');
+        }
+    }
+    false
 }

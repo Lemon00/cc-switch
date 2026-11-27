@@ -1,8 +1,12 @@
-import React from "react";
-import { useTranslation } from "react-i18next";
+import { CopilotAccountQuota } from "@/components/settings/auth/AccountQuota";
+import {
+  ManagedAccountsGroup,
+  type GroupAccountRow,
+} from "@/components/settings/auth/ManagedAccountsGroup";
+import { signedInDate } from "@/components/settings/auth/accountDetails";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Notice } from "@/components/ui/notice";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
@@ -12,28 +16,23 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import type { GitHubAccount } from "@/lib/api";
 import {
-  Loader2,
-  User,
-  Settings2,
   AlertTriangle,
   CircleAlert,
+  Loader2,
   RefreshCw,
+  Settings2,
+  User,
 } from "lucide-react";
-import { useCopilotAuth } from "./hooks/useCopilotAuth";
+import React from "react";
+import { useTranslation } from "react-i18next";
 import {
   ManagedAccountRemoveDialog,
   type ManagedAccountRemoveTarget,
 } from "./ManagedAccountRemoveDialog";
+import { useCopilotAuth } from "./hooks/useCopilotAuth";
 import { useManagedAccountUsers } from "./hooks/useManagedAccountUsers";
-import type { GitHubAccount } from "@/lib/api";
-import {
-  ManagedAccountsGroup,
-  type GroupAccountRow,
-} from "@/components/settings/auth/ManagedAccountsGroup";
-import { CopilotAccountQuota } from "@/components/settings/auth/AccountQuota";
-import { signedInDate } from "@/components/settings/auth/accountDetails";
-
 interface CopilotAuthSectionProps {
   className?: string;
   /** select 模式只展示账号选择和管理入口；manage 模式是授权中心里的账号区 */
@@ -47,15 +46,12 @@ interface CopilotAuthSectionProps {
   /** 授权中心里最后一组的「?」向上弹 */
   helpSide?: "top" | "bottom";
 }
-
 type DeploymentType = "github.com" | "enterprise";
-
 const cleanDomain = (value: string) =>
   value
     .trim()
     .replace(/^https?:\/\//, "")
     .replace(/\/$/, "");
-
 /**
  * Copilot OAuth 认证区块
  *
@@ -78,13 +74,11 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
   const [choosing, setChoosing] = React.useState(false);
   const [domainError, setDomainError] = React.useState(false);
   const domainInputRef = React.useRef<HTMLInputElement | null>(null);
-
   // 根据部署类型计算实际的 GitHub 域名
   const effectiveGithubDomain =
     deploymentType === "enterprise" && enterpriseDomain.trim()
       ? cleanDomain(enterpriseDomain)
       : undefined;
-
   const {
     accounts,
     defaultAccountId,
@@ -110,12 +104,10 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
   );
   const [removeTarget, setRemoveTarget] =
     React.useState<ManagedAccountRemoveTarget | null>(null);
-
   // 处理账号选择
   const handleAccountSelect = (value: string) => {
     onAccountSelect?.(value === "none" ? null : value);
   };
-
   React.useEffect(() => {
     // Only clear a bound account once the status query has *successfully*
     // loaded and the account is genuinely gone. A failed/pending query yields
@@ -128,24 +120,24 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
     ) {
       return;
     }
-
     if (!accounts.some((account) => account.id === selectedAccountId)) {
       onAccountSelect(null);
     }
   }, [accounts, isStatusSuccess, mode, onAccountSelect, selectedAccountId]);
-
-  const confirmRemove = () => {
+  const confirmRemove = async () => {
     const target = removeTarget;
-    setRemoveTarget(null);
     // 标题行没有「删除全部」，只会是单个账号
     if (target?.kind !== "one") return;
-    removeAccount(target.accountId);
-    // 如果移除的是当前选中的账号，清除选择
-    if (selectedAccountId === target.accountId) {
-      onAccountSelect?.(null);
+    try {
+      await removeAccount(target.accountId);
+      setRemoveTarget(null);
+      if (selectedAccountId === target.accountId) {
+        onAccountSelect?.(null);
+      }
+    } catch {
+      // toast 由 useManagedAuth 统一给出；保留确认框便于重试
     }
   };
-
   const statusErrorBanner = isStatusError && (
     <div
       role="alert"
@@ -170,7 +162,6 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
       </Button>
     </div>
   );
-
   if (mode === "select") {
     const accountSelect = isStatusSuccess && onAccountSelect && (
       <div className="space-y-2">
@@ -207,7 +198,6 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
         </Select>
       </div>
     );
-
     return (
       <div className={`space-y-4 ${className || ""}`}>
         {statusErrorBanner}
@@ -236,9 +226,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
       </div>
     );
   }
-
   // ── 授权中心（manage） ──
-
   const openChooser = () => {
     if (choosing) {
       domainInputRef.current?.focus();
@@ -252,7 +240,6 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
     setDomainError(false);
     setChoosing(true);
   };
-
   const startLogin = () => {
     if (deploymentType === "enterprise" && !cleanDomain(enterpriseDomain)) {
       setDomainError(true);
@@ -262,7 +249,6 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
     setChoosing(false);
     addAccount();
   };
-
   const rows: GroupAccountRow[] = accounts.map((account) => {
     const domain = account.github_domain || "github.com";
     const enterprise = domain !== "github.com";
@@ -291,7 +277,6 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
       ),
     };
   });
-
   const chooser = choosing && (
     <div className="mx-3 mb-3 flex flex-col gap-2.5 rounded-[8px] border border-border px-3.5 py-3">
       <div className="flex flex-wrap items-center gap-3">
@@ -397,7 +382,6 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
       </div>
     </div>
   );
-
   return (
     <ManagedAccountsGroup
       slug="copilot"
@@ -469,16 +453,13 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
     </ManagedAccountsGroup>
   );
 };
-
-const CopilotAccountAvatar: React.FC<{ account: GitHubAccount }> = ({
-  account,
-}) => {
+const CopilotAccountAvatar: React.FC<{
+  account: GitHubAccount;
+}> = ({ account }) => {
   const [failed, setFailed] = React.useState(false);
-
   if (!account.avatar_url || failed) {
     return <User className="h-5 w-5 text-fg-2" />;
   }
-
   return (
     <img
       src={account.avatar_url}
@@ -490,5 +471,4 @@ const CopilotAccountAvatar: React.FC<{ account: GitHubAccount }> = ({
     />
   );
 };
-
 export default CopilotAuthSection;

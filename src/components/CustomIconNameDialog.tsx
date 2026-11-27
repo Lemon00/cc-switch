@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -8,14 +7,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ProviderIcon } from "./ProviderIcon";
-
 /** 和后端 `MAX_LIBRARY_NAME_CHARS` 一致 */
 export const MAX_CUSTOM_ICON_NAME_CHARS = 64;
-
 interface CustomIconNameDialogProps {
   /** 有值即打开 */
   icon: string | null;
@@ -27,7 +25,6 @@ interface CustomIconNameDialogProps {
   onConfirm: (name: string) => void;
   onCancel: () => void;
 }
-
 /** 给「我的图标」里的图片起名：上传后、把当前图标存进库、重命名共用 */
 export function CustomIconNameDialog({
   icon,
@@ -41,13 +38,10 @@ export function CustomIconNameDialog({
 }: CustomIconNameDialogProps) {
   const { t } = useTranslation();
   const [name, setName] = useState(initialName);
-
   useEffect(() => {
     if (icon) setName(initialName.slice(0, MAX_CUSTOM_ICON_NAME_CHARS));
   }, [icon, initialName]);
-
   const trimmed = name.trim();
-
   return (
     <Dialog
       open={icon !== null}

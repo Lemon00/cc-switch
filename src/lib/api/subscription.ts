@@ -1,10 +1,9 @@
-import { invoke } from "@tauri-apps/api/core";
 import type {
   ClaudeAccountPlan,
   ClaudeAccountQuota,
   SubscriptionQuota,
 } from "@/types/subscription";
-
+import { invoke } from "@tauri-apps/api/core";
 export const subscriptionApi = {
   getQuota: (tool: string): Promise<SubscriptionQuota> =>
     invoke("get_subscription_quota", { tool }),

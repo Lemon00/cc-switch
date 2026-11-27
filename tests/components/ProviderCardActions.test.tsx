@@ -3,7 +3,6 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ProviderCardActions } from "@/components/providers/ProviderCardActions";
 import type { CardPresentation } from "@/components/providers/presentation";
-
 async function openMenu(presentation: CardPresentation) {
   const user = userEvent.setup();
   render(
@@ -20,7 +19,6 @@ async function openMenu(presentation: CardPresentation) {
   );
   return { user, menu: await screen.findByRole("menu") };
 }
-
 describe("ProviderCardActions — mode items in the more menu", () => {
   it("lists them first", async () => {
     const onSelect = vi.fn();
@@ -35,15 +33,12 @@ describe("ProviderCardActions — mode items in the more menu", () => {
         },
       ],
     });
-
     const items = within(menu).getAllByRole("menuitem");
     expect(items[0]).toHaveTextContent("providerCard.action.setDefault");
     expect(items[1]).toHaveTextContent("provider.duplicate");
-
     await user.click(items[0]);
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
-
   it("keeps a disabled one listed with its reason", async () => {
     const onSelect = vi.fn();
     const { user, menu } = await openMenu({
@@ -58,14 +53,12 @@ describe("ProviderCardActions — mode items in the more menu", () => {
         },
       ],
     });
-
     const item = within(menu).getAllByRole("menuitem")[0];
     expect(item).toHaveAttribute("aria-disabled", "true");
     expect(item).toHaveTextContent("providerCard.reason.defaultWhileRouting");
     await user.click(item);
     expect(onSelect).not.toHaveBeenCalled();
   });
-
   it("opens a submenu to pick the default model", async () => {
     const onSelect = vi.fn();
     const pick = vi.fn();
@@ -92,7 +85,6 @@ describe("ProviderCardActions — mode items in the more menu", () => {
         },
       ],
     });
-
     const trigger = within(menu).getAllByRole("menuitem")[0];
     expect(trigger).toHaveTextContent("providerCard.action.setDefault");
     await user.click(trigger);
@@ -105,10 +97,8 @@ describe("ProviderCardActions — mode items in the more menu", () => {
     expect(pick).toHaveBeenCalledTimes(1);
     expect(onSelect).not.toHaveBeenCalled();
   });
-
   it("shows only the usual items when the mode has none", async () => {
     const { menu } = await openMenu({ buttons: [], chips: [] });
-
     expect(
       within(menu)
         .getAllByRole("menuitem")
@@ -116,7 +106,6 @@ describe("ProviderCardActions — mode items in the more menu", () => {
     ).toEqual(["provider.duplicate", "common.delete"]);
   });
 });
-
 describe("ProviderCardActions — open terminal", () => {
   it("is a button on the card, not an item in the more menu", async () => {
     const user = userEvent.setup();
@@ -131,12 +120,10 @@ describe("ProviderCardActions — open terminal", () => {
         onOpenTerminal={onOpenTerminal}
       />,
     );
-
     await user.click(
       screen.getByRole("button", { name: "providerCard.action.openTerminal" }),
     );
     expect(onOpenTerminal).toHaveBeenCalledTimes(1);
-
     await user.click(
       screen.getByRole("button", { name: "providerCard.action.more" }),
     );
@@ -145,7 +132,6 @@ describe("ProviderCardActions — open terminal", () => {
       within(menu).queryByRole("menuitem", { name: "provider.openTerminal" }),
     ).not.toBeInTheDocument();
   });
-
   // 只能经路由用的卡：按钮留着（卡片对齐），置灰、点了不开终端，原因挂在按钮上
   it("stays on the card but is disabled with its reason", async () => {
     const user = userEvent.setup();
@@ -160,7 +146,6 @@ describe("ProviderCardActions — open terminal", () => {
         openTerminalDisabledReason="provider.openTerminalNeedsRoute"
       />,
     );
-
     const button = screen.getByRole("button", {
       name: "providerCard.action.openTerminal",
     });
@@ -171,7 +156,6 @@ describe("ProviderCardActions — open terminal", () => {
       "provider.openTerminalNeedsRoute",
     );
   });
-
   it("isn't shown for apps without it", () => {
     render(
       <ProviderCardActions

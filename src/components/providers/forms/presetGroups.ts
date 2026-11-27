@@ -1,5 +1,3 @@
-import type { AppId } from "@/lib/api";
-import type { Provider } from "@/types";
 import {
   PRESET_FAMILIES,
   PRESET_REGION_KEYS,
@@ -9,11 +7,11 @@ import {
   type PresetRegionKey,
 } from "@/config/presetFamilies";
 import { PRESET_SEARCH_ALIASES } from "@/config/presetSearchAliases";
+import type { AppId } from "@/lib/api";
+import type { Provider } from "@/types";
 import { providerNeedsRouting } from "@/utils/providerCapabilities";
 import type { AnyPreset, PresetEntry } from "./ProviderPresetSelector";
-
 type Translate = (key: string) => unknown;
-
 /**
  * 添加供应商时左侧的分类（v7）：只在显示时按预设现有字段推算，不改 `category`
  * （很多行为依赖它）。
@@ -25,7 +23,6 @@ export type PresetGroup =
   | "cloud"
   | "local"
   | "plugin";
-
 export const PRESET_GROUP_ORDER: PresetGroup[] = [
   "login",
   "vendor",
@@ -34,14 +31,12 @@ export const PRESET_GROUP_ORDER: PresetGroup[] = [
   "local",
   "plugin",
 ];
-
 type PresetFields = AnyPreset & {
   websiteUrl?: string;
   requiresOAuth?: boolean;
   providerType?: string;
   apiFormat?: string;
 };
-
 export function presetGroup(preset: AnyPreset): PresetGroup {
   const p = preset as PresetFields;
   if (p.category === "official" || p.requiresOAuth || p.providerType) {
@@ -61,7 +56,6 @@ export function presetGroup(preset: AnyPreset): PresetGroup {
       return "thirdparty";
   }
 }
-
 /** 网址的主机名（去掉 www.） */
 export function presetDomain(preset: AnyPreset): string {
   const url = (preset as PresetFields).websiteUrl;
@@ -72,21 +66,17 @@ export function presetDomain(preset: AnyPreset): string {
     return "";
   }
 }
-
 const DOMAIN_PREFIXES =
   /^(www|api|platform|open|console|cloud|dashboard|app)\./;
 const DOMAIN_SUFFIXES =
   /(\.(com|cn|ai|io|net|org|dev|app|top|xyz|cc|co|me|tech|site|pro|vip|us|hk|jp))+$/;
-
 /** 域名主体：去掉 www/api 等前缀和 .com/.cn 等后缀，免得搜「com」「api」全命中 */
 export function domainBody(domain: string): string {
   return domain.replace(DOMAIN_PREFIXES, "").replace(DOMAIN_SUFFIXES, "");
 }
-
 export function presetDisplayName(preset: AnyPreset, t: Translate): string {
   return preset.nameKey ? String(t(preset.nameKey)) : preset.name;
 }
-
 /**
  * 每个词都要出现在 `texts` 里；带点的词（「kimi.ai」「z.ai」）也可以命中完整域名。
  * 域名平时只比主体，免得「com」「api」全命中。
@@ -109,7 +99,6 @@ function fieldsMatch(
           (part.includes(".") && hosts.some((host) => host.includes(part)))),
     );
 }
-
 export function presetMatches(
   entry: PresetEntry,
   query: string,
@@ -127,9 +116,7 @@ export function presetMatches(
     [domain],
   );
 }
-
 // ─── 厂商 / 版本：同一家的多个版本在第 1 步合成一行 ────────────────────────────
-
 /** 第 1 步的一行：一个预设，或者同一家的几个版本（按预设文件里的顺序） */
 export interface PresetRowItem {
   key: string;
@@ -137,7 +124,6 @@ export interface PresetRowItem {
   family?: PresetFamilyId;
   versions: PresetEntry[];
 }
-
 /** 把同一 `family` 的预设合成一行；只剩一个版本的照旧单独一行 */
 export function groupPresetRows(entries: PresetEntry[]): PresetRowItem[] {
   const byFamily = new Map<PresetFamilyId, PresetEntry[]>();
@@ -164,7 +150,6 @@ export function groupPresetRows(entries: PresetEntry[]): PresetRowItem[] {
   }
   return rows;
 }
-
 /** 选中的预设所在的那一家（含它自己）；没有别的版本时只有它自己 */
 export function presetVersions(
   entries: PresetEntry[],
@@ -175,7 +160,6 @@ export function presetVersions(
   const versions = entries.filter((item) => item.preset.family === family);
   return versions.length > 1 ? sortFamilyVersions(family, versions) : [entry];
 }
-
 /**
  * 排版本：先按套餐（PRESET_FAMILIES 里的 planOrder，没列到的按文件里第一次出现的顺序），
  * 同一套餐里再按地区（先国内后海外）；都没写的保持文件顺序。
@@ -203,29 +187,24 @@ function sortFamilyVersions(
     (a, b) => planRank(a) - planRank(b) || regionRank(a) - regionRank(b),
   );
 }
-
 export function familyDisplayName(family: PresetFamilyId, t: Translate) {
   const info: PresetFamilyInfo = PRESET_FAMILIES[family];
   return info.nameKey ? String(t(info.nameKey)) : info.name;
 }
-
 export function presetRowName(row: PresetRowItem, t: Translate): string {
   return row.family
     ? familyDisplayName(row.family, t)
     : presetDisplayName(row.versions[0].preset, t);
 }
-
 export function presetPlanLabel(plan: PresetPlanKey, t: Translate): string {
   return String(t(`providerPreset.plan.${plan}`));
 }
-
 export function presetRegionLabel(
   region: PresetRegionKey,
   t: Translate,
 ): string {
   return String(t(`providerPreset.region.${region}`));
 }
-
 /** 版本标签「套餐 · 地区」（「编程订阅 · 国内」）；两个都没写的用域名 */
 export function presetVersionLabel(entry: PresetEntry, t: Translate): string {
   const { planKey, regionKey } = entry.preset;
@@ -236,7 +215,6 @@ export function presetVersionLabel(entry: PresetEntry, t: Translate): string {
   if (parts.length > 0) return parts.join(" · ");
   return presetDomain(entry.preset) || presetDisplayName(entry.preset, t);
 }
-
 /**
  * 第 2 步怎么选版本：
  * - `single`：版本只在一个维度上不同（或都没写维度、用域名区分）→ 一个分段控件，
@@ -245,14 +223,21 @@ export function presetVersionLabel(entry: PresetEntry, t: Translate): string {
  * - `list`：其余（两维都变但缺格子、标签重复等）→ 下拉，列出「套餐 · 地区」。
  */
 export type PresetVersionLayout =
-  | { kind: "single"; dimension: "plan" | "region" | null }
-  | { kind: "grid"; plans: PresetPlanKey[]; regions: PresetRegionKey[] }
-  | { kind: "list" };
-
+  | {
+      kind: "single";
+      dimension: "plan" | "region" | null;
+    }
+  | {
+      kind: "grid";
+      plans: PresetPlanKey[];
+      regions: PresetRegionKey[];
+    }
+  | {
+      kind: "list";
+    };
 function distinct<T>(values: T[]): T[] {
   return values.filter((value, index) => values.indexOf(value) === index);
 }
-
 /** `versions` 需已排好序（presetVersions / groupPresetRows 的结果） */
 export function presetVersionLayout(
   versions: PresetEntry[],
@@ -263,7 +248,6 @@ export function presetVersionLayout(
   const regions = distinct(regionOf);
   const unique = (values: unknown[]) =>
     distinct(values).length === versions.length;
-
   if (plans.length > 1 && regions.length > 1) {
     const complete =
       !plans.includes(undefined) &&
@@ -294,7 +278,6 @@ export function presetVersionLayout(
     ? { kind: "single", dimension: null }
     : { kind: "list" };
 }
-
 /** 分段控件按钮上的字：只写变化的那一维 */
 export function presetVersionShortLabel(
   entry: PresetEntry,
@@ -308,7 +291,6 @@ export function presetVersionShortLabel(
   }
   return presetVersionLabel(entry, t);
 }
-
 /**
  * 搜索一行。返回 null 表示不匹配；`versions` 是命中的版本下标，空数组表示整家命中。
  * 顺序照画板：家名 / 主域名命中算整家；否则逐个版本比版本名、版本标签和它自己的域名
@@ -318,7 +300,9 @@ export function matchPresetRow(
   row: PresetRowItem,
   query: string,
   t: Translate,
-): { versions: number[] } | null {
+): {
+  versions: number[];
+} | null {
   if (!query.trim()) return { versions: [] };
   if (!row.family) {
     return presetMatches(row.versions[0], query, t) ? { versions: [] } : null;
@@ -357,29 +341,31 @@ export function matchPresetRow(
     ? { versions: [] }
     : null;
 }
-
 // ─── 「全部」按分类分段 ──────────────────────────────────────────────────────
-
 /** 一行的分类：合成的行看第一个版本（同一家的版本分类一致） */
 export function presetRowGroup(row: PresetRowItem): PresetGroup {
   return presetGroup(row.versions[0].preset);
 }
-
 /**
  * 「全部」按左侧分类分段（账号登录 → 模型厂商 → 第三方平台 → 云服务商 → 本地 → 插件配置），
  * 段内保持传入的顺序（已按名称排）；空段不出现。
  */
-export function sectionPresetRows<T extends { row: PresetRowItem }>(
+export function sectionPresetRows<
+  T extends {
+    row: PresetRowItem;
+  },
+>(
   items: T[],
-): { group: PresetGroup; items: T[] }[] {
+): {
+  group: PresetGroup;
+  items: T[];
+}[] {
   return PRESET_GROUP_ORDER.map((group) => ({
     group,
     items: items.filter((item) => presetRowGroup(item.row) === group),
   })).filter((section) => section.items.length > 0);
 }
-
 // ─── 按名称排：中文名按拼音首字母插进字母序（火山引擎排在 H）────────────────────
-
 const collator = new Intl.Collator(["zh-Hans-u-co-pinyin", "en"], {
   sensitivity: "base",
   numeric: true,
@@ -387,7 +373,6 @@ const collator = new Intl.Collator(["zh-Hans-u-co-pinyin", "en"], {
 const PINYIN_LETTERS = "abcdefghjklmnopqrstwxyz";
 const PINYIN_BOUNDARIES = "阿八嚓哒妸发旮哈讥咔垃痳拏噢妑七呥扨它穵夕丫帀";
 const HAN = /[㐀-鿿]/;
-
 function sortKey(name: string): string {
   const first = name.charAt(0);
   if (!HAN.test(first)) return name.toLowerCase();
@@ -400,28 +385,25 @@ function sortKey(name: string): string {
   }
   return `${letter}${name}`;
 }
-
 function sortByName<T>(items: T[], nameOf: (item: T) => string): T[] {
   return items
     .map((item) => ({ item, key: sortKey(nameOf(item)) }))
     .sort((a, b) => collator.compare(a.key, b.key))
     .map(({ item }) => item);
 }
-
 export function sortPresetsByName(
   entries: PresetEntry[],
   t: Translate,
 ): PresetEntry[] {
   return sortByName(entries, (entry) => presetDisplayName(entry.preset, t));
 }
-
-export function sortPresetRowsByName<T extends { row: PresetRowItem }>(
-  items: T[],
-  t: Translate,
-): T[] {
+export function sortPresetRowsByName<
+  T extends {
+    row: PresetRowItem;
+  },
+>(items: T[], t: Translate): T[] {
   return sortByName(items, (item) => presetRowName(item.row, t));
 }
-
 /** 预设需要经过路由才能用（托管 OAuth、要转换格式的） */
 export function presetNeedsRouting(
   appId: AppId | undefined,
@@ -432,8 +414,11 @@ export function presetNeedsRouting(
   const provider = {
     id: entry.id,
     name: p.name,
-    settingsConfig: (p as { settingsConfig?: Record<string, unknown> })
-      .settingsConfig as Provider["settingsConfig"],
+    settingsConfig: (
+      p as {
+        settingsConfig?: Record<string, unknown>;
+      }
+    ).settingsConfig as Provider["settingsConfig"],
     category: p.category,
     meta: {
       ...(p.apiFormat ? { apiFormat: p.apiFormat } : {}),
@@ -446,7 +431,6 @@ export function presetNeedsRouting(
     return false;
   }
 }
-
 /** 合成的一行只有所有版本都要路由时才挂「需要路由」 */
 export function presetRowNeedsRouting(
   appId: AppId | undefined,
@@ -454,7 +438,6 @@ export function presetRowNeedsRouting(
 ): boolean {
   return row.versions.every((entry) => presetNeedsRouting(appId, entry));
 }
-
 /** 账号登录类的副行：用哪家的账号登录 */
 export function loginAccountKey(
   appId: AppId | undefined,
@@ -467,13 +450,8 @@ export function loginAccountKey(
   switch (appId) {
     case "codex":
       return "chatgpt";
-    case "gemini":
     case "agy":
       return "google";
-    case "grokbuild":
-      return "xai";
-    case "kimi":
-      return "kimi";
     case "dsh":
       return "deepseek";
     default:

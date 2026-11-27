@@ -1,4 +1,4 @@
-import { useTranslation } from "react-i18next";
+import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -6,8 +6,8 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import type { SessionMeta } from "@/types";
+import { useTranslation } from "react-i18next";
 import {
   formatSessionTitle,
   isSessionAppId,
@@ -15,17 +15,14 @@ import {
   SESSION_SOURCE_PATHS,
   type SessionAppId,
 } from "./utils";
-
 const dialogClass =
   "max-w-[480px] gap-4 rounded-dialog border-border bg-surface p-6 shadow-v7-lg sm:rounded-dialog";
-
 interface SessionDeleteDialogProps {
   targets: SessionMeta[] | null;
   pending: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
-
 /** 删除确认：按应用写清删了什么、没删什么。会话删除不经过废纸篓，不给撤销。 */
 export function SessionDeleteDialog({
   targets,
@@ -36,7 +33,6 @@ export function SessionDeleteDialog({
   const { t } = useTranslation();
   const list = targets ?? [];
   const single = list.length === 1;
-
   const perApp = new Map<string, number>();
   list.forEach((session) =>
     perApp.set(session.providerId, (perApp.get(session.providerId) ?? 0) + 1),
@@ -45,7 +41,6 @@ export function SessionDeleteDialog({
     ...SESSION_APP_IDS.filter((app) => perApp.has(app)),
     ...Array.from(perApp.keys()).filter((app) => !isSessionAppId(app)),
   ];
-
   const consequence = (app: string) => {
     const name = isSessionAppId(app) ? APP_DISPLAY_NAME[app] : app;
     switch (app) {
@@ -57,11 +52,12 @@ export function SessionDeleteDialog({
       case "codex":
         return t("sessionManager.consequenceCodex", {
           defaultValue:
-            "只删除这一个会话文件。Codex 桌面版的任务列表里可能仍显示它，点开会提示无法继续。",
+            "删除这一个会话文件（若有压缩/解压姊妹文件一并清理）。Codex 桌面版的任务列表里可能仍显示它，点开会提示无法继续。",
         });
-      case "grokbuild":
-        return t("sessionManager.consequenceGrok", {
-          defaultValue: "删除这个会话的整个目录。",
+      case "opencode":
+        return t("sessionManager.consequenceOpenCode", {
+          defaultValue:
+            "删除会话记录，并尽量清理关联的 message / part / session_diff 文件；中断时可能残留附属碎片。",
         });
       default:
         return t("sessionManager.consequenceGeneric", {
@@ -70,7 +66,6 @@ export function SessionDeleteDialog({
         });
     }
   };
-
   return (
     <Dialog
       open={list.length > 0}
@@ -165,13 +160,11 @@ export function SessionDeleteDialog({
     </Dialog>
   );
 }
-
 interface SessionSourcesDialogProps {
   open: boolean;
   onClose: () => void;
 }
-
-/** 「会话记录在哪里」：列出 9 个来源的默认位置。 */
+/** 「会话记录在哪里」：列出 SESSION_APP_IDS 各来源的默认位置。 */
 export function SessionSourcesDialog({
   open,
   onClose,

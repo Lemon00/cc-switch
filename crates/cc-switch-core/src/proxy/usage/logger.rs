@@ -2,6 +2,7 @@
 
 use super::calculator::{CostBreakdown, CostCalculator, ModelPricing};
 use super::parser::TokenUsage;
+use crate::app_config::AppType;
 use crate::database::{Database, PRICING_SOURCE_REQUEST, PRICING_SOURCE_RESPONSE};
 use crate::error::AppError;
 use crate::services::sql_helpers::{INPUT_TOKEN_SEMANTICS_FRESH, INPUT_TOKEN_SEMANTICS_TOTAL};
@@ -213,8 +214,8 @@ impl<'a> UsageLogger<'a> {
                 input_token_semantics,
                 input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
                 latency_ms, first_token_ms, status_code, error_message, session_id,
-                provider_type, is_streaming, cost_multiplier, created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)"
+                provider_type, is_streaming, cost_multiplier, created_at, cache_creation_1h_tokens
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)"
         );
         let affected_rows = conn
             .execute(
@@ -245,6 +246,9 @@ impl<'a> UsageLogger<'a> {
                     log.is_streaming as i64,
                     log.cost_multiplier,
                     created_at,
+                    log.usage
+                        .cache_creation_1h_tokens
+                        .min(log.usage.cache_creation_tokens),
                 ],
             )
             .map_err(|e| AppError::Database(format!("记录请求日志失败: {e}")))?;
@@ -390,16 +394,21 @@ impl<'a> UsageLogger<'a> {
         }
     }
 
-    /// 获取计费模式来源（按请求模型 / 按返回模型），只读应用级全局配置
-    pub async fn resolve_pricing_model_source(&self, app_type: &str) -> String {
-        // Claude Desktop 网关没有独立的全局计费配置（proxy_config 的 CHECK 不含
-        // claude-desktop），继承 claude 的设置。
-        let default_app_type = if app_type == "claude-desktop" {
-            "claude"
-        } else {
-            app_type
+    /// 本地代理应用对应的 `proxy_config` 行；非代理应用不按 app 查库，避免 `init_proxy_config_rows`。
+    fn pricing_source_db_app_type(app_type: &str) -> Option<AppType> {
+        match app_type.parse::<AppType>() {
+            Ok(app) if app.supports_local_proxy() => Some(app),
+            Ok(_) => None,
+            Err(_) => None,
+        }
+    }
+
+    /// 获取计费模式来源（同步；供 `spawn_blocking` 路径使用，不在阻塞线程上 `block_on`）
+    pub fn resolve_pricing_model_source_sync(&self, app_type: &str) -> String {
+        let Some(db_app) = Self::pricing_source_db_app_type(app_type) else {
+            return PRICING_SOURCE_RESPONSE.to_string();
         };
-        match self.db.get_pricing_model_source(default_app_type).await {
+        match self.db.get_pricing_model_source_sync(&db_app) {
             Ok(value) if value == PRICING_SOURCE_RESPONSE || value == PRICING_SOURCE_REQUEST => {
                 value
             }
@@ -412,6 +421,11 @@ impl<'a> UsageLogger<'a> {
                 PRICING_SOURCE_RESPONSE.to_string()
             }
         }
+    }
+
+    /// 获取计费模式来源（按请求模型 / 按返回模型），只读应用级全局配置
+    pub async fn resolve_pricing_model_source(&self, app_type: &str) -> String {
+        self.resolve_pricing_model_source_sync(app_type)
     }
 
     /// 计算并记录请求
@@ -476,6 +490,32 @@ impl<'a> UsageLogger<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::lock_conn;
+
+    #[test]
+    fn missing_price_backfill_preserves_one_hour_cache_writes() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let mut log = request_log("one-hour", 0);
+        log.app_type = "claude".into();
+        log.model = "custom-cache-price".into();
+        log.pricing_model = log.model.clone();
+        log.usage.output_tokens = 0;
+        log.usage.cache_read_tokens = 0;
+        log.usage.cache_creation_tokens = 1000;
+        log.usage.cache_creation_1h_tokens = 600;
+        UsageLogger::new(&db).log_request(&log)?;
+        lock_conn!(db.conn).execute(
+            "INSERT INTO model_pricing (model_id, display_name, input_cost_per_million,
+                output_cost_per_million, cache_read_cost_per_million, cache_creation_cost_per_million)
+             VALUES ('custom-cache-price', 'cache', '5', '25', '0.5', '6.25')", [],
+        )?;
+        assert_eq!(db.backfill_missing_usage_costs()?, 1);
+        let detail = db.get_request_detail("one-hour")?.unwrap();
+        assert_eq!(detail.cache_creation_1h_tokens, 600);
+        assert_eq!(detail.cache_creation_cost_usd, "0.008500");
+        assert_eq!(detail.total_cost_usd, "0.008500");
+        Ok(())
+    }
 
     fn request_log(request_id: &str, input_tokens: u32) -> RequestLog {
         RequestLog {

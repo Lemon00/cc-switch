@@ -1,16 +1,11 @@
-import { useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { Loader2 } from "lucide-react";
-import type { AppId } from "@/lib/api";
-import type { Provider } from "@/types";
-import type { AppMode, ProxyStackSubagentModel } from "@/types/proxy";
+import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -18,34 +13,43 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
-import { extractErrorMessage } from "@/utils/errorUtils";
+import type { AppId } from "@/lib/api";
 import { logFrontendInfo } from "@/lib/frontendLogger";
+import type { Provider } from "@/types";
+import type { AppMode, ProxyStackSubagentModel } from "@/types/proxy";
+import { extractErrorMessage } from "@/utils/errorUtils";
 import { isOfficialAccount } from "@/utils/providerCapabilities";
+import { Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   StackSubagentFields,
   type StackSubagentValue,
 } from "./StackSubagentFields";
-
 /** 路由模式改写的客户端文件（确认框里写明，用默认位置）。 */
 const CLIENT_FILE: Partial<Record<AppId, string>> = {
   claude: "~/.claude/settings.json",
   codex: "~/.codex/config.toml",
-  gemini: "~/.gemini/.env",
-  grokbuild: "~/.grok/config.toml",
 };
-
 export type ModeDialogState =
-  | { kind: "enter"; target: Exclude<AppMode, "direct"> }
+  | {
+      kind: "enter";
+      target: Exclude<AppMode, "direct">;
+    }
   /** 回到直连；`useProviderId` 不为空时回到直连后改用这家 */
-  | { kind: "exit"; useProviderId?: string }
-  | { kind: "needsRoute"; providerId: string; reason: string };
-
+  | {
+      kind: "exit";
+      useProviderId?: string;
+    }
+  | {
+      kind: "needsRoute";
+      providerId: string;
+      reason: string;
+    };
 const MODE_LABEL: Record<Exclude<AppMode, "direct">, string> = {
   route: "路由",
   stack: "聚合",
 };
-
 /** 框里的选择写进日志：取消、仍然直连切换、进入模式在日志里分得清。 */
 function logDialog(app: AppId, state: ModeDialogState, choice: string) {
   const subject =
@@ -56,7 +60,6 @@ function logDialog(app: AppId, state: ModeDialogState, choice: string) {
         : `「${state.providerId} 需要路由」确认框`;
   logFrontendInfo(`[MODE] ${app} ${subject}：${choice}`);
 }
-
 interface ModeDialogProps {
   app: AppId;
   state: ModeDialogState | null;
@@ -69,9 +72,13 @@ interface ModeDialogProps {
   /** 默认选中：上次的路由目标（聚合里就是默认那家），没有就用直连那家 */
   defaultPick: string | null;
   /** 聚合名单（含默认那家）及各家的模型数；框里按选中的默认那家算「另有」哪几家 */
-  stackMembers: { id: string; name: string; models: number }[];
+  stackMembers: {
+    id: string;
+    name: string;
+    models: number;
+  }[];
   /**
-   * Codex 进入聚合时一起选子代理：名单里各家的模型（框里按选中的默认那家去掉它自己的）和
+   * Codex 进入聚合时一起选子代理：合并后的公共模型和各账号独有模型，以及
    * 现在的设置。不传就不显示。
    */
   stackSubagent?: {
@@ -90,7 +97,6 @@ interface ModeDialogProps {
   /** 对话框 F：仍然直连切换 */
   onSwitchDirect: (providerId: string) => void;
 }
-
 /**
  * 模式切换确认框（B4.4 的 A / B / C / D / E，以及 F「需要路由」）。确认键 = 入口按钮去掉「…」。
  * 出错时就地显示，不关框。路由到哪家、聚合以哪家为默认都在框里选（进入模式只有这一个入口，
@@ -98,36 +104,59 @@ interface ModeDialogProps {
  */
 export function ModeDialog(props: ModeDialogProps) {
   const { app, state, onClose } = props;
-
+  // busy 提到根：遮罩 / Escape 关闭时若正在 enter/exit，不能拆掉错误提示
+  const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (state) logDialog(app, state, "弹出");
+    else setBusy(false);
   }, [app, state]);
-
   const cancel = () => {
+    if (busy) return;
     if (state) logDialog(app, state, "取消");
     onClose();
   };
-
   return (
-    <Dialog open={state !== null} onOpenChange={(open) => !open && cancel()}>
+    <Dialog
+      open={state !== null}
+      onOpenChange={(open) => {
+        if (!open) cancel();
+      }}
+    >
       {state && (
         <DialogContent
           zIndex="alert"
           className="max-w-[480px] gap-0 overflow-y-auto rounded-dialog border-border bg-surface p-6 shadow-v7-lg sm:rounded-dialog"
         >
           {state.kind === "enter" ? (
-            <EnterBody {...props} state={state} onCancel={cancel} />
+            <EnterBody
+              {...props}
+              state={state}
+              busy={busy}
+              setBusy={setBusy}
+              onCancel={cancel}
+            />
           ) : state.kind === "exit" ? (
-            <ExitBody {...props} state={state} onCancel={cancel} />
+            <ExitBody
+              {...props}
+              state={state}
+              busy={busy}
+              setBusy={setBusy}
+              onCancel={cancel}
+            />
           ) : (
-            <NeedsRouteBody {...props} state={state} onCancel={cancel} />
+            <NeedsRouteBody
+              {...props}
+              state={state}
+              busy={busy}
+              setBusy={setBusy}
+              onCancel={cancel}
+            />
           )}
         </DialogContent>
       )}
     </Dialog>
   );
 }
-
 function EnterBody({
   app,
   state,
@@ -140,9 +169,18 @@ function EnterBody({
   onClose,
   onCancel,
   onEnter,
+  busy,
+  setBusy,
 }: ModeDialogProps & {
-  state: Extract<ModeDialogState, { kind: "enter" }>;
+  state: Extract<
+    ModeDialogState,
+    {
+      kind: "enter";
+    }
+  >;
   onCancel: () => void;
+  busy: boolean;
+  setBusy: (busy: boolean) => void;
 }) {
   const { t } = useTranslation();
   const appName = APP_DISPLAY_NAME[app];
@@ -154,7 +192,6 @@ function EnterBody({
       ? defaultPick
       : (eligible[0]?.id ?? "");
   const [pick, setPick] = useState(initialPick);
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pickedProvider = eligible.find((p) => p.id === pick);
   // 官方账号只能做聚合的默认、不能做成员（Codex）：选了别家，它的模型就进不了聚合
@@ -163,74 +200,44 @@ function EnterBody({
     pickedProvider !== undefined &&
     !isOfficialAccount(app, pickedProvider) &&
     eligible.some((p) => isOfficialAccount(app, p));
-
   const showSubagent = target === "stack" && stackSubagent !== undefined;
   const [subagent, setSubagent] = useState<StackSubagentValue | undefined>(
     stackSubagent?.value,
   );
-  // 默认那家不发布 `ccs-*` 模型：它自己的模型不能当子代理
-  const subagentModels = (stackSubagent?.models ?? []).filter(
-    (model) => model.providerId !== pick,
-  );
-
+  const subagentModels = stackSubagent?.models ?? [];
   useEffect(() => {
     setPick(initialPick);
     setSubagent(stackSubagent?.value);
     // 每次打开按传进来的预选重置
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state]);
-
   const otherMembers = stackMembers.filter((m) => m.id !== pick);
   const memberModels = otherMembers.reduce((sum, m) => sum + m.models, 0);
   const notes =
-    target === "route" && app === "claude-desktop"
+    target === "route"
       ? [
-          t("mode.dialog.desktopRouteNoteModels"),
-          t("mode.dialog.desktopRouteNoteRestart", { app: appName }),
-          t("mode.dialog.desktopRouteNoteKeepRunning", { app: appName }),
+          t("mode.dialog.routeNoteFile", {
+            file: CLIENT_FILE[app] ?? "",
+          }),
+          t("mode.dialog.routeNoteSwitch"),
+          t("mode.dialog.routeNoteKeepRunning"),
         ]
-      : target === "route"
-        ? [
-            t("mode.dialog.routeNoteFile", {
-              file: CLIENT_FILE[app] ?? "",
-            }),
-            t("mode.dialog.routeNoteSwitch"),
-            t("mode.dialog.routeNoteKeepRunning"),
-          ]
-        : app === "claude-desktop"
-          ? [
-              otherMembers.length > 0
-                ? t("mode.dialog.desktopStackNoteMembers", {
-                    names: otherMembers.map((m) => m.name).join("、"),
-                    count: memberModels,
-                  })
-                : t("mode.dialog.stackNoteEmpty"),
-              t("mode.dialog.desktopRouteNoteRestart", { app: appName }),
-              t("mode.dialog.desktopRouteNoteKeepRunning", { app: appName }),
-            ]
-          : [
-              otherMembers.length > 0
-                ? t("mode.dialog.stackNoteMembers", {
-                    names: otherMembers.map((m) => m.name).join("、"),
-                    count: memberModels,
-                  })
-                : t("mode.dialog.stackNoteEmpty"),
-              t("mode.dialog.stackNoteNoFailover"),
-              // Claude Code 运行中就会读到改过的 settings.json，不用重启。
-              ...(app === "codex"
-                ? [t("mode.dialog.stackNoteRestartCodex", { app: appName })]
-                : []),
-            ];
+      : [
+          otherMembers.length > 0
+            ? t("mode.dialog.stackNoteMembers", {
+                names: otherMembers.map((m) => m.name).join("、"),
+                count: memberModels,
+              })
+            : t("mode.dialog.stackNoteEmpty"),
+          t("mode.stackSettings.routingDescription"),
+          // Claude Code 运行中就会读到改过的 settings.json，不用重启。
+          ...(app === "codex"
+            ? [t("mode.dialog.stackNoteRestartCodex", { app: appName })]
+            : []),
+        ];
   if (active === "stack" && target === "route") {
-    notes.push(
-      t(
-        app === "claude-desktop"
-          ? "mode.dialog.desktopLeaveStackNote"
-          : "mode.dialog.leaveStackNote",
-      ),
-    );
+    notes.push(t("mode.dialog.leaveStackNote"));
   }
-
   const confirm = async () => {
     if (!pick || busy) return;
     logDialog(app, state, `确认，选 ${pick}`);
@@ -245,7 +252,6 @@ function EnterBody({
       setBusy(false);
     }
   };
-
   const targetName = t(`mode.names.${target}`);
   const title = viaDirect
     ? t("mode.dialog.switchTitle", {
@@ -269,7 +275,6 @@ function EnterBody({
     isOfficialAccount(app, provider)
       ? t("mode.dialog.officialOption", { name: provider.name })
       : provider.name;
-
   return (
     <div className="space-y-4">
       <div className="space-y-1">
@@ -362,7 +367,6 @@ function EnterBody({
     </div>
   );
 }
-
 function ExitBody({
   app,
   state,
@@ -372,37 +376,35 @@ function ExitBody({
   onClose,
   onCancel,
   onExit,
+  busy,
+  setBusy,
 }: ModeDialogProps & {
-  state: Extract<ModeDialogState, { kind: "exit" }>;
+  state: Extract<
+    ModeDialogState,
+    {
+      kind: "exit";
+    }
+  >;
   onCancel: () => void;
+  busy: boolean;
+  setBusy: (busy: boolean) => void;
 }) {
   const { t } = useTranslation();
   const appName = APP_DISPLAY_NAME[app];
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const targetId = state.useProviderId ?? directId;
   const provider =
     providers.find((p) => p.id === targetId)?.name ?? t("mode.noProvider");
-
   // Claude Desktop 没有单个配置文件可指，也没有故障转移队列和路由设置
-  const notes =
-    app === "claude-desktop"
-      ? [
-          t("mode.dialog.desktopRouteNoteRestart", { app: appName }),
-          active === "stack"
-            ? t("mode.dialog.desktopLeaveStackNote")
-            : t("mode.dialog.desktopExitNoteRouteKept"),
-        ]
-      : [
-          t("mode.dialog.exitNoteFile", {
-            file: CLIENT_FILE[app] ?? "",
-            provider,
-          }),
-          active === "stack"
-            ? t("mode.dialog.leaveStackNote")
-            : t("mode.dialog.exitNoteRouteKept"),
-        ];
-
+  const notes = [
+    t("mode.dialog.exitNoteFile", {
+      file: CLIENT_FILE[app] ?? "",
+      provider,
+    }),
+    active === "stack"
+      ? t("mode.dialog.leaveStackNote")
+      : t("mode.dialog.exitNoteRouteKept"),
+  ];
   const confirm = async () => {
     if (busy) return;
     logDialog(app, state, `确认，落到 ${targetId ?? "（无）"}`);
@@ -417,7 +419,6 @@ function ExitBody({
       setBusy(false);
     }
   };
-
   return (
     <div className="space-y-4">
       <div className="space-y-1">
@@ -473,7 +474,6 @@ function ExitBody({
     </div>
   );
 }
-
 function NeedsRouteBody({
   app,
   state,
@@ -482,16 +482,23 @@ function NeedsRouteBody({
   onCancel,
   onEnter,
   onSwitchDirect,
+  busy,
+  setBusy,
 }: ModeDialogProps & {
-  state: Extract<ModeDialogState, { kind: "needsRoute" }>;
+  state: Extract<
+    ModeDialogState,
+    {
+      kind: "needsRoute";
+    }
+  >;
   onCancel: () => void;
+  busy: boolean;
+  setBusy: (busy: boolean) => void;
 }) {
   const { t } = useTranslation();
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const provider = providers.find((p) => p.id === state.providerId);
   const name = provider?.name ?? state.providerId;
-
   const route = async () => {
     logDialog(app, state, "开始路由并使用");
     setBusy(true);
@@ -505,7 +512,6 @@ function NeedsRouteBody({
       setBusy(false);
     }
   };
-
   return (
     <div className="space-y-4">
       <div className="space-y-1">
@@ -539,7 +545,7 @@ function NeedsRouteBody({
           {t("common.cancel")}
         </Button>
         {/* Claude Desktop 直连写不进要经路由的卡，后端会拒绝 */}
-        {app !== "claude-desktop" && (
+        {
           <Button
             variant="neutral"
             size="regular"
@@ -552,7 +558,7 @@ function NeedsRouteBody({
           >
             {t("mode.dialog.switchAnyway")}
           </Button>
-        )}
+        }
         <Button
           variant="route"
           size="regular"

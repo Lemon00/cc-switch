@@ -109,24 +109,30 @@ fn webdav_transport_error(
     target_url: &str,
     err: reqwest::Error,
 ) -> AppError {
+    let retryable = err.is_timeout() || err.is_connect() || err.is_body() || err.is_request();
     let (zh_reason, en_reason) = transport_failure_reason(err);
 
     let safe_url = redact_url(target_url);
-    AppError::localized(
+    let error = AppError::localized(
         key,
         format!("WebDAV {op_zh}失败（{zh_reason}）: {safe_url}"),
         format!("WebDAV {op_en} failed ({en_reason}): {safe_url}"),
-    )
+    );
+    if retryable {
+        AppError::RetryableSync(Box::new(error))
+    } else {
+        error
+    }
 }
 
 fn webdav_stalled_error(key: &'static str, op_zh: &str, op_en: &str, target_url: &str) -> AppError {
     let secs = TRANSFER_IDLE_TIMEOUT.as_secs();
     let safe_url = redact_url(target_url);
-    AppError::localized(
+    AppError::RetryableSync(Box::new(AppError::localized(
         key,
         format!("WebDAV {op_zh}失败（{secs} 秒未收到数据）: {safe_url}"),
         format!("WebDAV {op_en} failed (no data received for {secs}s): {safe_url}"),
-    )
+    )))
 }
 
 // ─── HTTP operations ─────────────────────────────────────────
@@ -134,7 +140,7 @@ fn webdav_stalled_error(key: &'static str, op_zh: &str, op_en: &str, target_url:
 /// Test WebDAV connectivity via PROPFIND Depth=0 on the base URL.
 pub async fn test_connection(base_url: &str, auth: &WebDavAuth) -> Result<(), AppError> {
     let url = parse_base_url(base_url)?;
-    let client = http_client::get();
+    let client = http_client::no_redirect().map_err(AppError::Message)?;
 
     let resp = apply_auth(
         client
@@ -173,7 +179,7 @@ pub async fn ensure_remote_directories(
     if segments.is_empty() {
         return Ok(());
     }
-    let client = http_client::get();
+    let client = http_client::no_redirect().map_err(AppError::Message)?;
 
     for depth in 1..=segments.len() {
         let prefix = &segments[..depth];
@@ -237,10 +243,23 @@ pub async fn put_bytes(
     bytes: Vec<u8>,
     content_type: &str,
 ) -> Result<(), AppError> {
-    let client = http_client::get();
+    put_bytes_conditional(url, auth, bytes, content_type, &super::sync_protocol::PublishCondition::Overwrite).await.map(|_| ())
+}
+
+pub async fn put_bytes_conditional(
+    url: &str,
+    auth: &WebDavAuth,
+    bytes: Vec<u8>,
+    content_type: &str,
+    condition: &super::sync_protocol::PublishCondition,
+) -> Result<Option<String>, AppError> {
+    let client = http_client::no_redirect().map_err(AppError::Message)?;
+    let mut headers = reqwest::header::HeaderMap::new();
+    condition.apply(&mut headers)?;
     let resp = apply_auth(
         client
             .put(url)
+            .headers(headers)
             .header("Content-Type", content_type)
             .timeout(transfer_timeout(bytes.len() as u64))
             .body(bytes),
@@ -251,7 +270,10 @@ pub async fn put_bytes(
     .map_err(|e| webdav_transport_error("webdav.put_failed", "PUT 请求", "PUT request", url, e))?;
 
     if resp.status().is_success() {
-        return Ok(());
+        return Ok(resp.headers().get(reqwest::header::ETAG).and_then(|v| v.to_str().ok()).map(str::to_string));
+    }
+    if matches!(resp.status().as_u16(), 409 | 412) {
+        return Err(super::sync_protocol::publication_conflict());
     }
     Err(webdav_status_error("PUT", resp.status(), url))
 }
@@ -264,7 +286,7 @@ pub async fn get_bytes(
     auth: &WebDavAuth,
     max_bytes: usize,
 ) -> Result<Option<(Vec<u8>, Option<String>)>, AppError> {
-    let client = http_client::get();
+    let client = http_client::no_redirect().map_err(AppError::Message)?;
     let request = apply_auth(
         client.get(url).timeout(transfer_timeout(max_bytes as u64)),
         auth,
@@ -304,10 +326,12 @@ pub async fn get_bytes(
         })?
     {
         let chunk = chunk.map_err(|e| {
-            AppError::localized(
+            webdav_transport_error(
                 "webdav.response_read_failed",
-                format!("读取 WebDAV 响应失败: {e}"),
-                format!("Failed to read WebDAV response: {e}"),
+                "读取响应",
+                "response read",
+                url,
+                e,
             )
         })?;
         if bytes.len().saturating_add(chunk.len()) > max_bytes {
@@ -320,7 +344,7 @@ pub async fn get_bytes(
 
 /// HEAD request to retrieve the ETag. Returns `None` on 404.
 pub async fn head_etag(url: &str, auth: &WebDavAuth) -> Result<Option<String>, AppError> {
-    let client = http_client::get();
+    let client = http_client::no_redirect().map_err(AppError::Message)?;
     let resp = apply_auth(
         client
             .head(url)
@@ -365,13 +389,13 @@ async fn propfind_exists(
     .await;
     match resp {
         Ok(r) => Ok(r.status().is_success() || r.status() == StatusCode::MULTI_STATUS),
-        Err(e) => {
-            log::warn!(
-                "[WebDAV] PROPFIND check failed for {}: {e}",
-                redact_url(url)
-            );
-            Ok(false)
-        }
+        Err(e) => Err(webdav_transport_error(
+            "webdav.propfind_failed",
+            "PROPFIND 请求",
+            "PROPFIND request",
+            url,
+            e,
+        )),
     }
 }
 
@@ -418,7 +442,12 @@ pub fn webdav_status_error(op: &str, status: StatusCode, url: &str) -> AppError 
         }
     }
 
-    AppError::localized("webdav.http.status", zh, en)
+    let error = AppError::localized("webdav.http.status", zh, en);
+    if status.is_server_error() || matches!(status.as_u16(), 408 | 429) {
+        AppError::RetryableSync(Box::new(error))
+    } else {
+        error
+    }
 }
 
 fn redact_url(raw: &str) -> String {

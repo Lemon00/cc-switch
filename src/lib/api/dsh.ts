@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-
 export interface DshAccountProfile {
   id: string | null;
   name: string | null;
@@ -7,13 +6,11 @@ export interface DshAccountProfile {
   contact: string | null;
   avatarUrl: string | null;
 }
-
 export interface DshWallet {
   currency: "CNY" | "USD" | string;
   /** 十进制字符串，原样来自平台 */
   balance: string;
 }
-
 /**
  * DeepSeek 账号（OAuth）登录：存在 `$DSH_HOME/.credentials.yaml`，DeepSeek Harness 的
  * Web 和 Desktop 共用同一份，任一端登录 / 退出两端同时生效。
@@ -33,14 +30,12 @@ export interface DshAccountStatus {
   /** 资料或余额没查到；登录本身还在 */
   error: string | null;
 }
-
 export interface DshLoginStart {
   flowId: string;
   /** Platform 的授权页（`https://platform.deepseek.com/dsh/authorize?...`） */
   authUrl: string;
   expiresIn: number;
 }
-
 export const dshApi = {
   accountStatus: () => invoke<DshAccountStatus>("dsh_account_status"),
   /** Web 和 Desktop 同时退出 */

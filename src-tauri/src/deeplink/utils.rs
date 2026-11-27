@@ -6,6 +6,9 @@ use crate::error::AppError;
 use base64::prelude::*;
 use url::Url;
 
+/// Bound untrusted URL parsing and Base64 allocations, including direct IPC imports.
+pub(super) const MAX_DEEPLINK_BYTES: usize = 256 * 1024;
+
 /// Validate that a string is a valid HTTP(S) URL
 pub fn validate_url(url_str: &str, field_name: &str) -> Result<(), AppError> {
     let url = Url::parse(url_str)
@@ -28,6 +31,11 @@ pub fn validate_url(url_str: &str, field_name: &str) -> Result<(), AppError> {
 /// - Missing padding `=`
 /// - Both standard and URL-safe Base64 variants
 pub fn decode_base64_param(field: &str, raw: &str) -> Result<Vec<u8>, AppError> {
+    if raw.len() > MAX_DEEPLINK_BYTES {
+        return Err(AppError::InvalidInput(format!(
+            "'{field}' exceeds the 256 KiB limit"
+        )));
+    }
     let mut candidates: Vec<String> = Vec::new();
     // Keep spaces (to restore `+`), but remove newlines
     let trimmed = raw.trim_matches(|c| c == '\r' || c == '\n');

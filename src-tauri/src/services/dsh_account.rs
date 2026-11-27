@@ -18,7 +18,10 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::Serialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{sync::Mutex, time::Duration};
+use std::{
+    sync::{Mutex, PoisonError},
+    time::Duration,
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -235,9 +238,15 @@ pub async fn status() -> Result<DshAccountStatus, String> {
 
 /// Remove the shared login, then revoke it remotely (best effort; local sign-out stands).
 pub async fn sign_out() -> Result<(), String> {
-    let Some((token, issuer)) =
-        crate::dsh_config::remove_account_grant().map_err(|e| e.to_string())?
-    else {
+    let (grant, pending) = {
+        let mut pending = PENDING.lock().unwrap_or_else(PoisonError::into_inner);
+        let grant = crate::dsh_config::remove_account_grant().map_err(|e| e.to_string())?;
+        (grant, pending.take())
+    };
+    if let Some(pending) = pending {
+        abandon(pending);
+    }
+    let Some((token, issuer)) = grant else {
         return Ok(());
     };
     let Ok(origin) = validated_origin(&issuer) else {
@@ -434,11 +443,7 @@ pub async fn start_login() -> Result<DshLoginStart, String> {
             )
         })?
         .to_owned();
-    let timeout = init["expires_in"]
-        .as_f64()
-        .filter(|seconds| *seconds > 0.0)
-        .map(Duration::from_secs_f64)
-        .map_or(LOGIN_TIMEOUT, |expires| expires.min(LOGIN_TIMEOUT));
+    let timeout = login_timeout(&init);
 
     let (sender, receiver) = oneshot::channel();
     let state = pkce.state.clone();
@@ -459,13 +464,16 @@ pub async fn start_login() -> Result<DshLoginStart, String> {
         let _ = sender.send(outcome);
     });
 
-    let previous = PENDING.lock().unwrap().replace(PendingLogin {
-        flow_id: pkce.state.clone(),
-        result: receiver,
-        task: task.abort_handle(),
-        authorize_id,
-        verifier: pkce.verifier,
-    });
+    let previous = PENDING
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .replace(PendingLogin {
+            flow_id: pkce.state.clone(),
+            result: receiver,
+            task: task.abort_handle(),
+            authorize_id,
+            verifier: pkce.verifier,
+        });
     if let Some(previous) = previous {
         abandon(previous);
     }
@@ -474,6 +482,14 @@ pub async fn start_login() -> Result<DshLoginStart, String> {
         auth_url,
         expires_in: timeout.as_secs(),
     })
+}
+
+fn login_timeout(init: &Value) -> Duration {
+    init["expires_in"]
+        .as_f64()
+        .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
+        .map(|seconds| Duration::from_secs_f64(seconds.min(LOGIN_TIMEOUT.as_secs_f64())))
+        .unwrap_or(LOGIN_TIMEOUT)
 }
 
 /// Wait for the browser, exchange the code, store the grant, then send the browser on to
@@ -518,8 +534,7 @@ async fn finish_login(
                 url.query_pairs_mut().append_pair("login_source", "web");
                 url.to_string()
             });
-        crate::dsh_config::store_account_grant(token, PLATFORM_ORIGIN)
-            .map_err(|e| e.to_string())?;
+        commit_login_grant(state, token)?;
         Ok::<_, String>(completion)
     }
     .await;
@@ -531,6 +546,20 @@ async fn finish_login(
         Err(_) => respond(&mut browser, "200 OK", &[], PAGE_FAILED).await,
     };
     result.map(|_| ())
+}
+
+fn commit_login_grant(flow_id: &str, token: &str) -> Result<(), String> {
+    let pending = PENDING.lock().unwrap_or_else(PoisonError::into_inner);
+    if pending
+        .as_ref()
+        .is_none_or(|login| login.flow_id != flow_id)
+    {
+        return Err("This DeepSeek sign-in has ended; start again".into());
+    }
+    // Cancellation and replacement use this same gate. Abort alone cannot
+    // interrupt the synchronous credential write after HTTP has completed.
+    crate::dsh_config::store_account_grant(token, PLATFORM_ORIGIN)
+        .map_err(|error| error.to_string())
 }
 
 /// Accept connections until a GET to the callback path carries exactly one matching `state` and
@@ -632,7 +661,7 @@ const PAGE_FAILED: &str = "<!doctype html><meta charset=utf-8><title>CC Switch</
 
 /// `Ok(false)` while waiting for the browser; `Ok(true)` once the login is stored.
 pub fn poll_login(flow_id: &str) -> Result<bool, String> {
-    let mut pending = PENDING.lock().unwrap();
+    let mut pending = PENDING.lock().unwrap_or_else(PoisonError::into_inner);
     let Some(login) = pending.as_mut().filter(|login| login.flow_id == flow_id) else {
         return Err(login_error(
             "dsh.account.error_flow_ended",
@@ -660,7 +689,7 @@ pub fn poll_login(flow_id: &str) -> Result<bool, String> {
 /// Stop waiting and withdraw the attempt at Platform (best effort, like DSH's `auth_cancel`).
 pub fn cancel_login(flow_id: &str) {
     let login = {
-        let mut pending = PENDING.lock().unwrap();
+        let mut pending = PENDING.lock().unwrap_or_else(PoisonError::into_inner);
         if pending
             .as_ref()
             .is_none_or(|login| login.flow_id != flow_id)
@@ -688,6 +717,26 @@ fn abandon(login: PendingLogin) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn login_lifetime_is_bounded_before_duration_conversion() {
+        for value in [serde_json::json!(1e300), serde_json::json!(-1), Value::Null] {
+            assert_eq!(
+                login_timeout(&serde_json::json!({"expires_in": value})),
+                LOGIN_TIMEOUT
+            );
+        }
+        assert_eq!(
+            login_timeout(&serde_json::json!({"expires_in": 30})),
+            Duration::from_secs(30)
+        );
+    }
+
+    #[test]
+    fn cancelled_login_cannot_commit_credentials() {
+        // No native paths are touched: the absent flow is rejected at the gate.
+        assert!(commit_login_grant("nonexistent-flow", "never-store-this").is_err());
+    }
     use serde_json::json;
 
     #[test]
@@ -801,6 +850,24 @@ mod tests {
             assert!(response.starts_with("HTTP/1.1"), "{response}");
         }
         assert_eq!(waiter.await.unwrap(), "ok");
+    }
+
+    #[test]
+    fn sign_in_polling_and_cancel_still_answer_after_a_panic_while_the_pending_login_was_held() {
+        if !crate::sync_utils::in_isolated_process(
+            "services::dsh_account::tests::sign_in_polling_and_cancel_still_answer_after_a_panic_while_the_pending_login_was_held",
+        ) {
+            return;
+        }
+        assert!(std::panic::catch_unwind(|| {
+            let _pending = PENDING.lock().unwrap();
+            panic!("interrupted while holding the pending sign-in");
+        })
+        .is_err());
+        assert!(poll_login("no-such-flow")
+            .unwrap_err()
+            .contains("This DeepSeek sign-in has ended"));
+        cancel_login("no-such-flow");
     }
 
     #[test]

@@ -16,13 +16,11 @@ import {
 } from "vitest";
 import { useUsageAutoRefresh } from "@/hooks/useUsageAutoRefresh";
 import { usageApi } from "@/lib/api/usage";
-import { usageKeys } from "@/lib/query/usage";
+import { localUsageQueryFilters, usageKeys } from "@/lib/query/usage";
 import type { SessionSyncResult } from "@/types/usage";
-
 vi.mock("@/lib/api/usage", () => ({
   usageApi: { syncSessionUsage: vi.fn() },
 }));
-
 const syncResult: SessionSyncResult = {
   imported: 1,
   skipped: 0,
@@ -35,17 +33,14 @@ const lastSyncKey = [...usageKeys.all, "session-last-sync"];
 const syncMock = vi.mocked(usageApi.syncSessionUsage);
 const advance = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
 const flush = () => act(() => vi.advanceTimersByTimeAsync(0));
-
 describe("useUsageAutoRefresh", () => {
   let client: QueryClient;
   let invalidate: MockInstance<QueryClient["invalidateQueries"]>;
-
   function wrapper({ children }: PropsWithChildren) {
     return (
       <QueryClientProvider client={client}>{children}</QueryClientProvider>
     );
   }
-
   beforeEach(() => {
     vi.useFakeTimers();
     focusManager.setFocused(true);
@@ -53,7 +48,6 @@ describe("useUsageAutoRefresh", () => {
     invalidate = vi.spyOn(client, "invalidateQueries");
     syncMock.mockReset().mockResolvedValue(syncResult);
   });
-
   afterEach(() => {
     cleanup();
     client.clear();
@@ -61,7 +55,6 @@ describe("useUsageAutoRefresh", () => {
     vi.restoreAllMocks();
     vi.useRealTimers();
   });
-
   it.each([5000, 10000, 30000, 60000])(
     "scans on open, then every %i ms",
     async (refreshIntervalMs) => {
@@ -86,7 +79,6 @@ describe("useUsageAutoRefresh", () => {
       expect(syncMock).toHaveBeenCalledTimes(3);
     },
   );
-
   it("scans right away and reschedules when the interval changes", async () => {
     const { rerender } = renderHook(
       ({ interval }) =>
@@ -105,7 +97,6 @@ describe("useUsageAutoRefresh", () => {
     await advance(5000);
     expect(syncMock).toHaveBeenCalledTimes(3);
   });
-
   it("never scans while session auto-sync is off", async () => {
     const { rerender } = renderHook(
       ({ enabled }) =>
@@ -125,7 +116,6 @@ describe("useUsageAutoRefresh", () => {
     await advance(20000);
     expect(syncMock).toHaveBeenCalledTimes(1);
   });
-
   it("waits for a slow scan and shares it with manual sync without queueing more scans", async () => {
     let finish!: (result: SessionSyncResult) => void;
     syncMock.mockReturnValueOnce(
@@ -154,7 +144,6 @@ describe("useUsageAutoRefresh", () => {
     await advance(5000);
     expect(syncMock).toHaveBeenCalledTimes(2);
   });
-
   it("skips hidden windows, rescans once visible, and pauses during a rebuild", async () => {
     focusManager.setFocused(false);
     const { rerender } = renderHook(
@@ -178,7 +167,6 @@ describe("useUsageAutoRefresh", () => {
     await flush();
     expect(syncMock).toHaveBeenCalledTimes(2);
   });
-
   it.each(["disable", "unmount"] as const)(
     "ignores a pending scan after %s",
     async (action) => {
@@ -207,8 +195,9 @@ describe("useUsageAutoRefresh", () => {
       expect(syncMock).toHaveBeenCalledTimes(1);
     },
   );
-
   it("re-runs usage queries every minute for rolling ranges, even with scanning off", async () => {
+    const remoteKey = usageKeys.script("summary", "codex");
+    client.setQueryData(remoteKey, { success: true });
     const { rerender } = renderHook(
       ({ rolling }) =>
         useUsageAutoRefresh({
@@ -218,20 +207,20 @@ describe("useUsageAutoRefresh", () => {
         }),
       { wrapper, initialProps: { rolling: true } },
     );
-    await advance(59_999);
+    await advance(59999);
     expect(invalidate).not.toHaveBeenCalled();
     await advance(1);
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: usageKeys.all });
+    expect(invalidate).toHaveBeenCalledWith(localUsageQueryFilters);
+    expect(client.getQueryState(remoteKey)?.isInvalidated).toBe(false);
     focusManager.setFocused(false);
-    await advance(60_000);
+    await advance(60000);
     expect(invalidate).toHaveBeenCalledTimes(1);
     focusManager.setFocused(true);
     rerender({ rolling: false });
-    await advance(120_000);
+    await advance(120000);
     expect(invalidate).toHaveBeenCalledTimes(1);
     expect(syncMock).not.toHaveBeenCalled();
   });
-
   it("still updates the last sync time after a scan error and retries next time", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     syncMock.mockRejectedValueOnce(new Error("scan failed"));
@@ -250,7 +239,6 @@ describe("useUsageAutoRefresh", () => {
     expect(syncMock).toHaveBeenCalledTimes(2);
     expect(invalidate).toHaveBeenCalledTimes(2);
   });
-
   it("pauses rolling-range queries during a usage rebuild", async () => {
     const { rerender } = renderHook(
       ({ paused }) =>
@@ -262,10 +250,10 @@ describe("useUsageAutoRefresh", () => {
         }),
       { wrapper, initialProps: { paused: true } },
     );
-    await advance(120_000);
+    await advance(120000);
     expect(invalidate).not.toHaveBeenCalled();
     rerender({ paused: false });
-    await advance(60_000);
+    await advance(60000);
     expect(invalidate).toHaveBeenCalledTimes(1);
   });
 });

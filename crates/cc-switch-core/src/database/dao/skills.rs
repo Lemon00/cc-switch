@@ -9,7 +9,7 @@
 use crate::app_config::{InstalledSkill, SkillApps};
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
-use crate::services::skill::SkillRepo;
+use crate::skill_model::SkillRepo;
 use indexmap::IndexMap;
 use rusqlite::params;
 
@@ -42,20 +42,13 @@ impl Database {
                     apps: SkillApps {
                         claude: row.get(8)?,
                         codex: row.get(9)?,
-                        gemini: row.get(10)?,
-                        grokbuild: row.get(11)?,
                         opencode: row.get(12)?,
-                        hermes: row.get(13)?,
-                        pi: false,
-                        omp: false,
-                        mcode: row.get(17)?,
                         agy: row.get(18)?,
-                        kimi: row.get(19)?,
                         dsh: row.get(20)?,
                     },
                     installed_at: row.get(14)?,
                     content_hash: row.get(15)?,
-                    updated_at: row.get::<_, i64>(16).unwrap_or(0),
+                    updated_at: row.get(16)?,
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -93,20 +86,13 @@ impl Database {
                 apps: SkillApps {
                     claude: row.get(8)?,
                     codex: row.get(9)?,
-                    gemini: row.get(10)?,
-                    grokbuild: row.get(11)?,
                     opencode: row.get(12)?,
-                    hermes: row.get(13)?,
-                    pi: false,
-                    omp: false,
-                    mcode: row.get(17)?,
                     agy: row.get(18)?,
-                    kimi: row.get(19)?,
                     dsh: row.get(20)?,
                 },
                 installed_at: row.get(14)?,
                 content_hash: row.get(15)?,
-                updated_at: row.get::<_, i64>(16).unwrap_or(0),
+                updated_at: row.get(16)?,
             })
         });
 
@@ -120,12 +106,12 @@ impl Database {
     /// 保存 Skill（添加或更新）
     pub fn save_skill(&self, skill: &InstalledSkill) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
+        Self::save_skill_on(&conn, skill)
+    }
+
+    fn save_skill_on(conn: &rusqlite::Connection, skill: &InstalledSkill) -> Result<(), AppError> {
         conn.execute(
-            "INSERT OR REPLACE INTO skills
-             (id, name, description, directory, repo_owner, repo_name, repo_branch,
-              readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes,
-              installed_at, content_hash, updated_at, enabled_mcode, enabled_agy, enabled_kimi, enabled_dsh)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+            "INSERT INTO skills (id, name, description, directory, repo_owner, repo_name, repo_branch, readme_url, enabled_claude, enabled_codex, enabled_opencode, installed_at, content_hash, updated_at, enabled_agy, enabled_dsh) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16) ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description, directory=excluded.directory, repo_owner=excluded.repo_owner, repo_name=excluded.repo_name, repo_branch=excluded.repo_branch, readme_url=excluded.readme_url, enabled_claude=excluded.enabled_claude, enabled_codex=excluded.enabled_codex, enabled_opencode=excluded.enabled_opencode, installed_at=excluded.installed_at, content_hash=excluded.content_hash, updated_at=excluded.updated_at, enabled_agy=excluded.enabled_agy, enabled_dsh=excluded.enabled_dsh",
             params![
                 skill.id,
                 skill.name,
@@ -137,21 +123,32 @@ impl Database {
                 skill.readme_url,
                 skill.apps.claude,
                 skill.apps.codex,
-                skill.apps.gemini,
-                skill.apps.grokbuild,
                 skill.apps.opencode,
-                skill.apps.hermes,
                 skill.installed_at,
                 skill.content_hash,
                 skill.updated_at,
-                skill.apps.mcode,
                 skill.apps.agy,
-                skill.apps.kimi,
                 skill.apps.dsh,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
+    }
+
+    /// 原子提交迁移结果和完成标记；任一插入失败均保留旧表与重试快照。
+    pub fn replace_skills_for_migration(&self, skills: &[InstalledSkill]) -> Result<(), AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        tx.execute("DELETE FROM skills", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        for skill in skills {
+            Self::save_skill_on(&tx, skill)?;
+        }
+        tx.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('skills_ssot_migration_snapshot', ''), ('skills_ssot_migration_pending', 'false')", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))
     }
 
     /// 仅更新已安装 Skill 的元数据，不修改各应用的启用状态。
@@ -216,8 +213,8 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let affected = conn
             .execute(
-                "UPDATE skills SET enabled_claude = ?1, enabled_codex = ?2, enabled_gemini = ?3, enabled_grokbuild = ?4, enabled_opencode = ?5, enabled_hermes = ?6, enabled_mcode = ?8, enabled_agy = ?9, enabled_kimi = ?10, enabled_dsh = ?11 WHERE id = ?7",
-                params![apps.claude, apps.codex, apps.gemini, apps.grokbuild, apps.opencode, apps.hermes, id, apps.mcode, apps.agy, apps.kimi, apps.dsh],
+                "UPDATE skills SET enabled_claude = ?1, enabled_codex = ?2, enabled_opencode = ?3, enabled_agy = ?4, enabled_dsh = ?5 WHERE id = ?6",
+                params![apps.claude, apps.codex, apps.opencode, apps.agy, apps.dsh, id],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(affected > 0)
@@ -294,27 +291,34 @@ impl Database {
     /// 初始化默认的 Skill 仓库（启动时调用，每个数据库仅执行一次）
     pub fn init_default_skill_repos(&self) -> Result<usize, AppError> {
         const INITIALIZED_KEY: &str = "default_skill_repos_initialized";
-
-        if self.get_bool_flag(INITIALIZED_KEY)? {
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let initialized: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM settings WHERE key = ?1 AND value IN ('true', '1'))",
+            [INITIALIZED_KEY],
+            |row| row.get(0),
+        )?;
+        if initialized {
             return Ok(0);
         }
-
-        // 兼容升级前已经存在的用户选择，并记录初始化状态，避免以后删空后恢复默认值。
-        if !self.get_skill_repos()?.is_empty() {
-            self.set_setting(INITIALIZED_KEY, "true")?;
-            return Ok(0);
-        }
-
-        let default_store = crate::services::skill::SkillStore::default();
+        let has_repos: bool =
+            tx.query_row("SELECT EXISTS(SELECT 1 FROM skill_repos)", [], |row| {
+                row.get(0)
+            })?;
         let mut count = 0;
-
-        for repo in &default_store.repos {
-            self.save_skill_repo(repo)?;
-            count += 1;
-            log::info!("初始化默认 Skill 仓库: {}/{}", repo.owner, repo.name);
+        if !has_repos {
+            for repo in crate::skill_model::SkillStore::default().repos {
+                count += tx.execute(
+                    "INSERT INTO skill_repos (owner, name, branch, enabled) VALUES (?1, ?2, ?3, ?4)",
+                    params![repo.owner, repo.name, repo.branch, repo.enabled],
+                )?;
+            }
         }
-
-        self.set_setting(INITIALIZED_KEY, "true")?;
+        tx.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, 'true')",
+            [INITIALIZED_KEY],
+        )?;
+        tx.commit()?;
         Ok(count)
     }
 }
@@ -386,35 +390,5 @@ mod tests {
             .get_installed_skill(&candidate.id)
             .expect("query skill")
             .is_none());
-    }
-
-    #[test]
-    fn update_skill_metadata_does_not_touch_reinstalled_generation() {
-        let db = Database::memory().expect("memory db");
-        let stale_update = skill(
-            "owner/repo:skill",
-            "stale-update",
-            SkillApps::only(&AppType::Claude),
-        );
-
-        let mut reinstalled = skill(
-            &stale_update.id,
-            "reinstalled",
-            SkillApps::only(&AppType::Gemini),
-        );
-        reinstalled.installed_at = stale_update.installed_at + 1;
-        db.save_skill(&reinstalled).expect("seed reinstalled skill");
-
-        assert!(!db
-            .update_skill_metadata(&stale_update)
-            .expect("stale generation update is not an error"));
-
-        let stored = db
-            .get_installed_skill(&reinstalled.id)
-            .expect("query skill")
-            .expect("reinstalled generation remains");
-        assert_eq!(stored.name, reinstalled.name);
-        assert_eq!(stored.installed_at, reinstalled.installed_at);
-        assert_eq!(stored.apps, reinstalled.apps);
     }
 }

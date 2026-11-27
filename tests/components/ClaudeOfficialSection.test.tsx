@@ -7,7 +7,6 @@ import {
   ClaudeBoundAccountLine,
   ClaudeOfficialSection,
 } from "@/components/providers/forms/ClaudeOfficialSection";
-
 const mocks = vi.hoisted(() => ({
   useManagedAuth: vi.fn(),
   openExternal: vi.fn(),
@@ -15,7 +14,6 @@ const mocks = vi.hoisted(() => ({
   getLoginSwitch: vi.fn(),
   getStatus: vi.fn(),
 }));
-
 vi.mock("@/components/providers/forms/hooks/useManagedAuth", () => ({
   useManagedAuth: mocks.useManagedAuth,
 }));
@@ -42,7 +40,6 @@ vi.mock("@/lib/api", async (importOriginal) => {
     },
   };
 });
-
 const baseAuth = () => ({
   accounts: [] as unknown[],
   isStatusSuccess: true,
@@ -59,7 +56,6 @@ const baseAuth = () => ({
   logout: vi.fn(),
   refetchStatus: vi.fn(),
 });
-
 const account = (id: string, login: string) => ({
   id,
   provider: "claude_official",
@@ -70,7 +66,6 @@ const account = (id: string, login: string) => ({
   github_domain: "claude.ai",
   requires_reauth: false,
 });
-
 const loginSwitch = (overrides: Record<string, unknown> = {}) => {
   const status = {
     blocked: null,
@@ -80,7 +75,6 @@ const loginSwitch = (overrides: Record<string, unknown> = {}) => {
   // 和后端一样：没被挡住就会切换
   return { active: status.blocked === null, ...status };
 };
-
 // 组件读 React Query（切换状态、账号列表），每个用例一个新的 client
 const withQuery = (node: React.ReactNode) =>
   render(
@@ -95,7 +89,6 @@ const withQuery = (node: React.ReactNode) =>
 const renderSection = () => withQuery(<ClaudeOfficialSection />);
 const renderSelect = () =>
   withQuery(<ClaudeAccountSelect value={null} onChange={vi.fn()} />);
-
 describe("ClaudeOfficialSection", () => {
   beforeEach(() => {
     mocks.useManagedAuth.mockReset();
@@ -104,16 +97,13 @@ describe("ClaudeOfficialSection", () => {
     mocks.getLoginSwitch.mockReset().mockResolvedValue(loginSwitch());
     mocks.getStatus.mockReset();
   });
-
   it("has no default account and no re-login while the login is valid", async () => {
     const auth = baseAuth();
     auth.accounts = [account("acc:org", "me@example.com · Acme")];
     mocks.useManagedAuth.mockReturnValue(auth);
     renderSection();
-
     expect(mocks.useManagedAuth).toHaveBeenCalledWith("claude_official");
     expect(screen.queryByText("默认")).not.toBeInTheDocument();
-
     await userEvent.click(
       screen.getByRole("button", { name: "me@example.com · Acme 的更多操作" }),
     );
@@ -127,7 +117,6 @@ describe("ClaudeOfficialSection", () => {
       screen.queryByRole("menuitem", { name: "重新登录" }),
     ).not.toBeInTheDocument();
   });
-
   it("says the link was copied when the browser is not to be opened", () => {
     window.localStorage.setItem("cc-switch.authCenter.openBrowser", "0");
     const auth = baseAuth();
@@ -156,7 +145,6 @@ describe("ClaudeOfficialSection", () => {
     ).not.toBeInTheDocument();
     window.localStorage.removeItem("cc-switch.authCenter.openBrowser");
   });
-
   it("offers re-login once the login has expired", async () => {
     const auth = baseAuth();
     auth.accounts = [
@@ -164,11 +152,9 @@ describe("ClaudeOfficialSection", () => {
     ];
     mocks.useManagedAuth.mockReturnValue(auth);
     renderSection();
-
     await userEvent.click(screen.getByRole("button", { name: "重新登录" }));
     expect(auth.addAccount).toHaveBeenCalled();
   });
-
   it("warns a week before a parked account's sign-in expires", async () => {
     const day = 24 * 60 * 60 * 1000;
     const auth = baseAuth();
@@ -184,7 +170,6 @@ describe("ClaudeOfficialSection", () => {
     ];
     mocks.useManagedAuth.mockReturnValue(auth);
     renderSection();
-
     expect(
       screen.getAllByText(/过期，之后要重新登录|loginExpiresOn/),
     ).toHaveLength(1);
@@ -192,7 +177,6 @@ describe("ClaudeOfficialSection", () => {
       screen.queryByRole("button", { name: "重新登录" }),
     ).not.toBeInTheDocument();
   });
-
   it("offers re-login when a parked account's sign-in may have expired", async () => {
     const auth = baseAuth();
     auth.accounts = [
@@ -203,14 +187,12 @@ describe("ClaudeOfficialSection", () => {
     ];
     mocks.useManagedAuth.mockReturnValue(auth);
     renderSection();
-
     expect(
       screen.getByText(/登录可能已过期|loginMaybeExpired/),
     ).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "重新登录" }));
     expect(auth.addAccount).toHaveBeenCalled();
   });
-
   it("shows quota for every account that can still sign in", () => {
     const auth = baseAuth();
     auth.accounts = [
@@ -223,12 +205,10 @@ describe("ClaudeOfficialSection", () => {
     ];
     mocks.useManagedAuth.mockReturnValue(auth);
     renderSection();
-
     expect(
       screen.getAllByTestId("claude-quota").map((el) => el.textContent),
     ).toEqual(["ok:org"]);
   });
-
   it("shows each account's plan in the auth center", () => {
     const auth = baseAuth();
     auth.accounts = [
@@ -241,11 +221,9 @@ describe("ClaudeOfficialSection", () => {
     ];
     mocks.useManagedAuth.mockReturnValue(auth);
     renderSection();
-
     expect(screen.getByText(/Max 20x/)).toBeInTheDocument();
     expect(screen.queryByText(/^Pro$|^Max$/)).not.toBeInTheDocument();
   });
-
   it("lets the user paste the code when the browser can't come back", async () => {
     const auth = baseAuth();
     Object.assign(auth, {
@@ -264,7 +242,6 @@ describe("ClaudeOfficialSection", () => {
     mocks.useManagedAuth.mockReturnValue(auth);
     mocks.submitPaste.mockResolvedValue(undefined);
     renderSection();
-
     expect(
       screen.getByText(/已在浏览器打开 Claude 的登录页/),
     ).toBeInTheDocument();
@@ -276,13 +253,11 @@ describe("ClaudeOfficialSection", () => {
       "abc#state",
     );
     await userEvent.click(screen.getByRole("button", { name: "提交" }));
-
     expect(mocks.submitPaste).toHaveBeenCalledWith("flow-1", "abc#state");
     expect(
       await screen.findByText("已提交，正在完成登录…"),
     ).toBeInTheDocument();
   });
-
   it("says switching to the card changes the sign-in", async () => {
     mocks.useManagedAuth.mockReturnValue(baseAuth());
     renderSelect();
@@ -290,7 +265,6 @@ describe("ClaudeOfficialSection", () => {
       await screen.findByText(/Claude Code 的登录会实时换成选中的账号/),
     ).toBeInTheDocument();
   });
-
   it("lays out the sign-in choices like the Codex card", async () => {
     // jsdom 没有 scrollIntoView，下拉打开时会调
     Element.prototype.scrollIntoView = vi.fn();
@@ -308,7 +282,6 @@ describe("ClaudeOfficialSection", () => {
         onManageAccounts={onManageAccounts}
       />,
     );
-
     const select = screen.getByRole("combobox", { name: "登录方式" });
     expect(select).toHaveTextContent("跟随 Claude Code 登录");
     await user.click(select);
@@ -322,14 +295,12 @@ describe("ClaudeOfficialSection", () => {
     await user.click(screen.getByRole("option", { name: /添加或管理/ }));
     expect(onManageAccounts).toHaveBeenCalled();
     expect(onChange).not.toHaveBeenCalled();
-
     await user.click(select);
     await user.click(
       await screen.findByRole("option", { name: "work@example.com" }),
     );
     expect(onChange).toHaveBeenCalledWith("work:org");
   });
-
   it("points to Open Terminal when a config dir override blocks switching", async () => {
     mocks.getLoginSwitch.mockResolvedValue(
       loginSwitch({ blocked: "overrideDir" }),
@@ -340,7 +311,6 @@ describe("ClaudeOfficialSection", () => {
       await screen.findByText(/请从卡片「打开终端」使用选中的账号/),
     ).toBeInTheDocument();
   });
-
   it("greys out sign-in when the Claude config dir is in WSL", async () => {
     mocks.getLoginSwitch.mockResolvedValue(loginSwitch({ blocked: "wsl" }));
     const auth = baseAuth();
@@ -352,7 +322,6 @@ describe("ClaudeOfficialSection", () => {
     ];
     mocks.useManagedAuth.mockReturnValue(auth);
     renderSection();
-
     expect(
       await screen.findByText(
         "Claude 配置目录在 WSL 里，暂不支持添加和切换 Claude 账号。",
@@ -366,7 +335,6 @@ describe("ClaudeOfficialSection", () => {
     await userEvent.click(reauth);
     expect(auth.addAccount).not.toHaveBeenCalled();
   });
-
   it("says WSL isn't supported on the card form", async () => {
     mocks.getLoginSwitch.mockResolvedValue(loginSwitch({ blocked: "wsl" }));
     mocks.useManagedAuth.mockReturnValue(baseAuth());
@@ -375,7 +343,6 @@ describe("ClaudeOfficialSection", () => {
       await screen.findByText(/Claude 配置目录在 WSL 里，暂不支持 Claude 账号/),
     ).toBeInTheDocument();
   });
-
   it("words the card subtitle like the Codex card", async () => {
     const day = 24 * 60 * 60 * 1000;
     mocks.getStatus.mockResolvedValue({

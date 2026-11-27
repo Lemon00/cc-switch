@@ -6,7 +6,6 @@ import {
 import type { CopilotModel } from "@/lib/api/copilot";
 import type { CodexCopilotApiFormat } from "@/types";
 import endpointCases from "../fixtures/copilot-endpoint-cases.json";
-
 function model(supportedEndpoints?: string[]): CopilotModel {
   return {
     id: "model",
@@ -16,7 +15,6 @@ function model(supportedEndpoints?: string[]): CopilotModel {
     supported_endpoints: supportedEndpoints,
   };
 }
-
 describe("Codex Copilot capabilities", () => {
   it.each(endpointCases)(
     "matches the backend endpoint contract: $name",
@@ -33,16 +31,12 @@ describe("Codex Copilot capabilities", () => {
       }
     },
   );
-
   it("treats a reported prompt limit as authoritative and otherwise preserves the fallback", () => {
-    expect(resolveCopilotReportedPromptLimit("", 400_000)).toBe(400_000);
-    expect(resolveCopilotReportedPromptLimit(undefined, 1_000_000)).toBe(
-      1_000_000,
-    );
-    expect(resolveCopilotReportedPromptLimit(200_000, 400_000)).toBe(400_000);
-    expect(resolveCopilotReportedPromptLimit(200_000, undefined)).toBe(200_000);
+    expect(resolveCopilotReportedPromptLimit("", 400000)).toBe(400000);
+    expect(resolveCopilotReportedPromptLimit(undefined, 1000000)).toBe(1000000);
+    expect(resolveCopilotReportedPromptLimit(200000, 400000)).toBe(400000);
+    expect(resolveCopilotReportedPromptLimit(200000, undefined)).toBe(200000);
   });
-
   it("rejects an absent capabilities field", () => {
     expect(isCopilotModelSupportedByCodex(model())).toBe(false);
   });

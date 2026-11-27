@@ -1,13 +1,11 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   claudeModelFetchApiFormat,
   fetchModelsForConfig,
   modelFetchRequestHeaders,
 } from "./model-fetch";
-
 const invoke = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
-
 describe("model discovery requests", () => {
   it("leaves automatic catalog URL resolution to the backend", async () => {
     const baseUrl = "https://example.com/v1";
@@ -22,7 +20,6 @@ describe("model discovery requests", () => {
       requestHeaders: undefined,
     });
   });
-
   it("preserves an explicit catalog URL for other providers", async () => {
     await fetchModelsForConfig(
       "https://example.com/v1",
@@ -38,7 +35,6 @@ describe("model discovery requests", () => {
     );
   });
 });
-
 describe("modelFetchRequestHeaders", () => {
   it("合法的 Header 覆盖 JSON 原样转为请求头（键名归一为小写）", () => {
     expect(
@@ -49,13 +45,11 @@ describe("modelFetchRequestHeaders", () => {
       "x-lower": "b",
     });
   });
-
   it("空覆盖不携带请求头", () => {
     expect(modelFetchRequestHeaders("")).toBeUndefined();
     expect(modelFetchRequestHeaders("   \n  ")).toBeUndefined();
     expect(modelFetchRequestHeaders("{}")).toBeUndefined();
   });
-
   it("JSON 非法或结构不符合时静默回退（不阻断取模型）", () => {
     expect(modelFetchRequestHeaders("not json")).toBeUndefined();
     expect(modelFetchRequestHeaders('["array"]')).toBeUndefined();
@@ -65,7 +59,6 @@ describe("modelFetchRequestHeaders", () => {
       modelFetchRequestHeaders('{"dup": "a", "DUP": "b"}'),
     ).toBeUndefined();
   });
-
   it("本地代理托管头不允许借道模型列表请求", () => {
     expect(
       modelFetchRequestHeaders('{"authorization": "Bearer x"}'),
@@ -73,14 +66,12 @@ describe("modelFetchRequestHeaders", () => {
     expect(modelFetchRequestHeaders('{"x-api-key": "k"}')).toBeUndefined();
   });
 });
-
 describe("claudeModelFetchApiFormat", () => {
   it("sends Gemini Native catalogs with the Google API-key header", () => {
     expect(claudeModelFetchApiFormat("gemini_native")).toBe(
       "google-generative-ai",
     );
   });
-
   it.each(["anthropic", "openai_chat", "openai_responses", undefined])(
     "keeps the default Bearer catalog request for %s",
     (format) => {

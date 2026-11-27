@@ -28,16 +28,7 @@ fn default_file_version() -> u32 {
     MODEL_PRICING_FILE_VERSION
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ModelPricingInfo {
-    pub model_id: String,
-    pub display_name: String,
-    pub input_cost_per_million: String,
-    pub output_cost_per_million: String,
-    pub cache_read_cost_per_million: String,
-    pub cache_creation_cost_per_million: String,
-}
+pub use crate::pricing::ModelPricingInfo;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -118,6 +109,13 @@ fn normalize_decimal(label: &str, value: &str) -> Result<String, AppError> {
             "usage.invalidPrice",
             format!("{label} 价格必须为非负数: {value}"),
             format!("{label} price must be non-negative: {value}"),
+        ));
+    }
+    if parsed >= Decimal::from(1_000_000_000_000u64) {
+        return Err(AppError::localized(
+            "usage.invalidPrice",
+            format!("{label} 价格超出支持范围: {value}"),
+            format!("{label} price exceeds the supported range: {value}"),
         ));
     }
     Ok(value.to_string())
@@ -378,8 +376,8 @@ fn is_models_dev_response_too_large(len: usize) -> bool {
 /// 必须走全局代理客户端：WebView 直连只跟随系统代理，代理环境下会超时。
 /// 全局客户端为透传禁用了自动解压，须显式声明 gzip——否则 5.9MB 的 api.json
 /// 原样传输，代理环境下很容易在读响应体时超时。
-/// 返回解压后的 JSON 字符串，由前端解析为 ModelsDevResponse。
-pub async fn fetch_models_dev() -> Result<String, String> {
+/// 返回有界响应体，由 Rust 解析并裁剪，避免整包 JSON IPC。
+pub(crate) async fn fetch_models_dev_bytes() -> Result<Vec<u8>, String> {
     let client = crate::proxy::http_client::get();
     let mut response = client
         .get(MODELS_DEV_API_URL)
@@ -424,8 +422,7 @@ pub async fn fetch_models_dev() -> Result<String, String> {
         }
     }
 
-    let body = decode_models_dev_body(encoding.as_deref(), buf)?;
-    Ok(String::from_utf8_lossy(&body).into_owned())
+    decode_models_dev_body(encoding.as_deref(), buf)
 }
 
 /// 按响应声明的 content-encoding 解压 models.dev 响应体，解压输出同样受
@@ -573,6 +570,15 @@ pub fn delete_model_pricing(db: &Database, model_id: &str) -> Result<(), AppErro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_prices_that_exceed_the_supported_range() {
+        for value in ["-1", "1000000000000", "79228162514264337593543950335"] {
+            assert!(normalize_decimal("input", value).is_err());
+        }
+        assert!(normalize_decimal("input", "0").is_ok());
+        assert!(normalize_decimal("input", "0.000001").is_ok());
+    }
     use serial_test::serial;
 
     fn with_test_home(test: impl FnOnce(&Database, &PathBuf)) {

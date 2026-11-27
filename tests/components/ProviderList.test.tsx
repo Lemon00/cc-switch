@@ -8,9 +8,7 @@ import {
   ProviderList,
   type SwitchModeProps,
 } from "@/components/providers/ProviderList";
-import { hermesKeys } from "@/hooks/useHermes";
 import { server } from "../msw/server";
-
 vi.mock("sonner", () => ({
   toast: {
     success: vi.fn(),
@@ -19,22 +17,17 @@ vi.mock("sonner", () => ({
     error: vi.fn(),
   },
 }));
-
 const TAURI_ENDPOINT = "http://tauri.local";
-
 const useDragSortMock = vi.fn();
 const useSortableMock = vi.fn();
 const providerCardRenderSpy = vi.fn();
-
 /** 某张卡片最近一次渲染拿到的 props。 */
 const lastProps = (id: string) =>
   providerCardRenderSpy.mock.calls
     .map((call) => call[0])
     .filter((props) => props.provider.id === id)
     .at(-1);
-
 const dshAccountStatusMock = vi.fn();
-
 vi.mock("@/components/providers/DshAccount", () => ({
   useDshAccountStatus: (enabled: boolean) =>
     enabled ? dshAccountStatusMock() : { data: undefined },
@@ -44,16 +37,13 @@ vi.mock("@/components/providers/DshAccount", () => ({
     <div data-testid="dsh-account-card">{status.profile?.name}</div>
   ),
 }));
-
 vi.mock("@/hooks/useDragSort", () => ({
   useDragSort: (...args: unknown[]) => useDragSortMock(...args),
 }));
-
 vi.mock("@/components/providers/ProviderCard", () => ({
   ProviderCard: (props: any) => {
     providerCardRenderSpy(props);
     const { provider, presentation, onEdit, onDelete, onDuplicate } = props;
-
     return (
       <div data-testid={`provider-card-${provider.id}`}>
         {presentation.status && (
@@ -96,20 +86,16 @@ vi.mock("@/components/providers/ProviderCard", () => ({
     );
   },
 }));
-
 vi.mock("@/components/UsageFooter", () => ({
   default: () => <div data-testid="usage-footer" />,
 }));
-
 vi.mock("@dnd-kit/sortable", async () => {
   const actual = await vi.importActual<any>("@dnd-kit/sortable");
-
   return {
     ...actual,
     useSortable: (...args: unknown[]) => useSortableMock(...args),
   };
 });
-
 // Mock hooks that use QueryClient
 vi.mock("@/hooks/useStreamCheck", () => ({
   useStreamCheck: () => ({
@@ -117,7 +103,6 @@ vi.mock("@/hooks/useStreamCheck", () => ({
     isChecking: () => false,
   }),
 }));
-
 function createProvider(overrides: Partial<Provider> = {}): Provider {
   return {
     id: overrides.id ?? "provider-1",
@@ -130,12 +115,10 @@ function createProvider(overrides: Partial<Provider> = {}): Provider {
     websiteUrl: overrides.websiteUrl,
   };
 }
-
 function renderWithQueryClient(ui: ReactElement) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-
   return {
     ...render(
       <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
@@ -143,12 +126,10 @@ function renderWithQueryClient(ui: ReactElement) {
     queryClient,
   };
 }
-
 beforeEach(() => {
   useDragSortMock.mockReset();
   useSortableMock.mockReset();
   providerCardRenderSpy.mockClear();
-
   useSortableMock.mockImplementation(({ id }: { id: string }) => ({
     setNodeRef: vi.fn(),
     attributes: { "data-dnd-id": id },
@@ -157,14 +138,12 @@ beforeEach(() => {
     transition: null,
     isDragging: false,
   }));
-
   useDragSortMock.mockReturnValue({
     sortedProviders: [],
     sensors: [],
     handleDragEnd: vi.fn(),
   });
 });
-
 describe("ProviderList Component", () => {
   const baseProps = {
     currentProviderId: "",
@@ -174,27 +153,6 @@ describe("ProviderList Component", () => {
     onDuplicate: vi.fn(),
     onOpenWebsite: vi.fn(),
   };
-
-  it.each([false, true])(
-    "keeps account login inside the add-provider flow with existing providers: %s",
-    (hasProvider) => {
-      const providers: Record<string, Provider> = hasProvider
-        ? {
-            custom: {
-              id: "custom",
-              name: "Custom",
-              settingsConfig: {},
-              meta: { liveConfigManaged: true },
-            },
-          }
-        : {};
-      renderWithQueryClient(
-        <ProviderList {...baseProps} appId="kimi" providers={providers} />,
-      );
-      expect(screen.queryByText("kimi.oauth.title")).not.toBeInTheDocument();
-    },
-  );
-
   function switchMode(
     overrides: Partial<SwitchModeProps> = {},
   ): SwitchModeProps {
@@ -223,18 +181,14 @@ describe("ProviderList Component", () => {
       ...overrides,
     };
   }
-
   it("should render skeleton placeholders when loading", () => {
     const { container } = renderWithQueryClient(
       <ProviderList {...baseProps} providers={{}} appId="claude" isLoading />,
     );
-
     expect(container.querySelectorAll(".border-dashed")).toHaveLength(3);
   });
-
   it("should show empty state and trigger create callback when no providers exist", () => {
     const handleCreate = vi.fn();
-
     renderWithQueryClient(
       <ProviderList
         {...baseProps}
@@ -243,7 +197,6 @@ describe("ProviderList Component", () => {
         onCreate={handleCreate}
       />,
     );
-
     expect(
       screen.getByRole("heading", { name: "provider.noProviders" }),
     ).toBeInTheDocument();
@@ -258,11 +211,55 @@ describe("ProviderList Component", () => {
       expect(button.className).toContain("border-border-strong");
       expect(button.className).not.toContain("bg-action");
     }
-
     fireEvent.click(addButton);
     expect(handleCreate).toHaveBeenCalledTimes(1);
   });
-
+  const serveOneUnreadableProvider = () =>
+    server.use(
+      http.post("http://tauri.local/get_unreadable_providers", () =>
+        HttpResponse.json([
+          {
+            id: "broken",
+            name: "Broken",
+            error: "供应商 broken 的 meta 无法解析",
+          },
+        ]),
+      ),
+    );
+  it("lists unreadable providers apart, even when no readable one is left", async () => {
+    serveOneUnreadableProvider();
+    renderWithQueryClient(
+      <ProviderList {...baseProps} providers={{}} appId="claude" />,
+    );
+    expect(
+      await screen.findByText("「Broken」的数据无法读取"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "provider.noProviders" }),
+    ).toBeInTheDocument();
+  });
+  it("lists unreadable providers apart next to the readable ones", async () => {
+    serveOneUnreadableProvider();
+    const provider = createProvider({ id: "a", name: "A" });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        providers={{ a: provider }}
+        appId="claude"
+      />,
+    );
+    expect(
+      await screen.findByText("「Broken」的数据无法读取"),
+    ).toBeInTheDocument();
+    expect(
+      providerCardRenderSpy.mock.calls.map(([p]) => p.provider.id),
+    ).toEqual(expect.arrayContaining(["a"]));
+  });
   it("renders in the order returned by useDragSort and wires the mode actions", () => {
     const providerA = createProvider({ id: "a", name: "A" });
     const providerB = createProvider({ id: "b", name: "B" });
@@ -270,13 +267,11 @@ describe("ProviderList Component", () => {
     const handleDelete = vi.fn();
     const handleDuplicate = vi.fn();
     const mode = switchMode({ directId: "b" });
-
     useDragSortMock.mockReturnValue({
       sortedProviders: [providerB, providerA],
       sensors: [],
       handleDragEnd: vi.fn(),
     });
-
     renderWithQueryClient(
       <ProviderList
         {...baseProps}
@@ -289,21 +284,18 @@ describe("ProviderList Component", () => {
         switchMode={mode}
       />,
     );
-
     expect(providerCardRenderSpy).toHaveBeenCalledTimes(2);
     expect(providerCardRenderSpy.mock.calls[0][0].provider.id).toBe("b");
     expect(providerCardRenderSpy.mock.calls[1][0].provider.id).toBe("a");
     expect(lastProps("b")?.isCurrent).toBe(true);
     expect(screen.getByTestId("drag-attr-b")).toHaveTextContent("b");
     expect(screen.getByTestId("drag-attr-a")).toHaveTextContent("a");
-
     // 直连那家显示「使用中」，其余是「切换」
     expect(screen.getByTestId("status-b")).toHaveTextContent(
       "providerCard.status.inUse",
     );
     fireEvent.click(screen.getByTestId("switch-a"));
     expect(mode.actions.switchDirect).toHaveBeenCalledWith(providerA);
-
     fireEvent.click(screen.getByTestId("edit-b"));
     fireEvent.click(screen.getByTestId("duplicate-b"));
     fireEvent.click(screen.getByTestId("delete-a"));
@@ -315,7 +307,6 @@ describe("ProviderList Component", () => {
       "claude",
     );
   });
-
   it("shows queue sections while failover is on", () => {
     const providerA = createProvider({ id: "a", name: "A" });
     const providerB = createProvider({ id: "b", name: "B" });
@@ -324,7 +315,6 @@ describe("ProviderList Component", () => {
       sensors: [],
       handleDragEnd: vi.fn(),
     });
-
     renderWithQueryClient(
       <ProviderList
         {...baseProps}
@@ -339,14 +329,12 @@ describe("ProviderList Component", () => {
         })}
       />,
     );
-
     expect(
       screen.getByRole("heading", { name: "providerCard.section.queue" }),
     ).toBeInTheDocument();
     expect(screen.getByTestId("queueRemove-b")).toBeInTheDocument();
     expect(screen.getByTestId("queueAdd-a")).toBeInTheDocument();
   });
-
   it("uses the additive layout for apps that keep several providers", async () => {
     const providerA = createProvider({ id: "a", name: "A" });
     const live = createProvider({ id: "live", name: "Live" });
@@ -362,7 +350,6 @@ describe("ProviderList Component", () => {
         HttpResponse.json(["live"]),
       ),
     );
-
     renderWithQueryClient(
       <ProviderList
         {...baseProps}
@@ -372,198 +359,11 @@ describe("ProviderList Component", () => {
         onRemoveFromConfig={onRemoveFromConfig}
       />,
     );
-
     fireEvent.click(await screen.findByTestId("remove-live"));
     expect(onRemoveFromConfig).toHaveBeenCalledWith(live);
     fireEvent.click(screen.getByTestId("add-a"));
     expect(onSwitch).toHaveBeenCalledWith(providerA);
   });
-
-  it.each(["mcode"] as const)(
-    "uses native membership to add and remove %s providers",
-    async (appId) => {
-      const saved = createProvider({
-        id: "saved",
-        name: "Saved",
-        meta: { liveConfigManaged: false },
-      });
-      const live = createProvider({
-        id: "live",
-        name: "Live",
-        meta: { liveConfigManaged: true },
-      });
-      const onSwitch = vi.fn();
-      const onRemoveFromConfig = vi.fn();
-      useDragSortMock.mockReturnValue({
-        sortedProviders: [saved, live],
-        sensors: [],
-        handleDragEnd: vi.fn(),
-      });
-      renderWithQueryClient(
-        <ProviderList
-          {...baseProps}
-          providers={{ saved, live }}
-          appId={appId}
-          onSwitch={onSwitch}
-          onRemoveFromConfig={onRemoveFromConfig}
-        />,
-      );
-      fireEvent.click(await screen.findByTestId("remove-live"));
-      expect(onRemoveFromConfig).toHaveBeenCalledWith(live);
-      fireEvent.click(screen.getByTestId("add-saved"));
-      expect(onSwitch).toHaveBeenCalledWith(saved);
-    },
-  );
-
-  it("adds, switches and removes Kimi providers and marks only the native default-model owner as in use", () => {
-    const current = createProvider({
-      id: "current",
-      name: "Current",
-      meta: { liveConfigManaged: true },
-    });
-    const other = createProvider({
-      id: "other",
-      name: "Other",
-      meta: { liveConfigManaged: true },
-    });
-    const saved = createProvider({
-      id: "saved",
-      name: "Saved",
-      meta: { liveConfigManaged: false },
-    });
-    const onSwitch = vi.fn();
-    const onSetAsDefault = vi.fn();
-    const onRemoveFromConfig = vi.fn();
-    useDragSortMock.mockReturnValue({
-      sortedProviders: [current, other, saved],
-      sensors: [],
-      handleDragEnd: vi.fn(),
-    });
-    const props = {
-      ...baseProps,
-      appId: "kimi" as const,
-      providers: { current, other, saved },
-      onSwitch,
-      onSetAsDefault,
-      onRemoveFromConfig,
-    };
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    const { rerender } = render(
-      <QueryClientProvider client={client}>
-        <ProviderList {...props} currentProviderId="current" />
-      </QueryClientProvider>,
-    );
-    expect(screen.getByTestId("status-current")).toHaveTextContent(
-      "providerCard.status.default",
-    );
-    expect(lastProps("current")?.presentation.tone).toBe("direct");
-    expect(lastProps("current")?.isCurrent).toBe(true);
-    expect(screen.queryByTestId("switch-current")).not.toBeInTheDocument();
-    expect(
-      lastProps("current")?.presentation.deleteDisabledReason,
-    ).toBeTruthy();
-    expect(
-      lastProps("current")?.presentation.buttons.find(
-        (button: { key: string }) => button.key === "remove",
-      )?.disabledReason,
-    ).toBeTruthy();
-    // 已添加的卡在「更多」菜单里「设为默认」；未添加的卡「添加」只写进配置
-    expect(screen.queryByTestId("switch-other")).not.toBeInTheDocument();
-    lastProps("other")
-      ?.presentation.menuItems.find(
-        (action: { key: string }) => action.key === "setDefault",
-      )
-      .onSelect();
-    expect(onSetAsDefault).toHaveBeenLastCalledWith(other, undefined);
-    expect(screen.queryByTestId("switch-saved")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByTestId("add-saved"));
-    expect(onSwitch).toHaveBeenLastCalledWith(saved);
-    fireEvent.click(screen.getByTestId("remove-other"));
-    expect(onRemoveFromConfig).toHaveBeenCalledWith(other);
-    rerender(
-      <QueryClientProvider client={client}>
-        <ProviderList {...props} currentProviderId="other" />
-      </QueryClientProvider>,
-    );
-    expect(screen.queryByTestId("status-current")).not.toBeInTheDocument();
-    expect(screen.getByTestId("status-other")).toHaveTextContent(
-      "providerCard.status.default",
-    );
-    expect(
-      lastProps("current")?.presentation.menuItems.map(
-        (action: { key: string }) => action.key,
-      ),
-    ).toEqual(["setDefault"]);
-  });
-
-  it("does not mark any Kimi provider as current when the native selection is missing", () => {
-    const provider = createProvider({
-      id: "live",
-      meta: { liveConfigManaged: true },
-    });
-    useDragSortMock.mockReturnValue({
-      sortedProviders: [provider],
-      sensors: [],
-      handleDragEnd: vi.fn(),
-    });
-    renderWithQueryClient(
-      <ProviderList
-        {...baseProps}
-        appId="kimi"
-        providers={{ live: provider }}
-      />,
-    );
-    expect(screen.queryByTestId("status-live")).not.toBeInTheDocument();
-    expect(
-      lastProps("live")?.presentation.menuItems.map(
-        (action: { key: string }) => action.key,
-      ),
-    ).toEqual(["setDefault"]);
-  });
-
-  it("marks the native Kimi OAuth card as official without marking API-key presets", () => {
-    const official = createProvider({
-      id: "managed:kimi-code",
-      name: "Kimi Official",
-      icon: "kimi",
-      settingsConfig: {
-        provider: { type: "kimi", oauth: { key: "oauth/kimi-code" } },
-        models: {},
-      },
-      meta: { liveConfigManaged: true },
-    });
-    const apiKey = createProvider({
-      id: "kimi-coding",
-      name: "Kimi For Coding",
-      category: "cn_official",
-      meta: { liveConfigManaged: true },
-    });
-    useDragSortMock.mockReturnValue({
-      sortedProviders: [official, apiKey],
-      sensors: [],
-      handleDragEnd: vi.fn(),
-    });
-    renderWithQueryClient(
-      <ProviderList
-        {...baseProps}
-        appId="kimi"
-        currentProviderId={official.id}
-        providers={{ [official.id]: official, [apiKey.id]: apiKey }}
-      />,
-    );
-    expect(lastProps(official.id)?.presentation.chips).toContainEqual({
-      key: "official",
-      label: "providerCard.chip.official",
-      tone: "outline",
-    });
-    expect(lastProps(official.id)?.presentation.status.label).toBe(
-      "providerCard.status.default",
-    );
-    expect(lastProps(apiKey.id)?.presentation.chips).toEqual([]);
-  });
-
   it.each([{ ctrlKey: true }, { metaKey: true }])(
     "keeps search in the list flow and restores cards on close (%o)",
     async (shortcut) => {
@@ -575,7 +375,6 @@ describe("ProviderList Component", () => {
         sensors: [],
         handleDragEnd: vi.fn(),
       });
-
       const { container } = renderWithQueryClient(
         <ProviderList
           {...baseProps}
@@ -585,7 +384,6 @@ describe("ProviderList Component", () => {
           onEdit={onEdit}
         />,
       );
-
       fireEvent.keyDown(window, { key: "f", ...shortcut });
       const input = screen.getByRole("textbox", { name: "Search providers" });
       // A body portal with fixed positioning covers the first card's actions.
@@ -600,18 +398,15 @@ describe("ProviderList Component", () => {
         screen.getByTestId("provider-card-alpha"),
       );
       await waitFor(() => expect(input).toHaveFocus());
-
       fireEvent.change(input, { target: { value: "beta" } });
       expect(
         screen.queryByTestId("provider-card-alpha"),
       ).not.toBeInTheDocument();
       fireEvent.click(screen.getByTestId("edit-beta"));
       expect(onEdit).toHaveBeenCalledWith(beta);
-
       fireEvent.keyDown(window, { key: "Escape" });
       await waitFor(() => expect(input).not.toBeInTheDocument());
       expect(screen.getByTestId("provider-card-alpha")).toBeInTheDocument();
-
       fireEvent.keyDown(window, { key: "f", ...shortcut });
       const reopened = screen.getByRole("textbox", {
         name: "Search providers",
@@ -625,7 +420,6 @@ describe("ProviderList Component", () => {
       await waitFor(() => expect(reopened).not.toBeInTheDocument());
     },
   );
-
   it.each([
     { shortcut: { ctrlKey: true }, controlled: false },
     { shortcut: { metaKey: true }, controlled: false },
@@ -671,7 +465,6 @@ describe("ProviderList Component", () => {
       fireEvent.change(input, { target: { value: "Provider" } });
       const scrollIntoView = vi.fn();
       input.scrollIntoView = scrollIntoView;
-
       // jsdom has no layout: model scrolling away and assert the browser scroll request.
       const scrollContainer = screen.getByTestId("scroll-container");
       for (let invocation = 1; invocation <= 2; invocation++) {
@@ -693,7 +486,6 @@ describe("ProviderList Component", () => {
       }
     },
   );
-
   it.each(["input", "textarea", "select", "contenteditable"])(
     "does not steal the search shortcut from another %s",
     async (targetType) => {
@@ -740,7 +532,6 @@ describe("ProviderList Component", () => {
       }
     },
   );
-
   it("renders the search field into the mode row slot instead of the list", async () => {
     const alpha = createProvider({ id: "alpha", name: "Alpha Labs" });
     useDragSortMock.mockReturnValue({
@@ -760,7 +551,6 @@ describe("ProviderList Component", () => {
           searchSlot={slot}
         />,
       );
-
       fireEvent.keyDown(window, { key: "f", ctrlKey: true });
       const input = screen.getByRole("textbox", { name: "Search providers" });
       expect(slot).toContainElement(input);
@@ -770,7 +560,6 @@ describe("ProviderList Component", () => {
       slot.remove();
     }
   });
-
   it("renders nothing for a mode row slot that is not mounted yet", () => {
     const alpha = createProvider({ id: "alpha", name: "Alpha Labs" });
     useDragSortMock.mockReturnValue({
@@ -788,13 +577,11 @@ describe("ProviderList Component", () => {
         searchOpen
       />,
     );
-
     expect(
       screen.queryByRole("textbox", { name: "Search providers" }),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("provider-card-alpha")).toBeInTheDocument();
   });
-
   it("puts the search field beside the first section title and keeps it while no provider matches", async () => {
     const live = createProvider({ id: "live", name: "Live Labs" });
     const other = createProvider({ id: "other", name: "Other Works" });
@@ -808,7 +595,6 @@ describe("ProviderList Component", () => {
         HttpResponse.json(["live"]),
       ),
     );
-
     renderWithQueryClient(
       <ProviderList
         {...baseProps}
@@ -816,7 +602,6 @@ describe("ProviderList Component", () => {
         appId="opencode"
       />,
     );
-
     const heading = await screen.findByRole("heading", {
       name: "providerCard.section.added",
     });
@@ -829,7 +614,6 @@ describe("ProviderList Component", () => {
       screen.getAllByRole("heading", { name: "providerCard.section.added" }),
     ).toHaveLength(1);
     await waitFor(() => expect(input).toHaveFocus());
-
     fireEvent.change(input, { target: { value: "nothing-matches" } });
     expect(screen.getByText("No providers match your search.")).toBeVisible();
     // 结果清空时输入框还是同一个节点，焦点不丢
@@ -838,53 +622,14 @@ describe("ProviderList Component", () => {
     );
     expect(input).toHaveFocus();
   });
-
-  it("adds the search row only while searching when the list has no section title", async () => {
-    const desk = createProvider({ id: "desk", name: "Desk Relay" });
-    useDragSortMock.mockReturnValue({
-      sortedProviders: [desk],
-      sensors: [],
-      handleDragEnd: vi.fn(),
-    });
-
-    const { container } = renderWithQueryClient(
-      <ProviderList
-        {...baseProps}
-        providers={{ desk }}
-        appId="claude-desktop"
-        switchMode={switchMode()}
-      />,
-    );
-
-    const list = container.firstElementChild!;
-    expect(list.firstElementChild).toContainElement(
-      screen.getByTestId("provider-card-desk"),
-    );
-
-    fireEvent.keyDown(window, { key: "f", ctrlKey: true });
-    const input = screen.getByRole("textbox", { name: "Search providers" });
-    expect(list.firstElementChild).toContainElement(input);
-    expect(list.firstElementChild?.nextElementSibling).toContainElement(
-      screen.getByTestId("provider-card-desk"),
-    );
-
-    fireEvent.keyDown(window, { key: "Escape" });
-    await waitFor(() => expect(input).not.toBeInTheDocument());
-    expect(list.firstElementChild).toContainElement(
-      screen.getByTestId("provider-card-desk"),
-    );
-  });
-
   it("filters providers with the search input", () => {
     const providerAlpha = createProvider({ id: "alpha", name: "Alpha Labs" });
     const providerBeta = createProvider({ id: "beta", name: "Beta Works" });
-
     useDragSortMock.mockReturnValue({
       sortedProviders: [providerAlpha, providerBeta],
       sensors: [],
       handleDragEnd: vi.fn(),
     });
-
     renderWithQueryClient(
       <ProviderList
         providers={{ alpha: providerAlpha, beta: providerBeta }}
@@ -897,7 +642,6 @@ describe("ProviderList Component", () => {
         onOpenWebsite={vi.fn()}
       />,
     );
-
     fireEvent.keyDown(window, { key: "f", metaKey: true });
     const searchInput = screen.getByPlaceholderText(
       "Search name, notes, or URL...",
@@ -905,11 +649,9 @@ describe("ProviderList Component", () => {
     // Initially both providers are rendered
     expect(screen.getByTestId("provider-card-alpha")).toBeInTheDocument();
     expect(screen.getByTestId("provider-card-beta")).toBeInTheDocument();
-
     fireEvent.change(searchInput, { target: { value: "beta" } });
     expect(screen.queryByTestId("provider-card-alpha")).not.toBeInTheDocument();
     expect(screen.getByTestId("provider-card-beta")).toBeInTheDocument();
-
     fireEvent.change(searchInput, { target: { value: "gamma" } });
     expect(screen.queryByTestId("provider-card-alpha")).not.toBeInTheDocument();
     expect(screen.queryByTestId("provider-card-beta")).not.toBeInTheDocument();
@@ -917,7 +659,6 @@ describe("ProviderList Component", () => {
       screen.getByText("No providers match your search."),
     ).toBeInTheDocument();
   });
-
   it("matches the API address and stops filtering once the panel closes", () => {
     const relay = createProvider({
       id: "relay",
@@ -927,13 +668,11 @@ describe("ProviderList Component", () => {
       },
     });
     const other = createProvider({ id: "other", name: "Other" });
-
     useDragSortMock.mockReturnValue({
       sortedProviders: [relay, other],
       sensors: [],
       handleDragEnd: vi.fn(),
     });
-
     const props = {
       providers: { relay, other },
       currentProviderId: "",
@@ -958,433 +697,17 @@ describe("ProviderList Component", () => {
       </QueryClientProvider>
     );
     const { rerender } = render(ui(true));
-
     fireEvent.change(
       screen.getByPlaceholderText("Search name, notes, or URL..."),
       { target: { value: "relay-example" } },
     );
     expect(screen.getByTestId("provider-card-relay")).toBeInTheDocument();
     expect(screen.queryByTestId("provider-card-other")).not.toBeInTheDocument();
-
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onSearchOpenChange).toHaveBeenCalledWith(false);
-
     rerender(ui(false));
     expect(screen.getByTestId("provider-card-other")).toBeInTheDocument();
   });
-
-  it("does not manufacture a Pi selection summary card", async () => {
-    server.use(
-      http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
-        HttpResponse.json({
-          enabledProviderIds: [],
-        }),
-      ),
-    );
-
-    renderWithQueryClient(
-      <ProviderList
-        providers={{}}
-        currentProviderId=""
-        appId="pi"
-        onSwitch={vi.fn()}
-        onEdit={vi.fn()}
-        onDelete={vi.fn()}
-        onDuplicate={vi.fn()}
-        onOpenWebsite={vi.fn()}
-        onCreate={vi.fn()}
-      />,
-    );
-
-    expect(await screen.findByText("pi.empty.title")).toBeInTheDocument();
-    expect(providerCardRenderSpy).not.toHaveBeenCalled();
-    expect(
-      screen.queryByRole("button", { name: "provider.addProvider" }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("does not expose proxy or failover actions on Pi provider cards", async () => {
-    const currentProvider = createProvider({
-      id: "current-pi",
-      name: "Current Pi",
-    });
-    const inactiveProvider = createProvider({
-      id: "inactive-pi",
-      name: "Inactive Pi",
-    });
-    useDragSortMock.mockReturnValue({
-      sortedProviders: [currentProvider, inactiveProvider],
-      sensors: [],
-      handleDragEnd: vi.fn(),
-    });
-    server.use(
-      http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
-        HttpResponse.json({
-          enabledProviderIds: ["current-pi", "inactive-pi"],
-        }),
-      ),
-    );
-
-    renderWithQueryClient(
-      <ProviderList
-        providers={{
-          [currentProvider.id]: currentProvider,
-          [inactiveProvider.id]: inactiveProvider,
-        }}
-        currentProviderId="current-pi"
-        appId="pi"
-        onSwitch={vi.fn()}
-        onEdit={vi.fn()}
-        onDelete={vi.fn()}
-        onDuplicate={vi.fn()}
-        onOpenWebsite={vi.fn()}
-      />,
-    );
-
-    await waitFor(() => {
-      const currentCards = providerCardRenderSpy.mock.calls
-        .map(([props]) => props)
-        .filter((props) => props.provider.id === "current-pi");
-      const inactiveCards = providerCardRenderSpy.mock.calls
-        .map(([props]) => props)
-        .filter((props) => props.provider.id === "inactive-pi");
-      expect(currentCards).not.toHaveLength(0);
-      expect(inactiveCards).not.toHaveLength(0);
-      // Pi 只有启用 / 停用，没有路由、队列、健康状态
-      for (const props of [currentCards.at(-1), inactiveCards.at(-1)]) {
-        expect(props.isCurrent).toBe(false);
-        expect(props.presentation.showHealth).toBeFalsy();
-        expect(props.presentation.move).toBeUndefined();
-        expect(
-          props.presentation.buttons.map((button: any) => button.key),
-        ).toEqual(["remove"]);
-      }
-    });
-  });
-
-  it("derives Pi membership only from the native provider ID list", async () => {
-    const provider = createProvider({
-      id: "drifted-pi",
-      name: "Saved Pi",
-      settingsConfig: { models: [{ id: "saved-model" }] },
-    });
-    useDragSortMock.mockReturnValue({
-      sortedProviders: [provider],
-      sensors: [],
-      handleDragEnd: vi.fn(),
-    });
-    server.use(
-      http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
-        HttpResponse.json({
-          enabledProviderIds: ["drifted-pi"],
-        }),
-      ),
-    );
-
-    renderWithQueryClient(
-      <ProviderList
-        providers={{ [provider.id]: provider }}
-        currentProviderId=""
-        appId="pi"
-        onSwitch={vi.fn()}
-        onEdit={vi.fn()}
-        onDelete={vi.fn()}
-        onDuplicate={vi.fn()}
-        onOpenWebsite={vi.fn()}
-      />,
-    );
-
-    await waitFor(() => {
-      const latestCardProps = providerCardRenderSpy.mock.calls
-        .map(([props]) => props)
-        .filter((props) => props.provider.id === provider.id)
-        .at(-1);
-      expect(latestCardProps).toMatchObject({
-        isCurrent: false,
-        presentation: { buttons: [{ key: "remove" }] },
-      });
-      expect(latestCardProps.presentation.deleteDisabledReason).toBeUndefined();
-    });
-  });
-
-  it("sets an inactive Pi provider through the ordinary provider action", async () => {
-    const provider = createProvider({
-      id: "inactive-pi",
-      name: "Inactive Pi",
-      settingsConfig: {
-        models: [
-          { id: "model-a", name: "Model A" },
-          { id: "model-b", name: "Model B" },
-        ],
-      },
-    });
-    const onSwitch = vi.fn();
-    useDragSortMock.mockReturnValue({
-      sortedProviders: [provider],
-      sensors: [],
-      handleDragEnd: vi.fn(),
-    });
-    server.use(
-      http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
-        HttpResponse.json({
-          enabledProviderIds: ["other-pi"],
-        }),
-      ),
-    );
-
-    renderWithQueryClient(
-      <ProviderList
-        providers={{ [provider.id]: provider }}
-        currentProviderId=""
-        appId="pi"
-        onSwitch={onSwitch}
-        onEdit={vi.fn()}
-        onDelete={vi.fn()}
-        onDuplicate={vi.fn()}
-        onOpenWebsite={vi.fn()}
-      />,
-    );
-
-    // 读到 Pi 当前配置之前不能改
-    const enable = await screen.findByTestId("add-inactive-pi");
-    await waitFor(() => expect(enable).toBeEnabled());
-    fireEvent.click(enable);
-    expect(onSwitch).toHaveBeenCalledWith(provider);
-  });
-
-  it("does not use legacy metadata when Pi's authoritative state is unavailable", async () => {
-    const provider = createProvider({
-      id: "legacy-pi",
-      name: "Legacy Pi",
-      meta: { liveConfigManaged: true },
-    });
-    useDragSortMock.mockReturnValue({
-      sortedProviders: [provider],
-      sensors: [],
-      handleDragEnd: vi.fn(),
-    });
-    server.use(
-      http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
-        HttpResponse.json("current state unavailable", { status: 500 }),
-      ),
-    );
-
-    renderWithQueryClient(
-      <ProviderList
-        providers={{ [provider.id]: provider }}
-        currentProviderId=""
-        appId="pi"
-        onSwitch={vi.fn()}
-        onEdit={vi.fn()}
-        onDelete={vi.fn()}
-        onDuplicate={vi.fn()}
-        onOpenWebsite={vi.fn()}
-      />,
-    );
-
-    await screen.findByText("无法读取 Pi 当前配置");
-    await waitFor(() => {
-      const latestCardProps = providerCardRenderSpy.mock.calls
-        .map(([props]) => props)
-        .filter((props) => props.provider.id === provider.id)
-        .at(-1);
-      expect(latestCardProps).toMatchObject({
-        isCurrent: false,
-        presentation: { buttons: [{ key: "add" }] },
-      });
-      expect(latestCardProps.presentation.deleteDisabledReason).toBe(
-        "pi.current.stateUnavailableHint",
-      );
-    });
-  });
-
-  describe("Hermes providers from the providers: dict", () => {
-    const dictProvider = createProvider({
-      id: "dict-provider",
-      name: "Dict Provider",
-      settingsConfig: { _cc_source: "providers_dict" },
-    });
-    const latestPresentation = () =>
-      providerCardRenderSpy.mock.calls
-        .map(([props]) => props)
-        .filter((props) => props.provider.id === dictProvider.id)
-        .at(-1)?.presentation;
-
-    function renderHermes(liveIds: () => Response) {
-      useDragSortMock.mockReturnValue({
-        sortedProviders: [dictProvider],
-        sensors: [],
-        handleDragEnd: vi.fn(),
-      });
-      server.use(
-        http.post(`${TAURI_ENDPOINT}/get_hermes_live_provider_ids`, liveIds),
-      );
-      return renderWithQueryClient(
-        <ProviderList
-          providers={{ [dictProvider.id]: dictProvider }}
-          currentProviderId=""
-          appId="hermes"
-          onSwitch={vi.fn()}
-          onEdit={vi.fn()}
-          onDelete={vi.fn()}
-          onDuplicate={vi.fn()}
-          onOpenWebsite={vi.fn()}
-        />,
-      );
-    }
-
-    it("can be deleted once Hermes no longer defines them", async () => {
-      renderHermes(() => HttpResponse.json([]));
-
-      await waitFor(() =>
-        expect(latestPresentation()).toMatchObject({
-          editDisabledReason: undefined,
-          deleteDisabledReason: undefined,
-        }),
-      );
-    });
-
-    it("stay read-only while Hermes still defines them", async () => {
-      renderHermes(() => HttpResponse.json([dictProvider.id]));
-
-      await waitFor(() =>
-        expect(latestPresentation()?.deleteDisabledReason).toBe(
-          "provider.managedByHermesHint",
-        ),
-      );
-    });
-
-    it("stay read-only when the Hermes config cannot be read", async () => {
-      renderHermes(() =>
-        HttpResponse.json("Failed to parse Hermes config as YAML", {
-          status: 500,
-        }),
-      );
-
-      await screen.findByText("无法读取 apps.hermes 配置文件");
-      await waitFor(() =>
-        expect(latestPresentation()?.deleteDisabledReason).toBe(
-          "provider.managedByHermesHint",
-        ),
-      );
-    });
-
-    it("lock again when re-reading the Hermes config fails", async () => {
-      const { queryClient } = renderHermes(() => HttpResponse.json([]));
-      await waitFor(() =>
-        expect(latestPresentation()).toMatchObject({
-          deleteDisabledReason: undefined,
-        }),
-      );
-
-      // 刷新失败时 React Query 保留旧的 []，不能据此继续放开
-      server.use(
-        http.post(`${TAURI_ENDPOINT}/get_hermes_live_provider_ids`, () =>
-          HttpResponse.json("Failed to parse Hermes config as YAML", {
-            status: 500,
-          }),
-        ),
-      );
-      await queryClient.invalidateQueries({
-        queryKey: hermesKeys.liveProviderIds,
-      });
-
-      await waitFor(() =>
-        expect(latestPresentation()?.deleteDisabledReason).toBe(
-          "provider.managedByHermesHint",
-        ),
-      );
-    });
-  });
-
-  it("warns when an additive app's live config cannot be read", async () => {
-    server.use(
-      http.post(`${TAURI_ENDPOINT}/get_hermes_live_provider_ids`, () =>
-        HttpResponse.json("Failed to parse Hermes config as YAML", {
-          status: 500,
-        }),
-      ),
-    );
-
-    renderWithQueryClient(
-      <ProviderList
-        providers={{}}
-        currentProviderId=""
-        appId="hermes"
-        onSwitch={vi.fn()}
-        onEdit={vi.fn()}
-        onDelete={vi.fn()}
-        onDuplicate={vi.fn()}
-        onOpenWebsite={vi.fn()}
-      />,
-    );
-
-    await screen.findByText("无法读取 apps.hermes 配置文件");
-    expect(
-      screen.getByText(/Failed to parse Hermes config as YAML/),
-    ).toBeInTheDocument();
-  });
-
-  it("keeps Pi provider creation on the page-level add action", async () => {
-    server.use(
-      http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
-        HttpResponse.json({
-          enabledProviderIds: [],
-        }),
-      ),
-    );
-
-    renderWithQueryClient(
-      <ProviderList
-        providers={{}}
-        currentProviderId=""
-        appId="pi"
-        onSwitch={vi.fn()}
-        onEdit={vi.fn()}
-        onDelete={vi.fn()}
-        onDuplicate={vi.fn()}
-        onOpenWebsite={vi.fn()}
-        onCreate={vi.fn()}
-      />,
-    );
-
-    await screen.findByText("pi.empty.title");
-    expect(
-      screen.queryByRole("button", { name: "provider.importCurrent" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "provider.addProvider" }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("does not tell MiniMax Code users to click a missing import button", async () => {
-    renderWithQueryClient(
-      <ProviderList
-        providers={{}}
-        currentProviderId=""
-        appId="mcode"
-        onSwitch={vi.fn()}
-        onEdit={vi.fn()}
-        onDelete={vi.fn()}
-        onDuplicate={vi.fn()}
-        onOpenWebsite={vi.fn()}
-        onCreate={vi.fn()}
-      />,
-    );
-
-    await screen.findByText("mcode.empty.title");
-    expect(screen.getByText("mcode.empty.description")).toBeInTheDocument();
-    expect(
-      screen.queryByText("provider.noProvidersDescription"),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "provider.importCurrent" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "provider.addProvider" }),
-    ).toBeInTheDocument();
-  });
-
   it("shows the signed-in DeepSeek account as an official card under Added", async () => {
     dshAccountStatusMock.mockReturnValue({
       data: { signedIn: true, expired: false, profile: { name: "Jason" } },
@@ -1402,7 +725,6 @@ describe("ProviderList Component", () => {
         onCreate={vi.fn()}
       />,
     );
-
     expect(await screen.findByTestId("dsh-account-card")).toHaveTextContent(
       "Jason",
     );
@@ -1414,7 +736,6 @@ describe("ProviderList Component", () => {
       screen.queryByRole("button", { name: "provider.addProvider" }),
     ).not.toBeInTheDocument();
   });
-
   it("keeps the empty state and no account card while signed out of DeepSeek", async () => {
     dshAccountStatusMock.mockReturnValue({
       data: { signedIn: false, expired: false, profile: null },
@@ -1432,7 +753,6 @@ describe("ProviderList Component", () => {
         onCreate={vi.fn()}
       />,
     );
-
     expect(
       await screen.findByRole("button", { name: "provider.addProvider" }),
     ).toBeInTheDocument();

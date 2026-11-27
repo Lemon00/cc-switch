@@ -1,5 +1,4 @@
 import { parse as parseToml } from "smol-toml";
-
 /**
  * 将常见的中文/全角/弯引号统一为 ASCII 引号，以避免 TOML 解析失败。
  * - 双引号：” “ „ ‟ ＂ → "
@@ -16,17 +15,14 @@ export const normalizeQuotes = (text: string): string => {
       .replace(/[‘’＇]/g, "'")
   );
 };
-
 const SMART_DOUBLE_QUOTES = new Set(["“", "”", "„", "‟", "＂"]);
 const SMART_SINGLE_QUOTES = new Set(["‘", "’", "＇"]);
-
 /** 返回字符所属的引号族（ASCII 引号或弯/全角引号），非引号返回 null */
 const quoteFamily = (ch: string): '"' | "'" | null => {
   if (ch === '"' || SMART_DOUBLE_QUOTES.has(ch)) return '"';
   if (ch === "'" || SMART_SINGLE_QUOTES.has(ch)) return "'";
   return null;
 };
-
 /**
  * 扫描 TOML 文本，把语法位置（字符串定界符）的弯/全角引号换成 ASCII 引号。
  * - 字符串外的弯引号视为定界符，换成 ASCII 并开启字符串；
@@ -42,10 +38,8 @@ const scanTomlQuotes = (text: string, lenient: boolean): string => {
   let out = "";
   let i = 0;
   const n = text.length;
-
   while (i < n) {
     const ch = text[i];
-
     if (ch === "#") {
       const end = text.indexOf("\n", i);
       const stop = end === -1 ? n : end;
@@ -53,14 +47,12 @@ const scanTomlQuotes = (text: string, lenient: boolean): string => {
       i = stop;
       continue;
     }
-
     const family = quoteFamily(ch);
     if (!family) {
       out += ch;
       i += 1;
       continue;
     }
-
     // 开启字符串：判断是否为三引号（多行字符串）
     const multiline =
       i + 2 < n &&
@@ -70,15 +62,16 @@ const scanTomlQuotes = (text: string, lenient: boolean): string => {
     const openedBySmart = text.slice(i, i + openLen) !== family.repeat(openLen);
     const bodyStart = i + openLen;
     out += family.repeat(openLen);
-
     const scan = (
       acceptSmart: boolean,
-    ): { body: string; next: number } | null => {
+    ): {
+      body: string;
+      next: number;
+    } | null => {
       let body = "";
       let j = bodyStart;
       const isCloser = (c: string) =>
         c === family || (acceptSmart && quoteFamily(c) === family);
-
       while (j < n) {
         const c = text[j];
         if (
@@ -112,7 +105,6 @@ const scanTomlQuotes = (text: string, lenient: boolean): string => {
       }
       return null;
     };
-
     const acceptSmart = lenient || openedBySmart;
     const result = scan(acceptSmart) ?? (acceptSmart ? null : scan(true));
     if (result) {
@@ -120,17 +112,14 @@ const scanTomlQuotes = (text: string, lenient: boolean): string => {
       i = result.next;
       continue;
     }
-
     // 未闭合：原样输出到行尾（多行字符串到文末），交给解析器报错
     const end = multiline ? n : text.indexOf("\n", bodyStart);
     const stop = end === -1 ? n : end;
     out += text.slice(bodyStart, stop);
     i = stop;
   }
-
   return out;
 };
-
 const parsesAsToml = (text: string): boolean => {
   try {
     parseToml(text);
@@ -139,7 +128,6 @@ const parsesAsToml = (text: string): boolean => {
     return false;
   }
 };
-
 /**
  * 专用于 TOML 文本的归一化：只把语法位置的弯/全角引号换成 ASCII 引号，合法字符串
  * 内部的内容原样保留（#8559）。严格结果解析不通过、宽松结果（字符串里的同族弯引号
@@ -147,7 +135,6 @@ const parsesAsToml = (text: string): boolean => {
  */
 export const normalizeTomlText = (text: string): string => {
   if (!text || !/[“”„‟＂‘’＇]/.test(text)) return text;
-
   const strict = scanTomlQuotes(text, false);
   if (parsesAsToml(strict)) return strict;
   const lenient = scanTomlQuotes(text, true);

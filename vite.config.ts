@@ -17,6 +17,9 @@ export default defineConfig(({ command }) => ({
     outDir: "../dist",
     emptyOutDir: true,
     rollupOptions: {
+      // Let Rollup split shared dependencies along the actual import graph.
+      // Manual feature chunks also captured clsx/CommonJS helpers, forcing the
+      // main entry to preload Recharts despite UsagePage being lazy.
       // 托盘面板是单独的入口，不加载主界面
       input: {
         main: path.resolve(__dirname, "src/index.html"),

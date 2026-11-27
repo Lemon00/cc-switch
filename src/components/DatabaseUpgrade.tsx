@@ -1,21 +1,20 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
+import { Button } from "@/components/ui/button";
+import { cleanupTauriListener } from "@/lib/tauriEventCleanup";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { exit } from "@tauri-apps/plugin-process";
 import {
+  AlertTriangle,
   Database,
   Download,
-  RefreshCw,
   ExternalLink,
   FolderOpen,
   Loader2,
-  AlertTriangle,
+  RefreshCw,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 const RELEASES_URL = "https://github.com/Lemon00/cc-switch/releases";
-
 interface DatabaseUpgradeProps {
   payload: {
     path?: string;
@@ -25,19 +24,16 @@ interface DatabaseUpgradeProps {
     supported_version?: number;
   };
 }
-
 // checking: 启动时检查是否有可用更新
 // upgradable: 有可用更新，升级应用即可解决
 // incompatible: 已是最新版本但数据库仍过新（可能来自第三方客户端），升级无法解决
 // updating: 正在下载/安装更新
 // error: 升级过程出错
 type Phase = "checking" | "upgradable" | "incompatible" | "updating" | "error";
-
 interface DownloadProgress {
   downloaded: number;
   total: number | null;
 }
-
 /**
  * 数据库版本过新（应用过旧）时的应用内恢复界面。
  *
@@ -53,10 +49,15 @@ export function DatabaseUpgrade({ payload }: DatabaseUpgradeProps) {
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const unlistenRef = useRef<(() => void) | null>(null);
-
+  const mountedRef = useRef(false);
+  const upgradingRef = useRef(false);
+  const stopListening = useCallback(() => {
+    const stop = unlistenRef.current;
+    unlistenRef.current = null;
+    stop?.();
+  }, []);
   const dbVersion = payload.db_version;
   const supportedVersion = payload.supported_version;
-
   // 启动时检查可用更新，决定 upgradable / incompatible
   useEffect(() => {
     let cancelled = false;
@@ -81,46 +82,69 @@ export function DatabaseUpgrade({ payload }: DatabaseUpgradeProps) {
       cancelled = true;
     };
   }, []);
-
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
-      unlistenRef.current?.();
+      mountedRef.current = false;
+      stopListening();
     };
-  }, []);
-
+  }, [stopListening]);
   const startUpgrade = useCallback(async () => {
+    if (upgradingRef.current || !mountedRef.current) return;
+    upgradingRef.current = true;
     setPhase("updating");
     setProgress(null);
     setErrorMsg(null);
     try {
-      unlistenRef.current?.();
-      unlistenRef.current = await listen<DownloadProgress>(
+      stopListening();
+      let listening = true;
+      const off = await listen<DownloadProgress>(
         "update-download-progress",
-        (e) => setProgress(e.payload),
+        (e) => {
+          if (listening && mountedRef.current) setProgress(e.payload);
+        },
       );
+      const stop = () => {
+        // IPC 清理失败或事件已排队时，旧订阅也不能再更新后续重试的进度。
+        listening = false;
+        cleanupTauriListener(off, "update-download-progress");
+      };
+      if (!mountedRef.current) {
+        stop();
+        return;
+      }
+      unlistenRef.current = stop;
       // 成功时后端会下载+安装+重启，不会返回；返回 false 表示无可用更新。
       const updating = await invoke<boolean>("install_update_and_restart");
-      unlistenRef.current?.();
-      unlistenRef.current = null;
-      if (!updating) {
+      if (!updating && mountedRef.current) {
         // 竞态：检查时有更新、安装时已无 → 按不兼容处理
         setPhase("incompatible");
       }
       // updating === true：应用即将重启，保持 updating 态直到进程退出。
     } catch (e) {
-      unlistenRef.current?.();
-      unlistenRef.current = null;
-      setErrorMsg(e instanceof Error ? e.message : String(e));
-      setPhase("error");
+      if (mountedRef.current) {
+        setErrorMsg(e instanceof Error ? e.message : String(e));
+        setPhase("error");
+      }
+    } finally {
+      stopListening();
+      upgradingRef.current = false;
     }
-  }, []);
-
+  }, [stopListening]);
+  const runRecoveryAction = async (action: () => Promise<unknown>) => {
+    setErrorMsg(null);
+    try {
+      await action();
+    } catch (error) {
+      if (mountedRef.current)
+        setErrorMsg(error instanceof Error ? error.message : String(error));
+    }
+  };
   const percent =
     progress && progress.total && progress.total > 0
       ? Math.min(100, Math.round((progress.downloaded / progress.total) * 100))
       : null;
   const fmtMB = (n: number) => (n / 1024 / 1024).toFixed(1);
-
   const isIncompatible = phase === "incompatible";
   const accent = isIncompatible
     ? {
@@ -132,7 +156,6 @@ export function DatabaseUpgrade({ payload }: DatabaseUpgradeProps) {
         Icon: Database,
       };
   const AccentIcon = accent.Icon;
-
   return (
     <div className="flex min-h-screen items-center justify-center bg-surface p-6 text-fg-1">
       <div className="w-full max-w-lg space-y-5 rounded-2xl border border-border/60 bg-surface p-7 shadow-xl">
@@ -223,9 +246,7 @@ export function DatabaseUpgrade({ payload }: DatabaseUpgradeProps) {
             </div>
             <div className="h-2 w-full overflow-hidden rounded-full bg-subtle">
               <div
-                className={`h-full rounded-full bg-warning transition-all duration-200 ${
-                  percent === null ? "w-1/3 animate-pulse" : ""
-                }`}
+                className={`h-full rounded-full bg-warning transition-all duration-200 ${percent === null ? "w-1/3 animate-pulse" : ""}`}
                 style={percent === null ? undefined : { width: `${percent}%` }}
               />
             </div>
@@ -238,8 +259,11 @@ export function DatabaseUpgrade({ payload }: DatabaseUpgradeProps) {
           </div>
         )}
 
-        {phase === "error" && errorMsg && (
-          <p className="rounded-lg border border-transparent bg-danger-soft p-3 text-sm text-danger-text">
+        {errorMsg && (
+          <p
+            role="alert"
+            className="rounded-lg border border-transparent bg-danger-soft p-3 text-sm text-danger-text"
+          >
             {errorMsg}
           </p>
         )}
@@ -266,7 +290,9 @@ export function DatabaseUpgrade({ payload }: DatabaseUpgradeProps) {
               variant="outline"
               className="gap-2"
               onClick={() =>
-                void invoke("open_external", { url: RELEASES_URL })
+                void runRecoveryAction(() =>
+                  invoke("open_external", { url: RELEASES_URL }),
+                )
               }
             >
               <ExternalLink className="h-4 w-4" />
@@ -277,7 +303,9 @@ export function DatabaseUpgrade({ payload }: DatabaseUpgradeProps) {
           <Button
             variant="outline"
             className="gap-2"
-            onClick={() => void invoke("open_app_config_folder")}
+            onClick={() =>
+              void runRecoveryAction(() => invoke("open_app_config_folder"))
+            }
             disabled={phase === "updating"}
           >
             <FolderOpen className="h-4 w-4" />
@@ -287,7 +315,7 @@ export function DatabaseUpgrade({ payload }: DatabaseUpgradeProps) {
           <Button
             variant="ghost"
             className="ml-auto text-fg-2"
-            onClick={() => void exit(0)}
+            onClick={() => void runRecoveryAction(() => exit(0))}
             disabled={phase === "updating"}
           >
             {t("dbUpgrade.quit", "退出")}
@@ -297,5 +325,4 @@ export function DatabaseUpgrade({ payload }: DatabaseUpgradeProps) {
     </div>
   );
 }
-
 export default DatabaseUpgrade;

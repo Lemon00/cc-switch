@@ -11,7 +11,7 @@
 use crate::config::get_claude_config_dir;
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
-use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
+use crate::proxy::usage::calculator::ModelPricing;
 use crate::proxy::usage::parser::{claude_cache_creation_1h_tokens, TokenUsage};
 use crate::services::usage_stats::{
     effective_usage_log_filter, find_model_pricing, has_matching_proxy_usage_log, DedupKey,
@@ -128,43 +128,13 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
     );
     merge_sync_step(
         &mut result,
-        "Gemini",
-        crate::services::session_usage_gemini::sync_gemini_usage(db),
-    );
-    merge_sync_step(
-        &mut result,
         "OpenCode",
         crate::services::session_usage_opencode::sync_opencode_usage(db),
     );
     merge_sync_step(
         &mut result,
-        "Grok Build",
-        crate::services::session_usage_grokbuild::sync_grokbuild_usage(db),
-    );
-    merge_sync_step(
-        &mut result,
-        "Pi",
-        crate::services::session_usage_pi::sync_pi_usage(db),
-    );
-    merge_sync_step(
-        &mut result,
-        "Oh My Pi",
-        crate::services::session_usage_omp::sync_omp_usage(db),
-    );
-    merge_sync_step(
-        &mut result,
-        "MCode",
-        crate::services::session_usage_mcode::sync_mcode_usage(db),
-    );
-    merge_sync_step(
-        &mut result,
         "Antigravity",
         crate::services::session_usage_agy::sync_agy_usage(db),
-    );
-    merge_sync_step(
-        &mut result,
-        "Kimi Code",
-        crate::services::session_usage_kimi::sync_kimi_usage(db),
     );
     // Web 与 Desktop 共用 `$DSH_HOME/sessions`，一次扫描覆盖两端
     merge_sync_step(
@@ -776,19 +746,23 @@ fn sync_single_file(
             input_tokens: usage
                 .get("input_tokens")
                 .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32,
+                .unwrap_or(0)
+                .min(u32::MAX as u64) as u32,
             output_tokens: usage
                 .get("output_tokens")
                 .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32,
+                .unwrap_or(0)
+                .min(u32::MAX as u64) as u32,
             cache_read_tokens: usage
                 .get("cache_read_input_tokens")
                 .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32,
+                .unwrap_or(0)
+                .min(u32::MAX as u64) as u32,
             cache_creation_tokens: usage
                 .get("cache_creation_input_tokens")
                 .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32,
+                .unwrap_or(0)
+                .min(u32::MAX as u64) as u32,
             cache_creation_1h_tokens: claude_cache_creation_1h_tokens(usage),
             stop_reason: message
                 .get("stop_reason")
@@ -1096,20 +1070,15 @@ fn session_costs(
         model: Some(msg.model.clone()),
         message_id: None,
     };
-    match pricing_cache.get(conn, &msg.model) {
-        Some(pricing) => {
-            let cost = CostCalculator::calculate(&usage, pricing, Decimal::from(1));
-            [
-                cost.input_cost.to_string(),
-                cost.output_cost.to_string(),
-                cost.cache_read_cost.to_string(),
-                cost.cache_creation_cost.to_string(),
-                cost.total_cost.to_string(),
-            ]
-        }
-        None => std::array::from_fn(|_| "0".to_string()),
-    }
+    cost_columns(
+        "claude",
+        &usage,
+        pricing_cache.get(conn, &msg.model),
+        Decimal::ONE,
+    )
 }
+
+pub(crate) use crate::services::session_common::cost_columns;
 
 /// 补全一条已经入库的回复。
 ///
@@ -1130,6 +1099,7 @@ fn refresh_session_log_entry_on_conn(
     pricing_cache: &mut SessionPricingCache,
 ) -> Result<SessionRowOutcome, AppError> {
     if stored.data_source != "session_log" {
+        crate::database::usage::remember_session_request(conn, "session_log", request_id)?;
         return Ok(SessionRowOutcome::Skipped);
     }
     let output_grew = i64::from(msg.output_tokens) > stored.output_tokens;
@@ -1157,6 +1127,7 @@ fn refresh_session_log_entry_on_conn(
     // 入库时用量还是中间值，对不上路由服务记的那一行；补全后对上了，说明这次
     // 请求路由服务已经记过，先前入库的这一行是重复的
     if has_matching_proxy_usage_log(conn, dedup_key)? {
+        crate::database::usage::remember_session_request(conn, "session_log", request_id)?;
         conn.execute(
             "DELETE FROM proxy_request_logs WHERE request_id = ?1",
             [request_id],
@@ -1172,7 +1143,7 @@ fn refresh_session_log_entry_on_conn(
             input_tokens = ?1, output_tokens = ?2, cache_read_tokens = ?3,
             cache_creation_tokens = ?4, input_cost_usd = ?5, output_cost_usd = ?6,
             cache_read_cost_usd = ?7, cache_creation_cost_usd = ?8, total_cost_usd = ?9,
-            latency_ms = ?10, first_token_ms = ?11
+            latency_ms = ?10, first_token_ms = ?11, cache_creation_1h_tokens = ?13
          WHERE request_id = ?12",
         rusqlite::params![
             msg.input_tokens,
@@ -1187,6 +1158,7 @@ fn refresh_session_log_entry_on_conn(
             latency_ms,
             first_token_ms,
             request_id,
+            msg.cache_creation_1h_tokens.min(msg.cache_creation_tokens),
         ],
     )
     .map_err(|e| AppError::Database(format!("补全会话日志失败: {e}")))?;
@@ -1241,7 +1213,10 @@ fn upsert_session_log_entry_on_conn(
             pricing_cache,
         );
     }
-    if has_matching_proxy_usage_log(conn, &dedup_key)? {
+    if crate::database::usage::archived_session_request_exists(conn, "session_log", request_id)?
+        || has_matching_proxy_usage_log(conn, &dedup_key)?
+    {
+        crate::database::usage::remember_session_request(conn, "session_log", request_id)?;
         return Ok(SessionRowOutcome::Skipped);
     }
 
@@ -1255,8 +1230,8 @@ fn upsert_session_log_entry_on_conn(
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
-            provider_type, is_streaming, cost_multiplier, created_at, data_source
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+            provider_type, is_streaming, cost_multiplier, created_at, data_source, cache_creation_1h_tokens
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
             rusqlite::params![
                 request_id,
                 "_session",         // provider_id: 标记为会话来源
@@ -1282,6 +1257,7 @@ fn upsert_session_log_entry_on_conn(
                 "1.0",              // cost_multiplier
                 created_at,
                 "session_log",      // data_source
+                msg.cache_creation_1h_tokens.min(msg.cache_creation_tokens),
             ],
         )
         .map_err(|e| AppError::Database(format!("插入会话日志失败: {e}")))?;
@@ -1336,6 +1312,25 @@ pub fn get_data_source_breakdown(db: &Database) -> Result<Vec<DataSourceSummary>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_cache_ttl_is_persisted_for_later_pricing() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("session.jsonl");
+        let line = serde_json::json!({
+            "type":"assistant", "message": { "id":"ttl", "model":"custom-ttl-model",
+                "usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":1000,
+                    "cache_creation":{"ephemeral_1h_input_tokens":600}}
+            }
+        });
+        fs::write(&path, format!("{line}\n")).unwrap();
+        assert_eq!(sync_with_cursor(&db, &path)?.imported, 1);
+        let detail = db.get_request_detail("session:ttl")?.unwrap();
+        assert_eq!(detail.cache_creation_tokens, 1000);
+        assert_eq!(detail.cache_creation_1h_tokens, 600);
+        Ok(())
+    }
 
     fn pricing_test_message(model: &str) -> ParsedAssistantUsage {
         ParsedAssistantUsage {

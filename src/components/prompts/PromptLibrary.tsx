@@ -1,9 +1,9 @@
+import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
+import { Button } from "@/components/ui/button";
+import type { AppId, Prompt } from "@/lib/api";
+import { Download, FileText, Plus } from "lucide-react";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { Download, FileText, Plus } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
-import type { AppId, Prompt } from "@/lib/api";
 import PromptListItem from "./PromptListItem";
 import {
   firstLine,
@@ -12,7 +12,6 @@ import {
   renderSegs,
   utf8Bytes,
 } from "./promptUtils";
-
 interface PromptLibraryProps {
   prompts: Record<string, Prompt>;
   searchQuery: string;
@@ -27,7 +26,6 @@ interface PromptLibraryProps {
   /** 删除不能用时的原因；默认启用中的不能删 */
   getDeleteBlockedReason?: (id: string, prompt: Prompt) => string | undefined;
 }
-
 export function filterPromptEntries(
   entries: Array<[string, Prompt]>,
   query: string,
@@ -40,7 +38,6 @@ export function filterPromptEntries(
     ),
   );
 }
-
 /** 提示库列表（Prompts.dc.html 第 165–190 行）。空库由页面自己画空状态，这里只管有条目时。 */
 export function PromptLibrary({
   prompts,
@@ -61,7 +58,6 @@ export function PromptLibrary({
     () => filterPromptEntries(entries, searchQuery),
     [entries, searchQuery],
   );
-
   if (filtered.length === 0) {
     return (
       <div className="flex flex-col items-center gap-3 rounded-panel border border-border bg-surface px-6 py-10 text-center">
@@ -74,7 +70,6 @@ export function PromptLibrary({
       </div>
     );
   }
-
   return (
     <ul
       aria-label={listLabel}
@@ -115,7 +110,6 @@ export function PromptLibrary({
     </ul>
   );
 }
-
 interface PromptEmptyStateProps {
   app: AppId;
   displayPath: string;
@@ -125,7 +119,6 @@ interface PromptEmptyStateProps {
   onImport: () => void;
   onAdd: () => void;
 }
-
 /**
  * 提示库还是空的（PromptsImport.dc.html）：只说启用的那条写到哪里；
  * 文件里已有内容时给「导入现有内容」（导入只存进库、不改文件，后果写在导入后的 toast 里）。
@@ -145,7 +138,6 @@ export function PromptEmptyState({
     .filter((line) => line.trim())
     .slice(0, 2)
     .join("  ");
-
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-2 px-10 pb-10 text-center">
       <h2 className="m-0 text-section text-fg-1">

@@ -4,6 +4,7 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "CC Switch",
         "titleBarStyle": "Visible",
         "decorations": false,

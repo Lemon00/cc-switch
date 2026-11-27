@@ -25,7 +25,10 @@ pub use super::webdav_sync::archive::{backup_current_skills, restore_skills_zip,
 /// Wire-format identifier stored in remote manifests.
 /// Retains historic "webdav" naming for backward compatibility with existing remotes.
 pub const PROTOCOL_FORMAT: &str = "cc-switch-webdav-sync";
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
+/// Keep the discovery path stable so v2 snapshots can be read and upgraded in place.
+/// Older clients reject the v3 manifest instead of importing stale fixed-name artifacts.
+pub const STORAGE_VERSION: u32 = 2;
 pub const DB_COMPAT_VERSION: u32 = 6;
 pub const LEGACY_DB_COMPAT_VERSION: u32 = 5;
 pub const REMOTE_DB_SQL: &str = "db.sql";
@@ -103,20 +106,24 @@ where
 /// Keep this transport-agnostic so WebDAV and S3 cannot silently drift apart.
 /// `model_pricing` is intentionally excluded while its local JSON sidecar is
 /// the user-owned SSOT.
+pub const AUTO_SYNC_TABLES: &[&str] = &[
+    "providers",
+    "provider_endpoints",
+    "mcp_servers",
+    "prompts",
+    "skills",
+    "skill_repos",
+    "profiles",
+    "settings",
+    "proxy_config",
+];
+
+/// Tables whose changes make the remote configuration snapshot stale.
 pub fn should_trigger_auto_sync_for_table(table: &str) -> bool {
     let normalized = table.trim().to_ascii_lowercase();
-    matches!(
-        normalized.as_str(),
-        "providers"
-            | "provider_endpoints"
-            | "mcp_servers"
-            | "prompts"
-            | "skills"
-            | "skill_repos"
-            | "profiles"
-            | "settings"
-            | "proxy_config"
-    )
+    AUTO_SYNC_TABLES
+        .iter()
+        .any(|table| *table == normalized.as_str())
 }
 
 // ─── Error helpers ───────────────────────────────────────────
@@ -165,6 +172,62 @@ pub struct LocalSnapshot {
     pub skills_zip: Vec<u8>,
     pub manifest_bytes: Vec<u8>,
     pub manifest_hash: String,
+    pub artifact_dir: String,
+}
+
+/// Manifest publication is the only mutable part of a snapshot upload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PublishCondition {
+    Overwrite,
+    Create,
+    Match(String),
+}
+
+impl PublishCondition {
+    pub fn from_remote(etag: Option<&str>, exists: bool) -> Result<Self, AppError> {
+        if !exists {
+            return Ok(Self::Create);
+        }
+        let etag = etag.unwrap_or("");
+        // If-Match requires a single strong entity tag. Never silently overwrite
+        // when a server omits it, sends a weak tag, or an invalid header value.
+        if etag.len() < 2 || !etag.starts_with('"') || !etag.ends_with('"')
+            || !etag.as_bytes()[1..etag.len() - 1].iter().all(|b| *b == 0x21 || (0x23..=0x7e).contains(b) || *b >= 0x80)
+        {
+            return Err(AppError::Conflict(
+                "远端未提供有效的强 ETag，无法安全自动上传；请确认远端数据后手动上传。 (Remote does not provide a strong ETag; confirm the remote data and upload manually.)".into(),
+            ));
+        }
+        Ok(Self::Match(etag.to_string()))
+    }
+
+    pub fn apply(&self, headers: &mut reqwest::header::HeaderMap) -> Result<(), AppError> {
+        let (name, value) = match self {
+            Self::Overwrite => return Ok(()),
+            Self::Create => (reqwest::header::IF_NONE_MATCH, "*"),
+            Self::Match(etag) => (reqwest::header::IF_MATCH, etag.as_str()),
+        };
+        headers.insert(name, value.parse().map_err(|_| AppError::InvalidInput("Invalid sync ETag".into()))?);
+        Ok(())
+    }
+}
+
+pub fn publication_conflict() -> AppError {
+    AppError::Conflict("远端同步数据在上传期间发生变化，未发布本地快照。请先下载或确认后手动上传。 (Remote changed during upload; the local snapshot was not published.)".into())
+}
+
+/// Only derive paths from validated identities, never from arbitrary remote path strings.
+pub fn artifact_path(manifest: &SyncManifest, name: &str) -> Result<String, AppError> {
+    if ![REMOTE_DB_SQL, REMOTE_SKILLS_ZIP].contains(&name) {
+        return Err(AppError::InvalidInput("Unknown sync artifact".into()));
+    }
+    match manifest.version {
+        2 => Ok(name.to_string()),
+        PROTOCOL_VERSION if manifest.snapshot_id.len() == 64
+            && manifest.snapshot_id.bytes().all(|b| b.is_ascii_hexdigit()) =>
+            Ok(format!("snapshots/{}/{name}", manifest.snapshot_id)),
+        _ => Err(AppError::InvalidInput("Invalid snapshot version or identity".into())),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -192,6 +255,7 @@ pub fn build_local_snapshot(db: &crate::database::Database) -> Result<LocalSnaps
     // Export database to SQL string
     let sql_string = db.export_sql_string_for_sync()?;
     let db_sql = sql_string.into_bytes();
+    validate_artifact_size_limit(REMOTE_DB_SQL, db_sql.len() as u64)?;
 
     // Pack skills into deterministic ZIP
     let tmp = tempdir().map_err(|e| {
@@ -204,6 +268,10 @@ pub fn build_local_snapshot(db: &crate::database::Database) -> Result<LocalSnaps
     })?;
     let skills_zip_path = tmp.path().join(REMOTE_SKILLS_ZIP);
     zip_skills_ssot(&skills_zip_path)?;
+    let zip_size = fs::metadata(&skills_zip_path)
+        .map_err(|error| AppError::io(&skills_zip_path, error))?
+        .len();
+    validate_artifact_size_limit(REMOTE_SKILLS_ZIP, zip_size)?;
     let skills_zip = fs::read(&skills_zip_path).map_err(|e| AppError::io(&skills_zip_path, e))?;
 
     // Build artifact map and compute hashes
@@ -224,6 +292,7 @@ pub fn build_local_snapshot(db: &crate::database::Database) -> Result<LocalSnaps
     );
 
     let snapshot_id = compute_snapshot_id(&artifacts);
+    let artifact_dir = format!("snapshots/{snapshot_id}");
     let manifest = SyncManifest {
         format: PROTOCOL_FORMAT.to_string(),
         version: PROTOCOL_VERSION,
@@ -242,6 +311,7 @@ pub fn build_local_snapshot(db: &crate::database::Database) -> Result<LocalSnaps
         skills_zip,
         manifest_bytes,
         manifest_hash,
+        artifact_dir,
     })
 }
 
@@ -278,7 +348,7 @@ pub fn validate_manifest_compat(
             ),
         ));
     }
-    if manifest.version != PROTOCOL_VERSION {
+    if ![2, PROTOCOL_VERSION].contains(&manifest.version) {
         return Err(localized(
             "sync.manifest_version_incompatible",
             format!(
@@ -322,6 +392,23 @@ pub fn validate_manifest_compat(
             ));
         }
         _ => {}
+    }
+    for name in [REMOTE_DB_SQL, REMOTE_SKILLS_ZIP] {
+        let meta = manifest
+            .artifacts
+            .get(name)
+            .ok_or_else(|| AppError::InvalidInput(format!("Manifest missing artifact: {name}")))?;
+        validate_artifact_size_limit(name, meta.size)?;
+        if meta.sha256.len() != 64 || !meta.sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(AppError::InvalidInput(format!(
+                "Invalid artifact SHA256: {name}"
+            )));
+        }
+    }
+    if manifest.snapshot_id != compute_snapshot_id(&manifest.artifacts) {
+        return Err(AppError::InvalidInput(
+            "Manifest snapshot identity does not match its artifacts".into(),
+        ));
     }
     Ok(())
 }
@@ -422,6 +509,21 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+/// Automatic uploads may only replace the remote revision this device last
+/// observed. A manual upload remains the user's explicit overwrite operation.
+pub fn validate_auto_upload_revision(
+    expected_hash: Option<&str>,
+    remote_manifest: Option<&[u8]>,
+) -> Result<(), AppError> {
+    let current_hash = remote_manifest.map(sha256_hex);
+    if current_hash.as_deref() != expected_hash {
+        return Err(AppError::Conflict(
+            "远端同步数据已变化或尚未在本机确认，自动上传已停止。请先下载远端数据，或确认后手动上传。 (Remote sync data changed or has not been confirmed on this device. Download it first, or explicitly upload to overwrite.)".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub fn detect_system_device_name() -> Option<String> {
     let env_name = ["CC_SWITCH_DEVICE_NAME", "COMPUTERNAME", "HOSTNAME"]
         .iter()
@@ -491,8 +593,88 @@ where
 // ─── Tests ───────────────────────────────────────────────────
 
 #[cfg(test)]
+#[path = "sync_protocol_publish_tests.rs"]
+mod publish_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automatic_upload_requires_the_last_observed_remote_revision() {
+        let remote = b"remote snapshot";
+        let hash = sha256_hex(remote);
+        assert!(validate_auto_upload_revision(None, None).is_ok());
+        assert!(validate_auto_upload_revision(Some(&hash), Some(remote)).is_ok());
+        for (expected, actual) in [
+            (None, Some(remote.as_slice())),
+            (Some("old"), Some(remote.as_slice())),
+            (Some(hash.as_str()), None),
+        ] {
+            assert!(matches!(
+                validate_auto_upload_revision(expected, actual),
+                Err(AppError::Conflict(_))
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn automatic_uploads_to_both_transports_refuse_unknown_remote_before_writing() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let bytes = serde_json::to_vec(&manifest_with(
+            PROTOCOL_FORMAT,
+            PROTOCOL_VERSION,
+            Some(DB_COMPAT_VERSION),
+        ))
+        .unwrap();
+        let server = tokio::spawn(async move {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0; 1024];
+                while !request.windows(4).any(|part| part == b"\r\n\r\n") {
+                    let read = stream.read(&mut buffer).await.unwrap();
+                    assert!(read > 0);
+                    request.extend_from_slice(&buffer[..read]);
+                }
+                assert!(
+                    request.starts_with(b"GET "),
+                    "conflict must be checked before any PUT or MKCOL"
+                );
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    bytes.len()
+                );
+                stream.write_all(header.as_bytes()).await.unwrap();
+                stream.write_all(&bytes).await.unwrap();
+            }
+        });
+        let db = crate::database::Database::memory().unwrap();
+        let mut webdav = crate::settings::WebDavSyncSettings {
+            base_url: endpoint.clone(),
+            username: "alice".into(),
+            ..Default::default()
+        };
+        assert!(matches!(
+            super::super::webdav_sync::auto_upload(&db, &mut webdav).await,
+            Err(AppError::Conflict(_))
+        ));
+        let mut s3 = crate::settings::S3SyncSettings {
+            endpoint,
+            bucket: "bucket".into(),
+            region: "auto".into(),
+            access_key_id: "AKID".into(),
+            secret_access_key: "SECRET".into(),
+            ..Default::default()
+        };
+        assert!(matches!(
+            super::super::s3_sync::auto_upload(&db, &mut s3).await,
+            Err(AppError::Conflict(_))
+        ));
+        server.await.unwrap();
+    }
 
     #[tokio::test]
     async fn transport_failure_reason_reports_send_failure_with_cause() {
@@ -650,8 +832,9 @@ mod tests {
 
     fn manifest_with(format: &str, version: u32, db_compat_version: Option<u32>) -> SyncManifest {
         let mut artifacts = BTreeMap::new();
-        artifacts.insert("db.sql".to_string(), artifact("abc", 1));
-        artifacts.insert("skills.zip".to_string(), artifact("def", 2));
+        artifacts.insert("db.sql".to_string(), artifact(&sha256_hex(b"a"), 1));
+        artifacts.insert("skills.zip".to_string(), artifact(&sha256_hex(b"bc"), 2));
+        let snapshot_id = compute_snapshot_id(&artifacts);
         SyncManifest {
             format: format.to_string(),
             version,
@@ -659,7 +842,7 @@ mod tests {
             device_name: "My MacBook".to_string(),
             created_at: "2026-02-12T00:00:00Z".to_string(),
             artifacts,
-            snapshot_id: "snap-1".to_string(),
+            snapshot_id,
         }
     }
 
@@ -667,6 +850,23 @@ mod tests {
     fn validate_manifest_compat_accepts_supported_manifest() {
         let manifest = manifest_with(PROTOCOL_FORMAT, PROTOCOL_VERSION, Some(DB_COMPAT_VERSION));
         assert!(validate_manifest_compat(&manifest, RemoteLayout::Current).is_ok());
+    }
+
+    #[test]
+    fn manifest_preflight_rejects_incomplete_oversized_or_inconsistent_snapshots() {
+        let valid = manifest_with(PROTOCOL_FORMAT, PROTOCOL_VERSION, Some(DB_COMPAT_VERSION));
+        let mut invalid = valid.clone();
+        invalid.artifacts.remove(REMOTE_SKILLS_ZIP);
+        assert!(validate_manifest_compat(&invalid, RemoteLayout::Current).is_err());
+        invalid = valid.clone();
+        invalid.artifacts.get_mut(REMOTE_SKILLS_ZIP).unwrap().size = MAX_SYNC_ARTIFACT_BYTES + 1;
+        assert!(validate_manifest_compat(&invalid, RemoteLayout::Current).is_err());
+        invalid = valid.clone();
+        invalid.artifacts.get_mut(REMOTE_DB_SQL).unwrap().sha256 = "invalid".into();
+        assert!(validate_manifest_compat(&invalid, RemoteLayout::Current).is_err());
+        invalid = valid;
+        invalid.snapshot_id = "unrelated".into();
+        assert!(validate_manifest_compat(&invalid, RemoteLayout::Current).is_err());
     }
 
     #[test]

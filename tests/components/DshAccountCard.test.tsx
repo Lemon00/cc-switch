@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 import { DshAccountCard } from "@/components/providers/DshAccount";
 import type { DshAccountStatus } from "@/lib/api/dsh";
 import { createTestQueryClient } from "../utils/testQueryClient";
-
 const signedIn: DshAccountStatus = {
   signedIn: true,
   expired: false,
@@ -16,7 +15,6 @@ const signedIn: DshAccountStatus = {
   topUpUrl: null,
   error: null,
 };
-
 function renderCard(status: DshAccountStatus) {
   render(
     <QueryClientProvider client={createTestQueryClient()}>
@@ -24,7 +22,6 @@ function renderCard(status: DshAccountStatus) {
     </QueryClientProvider>,
   );
 }
-
 describe("DshAccountCard", () => {
   it("shows the account as an official card with its balance and no add or remove action", () => {
     renderCard(signedIn);
@@ -37,7 +34,6 @@ describe("DshAccountCard", () => {
       }),
     ).not.toBeInTheDocument();
   });
-
   it("flags an expired sign-in and hides the stale balance", () => {
     renderCard({ ...signedIn, expired: true });
     expect(screen.getByText("dsh.account.expiredChip")).toBeInTheDocument();

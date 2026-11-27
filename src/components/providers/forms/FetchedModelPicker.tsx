@@ -1,12 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { useTranslation } from "react-i18next";
-import { Download, ListChecks, Loader2, RefreshCw } from "lucide-react";
+import { CHECKBOX_CLASS, V7Dialog } from "@/components/mcp/formBits";
 import { Button } from "@/components/ui/button";
 import { DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { SearchField } from "@/components/ui/search-field";
-import { CHECKBOX_CLASS, V7Dialog } from "@/components/mcp/formBits";
 import type { FetchedModel } from "@/lib/api/model-fetch";
 import {
   resolveModelMetadata,
@@ -14,19 +10,20 @@ import {
 } from "@/lib/modelMetadata";
 import { modelsDevQueryOptions } from "@/lib/modelsDev";
 import { cn } from "@/lib/utils";
-
+import { useQuery } from "@tanstack/react-query";
+import { Download, ListChecks, Loader2, RefreshCw } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 export interface FetchedModelSelection {
   /** 新勾上的模型，按弹窗里的顺序 */
   add: string[];
   /** 取消勾选的已配置模型 */
   remove: string[];
 }
-
 interface ModelMetadataSourceProps {
   baseUrl: string;
   presets?: () => readonly PresetModelSource[];
 }
-
 interface FetchedModelPickerProps {
   models: FetchedModel[];
   /** 列表里已有的模型 ID（调用方按自己的规则归一，如去掉 [1m]） */
@@ -40,7 +37,6 @@ interface FetchedModelPickerProps {
    */
   metadataSource?: ModelMetadataSourceProps;
 }
-
 /** 窗口按 2 的幂整除时用 1024 进位（262144 → 256K），否则按 1000（200000 → 200K）。 */
 function formatContextWindow(tokens: number): string {
   const base = tokens % 1024 === 0 ? 1024 : 1000;
@@ -50,7 +46,6 @@ function formatContextWindow(tokens: number): string {
   if (tokens >= base) return `${Number((tokens / base).toPrecision(3))}K`;
   return String(tokens);
 }
-
 /**
  * 模型列表标题旁的「获取模型列表」按钮和选择弹窗。
  *
@@ -70,20 +65,16 @@ export function FetchedModelPicker({
   const [open, setOpen] = useState(false);
   // 点按钮发起的拉取：结束时拿到新列表才打开弹窗（预检失败、出错、空列表都不打开）
   const [awaiting, setAwaiting] = useState<FetchedModel[] | null>(null);
-
   useEffect(() => {
     if (!awaiting || isFetching) return;
     setAwaiting(null);
     if (models !== awaiting && models.length > 0) setOpen(true);
   }, [awaiting, isFetching, models]);
-
   const startFetch = () => {
     setAwaiting(models);
     onFetch();
   };
-
   const hasModels = models.length > 0;
-
   return (
     <>
       <Button
@@ -126,7 +117,6 @@ export function FetchedModelPicker({
     </>
   );
 }
-
 function FetchedModelPickerBody({
   models,
   configuredModelIds,
@@ -146,7 +136,6 @@ function FetchedModelPickerBody({
   const [query, setQuery] = useState("");
   const [onlySelected, setOnlySelected] = useState(false);
   const [draft, setDraft] = useState<Set<string>>(() => new Set(configured));
-
   const fetchedIds = new Set(models.map((model) => model.id));
   const extraIds = configured.filter((id) => !fetchedIds.has(id));
   const normalized = query.trim().toLowerCase();
@@ -162,7 +151,6 @@ function FetchedModelPickerBody({
   const visibleIds = [...visibleExtra, ...visibleFetched.map((m) => m.id)];
   const allIds = [...extraIds, ...models.map((model) => model.id)];
   const selectedCount = allIds.filter((id) => draft.has(id)).length;
-
   // 拉到模型列表时表单已经预取过 models.dev，通常已在缓存里。
   const { data: modelsDev } = useQuery({
     ...modelsDevQueryOptions,
@@ -196,7 +184,6 @@ function FetchedModelPickerBody({
     }
     return result;
   }, [allIdsKey, baseUrl, modelsDev, presets, t]);
-
   const setChecked = (ids: string[], checked: boolean) =>
     setDraft((prev) => {
       const next = new Set(prev);
@@ -206,7 +193,6 @@ function FetchedModelPickerBody({
       }
       return next;
     });
-
   const apply = () => {
     const configuredSet = new Set(configured);
     onApply({
@@ -216,7 +202,6 @@ function FetchedModelPickerBody({
       remove: configured.filter((id) => !draft.has(id)),
     });
   };
-
   // 厂商列定宽，参数列才能上下对齐；没有一个模型带厂商时不占位。
   const showOwner = models.some((model) => model.ownedBy);
   const renderRow = (id: string, ownedBy: string | null, first: boolean) => (
@@ -248,13 +233,11 @@ function FetchedModelPickerBody({
       </label>
     </li>
   );
-
   const groupHeading = (label: string) => (
     <li className="sticky top-0 z-[1] border-b border-border bg-subtle px-3.5 py-1.5 text-caption font-medium text-fg-2">
       {label}
     </li>
   );
-
   return (
     <>
       <div className="flex shrink-0 items-start justify-between gap-3">

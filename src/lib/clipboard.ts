@@ -1,14 +1,11 @@
-import { invoke } from "@tauri-apps/api/core";
 import { isLinux } from "@/lib/platform";
-
+import { invoke } from "@tauri-apps/api/core";
 async function copyViaNative(text: string): Promise<void> {
   await invoke("copy_text_to_clipboard", { text });
 }
-
 async function copyViaWeb(text: string): Promise<void> {
   await navigator.clipboard.writeText(text);
 }
-
 // Linux 上先走 WebView 的剪贴板：arboard 写完即释放剪贴板所有权，
 // 没有剪贴板管理器接手时（如 KDE Wayland）会“提示成功、剪贴板为空”，
 // 而且后端不报错，前端也就不会回落。GTK 会一直持有 WebView 写入的内容（#9384）。

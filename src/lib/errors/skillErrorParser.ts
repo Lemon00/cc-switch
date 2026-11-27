@@ -1,5 +1,4 @@
 import { TFunction } from "i18next";
-
 /**
  * 结构化错误对象
  */
@@ -8,7 +7,6 @@ export interface SkillError {
   context: Record<string, string>;
   suggestion?: string;
 }
-
 /**
  * 尝试解析后端返回的错误字符串
  * 如果是 JSON 格式，返回结构化错误；否则返回 null
@@ -16,7 +14,19 @@ export interface SkillError {
 export function parseSkillError(errorString: string): SkillError | null {
   try {
     const parsed = JSON.parse(errorString);
-    if (parsed.code && parsed.context) {
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof parsed.code === "string" &&
+      parsed.code.length > 0 &&
+      parsed.context &&
+      typeof parsed.context === "object" &&
+      !Array.isArray(parsed.context) &&
+      Object.values(parsed.context).every(
+        (value) => typeof value === "string",
+      ) &&
+      (parsed.suggestion === undefined || typeof parsed.suggestion === "string")
+    ) {
       return parsed as SkillError;
     }
   } catch {
@@ -24,7 +34,6 @@ export function parseSkillError(errorString: string): SkillError | null {
   }
   return null;
 }
-
 /**
  * 将错误码映射到 i18n key
  */
@@ -44,10 +53,8 @@ function getErrorI18nKey(code: string): string {
     GET_HOME_DIR_FAILED: "skills.error.getHomeDirFailed",
     NO_SKILLS_IN_ZIP: "skills.error.noSkillsInZip",
   };
-
   return mapping[code] || "skills.error.unknownError";
 }
-
 /**
  * 将建议码映射到 i18n key
  */
@@ -64,10 +71,8 @@ function getSuggestionI18nKey(suggestion: string): string {
     http404: "skills.error.http404",
     http429: "skills.error.http429",
   };
-
   return mapping[suggestion] || suggestion;
 }
-
 /**
  * 格式化技能错误为用户友好的消息
  * @param errorString 后端返回的错误字符串
@@ -79,9 +84,11 @@ export function formatSkillError(
   errorString: string,
   t: TFunction,
   defaultTitle: string = "skills.installFailed",
-): { title: string; description: string } {
+): {
+  title: string;
+  description: string;
+} {
   const parsedError = parseSkillError(errorString);
-
   if (!parsedError) {
     // 如果不是结构化错误，返回原始错误字符串
     return {
@@ -89,28 +96,22 @@ export function formatSkillError(
       description: errorString || t("common.error"),
     };
   }
-
   const { code, context, suggestion } = parsedError;
-
   // 获取错误消息的 i18n key
   const errorKey = getErrorI18nKey(code);
-
   // 构建描述（错误消息 + 建议）
   let description = t(errorKey, context);
-
   // 如果有建议，追加到描述中
   if (suggestion) {
     const suggestionKey = getSuggestionI18nKey(suggestion);
     const suggestionText = t(suggestionKey);
     description += `\n\n${suggestionText}`;
   }
-
   return {
     title: t(defaultTitle),
     description,
   };
 }
-
 /**
  * 一句话的失败原因，放进「N 个仓库没有读到：owner/name（原因）」这类横幅。
  * HTTP 403 / 404 / 429 用对应的说明（如「GitHub 访问受限，可能是请求频率过高」），

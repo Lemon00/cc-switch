@@ -1,7 +1,9 @@
-import React from "react";
-import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
-import { authApi } from "@/lib/api";
+import { signedInDate } from "@/components/settings/auth/accountDetails";
+import { AgyAccountQuota } from "@/components/settings/auth/AccountQuota";
+import {
+  ManagedAccountsGroup,
+  type GroupAccountRow,
+} from "@/components/settings/auth/ManagedAccountsGroup";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -10,24 +12,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useManagedAuth } from "./hooks/useManagedAuth";
+import { authApi } from "@/lib/api";
+import { useQuery } from "@tanstack/react-query";
+import React from "react";
+import { useTranslation } from "react-i18next";
 import { useManagedAccountUsers } from "./hooks/useManagedAccountUsers";
+import { useManagedAuth } from "./hooks/useManagedAuth";
 import {
   ManagedAccountRemoveDialog,
   type ManagedAccountRemoveTarget,
 } from "./ManagedAccountRemoveDialog";
-import {
-  ManagedAccountsGroup,
-  type GroupAccountRow,
-} from "@/components/settings/auth/ManagedAccountsGroup";
-import { signedInDate } from "@/components/settings/auth/accountDetails";
-import { AgyAccountQuota } from "@/components/settings/auth/AccountQuota";
-
 interface AgyOAuthSectionProps {
   /** 授权中心里最后一组的「?」向上弹 */
   helpSide?: "top" | "bottom";
 }
-
 /**
  * 授权中心的 Antigravity 账号组。agy 只有一份全局登录（系统钥匙串），「默认」就是 agy 现在
  * 登着的那个号；「切换」把选中的号写进去。在这里删账号只删 CC Switch 的副本，不让 agy 登出。
@@ -57,14 +55,17 @@ export const AgyOAuthSection: React.FC<AgyOAuthSectionProps> = ({
   const accountUsers = useManagedAccountUsers("agy_oauth", defaultAccountId);
   const [removeTarget, setRemoveTarget] =
     React.useState<ManagedAccountRemoveTarget | null>(null);
-
-  const confirmRemove = () => {
+  const confirmRemove = async () => {
     const target = removeTarget;
-    setRemoveTarget(null);
     // 这组没有「删除全部」，只会是单个账号
-    if (target?.kind === "one") removeAccount(target.accountId);
+    if (target?.kind !== "one") return;
+    try {
+      await removeAccount(target.accountId);
+      setRemoveTarget(null);
+    } catch {
+      // toast 由 useManagedAuth 统一给出；保留确认框便于重试
+    }
   };
-
   const rows: GroupAccountRow[] = accounts.map((account) => {
     const date = signedInDate(account.authenticated_at, i18n.language);
     return {
@@ -93,7 +94,6 @@ export const AgyOAuthSection: React.FC<AgyOAuthSectionProps> = ({
       ),
     };
   });
-
   return (
     <ManagedAccountsGroup
       slug="agy"
@@ -154,7 +154,8 @@ export const AgyOAuthSection: React.FC<AgyOAuthSectionProps> = ({
         }
         othersRemain={accounts.length > 1}
         note={t("authCenter.agy.removeNote", {
-          defaultValue: "不会让 agy 退出登录：agy 现在登着的号删掉后仍然可用。",
+          defaultValue:
+            "不会吊销云端会话，也不会让 agy 退出登录：agy 现在登着的号删掉后仍然可用。",
         })}
         pending={isRemovingAccount}
         onConfirm={confirmRemove}
@@ -163,14 +164,11 @@ export const AgyOAuthSection: React.FC<AgyOAuthSectionProps> = ({
     </ManagedAccountsGroup>
   );
 };
-
 export default AgyOAuthSection;
-
 interface AgyAccountSelectProps {
   value: string | null;
   onChange: (accountId: string | null) => void;
 }
-
 /**
  * Antigravity 官方卡的账号：不选就跟着 agy 当前的登录；选了的话「打开终端」前先把 agy
  * 切到这个号。账号在授权中心添加。
@@ -185,7 +183,6 @@ export function AgyAccountSelect({ value, onChange }: AgyAccountSelectProps) {
   const accounts = data?.accounts ?? [];
   // 绑的号在这台电脑上不存在（别的设备同步来的、或已删掉）时也要显示出来，别悄悄改成「跟随」
   const missing = value !== null && !accounts.some((a) => a.id === value);
-
   return (
     <div className="space-y-2">
       <Label htmlFor="agy-account">
@@ -235,5 +232,4 @@ export function AgyAccountSelect({ value, onChange }: AgyAccountSelectProps) {
     </div>
   );
 }
-
 const FOLLOW = "__follow__";

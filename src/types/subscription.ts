@@ -5,7 +5,6 @@ export type CredentialStatus =
   | "refresh_pending"
   | "not_found"
   | "parse_error";
-
 export interface QuotaTier {
   name: string;
   utilization: number; // 0-100
@@ -14,7 +13,6 @@ export interface QuotaTier {
   maxValueUsd?: number | null;
   planLabel?: string | null;
 }
-
 export interface ExtraUsage {
   isEnabled: boolean;
   monthlyLimit: number | null;
@@ -22,12 +20,10 @@ export interface ExtraUsage {
   utilization: number | null;
   currency: string | null;
 }
-
 /** ChatGPT 订阅存下的限额重置：每一次的到期时间，先到期的在前，null 表示不过期 */
 export interface ResetCredits {
   expiresAt: (string | null)[];
 }
-
 export interface SubscriptionQuota {
   tool: string;
   credentialStatus: CredentialStatus;
@@ -42,13 +38,11 @@ export interface SubscriptionQuota {
   error: string | null;
   queriedAt: number | null;
 }
-
 /** Claude 账号的套餐：Claude Code 记在凭据里（`subscriptionType` / `rateLimitTier`） */
 export interface ClaudeAccountPlan {
   subscriptionType: string | null;
   rateLimitTier: string | null;
 }
-
 /** 绑号卡的额度，带上这个号的套餐（读不到时缺省） */
 export interface ClaudeAccountQuota extends SubscriptionQuota {
   plan?: ClaudeAccountPlan | null;

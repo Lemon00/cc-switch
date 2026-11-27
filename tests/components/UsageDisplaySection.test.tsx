@@ -4,13 +4,10 @@ import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { UsageDisplaySection } from "@/components/usage/UsageDisplaySection";
 import type { FetchedExchangeRates, UsageDisplaySettings } from "@/types";
-
 const fetchExchangeRatesMock = vi.hoisted(() => vi.fn());
-
 vi.mock("@/lib/api", () => ({
   usageApi: { fetchExchangeRates: fetchExchangeRatesMock },
 }));
-
 const pickCurrency = async (
   user: ReturnType<typeof userEvent.setup>,
   code: string,
@@ -22,24 +19,20 @@ const pickCurrency = async (
     await screen.findByRole("option", { name: new RegExp(`^${code}`) }),
   );
 };
-
 describe("UsageDisplaySection", () => {
   // jsdom 没有 scrollIntoView，下拉打开时会调
   beforeAll(() => {
     Element.prototype.scrollIntoView = vi.fn();
   });
-
   beforeEach(() => {
     // 默认让取汇率的请求一直挂着：不相干的用例不需要异步保存
     fetchExchangeRatesMock.mockReset();
     fetchExchangeRatesMock.mockReturnValue(new Promise(() => {}));
   });
-
   it("offers every display currency and hides the rate while showing USD", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<UsageDisplaySection value={undefined} onChange={onChange} />);
-
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     await user.click(
       screen.getByRole("combobox", { name: "usage.display.currency" }),
@@ -54,13 +47,11 @@ describe("UsageDisplaySection", () => {
       "TRY",
     ]);
     await user.keyboard("{Escape}");
-
     await pickCurrency(user, "JPY");
     expect(onChange).toHaveBeenCalledWith({ currency: "JPY" });
     // 预置汇率：用户没填过时从这里起步
     expect(screen.getByRole("textbox")).toHaveValue("158");
   });
-
   it("rejects a bad rate and keeps the rates of other currencies", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
@@ -76,13 +67,11 @@ describe("UsageDisplaySection", () => {
     );
     const input = screen.getByRole("textbox");
     expect(input).toHaveValue("7");
-
     await user.clear(input);
     await user.type(input, "0{Enter}");
     expect(screen.getByText("usage.display.rateInvalid")).toBeInTheDocument();
     expect(input).toHaveAttribute("aria-invalid", "true");
     expect(onChange).not.toHaveBeenCalled();
-
     await user.clear(input);
     await user.type(input, "7.25{Enter}");
     expect(onChange).toHaveBeenCalledWith({
@@ -91,7 +80,6 @@ describe("UsageDisplaySection", () => {
       exchangeRates: { CNY: 7.25, EUR: 0.9 },
     });
   });
-
   it("switches the rate box to the rate saved for the picked currency", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
@@ -108,7 +96,6 @@ describe("UsageDisplaySection", () => {
     await pickCurrency(user, "EUR");
     expect(screen.getByRole("textbox")).toHaveValue("0.9");
   });
-
   it("shows the fetched rate read-only while the source is automatic", () => {
     render(
       <UsageDisplaySection
@@ -128,7 +115,6 @@ describe("UsageDisplaySection", () => {
       screen.getByRole("combobox", { name: "usage.display.rateSource" }),
     ).toHaveTextContent("usage.display.rateSources.auto");
   });
-
   it("keeps the currency picked while a rate refresh is in flight", async () => {
     const user = userEvent.setup();
     let resolveFetch!: (value: FetchedExchangeRates) => void;
@@ -137,7 +123,6 @@ describe("UsageDisplaySection", () => {
         resolveFetch = resolve;
       }),
     );
-
     const saved: Array<UsageDisplaySettings | undefined> = [];
     const Harness = () => {
       const [value, setValue] = useState<UsageDisplaySettings | undefined>({
@@ -155,7 +140,6 @@ describe("UsageDisplaySection", () => {
       );
     };
     render(<Harness />);
-
     await pickCurrency(user, "CNY");
     await waitFor(() =>
       expect(fetchExchangeRatesMock).toHaveBeenCalledTimes(1),
@@ -164,16 +148,14 @@ describe("UsageDisplaySection", () => {
     await act(async () => {
       resolveFetch({
         rates: { CNY: 6.9 },
-        fetchedAt: 1_700_000_000_000,
+        fetchedAt: 1700000000000,
         source: "open.er-api.com",
       });
     });
-
     const last = saved.at(-1);
     expect(last?.currency).toBe("CNY");
     expect(last?.autoExchangeRates?.CNY).toBe(6.9);
   });
-
   it("keeps settings changed while a rate refresh is in flight", async () => {
     const user = userEvent.setup();
     let resolveFetch!: (value: FetchedExchangeRates) => void;
@@ -182,16 +164,18 @@ describe("UsageDisplaySection", () => {
         resolveFetch = resolve;
       }),
     );
-
     // 模拟 UsagePage 的 autoSaveSettings：用它闭包里的整份设置合并保存。
     // 请求在途时改了刷新间隔，汇率回来后不能把间隔改回去。
-    const saved: Array<{ usage: UsageDisplaySettings; refreshMs: number }> = [];
+    const saved: Array<{
+      usage: UsageDisplaySettings;
+      refreshMs: number;
+    }> = [];
     const Harness = () => {
       const [usage, setUsage] = useState<UsageDisplaySettings>({
         currency: "CNY",
         rateSource: "auto",
       });
-      const [refreshMs, setRefreshMs] = useState(60_000);
+      const [refreshMs, setRefreshMs] = useState(60000);
       const captured = { usage, refreshMs };
       return (
         <>
@@ -204,14 +188,13 @@ describe("UsageDisplaySection", () => {
               return true;
             }}
           />
-          <button type="button" onClick={() => setRefreshMs(120_000)}>
+          <button type="button" onClick={() => setRefreshMs(120000)}>
             change refresh
           </button>
         </>
       );
     };
     render(<Harness />);
-
     await user.click(
       screen.getByRole("button", { name: "usage.display.rateRefresh" }),
     );
@@ -222,17 +205,15 @@ describe("UsageDisplaySection", () => {
     await act(async () => {
       resolveFetch({
         rates: { CNY: 6.9 },
-        fetchedAt: 1_700_000_000_000,
+        fetchedAt: 1700000000000,
         source: "open.er-api.com",
       });
     });
-
     const last = saved.at(-1);
-    expect(last?.refreshMs).toBe(120_000);
+    expect(last?.refreshMs).toBe(120000);
     expect(last?.usage.autoExchangeRates?.CNY).toBe(6.9);
     expect(last?.usage.rateProvider).toBe("open.er-api.com");
   });
-
   it("drops a fetched rate when the page was left meanwhile", async () => {
     const user = userEvent.setup();
     let resolveFetch!: (value: FetchedExchangeRates) => void;
@@ -248,7 +229,6 @@ describe("UsageDisplaySection", () => {
         onChange={onChange}
       />,
     );
-
     await user.click(
       screen.getByRole("button", { name: "usage.display.rateRefresh" }),
     );
@@ -259,14 +239,12 @@ describe("UsageDisplaySection", () => {
     await act(async () => {
       resolveFetch({
         rates: { CNY: 6.9 },
-        fetchedAt: 1_700_000_000_000,
+        fetchedAt: 1700000000000,
         source: "open.er-api.com",
       });
     });
-
     expect(onChange).not.toHaveBeenCalled();
   });
-
   it("credits the provider of the automatic rates", () => {
     render(
       <UsageDisplaySection
@@ -284,7 +262,6 @@ describe("UsageDisplaySection", () => {
       screen.getByRole("link", { name: "usage.display.rateAttribution" }),
     ).toHaveAttribute("href", "https://www.floatrates.com/");
   });
-
   it("does not write the preset rate when it was left unchanged", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
@@ -294,7 +271,6 @@ describe("UsageDisplaySection", () => {
     await user.type(screen.getByRole("textbox"), "{Enter}");
     expect(onChange).not.toHaveBeenCalled();
   });
-
   it("picks up to two items for the sidebar Today label", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
@@ -305,7 +281,6 @@ describe("UsageDisplaySection", () => {
       name: /^usage\.display\.sidebarToday:/,
     });
     expect(trigger).toHaveTextContent("usage.display.sidebarTodayItems.cost");
-
     const item = (key: string) =>
       screen.getByRole("menuitemcheckbox", {
         name: `usage.display.sidebarTodayItems.${key}`,
@@ -315,7 +290,6 @@ describe("UsageDisplaySection", () => {
       await screen.findByText("usage.display.sidebarTodayLimit"),
     ).toBeInTheDocument();
     expect(item("cost")).toHaveAttribute("aria-checked", "true");
-
     // 勾的先后不影响顺序：按菜单顺序存
     await user.click(item("hitRate"));
     expect(onChange).toHaveBeenLastCalledWith({
@@ -325,13 +299,11 @@ describe("UsageDisplaySection", () => {
     expect(trigger).toHaveTextContent(
       "usage.display.sidebarTodayItems.cost + usage.display.sidebarTodayItems.hitRate",
     );
-
     // 勾满两项：没勾的灰掉，点了也不变
     expect(item("requests")).toHaveAttribute("aria-disabled", "true");
     expect(item("tokens")).toHaveAttribute("aria-disabled", "true");
     await user.click(item("requests"));
     expect(onChange).toHaveBeenCalledTimes(1);
-
     // 去掉一项后其余的又能勾；全去掉＝不显示，存空列表
     await user.click(item("cost"));
     expect(onChange).toHaveBeenLastCalledWith({
@@ -346,7 +318,6 @@ describe("UsageDisplaySection", () => {
     });
     expect(trigger).toHaveTextContent("usage.display.sidebarTodayItems.none");
   });
-
   it("picks the trend chart style and keeps the other display settings", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
@@ -358,7 +329,6 @@ describe("UsageDisplaySection", () => {
     });
     // 没设置过按柱形图
     expect(trigger).toHaveTextContent("usage.display.trendChartTypes.bar");
-
     await user.click(trigger);
     await user.click(
       await screen.findByRole("option", {

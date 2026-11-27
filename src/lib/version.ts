@@ -12,7 +12,6 @@
  * 不可比,按"无法判定"处理,不提示更新;普通 semver build metadata(如
  * `1.0.0+linux.1`)按 semver 规范忽略后照常比较。
  */
-
 interface ParsedVersion {
   /** 主版本三段 [major, minor, patch] */
   core: [number, number, number];
@@ -21,7 +20,6 @@ interface ParsedVersion {
   /** local version 段("0.22.1+238.g<sha>" → "238.g<sha>");正式版为 null。是否为开发构建由 isDevLocal 判定 */
   local: string | null;
 }
-
 /**
  * 解析 "2.1.156" / "2.1.156-beta.1" / "0.22.1+238.g8211bb9"(开发构建);
  * 无法解析返回 null。
@@ -37,7 +35,6 @@ function parseVersion(v: string): ParsedVersion | null {
     local: m[5] ?? null,
   };
 }
-
 /**
  * local version 段是否为开发构建形态:git describe(`238.g<sha>`)或常见开发
  * 通道标识(canary / nightly / dev / dirty / snapshot)。普通 semver build
@@ -45,11 +42,9 @@ function parseVersion(v: string): ParsedVersion | null {
  */
 const DEV_LOCAL_RE =
   /^\d+\.g[0-9a-f]{4,}|(?:^|\.)(?:canary|nightly|dev|dirty|snapshot)(?:\.|$)/i;
-
 function isDevLocal(local: string | null): boolean {
   return local !== null && DEV_LOCAL_RE.test(local);
 }
-
 /**
  * 比较预发布段(遵循 semver):
  * - 双方都无预发布 → 相等
@@ -81,7 +76,6 @@ function comparePre(a: string[], b: string[]): number {
   if (a.length === b.length) return 0;
   return a.length < b.length ? -1 : 1;
 }
-
 /**
  * 比较两个版本号。
  * @returns >0 表示 a 比 b 新;<0 表示 a 比 b 旧;0 表示相等、无法判定、或任一
@@ -100,7 +94,6 @@ export function compareVersions(a: string, b: string): number {
   }
   return comparePre(pa.pre, pb.pre);
 }
-
 /**
  * 是否有可用更新:仅当 `latest` 严格高于 `current` 时为 true。
  * 本地版本 ≥ latest(含抢先/预发布版反超 latest 的情况)一律返回 false;

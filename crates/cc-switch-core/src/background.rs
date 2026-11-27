@@ -15,7 +15,7 @@
 
 use std::future::Future;
 use std::sync::OnceLock;
-use tokio::runtime::{Builder, Runtime};
+use tokio::runtime::{Builder, Handle, Runtime};
 use tokio::task::JoinHandle;
 
 fn runtime() -> &'static Runtime {
@@ -28,6 +28,13 @@ fn runtime() -> &'static Runtime {
             .build()
             .expect("cc-switch background runtime")
     })
+}
+
+/// Let the desktop shell share the core's process-lifetime runtime. Creating a
+/// second runtime for Tauri duplicates worker threads even in lightweight mode.
+/// Core keeps ownership, so the supplied handle cannot outlive its runtime.
+pub fn runtime_handle() -> Handle {
+    runtime().handle().clone()
 }
 
 /// Spawn a future on core's background runtime, independent of any ambient
@@ -52,4 +59,22 @@ where
             log::error!("后台任务 {name} 退出: {error}");
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn shared_handle_runs_core_timers_and_blocking_tasks_without_ambient_runtime() {
+        std::thread::spawn(|| {
+            assert!(tokio::runtime::Handle::try_current().is_err());
+            let handle = super::runtime_handle();
+            let task = super::spawn_background(async {
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                tokio::task::spawn_blocking(|| 42).await.unwrap()
+            });
+            assert_eq!(handle.block_on(task).unwrap(), 42);
+        })
+        .join()
+        .unwrap();
+    }
 }

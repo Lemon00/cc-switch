@@ -1,6 +1,6 @@
 [package]
 name = "cc-switch-core"
-version = "4.0.28"
+version = "1.0.0"
 edition = "2021"
 rust-version = "1.85"
 description = "cc-switch backend core: database, providers, proxy, live writers. No Tauri, no WebKit."
@@ -13,8 +13,7 @@ path = "src/lib.rs"
 default = ["session-monitor"]
 # 会话聚合与监控：只有 GUI 仪表盘用。CLI 关掉它（default-features = false），
 # 代理自身的请求日志不受影响（那是 proxy/usage，不在这个 feature 里）。
-# 注意：session_usage_codex 不在这个 feature 里——数据库 v15->v16 迁移依赖它的
-# reset，关掉会改迁移语义，所以 codex 那份常驻。
+# Codex 的迁移 reset 已归入 database，关闭监控仍保留完整迁移语义。
 session-monitor = []
 # 供 GUI 测试用的测试辅助（TestAgentDir、sync_mutex 等）：正常构建不编，
 # GUI 的 dev-dependency 开它；核心自己的 cargo test 因 cfg(test) 也可见。
@@ -80,7 +79,7 @@ url = "2.5"
 once_cell = "1.21.3"
 base64 = "0.22"
 png = "0.18"
-rusqlite = { version = "0.31", features = ["bundled", "backup", "hooks"] }
+rusqlite = { version = "0.31", features = ["bundled", "backup", "hooks", "limits"] }
 indexmap = { version = "2", features = ["serde"] }
 rust_decimal = "1.33"
 uuid = { version = "1.11", features = ["v4"] }
@@ -110,6 +109,8 @@ windows-sys = { version = "0.61", features = [
     "Win32_Globalization",
     "Win32_Storage_FileSystem",
     "Win32_System_Threading",
+    "Win32_System_JobObjects",
+    "Win32_Security",
 ] }
 
 [dev-dependencies]

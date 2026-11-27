@@ -1,20 +1,16 @@
-import { useCallback, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { toast } from "@/lib/toast";
 import { settingsApi } from "@/lib/api";
-import { syncCurrentProvidersLiveSafe } from "@/utils/postChangeSync";
-
+import { toast } from "@/lib/toast";
+import { useCallback, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 export type ImportStatus =
   | "idle"
   | "importing"
   | "success"
   | "partial-success"
   | "error";
-
 export interface UseImportExportOptions {
   onImportSuccess?: () => void | Promise<void>;
 }
-
 export interface UseImportExportResult {
   selectedFile: string;
   status: ImportStatus;
@@ -27,33 +23,33 @@ export interface UseImportExportResult {
   exportConfig: () => Promise<void>;
   resetStatus: () => void;
 }
-
 export function useImportExport(
   options: UseImportExportOptions = {},
 ): UseImportExportResult {
   const { t } = useTranslation();
   const { onImportSuccess } = options;
-
   const [selectedFile, setSelectedFile] = useState("");
   const [status, setStatus] = useState<ImportStatus>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [backupId, setBackupId] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
-
+  const importingRef = useRef(false);
   const clearSelection = useCallback(() => {
+    if (importingRef.current) return;
     setSelectedFile("");
     setStatus("idle");
     setErrorMessage(null);
     setBackupId(null);
   }, []);
-
   const selectImportFile = useCallback(async () => {
+    if (importingRef.current) return;
     try {
       const filePath = await settingsApi.openFileDialog();
-      if (filePath) {
+      if (filePath && !importingRef.current) {
         setSelectedFile(filePath);
         setStatus("idle");
         setErrorMessage(null);
+        setBackupId(null);
       }
     } catch (error) {
       console.error("[useImportExport] Failed to open file dialog", error);
@@ -64,7 +60,6 @@ export function useImportExport(
       );
     }
   }, [t]);
-
   const importConfig = useCallback(async () => {
     if (!selectedFile) {
       toast.error(
@@ -74,13 +69,12 @@ export function useImportExport(
       );
       return;
     }
-
-    if (isImporting) return;
-
+    if (importingRef.current) return;
+    importingRef.current = true;
     setIsImporting(true);
     setStatus("importing");
     setErrorMessage(null);
-
+    setBackupId(null);
     try {
       const result = await settingsApi.importConfigFromFile(selectedFile);
       if (!result.success) {
@@ -94,33 +88,32 @@ export function useImportExport(
         toast.error(message);
         return;
       }
-
       setBackupId(result.backupId ?? null);
-      // 导入成功后立即触发外部刷新（与 live 同步结果解耦）
-      // - 避免 sync 失败时 UI 不刷新
-      // - 避免依赖 setTimeout（组件卸载会取消）
-      void onImportSuccess?.();
-
-      const syncResult = await syncCurrentProvidersLiveSafe();
-      if (syncResult.ok) {
+      // The backend already projects the restored data while holding the sync
+      // lock. Refresh UI only; another projection here can race a newer restore.
+      let warning = result.warning;
+      try {
+        await onImportSuccess?.();
+      } catch (error) {
+        console.error(
+          "[useImportExport] Failed to refresh imported data",
+          error,
+        );
+        const refreshWarning = t("settings.importRefreshFailed", {
+          defaultValue: "配置已导入，但界面刷新失败，请重新打开页面。",
+        });
+        warning = [warning, refreshWarning].filter(Boolean).join("\n");
+      }
+      if (warning) {
+        setStatus("partial-success");
+        toast.warning(warning);
+      } else {
         setStatus("success");
         toast.success(
           t("settings.importSuccess", {
             defaultValue: "配置导入成功",
           }),
           { closeButton: true },
-        );
-      } else {
-        console.error(
-          "[useImportExport] Failed to sync live config",
-          syncResult.error,
-        );
-        setStatus("partial-success");
-        toast.warning(
-          t("settings.importPartialSuccess", {
-            defaultValue:
-              "配置已导入，但同步到当前供应商失败。请手动重新选择一次供应商。",
-          }),
         );
       }
     } catch (error) {
@@ -136,10 +129,10 @@ export function useImportExport(
         }),
       );
     } finally {
+      importingRef.current = false;
       setIsImporting(false);
     }
-  }, [isImporting, onImportSuccess, selectedFile, t]);
-
+  }, [onImportSuccess, selectedFile, t]);
   const exportConfig = useCallback(async () => {
     try {
       const now = new Date();
@@ -147,14 +140,8 @@ export function useImportExport(
       const defaultName = `cc-switch-export-${stamp}.sql`;
       const destination = await settingsApi.saveFileDialog(defaultName);
       if (!destination) {
-        toast.error(
-          t("settings.selectFileFailed", {
-            defaultValue: "请选择 SQL 备份保存路径",
-          }),
-        );
         return;
       }
-
       const result = await settingsApi.exportConfigToFile(destination);
       if (result.success) {
         const displayPath = result.filePath ?? destination;
@@ -181,13 +168,12 @@ export function useImportExport(
       );
     }
   }, [t]);
-
   const resetStatus = useCallback(() => {
+    if (importingRef.current) return;
     setStatus("idle");
     setErrorMessage(null);
     setBackupId(null);
   }, []);
-
   return {
     selectedFile,
     status,

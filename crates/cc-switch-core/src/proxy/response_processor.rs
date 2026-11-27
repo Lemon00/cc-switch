@@ -360,6 +360,9 @@ pub struct SseUsageCollector {
     inner: Arc<SseUsageCollectorInner>,
 }
 
+/// 流式 usage 事件上限，防止异常上游撑爆内存。
+const MAX_SSE_USAGE_EVENTS: usize = 256;
+
 struct SseUsageCollectorInner {
     events: Mutex<Vec<Value>>,
     first_output_time: OnceLock<std::time::Instant>,
@@ -413,6 +416,10 @@ impl SseUsageCollector {
     /// 推送 SSE 事件
     pub async fn push(&self, event: Value) {
         let mut events = self.inner.events.lock().await;
+        if events.len() >= MAX_SSE_USAGE_EVENTS {
+            let drop = events.len() - MAX_SSE_USAGE_EVENTS + 1;
+            events.drain(..drop);
+        }
         events.push(event);
     }
 
@@ -693,10 +700,7 @@ async fn log_usage_internal(
     let outbound_model = outbound_model.to_string();
     let write = tokio::task::spawn_blocking(move || {
         let logger = UsageLogger::new(&db);
-        // 计费模式读取的 DAO 是伪 async（无真实挂起点、直接取阻塞锁），
-        // 在阻塞线程上 block_on 不会停转运行时
-        let pricing_model_source = tokio::runtime::Handle::current()
-            .block_on(logger.resolve_pricing_model_source(&app_type));
+        let pricing_model_source = logger.resolve_pricing_model_source_sync(&app_type);
         let pricing_model = if pricing_model_source == PRICING_SOURCE_REQUEST {
             outbound_model
         } else {
@@ -742,6 +746,7 @@ pub fn create_logged_passthrough_stream(
         let mut finish_guard = collector.clone().map(SseUsageFinishGuard::new);
         let inspect_sse_events =
             collector.is_some() || log::log_enabled!(log::Level::Debug);
+        let mut sse_parse_enabled = inspect_sse_events;
         let mut is_first_chunk = true;
 
         // 超时配置
@@ -792,11 +797,19 @@ pub fn create_logged_passthrough_stream(
                         );
                     }
                     is_first_chunk = false;
-                    if inspect_sse_events {
-                        sse.push_bytes(&bytes);
+                    if sse_parse_enabled {
+                        if let Err(parse_err) = sse.push_bytes(&bytes) {
+                            log::warn!(
+                                "[{tag}] SSE 解析失败，停止收集 usage 但仍透传字节: {parse_err}"
+                            );
+                            sse_parse_enabled = false;
+                        }
 
                         // 尝试解析并记录完整的 SSE 事件
-                        while let Some(event_text) = sse.next_block() {
+                        while sse_parse_enabled {
+                            let Some(event_text) = sse.next_block() else {
+                                break;
+                            };
                             if !event_text.trim().is_empty() {
                                 let event_name = event_text
                                     .lines()
@@ -908,6 +921,7 @@ fn format_headers(headers: &HeaderMap) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_config::AppType;
     use crate::database::Database;
     use crate::error::AppError;
     use crate::provider::ProviderMeta;
@@ -1233,7 +1247,8 @@ mod tests {
         let db = Arc::new(Database::memory()?);
         let app_type = "claude";
 
-        db.set_pricing_model_source(app_type, "response").await?;
+        db.set_pricing_model_source(&AppType::Claude, "response")
+            .await?;
         seed_pricing(&db)?;
         {
             // 旧版写下的全局倍率仍留在列里，新版不再读取
@@ -1304,7 +1319,8 @@ mod tests {
         let db = Arc::new(Database::memory()?);
         let app_type = "claude";
 
-        db.set_pricing_model_source(app_type, "request").await?;
+        db.set_pricing_model_source(&AppType::Claude, "request")
+            .await?;
         seed_pricing(&db)?;
         {
             let conn = crate::database::lock_conn!(db.conn);
@@ -1368,23 +1384,6 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_claude_desktop_inherits_claude_pricing_source() -> Result<(), AppError> {
-        use crate::proxy::usage::logger::UsageLogger;
-
-        let db = Arc::new(Database::memory()?);
-
-        // proxy_config 没有 claude-desktop 行；它的计费模式必须继承 claude，
-        // 而不是静默落回工厂默认（response）
-        db.set_pricing_model_source("claude", "request").await?;
-
-        let logger = UsageLogger::new(&db);
-        let source = logger.resolve_pricing_model_source("claude-desktop").await;
-
-        assert_eq!(source, "request");
-        Ok(())
-    }
-
     // #7818 回归闸门：使用量写入必须离开异步执行器线程。
     // Database 全局只有单把 std::sync::Mutex<Connection>，先让专用线程占住
     // 这把锁模拟慢盘/竞争。修复前，log_usage_internal 会在当前 tokio worker
@@ -1399,7 +1398,8 @@ mod tests {
         let db = Arc::new(Database::memory()?);
         let app_type = "claude";
 
-        db.set_pricing_model_source(app_type, "response").await?;
+        db.set_pricing_model_source(&AppType::Claude, "response")
+            .await?;
         seed_pricing(&db)?;
         insert_provider(&db, "provider-busy", app_type, ProviderMeta::default())?;
 

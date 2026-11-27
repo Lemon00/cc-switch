@@ -1,20 +1,17 @@
-import { useState, useSyncExternalStore } from "react";
 import type { Provider } from "@/types";
 import type { AppMode } from "@/types/proxy";
-
+import { useState, useSyncExternalStore } from "react";
 /** 正在编辑哪一家，以及从供应商页哪一格打开的（见 ProviderForm 的 `modeView`） */
 export interface EditProviderRequest {
   provider: Provider;
   modeView?: AppMode;
 }
-
 export interface EditProviderStore {
   open: (provider: Provider, modeView?: AppMode) => void;
   close: () => void;
   subscribe: (listener: () => void) => () => void;
   getSnapshot: () => EditProviderRequest | null;
 }
-
 /**
  * 「正在编辑哪个供应商」放在 App 的 state 之外。
  *
@@ -45,12 +42,10 @@ export function createEditProviderStore(): EditProviderStore {
     getSnapshot: () => current,
   };
 }
-
 /** 组件生命周期内固定的一个 store */
 export function useCreateEditProviderStore(): EditProviderStore {
   return useState(createEditProviderStore)[0];
 }
-
 export function useEditProviderRequest(
   store: EditProviderStore,
 ): EditProviderRequest | null {

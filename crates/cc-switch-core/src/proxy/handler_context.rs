@@ -71,7 +71,7 @@ pub struct RequestContext {
     pub optimizer_config: OptimizerConfig,
     /// Copilot 优化器配置
     pub copilot_optimizer_config: CopilotOptimizerConfig,
-    /// Stack 模型的请求（`mode::stack`）：直达 Stack 里的那一家，不读也不写任何路由状态。
+    /// 已解析的聚合模型：固定账号或公共模型池；始终保留所选模型，不改默认账号。
     pub is_stack: bool,
 }
 
@@ -103,7 +103,7 @@ impl RequestContext {
         // 从数据库读取应用级代理配置（per-app）
         let mut app_config = state
             .db
-            .get_proxy_config_for_app(app_type_str)
+            .get_proxy_config_for_app(&app_type)
             .await
             .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
 
@@ -127,22 +127,39 @@ impl RequestContext {
         let is_stack = stack.is_some();
         let (provider, providers, current_provider_id, request_model) = match stack {
             Some(target) => {
-                // Stack 模型：只发往 Stack 里的那一家，不读代理路由、不经熔断器选家。按「单家、
-                // 不转移」处理：换成有效副本，转发和读响应两个阶段都从这里取，超时和重试
-                // 跟着关掉（见 `create_forwarder`）。
-                app_config.auto_failover_enabled = false;
+                app_config.auto_failover_enabled = !target.candidates.is_empty();
+                let providers = if target.candidates.is_empty() {
+                    vec![target.provider]
+                } else {
+                    let pool_name = if app_type == AppType::Claude {
+                        crate::model_names::strip_one_m_suffix_for_upstream(&target.original_model)
+                    } else {
+                        &target.original_model
+                    };
+                    state
+                        .provider_router
+                        .select_model_pool(&app_type, pool_name, target.candidates)
+                        .await
+                        .map_err(|e| match e {
+                            crate::error::AppError::AllProvidersCircuitOpen => {
+                                ProxyError::AllProvidersCircuitOpen
+                            }
+                            _ => ProxyError::DatabaseError(e.to_string()),
+                        })?
+                };
+                let provider = providers[0].clone();
                 log::debug!(
                     "[{}] Stacked model {} → provider {}, upstream model {}, session: {}",
                     tag,
                     target.original_model,
-                    target.provider.name,
+                    provider.name,
                     target.upstream_model,
                     session_id
                 );
-                let current_provider_id = target.provider.id.clone();
+                let current_provider_id = provider.id.clone();
                 (
-                    target.provider.clone(),
-                    vec![target.provider],
+                    provider,
+                    providers,
                     current_provider_id,
                     target.original_model,
                 )
@@ -163,8 +180,8 @@ impl RequestContext {
                     .unwrap_or("unknown")
                     .to_string();
 
-                // Stack 模式不做故障转移：只发往默认那家，和故障转移关着时一样跳过熔断器选家；
-                // 队列留着，回到路由模式恢复。故障转移本来就关着时不用读模式。
+                // 聚合模式的不带前缀请求仍只发往默认账号。公共模型池已在上面的
+                // StackTarget 分支中启用故障转移，不使用普通路由的队列。
                 let stack_mode = app_config.auto_failover_enabled
                     && crate::mode::stack::stack_mode_now(&app_type);
                 let providers = if stack_mode {
@@ -176,7 +193,7 @@ impl RequestContext {
                     state
                         .provider_router
                         .select_providers_with_current(
-                            app_type_str,
+                            &app_type,
                             current_provider,
                             app_config.auto_failover_enabled,
                         )

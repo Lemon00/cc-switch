@@ -6,7 +6,6 @@ import {
   formatUsageTrendTickLabel,
   hitRateAxisFloor,
 } from "@/components/usage/UsageTrendChart";
-
 const day = (isoDate: string) =>
   ({
     date: `${isoDate}T12:00:00.000Z`,
@@ -16,15 +15,26 @@ const day = (isoDate: string) =>
     totalCacheReadTokens: 0,
     totalCost: "0.01",
   }) as const;
-
 describe("buildUsageTrendChartData (#6302)", () => {
+  it("interprets daily bucket strings as local calendar dates", () => {
+    const points = buildUsageTrendChartData(
+      [{ ...day("2026-11-25"), date: "2026-11-25" }],
+      {
+        isHourly: false,
+        dateLocale: "en-US",
+        startDate: new Date(2026, 10, 1).getTime() / 1000,
+        endDate: new Date(2026, 10, 26).getTime() / 1000,
+      },
+    );
+    expect(points[0].hour).toBe(0);
+    expect(points[0].tooltipLabel).toBe("11/25/2026");
+  });
   it("keeps unique x-axis keys when the same MM/DD appears in multiple years", () => {
     // 2025-04-27 and 2026-04-27 share the same MM/DD tick text in single-year
     // formatting. Using that text as the Recharts category key made activeDots
     // jump to the earlier year's point while the tooltip followed the cursor.
     const startDate = Math.floor(Date.parse("2025-01-01T00:00:00Z") / 1000);
     const endDate = Math.floor(Date.parse("2026-08-10T00:00:00Z") / 1000);
-
     const points = buildUsageTrendChartData(
       [day("2025-04-27"), day("2026-04-27")],
       {
@@ -34,7 +44,6 @@ describe("buildUsageTrendChartData (#6302)", () => {
         endDate,
       },
     );
-
     expect(points).toHaveLength(2);
     expect(points[0].xKey).not.toBe(points[1].xKey);
     expect(points[0].xKey).toContain("2025-04-27");
@@ -43,38 +52,31 @@ describe("buildUsageTrendChartData (#6302)", () => {
     expect(points[0].tooltipLabel).toMatch(/2025/);
     expect(points[1].tooltipLabel).toMatch(/2026/);
   });
-
   it("includes a year in the axis tick when the selected range spans years", () => {
     const startDate = Math.floor(Date.parse("2025-01-01T00:00:00Z") / 1000);
     const endDate = Math.floor(Date.parse("2026-08-10T00:00:00Z") / 1000);
-
     const points = buildUsageTrendChartData([day("2026-04-27")], {
       isHourly: false,
       dateLocale: "en-US",
       startDate,
       endDate,
     });
-
     expect(points[0].label).toMatch(/26|2026/);
   });
-
   it("keeps short MM/DD ticks for single-year ranges", () => {
     const startDate = Math.floor(Date.parse("2026-01-01T00:00:00Z") / 1000);
     const endDate = Math.floor(Date.parse("2026-08-10T00:00:00Z") / 1000);
-
     const points = buildUsageTrendChartData([day("2026-04-27")], {
       isHourly: false,
       dateLocale: "en-US",
       startDate,
       endDate,
     });
-
     // en-US 2-digit month/day — should not need a year prefix inside one year.
     expect(points[0].label).not.toMatch(/2026/);
     expect(points[0].tooltipLabel).toMatch(/2026/);
   });
 });
-
 describe("hourly tick labels", () => {
   const hour = (iso: string) => ({
     date: iso,
@@ -84,11 +86,9 @@ describe("hourly tick labels", () => {
     totalCacheReadTokens: 0,
     totalCost: "0",
   });
-
   it("shows only the hour within one day, and the date where a new day starts", () => {
     const at = (h: number, d = 22) => new Date(2026, 9, d, h).toISOString();
     const sec = (date: Date) => Math.floor(date.getTime() / 1000);
-
     const sameDay = buildUsageTrendChartData([hour(at(1)), hour(at(13))], {
       isHourly: true,
       dateLocale: "en-US",
@@ -98,7 +98,6 @@ describe("hourly tick labels", () => {
     expect(sameDay.map((p) => p.label)).toEqual(["01:00", "13:00"]);
     // 悬停提示仍然写全日期
     expect(sameDay[0].tooltipLabel).toContain("10/22/2026");
-
     const acrossMidnight = buildUsageTrendChartData(
       [hour(at(23, 21)), hour(at(0)), hour(at(1))],
       {
@@ -115,7 +114,6 @@ describe("hourly tick labels", () => {
     ]);
   });
 });
-
 describe("formatUsageTrendTickLabel", () => {
   it("resolves labels by xKey even when the tick index is thinned", () => {
     const startDate = Math.floor(Date.parse("2025-01-01T00:00:00Z") / 1000);
@@ -149,7 +147,6 @@ describe("formatUsageTrendTickLabel", () => {
       ],
       { isHourly: false, dateLocale: "en-US", startDate, endDate },
     );
-
     // Simulate Recharts passing a later category as the only visible tick
     // (filtered index 0 would wrongly map to the first chart row).
     const last = points[2];
@@ -159,57 +156,47 @@ describe("formatUsageTrendTickLabel", () => {
     );
   });
 });
-
 describe("formatUsageTrendTokenTickLabel", () => {
   it.each(["zhb", "jam"])(
     "avoids Chinese/Japanese axis units for %s",
     (locale) => {
       const formatter = createUsageTrendTokenTickFormatter(locale);
-      expect(formatUsageTrendTokenTickLabel(50_000_000, formatter)).not.toMatch(
+      expect(formatUsageTrendTokenTickLabel(50000000, formatter)).not.toMatch(
         /[千亿億万萬]/,
       );
-      expect(formatUsageTrendTokenTickLabel(50_000_000, formatter)).toBe("50M");
+      expect(formatUsageTrendTokenTickLabel(50000000, formatter)).toBe("50M");
     },
   );
-
   it("uses localized compact units for large token axis ticks", () => {
     const zhFormatter = createUsageTrendTokenTickFormatter("zh-CN");
     const zhTwFormatter = createUsageTrendTokenTickFormatter("zh-TW");
     const enFormatter = createUsageTrendTokenTickFormatter("en-US");
-
-    expect(formatUsageTrendTokenTickLabel(600_000_000, zhFormatter)).toBe(
-      "6亿",
-    );
-    expect(formatUsageTrendTokenTickLabel(1_950_000_000, zhFormatter)).toBe(
+    expect(formatUsageTrendTokenTickLabel(600000000, zhFormatter)).toBe("6亿");
+    expect(formatUsageTrendTokenTickLabel(1950000000, zhFormatter)).toBe(
       "19.5亿",
     );
-    expect(formatUsageTrendTokenTickLabel(65_000_000, zhTwFormatter)).toBe(
+    expect(formatUsageTrendTokenTickLabel(65000000, zhTwFormatter)).toBe(
       "6.5千萬",
     );
-    expect(formatUsageTrendTokenTickLabel(600_000_000, enFormatter)).toBe(
-      "600M",
-    );
+    expect(formatUsageTrendTokenTickLabel(600000000, enFormatter)).toBe("600M");
   });
-
   it("writes four-digit wan / yi ticks with a thousand unit in CJK", () => {
     const zh = createUsageTrendTokenTickFormatter("zh-CN");
     const zhTw = createUsageTrendTokenTickFormatter("zh-TW");
     const ja = createUsageTrendTokenTickFormatter("ja-JP");
     const en = createUsageTrendTokenTickFormatter("en-US");
-
-    expect(formatUsageTrendTokenTickLabel(50_000_000, zh)).toBe("5千万");
-    expect(formatUsageTrendTokenTickLabel(15_000_000, zh)).toBe("1.5千万");
-    expect(formatUsageTrendTokenTickLabel(200_000_000_000, zh)).toBe("2千亿");
-    expect(formatUsageTrendTokenTickLabel(50_000_000, zhTw)).toBe("5千萬");
-    expect(formatUsageTrendTokenTickLabel(50_000_000, ja)).toBe("5千万");
-    expect(formatUsageTrendTokenTickLabel(200_000_000_000, ja)).toBe("2千億");
+    expect(formatUsageTrendTokenTickLabel(50000000, zh)).toBe("5千万");
+    expect(formatUsageTrendTokenTickLabel(15000000, zh)).toBe("1.5千万");
+    expect(formatUsageTrendTokenTickLabel(200000000000, zh)).toBe("2千亿");
+    expect(formatUsageTrendTokenTickLabel(50000000, zhTw)).toBe("5千萬");
+    expect(formatUsageTrendTokenTickLabel(50000000, ja)).toBe("5千万");
+    expect(formatUsageTrendTokenTickLabel(200000000000, ja)).toBe("2千億");
     // 三位以内照旧，进位到 10 的交回原格式
-    expect(formatUsageTrendTokenTickLabel(5_000_000, zh)).toBe("500万");
-    expect(formatUsageTrendTokenTickLabel(100_000_000, zh)).toBe("1亿");
-    expect(formatUsageTrendTokenTickLabel(99_600_000, zh)).toBe("9960万");
-    expect(formatUsageTrendTokenTickLabel(50_000_000, en)).toBe("50M");
+    expect(formatUsageTrendTokenTickLabel(5000000, zh)).toBe("500万");
+    expect(formatUsageTrendTokenTickLabel(100000000, zh)).toBe("1亿");
+    expect(formatUsageTrendTokenTickLabel(99600000, zh)).toBe("9960万");
+    expect(formatUsageTrendTokenTickLabel(50000000, en)).toBe("50M");
   });
-
   it("keeps zero and small-thousand token ticks readable", () => {
     expect(
       formatUsageTrendTokenTickLabel(
@@ -225,7 +212,6 @@ describe("formatUsageTrendTokenTickLabel", () => {
     ).toBe("1.5K");
   });
 });
-
 describe("hitRateAxisFloor", () => {
   it("starts the axis a little below the lowest hit rate, on a 5% step", () => {
     // 最低 96%：余量 2 个百分点 → 94% → 取整到 90%
@@ -237,7 +223,6 @@ describe("hitRateAxisFloor", () => {
     // 最低 80%：余量 10 个百分点 → 70%
     expect(hitRateAxisFloor([0.8, 0.95])).toBe(0.7);
   });
-
   it("falls back to 0 for low rates or no data", () => {
     // 最低 37%：算出来 5%，低于 50% 就不截断
     expect(hitRateAxisFloor([0.37, 0.99])).toBe(0);

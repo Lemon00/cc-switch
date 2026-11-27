@@ -1,17 +1,9 @@
-import React from "react";
-import { useTranslation } from "react-i18next";
+import { XaiAccountQuota } from "@/components/settings/auth/AccountQuota";
 import {
-  AlertTriangle,
-  Check,
-  Copy,
-  ExternalLink,
-  Loader2,
-  LogOut,
-  Plus,
-  Sparkles,
-  User,
-  X,
-} from "lucide-react";
+  ManagedAccountsGroup,
+  type GroupAccountRow,
+} from "@/components/settings/auth/ManagedAccountsGroup";
+import { signedInDate } from "@/components/settings/auth/accountDetails";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { HoverTip } from "@/components/ui/hover-tip";
@@ -24,20 +16,27 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { copyText } from "@/lib/clipboard";
-import { useXaiOauth } from "./hooks/useXaiOauth";
+import {
+  AlertTriangle,
+  Check,
+  Copy,
+  ExternalLink,
+  Loader2,
+  LogOut,
+  Plus,
+  Sparkles,
+  User,
+  X,
+} from "lucide-react";
+import React from "react";
+import { useTranslation } from "react-i18next";
 import {
   ManagedAccountRemoveDialog,
   ManagedAccountUsage,
   type ManagedAccountRemoveTarget,
 } from "./ManagedAccountRemoveDialog";
 import { useManagedAccountUsers } from "./hooks/useManagedAccountUsers";
-import {
-  ManagedAccountsGroup,
-  type GroupAccountRow,
-} from "@/components/settings/auth/ManagedAccountsGroup";
-import { XaiAccountQuota } from "@/components/settings/auth/AccountQuota";
-import { signedInDate } from "@/components/settings/auth/accountDetails";
-
+import { useXaiOauth } from "./hooks/useXaiOauth";
 interface XaiOAuthSectionProps {
   className?: string;
   /**
@@ -50,7 +49,6 @@ interface XaiOAuthSectionProps {
   /** 授权中心里最后一组的「?」向上弹 */
   helpSide?: "top" | "bottom";
 }
-
 export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
   className,
   mode,
@@ -85,16 +83,13 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
   const [removeTarget, setRemoveTarget] =
     React.useState<ManagedAccountRemoveTarget | null>(null);
   const resolvedMode = mode ?? (onAccountSelect ? "select" : "manage");
-
   const usableAccounts = accounts.filter((account) => !account.requires_reauth);
-
   const copyUserCode = async () => {
     if (!deviceCode?.user_code) return;
     await copyText(deviceCode.user_code);
     setCopied(true);
-    setTimeout(() => setCopied(false), 2_000);
+    setTimeout(() => setCopied(false), 2000);
   };
-
   // 删账号先确认：确认框里列出在用它的供应商
   const remove = (
     accountId: string,
@@ -105,19 +100,21 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
     event.stopPropagation();
     setRemoveTarget({ kind: "one", accountId, login });
   };
-
-  const confirmRemove = () => {
+  const confirmRemove = async () => {
     const target = removeTarget;
-    setRemoveTarget(null);
     if (!target) return;
-    if (target.kind === "all") {
-      logout();
-      return;
+    try {
+      if (target.kind === "all") {
+        await logout();
+      } else {
+        await removeAccount(target.accountId);
+        if (selectedAccountId === target.accountId) onAccountSelect?.(null);
+      }
+      setRemoveTarget(null);
+    } catch {
+      // toast 由 useManagedAuth 统一给出；保留确认框便于重试
     }
-    removeAccount(target.accountId);
-    if (selectedAccountId === target.accountId) onAccountSelect?.(null);
   };
-
   const removeDialog = (
     <ManagedAccountRemoveDialog
       target={removeTarget}
@@ -137,7 +134,6 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
       onCancel={() => setRemoveTarget(null)}
     />
   );
-
   if (resolvedMode === "manage") {
     const rows: GroupAccountRow[] = accounts.map((account) => {
       const date = signedInDate(account.authenticated_at, i18n.language);
@@ -167,7 +163,6 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
         ),
       };
     });
-
     return (
       <ManagedAccountsGroup
         slug="xai"
@@ -212,7 +207,6 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
       </ManagedAccountsGroup>
     );
   }
-
   return (
     <div className={`space-y-4 ${className ?? ""}`}>
       <div className="flex items-center justify-between">
@@ -477,5 +471,4 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
     </div>
   );
 };
-
 export default XaiOAuthSection;

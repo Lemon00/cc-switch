@@ -1,16 +1,11 @@
-import * as React from "react";
-import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { ModalDragStrip } from "@/components/shell/AppPageHeader";
 import { cn } from "@/lib/utils";
-
+import * as DialogPrimitive from "@radix-ui/react-dialog";
+import * as React from "react";
 const Dialog = DialogPrimitive.Root;
-
 const DialogTrigger = DialogPrimitive.Trigger;
-
 const DialogPortal = DialogPrimitive.Portal;
-
 const DialogClose = DialogPrimitive.Close;
-
 const DialogOverlay = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Overlay>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Overlay> & {
@@ -23,7 +18,6 @@ const DialogOverlay = React.forwardRef<
     alert: "z-[60]",
     top: "z-[110]",
   };
-
   return (
     <DialogPrimitive.Overlay
       ref={ref}
@@ -39,7 +33,6 @@ const DialogOverlay = React.forwardRef<
   );
 });
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
-
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
@@ -52,7 +45,6 @@ const DialogContent = React.forwardRef<
     alert: "z-[60]",
     top: "z-[110]",
   };
-
   return (
     <DialogPortal>
       <DialogOverlay zIndex={zIndex} />
@@ -79,7 +71,6 @@ const DialogContent = React.forwardRef<
   );
 });
 DialogContent.displayName = DialogPrimitive.Content.displayName;
-
 const DialogHeader = ({
   className,
   ...props
@@ -93,7 +84,6 @@ const DialogHeader = ({
   />
 );
 DialogHeader.displayName = "DialogHeader";
-
 const DialogFooter = ({
   className,
   ...props
@@ -107,7 +97,6 @@ const DialogFooter = ({
   />
 );
 DialogFooter.displayName = "DialogFooter";
-
 const DialogTitle = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Title>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Title>
@@ -119,7 +108,6 @@ const DialogTitle = React.forwardRef<
   />
 ));
 DialogTitle.displayName = DialogPrimitive.Title.displayName;
-
 const DialogDescription = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Description>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Description>
@@ -131,14 +119,13 @@ const DialogDescription = React.forwardRef<
   />
 ));
 DialogDescription.displayName = DialogPrimitive.Description.displayName;
-
 export {
   Dialog,
-  DialogTrigger,
-  DialogContent,
-  DialogHeader,
-  DialogFooter,
-  DialogTitle,
-  DialogDescription,
   DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
 };

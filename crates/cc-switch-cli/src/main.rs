@@ -32,17 +32,24 @@ use std::env;
 use std::fs::{self, OpenOptions};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
-use std::process::{exit, Command, Stdio};
+use std::process::{exit, Child, Command, Stdio};
 use std::sync::{Arc, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use cc_switch_core::events::{EventSink, FrontendHooks, OAuthStateProvider};
+use cc_switch_core::process_output::output_with_timeout;
 use cc_switch_core::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use cc_switch_core::proxy::providers::copilot_auth::CopilotAuthManager;
 use cc_switch_core::proxy::providers::xai_oauth_auth::XaiOAuthManager;
 use cc_switch_core::{config, frontend_apps, AppState, AppType, Database, ProviderService};
 use tokio::sync::RwLock;
+
+mod tui;
+
+#[cfg(windows)]
+#[path = "windows_stdio.rs"]
+mod windows_stdio;
 
 const VERSION: &str = concat!(
     "cc-switch-cli ",
@@ -90,6 +97,7 @@ fn help() -> String {
         "  cc-switch-cli --app agy launch <id> --exec -- --model foo  # 透传额外 agy 参数",
         "",
         "通用:",
+        "  cc-switch-cli [--app codex|agy] tui  # 交互编辑供应商和 CLI 设置",
         "  cc-switch-cli version / --version / -V",
         "  cc-switch-cli config path",
     ]
@@ -121,18 +129,23 @@ fn proxy_log_path() -> PathBuf {
 }
 
 fn read_proxy_pid() -> Option<u32> {
-    fs::read_to_string(proxy_pid_path())
-        .ok()?
-        .trim()
-        .parse::<u32>()
-        .ok()
-        .filter(|pid| *pid > 1)
+    let content = fs::read_to_string(proxy_pid_path()).ok()?;
+    let pid = content.trim().parse::<u32>().ok().or_else(|| {
+        let record: serde_json::Value = serde_json::from_str(&content).ok()?;
+        record["pid"]
+            .as_u64()
+            .and_then(|pid| u32::try_from(pid).ok())
+    })?;
+    (pid > 1).then_some(pid)
 }
 
-fn write_proxy_pid(pid: u32) {
-    if let Err(e) = fs::write(proxy_pid_path(), pid.to_string()) {
-        eprintln!("警告: 写 pid 文件失败: {e}");
-    }
+fn write_proxy_pid(pid: u32) -> Result<(), String> {
+    let identity = process_identity(pid).ok_or("无法确认后台代理进程身份")?;
+    config::write_json_file_private(
+        &proxy_pid_path(),
+        &serde_json::json!({ "pid": pid, "identity": identity }),
+    )
+    .map_err(|error| error.to_string())
 }
 
 fn remove_proxy_pid() {
@@ -151,10 +164,11 @@ fn pid_alive(pid: u32) -> bool {
 /// 用 `contains` 会误判存活。
 #[cfg(windows)]
 fn windows_image_name(pid: u32) -> Option<String> {
-    let out = Command::new("tasklist")
-        .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
-        .output()
-        .ok()?;
+    let out = output_with_timeout(
+        Command::new("tasklist").args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"]),
+        Duration::from_secs(10),
+    )
+    .ok()?;
     if !out.status.success() {
         return None;
     }
@@ -175,27 +189,117 @@ fn pid_alive(pid: u32) -> bool {
 
 /// PID 可能被系统复用：停进程前再确认一次 cmdline 是自己的守护进程，
 /// 免得 `disable` 误杀一个无关进程。
-#[cfg(unix)]
-fn pid_is_our_daemon(pid: u32) -> bool {
-    fs::read_to_string(format!("/proc/{pid}/cmdline"))
-        .map(|cmd| cmd.contains(PROXY_DAEMON_CMD))
-        .unwrap_or(false)
+#[cfg(target_os = "linux")]
+fn process_identity(pid: u32) -> Option<String> {
+    let executable = fs::read_link(format!("/proc/{pid}/exe")).ok()?;
+    if executable != env::current_exe().ok()? {
+        return None;
+    }
+    let command = fs::read_to_string(format!("/proc/{pid}/cmdline")).ok()?;
+    if !command
+        .split('\0')
+        .any(|argument| argument == PROXY_DAEMON_CMD)
+    {
+        return None;
+    }
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let (_, fields) = stat.rsplit_once(')')?;
+    let started = fields.split_whitespace().nth(19)?;
+    Some(format!("{started}|{}", executable.display()))
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+fn process_identity(pid: u32) -> Option<String> {
+    let read_field = |field: &str| {
+        let output = output_with_timeout(
+            Command::new("ps").args(["-p", &pid.to_string(), "-o", field]),
+            Duration::from_secs(10),
+        )
+        .ok()?;
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    };
+    let executable = read_field("comm=")?;
+    if Path::new(&executable) != env::current_exe().ok()? {
+        return None;
+    }
+    if !read_field("args=")?
+        .split_whitespace()
+        .any(|argument| argument == PROXY_DAEMON_CMD)
+    {
+        return None;
+    }
+    let started = read_field("lstart=")?;
+    if started.is_empty() {
+        return None;
+    }
+    Some(format!("{started}|{executable}"))
 }
 
 #[cfg(windows)]
-fn pid_is_our_daemon(pid: u32) -> bool {
-    // PID 会被系统复用：能读到映像名时确认是自己的可执行文件，免得 `proxy disable`
-    // 用 taskkill /T /F 杀掉无关进程树；读不到（tasklist 不可用）时退回原来的宽松判断。
-    let Some(name) = windows_image_name(pid) else {
-        return true;
-    };
-    match env::current_exe().ok().and_then(|exe| {
-        exe.file_name()
-            .map(|name| name.to_string_lossy().to_string())
-    }) {
-        Some(exe) => exe.eq_ignore_ascii_case(&name),
-        None => true,
+fn process_identity(pid: u32) -> Option<String> {
+    let script = format!("$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); $process=Get-Process -Id {pid}; [string]$process.StartTime.ToUniversalTime().Ticks + '|' + $process.Path");
+    let output = output_with_timeout(
+        Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", &script]),
+        Duration::from_secs(10),
+    )
+    .ok()?;
+    if !output.status.success() {
+        return None;
     }
+    let identity = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let (started, executable) = identity.split_once('|')?;
+    if started.parse::<u64>().ok()? == 0
+        || !executable.eq_ignore_ascii_case(&env::current_exe().ok()?.to_string_lossy())
+    {
+        return None;
+    }
+    Some(identity)
+}
+
+fn pid_is_our_daemon(pid: u32) -> bool {
+    let Some(content) = fs::read_to_string(proxy_pid_path()).ok() else {
+        return false;
+    };
+    if content.trim().parse::<u32>().ok() == Some(pid) {
+        if process_identity(pid).is_none() {
+            return false;
+        }
+        #[cfg(windows)]
+        {
+            let script =
+                format!("[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); (Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}').CommandLine");
+            return output_with_timeout(
+                Command::new("powershell.exe").args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    &script,
+                ]),
+                Duration::from_secs(10),
+            )
+            .ok()
+            .is_some_and(|output| {
+                output.status.success()
+                    && String::from_utf8_lossy(&output.stdout)
+                        .split_whitespace()
+                        .any(|argument| argument.trim_matches('"') == PROXY_DAEMON_CMD)
+            });
+        }
+        #[cfg(unix)]
+        {
+            return true;
+        }
+    }
+    let Ok(record) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+    record["pid"].as_u64() == Some(pid as u64)
+        && record["identity"]
+            .as_str()
+            .is_some_and(|identity| process_identity(pid).as_deref() == Some(identity))
 }
 
 fn running_proxy_pid() -> Option<u32> {
@@ -206,9 +310,15 @@ fn running_proxy_pid() -> Option<u32> {
 /// 把同一个可执行文件拉成独立于终端的后台进程。开启 proxy_log 时 stdout/stderr
 /// 落到日志文件，否则直接丢弃（默认不写 cli-proxy.log），避免终端关闭后
 /// 守护进程的打印变成 SIGPIPE/EPIPE。
-fn spawn_proxy_daemon(app: &AppType, exe: &Path, log: Option<&fs::File>) -> Result<u32, String> {
+fn spawn_proxy_daemon(
+    app: &AppType,
+    exe: &Path,
+    log: Option<&fs::File>,
+    ready_path: &Path,
+) -> Result<Child, String> {
     let mut cmd = Command::new(exe);
     cmd.args(["--app", app.as_str(), "proxy", PROXY_DAEMON_CMD])
+        .env("CC_SWITCH_DAEMON_READY", ready_path)
         .stdin(Stdio::null());
     match log {
         Some(file) => {
@@ -245,9 +355,7 @@ fn spawn_proxy_daemon(app: &AppType, exe: &Path, log: Option<&fs::File>) -> Resu
         cmd.creation_flags(DETACHED_PROCESS);
     }
 
-    cmd.spawn()
-        .map(|child| child.id())
-        .map_err(|e| format!("拉起后台代理失败: {e}"))
+    cmd.spawn().map_err(|e| format!("拉起后台代理失败: {e}"))
 }
 
 /// 守护进程等 Ctrl-C（手动跑内部命令时）或 SIGTERM（`proxy disable` 发的）。
@@ -273,8 +381,7 @@ async fn wait_for_proxy_shutdown() {
     let _ = tokio::signal::ctrl_c().await;
 }
 
-/// 拉起后台代理并等它就绪，返回 pid。`logging` 为真时日志写 `cli-proxy.log`，并等代理真正
-/// bind 成功（日志里的「代理已起」）再返回；否则只看守护进程是否还活着。
+/// 拉起后台代理并等待独立于日志设置的就绪确认，返回 pid。
 ///
 /// `proxy enable` 和「路由 / 聚合模式下切换供应商之后接上客户端」共用这一条路径：客户端文件
 /// 一旦被接上，代理就必须在跑，否则 Codex 的每个请求都会打到没人监听的端口。
@@ -297,48 +404,49 @@ fn start_proxy_daemon(app: &AppType, logging: bool) -> Result<u32, String> {
         None
     };
     let exe = env::current_exe().map_err(|e| format!("取当前可执行文件路径失败: {e}"))?;
-    let pid = spawn_proxy_daemon(app, &exe, log.as_ref())?;
-    write_proxy_pid(pid);
-
-    if !logging {
-        // 日志关闭时没有「代理已起」可读：靠守护进程存活判断就绪，
-        // 启动失败（bind 失败等）会让它立刻 err() 退出。
-        let ready_at = Instant::now() + Duration::from_secs(2);
-        while Instant::now() < ready_at {
-            if !pid_alive(pid) {
-                remove_proxy_pid();
-                return Err(concat!(
-                    "后台代理启动失败（进程已退出）：",
-                    "GUI 正在运行时它自带的代理会占着同一端口，这时不用再 enable；",
-                    "否则运行 `proxy log on` 打开日志后重新 enable 可查看原因"
-                )
-                .to_string());
-            }
-            thread::sleep(Duration::from_millis(150));
-        }
-        return Ok(pid);
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let ready_path = app_dir().join(format!("cli-proxy-ready-{}-{nonce}", std::process::id()));
+    let mut child = spawn_proxy_daemon(app, &exe, log.as_ref(), &ready_path)?;
+    let result =
+        wait_for_daemon_ready(&mut child, &ready_path, Duration::from_secs(15)).and_then(|pid| {
+            write_proxy_pid(pid)?;
+            Ok(pid)
+        });
+    if result.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
     }
+    let _ = fs::remove_file(&ready_path);
+    result
+}
 
-    // 开启日志：等代理真正 bind 成功再返回；失败时把日志尾巴打出来。
-    // 日志里的「代理已起」由守护进程在 start() 成功后打印。
-    let deadline = Instant::now() + Duration::from_secs(15);
+fn wait_for_daemon_ready(
+    child: &mut Child,
+    ready_path: &Path,
+    timeout: Duration,
+) -> Result<u32, String> {
+    let deadline = Instant::now() + timeout;
     loop {
-        if let Ok(text) = fs::read_to_string(&log_path) {
-            if text.contains("代理已起:") {
-                return Ok(pid);
-            }
-            if text.contains("启动代理失败") {
-                let _ = fs::remove_file(proxy_pid_path());
-                return Err(format!("后台代理启动失败，详见 {}", log_path.display()));
-            }
+        if child
+            .try_wait()
+            .map_err(|error| error.to_string())?
+            .is_some()
+        {
+            return Err(
+                "后台代理启动失败（进程已退出），请打开 proxy log 后检查端口和配置".to_string(),
+            );
         }
-        if !pid_alive(pid) {
-            remove_proxy_pid();
-            return Err(format!("后台代理进程已退出，详见 {}", log_path.display()));
+        if fs::read_to_string(ready_path)
+            .ok()
+            .is_some_and(|ready| ready.trim() == child.id().to_string())
+        {
+            return Ok(child.id());
         }
         if Instant::now() >= deadline {
-            remove_proxy_pid();
-            return Err(format!("等待后台代理就绪超时，详见 {}", log_path.display()));
+            return Err("等待后台代理就绪超时，未接上客户端".to_string());
         }
         thread::sleep(Duration::from_millis(150));
     }
@@ -348,12 +456,12 @@ fn start_proxy_daemon(app: &AppType, logging: bool) -> Result<u32, String> {
 ///
 /// 守护进程只管代理本身；客户端文件（`config.toml` / 模型目录）由发起命令的父进程
 /// 在代理就绪后接上、在代理停掉后分离。这样常驻进程不必写用户配置，也避免父进程
-/// 和守护进程同时 attach。开库放在起/停之后，是 best-effort：失败只警告，不改命令结果。
+/// 和守护进程同时 attach。开库放在起/停之后，配置接入或分离失败时返回非零退出码。
 fn cmd_proxy_control(app: AppType, action: &str) {
+    if app != AppType::Codex {
+        err("proxy enable / disable 只适用于 codex；agy 不走代理");
+    }
     if action == "enable" {
-        if app != AppType::Codex {
-            err("proxy enable 只适用于 codex；agy 不走代理，请用 agy launch");
-        }
         if let Some(pid) = running_proxy_pid() {
             println!("后台代理已在运行（pid {pid}），无需重复 enable");
         } else {
@@ -373,55 +481,62 @@ fn cmd_proxy_control(app: AppType, action: &str) {
         // GUI 退出时 detach_all 把客户端写回了直连，只起代理不会重写 config.toml
         // 和模型目录，Codex 的模型列表会停在旧的那几个。代理就绪后补一次接上。
         match try_open_state() {
-            Ok(state) => ensure_client_live(&state, &app),
-            Err(e) => println!("警告: 客户端配置保持原样（{e}）"),
+            Ok(state) => ensure_client_live(&state, &app).unwrap_or_else(|message| err(&message)),
+            Err(e) => err(&format!("代理已启动，但客户端配置未更新: {e}")),
         }
         return;
     }
 
-    // disable：即使没在跑也当成功，方便脚本里直接调用。
-    let Some(pid) = read_proxy_pid() else {
-        println!("后台代理未在运行");
-        return;
-    };
-    if !pid_alive(pid) || !pid_is_our_daemon(pid) {
-        remove_proxy_pid();
-        println!("后台代理未在运行（已清理陈旧的 pid 文件）");
-        return;
-    }
-
-    #[cfg(unix)]
-    {
-        // SAFETY: pid 已确认是本 CLI 的守护进程；SIGTERM 触发它优雅停代理后退出。
-        unsafe {
-            libc::kill(pid as libc::pid_t, libc::SIGTERM);
+    // disable：进程停止与客户端分离拆成独立幂等步骤。PID 缺失/陈旧时仍尝试
+    // detach——守护进程崩溃后客户端可能仍指向无人监听的端口。
+    let mut require_detach = false;
+    match read_proxy_pid() {
+        None => {
+            println!("后台代理未在运行（无 pid 文件）；仍尝试分离客户端配置");
+            require_detach = true;
         }
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while pid_alive(pid) && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(100));
+        Some(pid) if !pid_alive(pid) || !pid_is_our_daemon(pid) => {
+            remove_proxy_pid();
+            println!("后台代理未在运行（已清理陈旧的 pid 文件）；仍尝试分离客户端配置");
+            require_detach = true;
         }
-        if pid_alive(pid) {
-            unsafe {
-                libc::kill(pid as libc::pid_t, libc::SIGKILL);
+        Some(pid) => {
+            #[cfg(unix)]
+            {
+                // SAFETY: pid 已确认是本 CLI 的守护进程；SIGTERM 触发它优雅停代理后退出。
+                unsafe {
+                    libc::kill(pid as libc::pid_t, libc::SIGTERM);
+                }
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while pid_alive(pid) && Instant::now() < deadline {
+                    thread::sleep(Duration::from_millis(100));
+                }
+                if pid_alive(pid) {
+                    unsafe {
+                        libc::kill(pid as libc::pid_t, libc::SIGKILL);
+                    }
+                }
             }
+            #[cfg(windows)]
+            {
+                let status = output_with_timeout(
+                    Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]),
+                    Duration::from_secs(10),
+                )
+                .map(|output| output.status);
+                match status {
+                    Ok(s) if s.success() => {}
+                    Ok(s) => err(&format!("停止后台代理失败: taskkill 退出码 {s}")),
+                    Err(e) => err(&format!("执行 taskkill 失败: {e}")),
+                }
+            }
+            remove_proxy_pid();
+            require_detach = true;
+            println!("后台代理已停止（pid {pid}）");
         }
     }
-    #[cfg(windows)]
-    {
-        let status = Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .status();
-        match status {
-            Ok(s) if s.success() => {}
-            Ok(s) => err(&format!("停止后台代理失败: taskkill 退出码 {s}")),
-            Err(e) => err(&format!("执行 taskkill 失败: {e}")),
-        }
-    }
-    remove_proxy_pid();
-    println!("后台代理已停止（pid {pid}）");
-    // 停完代理要把客户端指回直连，否则 config.toml 还指向没人监听的端口。
-    // detach_all 只分离已接上的应用；已经是分离态时 exit_locked 直接返回，不会误写。
-    // 只在确实停掉自己的守护进程时做，pid 文件缺失/过期那几条出口不碰 GUI 管的客户端。
+
+    // 停完或发现守护进程已死：把客户端指回直连。exit_locked 对已分离态幂等。
     match try_open_state() {
         Ok(state) => {
             match tokio::runtime::Builder::new_current_thread()
@@ -429,24 +544,42 @@ fn cmd_proxy_control(app: AppType, action: &str) {
                 .build()
             {
                 Ok(rt) => {
-                    rt.block_on(cc_switch_core::mode::controller::detach_all(&state));
-                    println!("客户端配置已分离（指回直连）");
+                    match rt.block_on(cc_switch_core::mode::controller::detach_app(&state, &app)) {
+                        Ok(()) => println!("客户端配置已分离（指回直连）"),
+                        Err(e) if require_detach => err(&format!("客户端配置分离失败: {e}")),
+                        Err(e) => println!("警告: 客户端配置分离失败: {e}"),
+                    }
+                }
+                Err(e) if require_detach => {
+                    err(&format!("客户端配置保持接上（建运行时失败: {e}）"))
                 }
                 Err(e) => println!("警告: 客户端配置保持接上（建运行时失败: {e}）"),
             }
         }
+        Err(e) if require_detach => err(&format!("客户端配置保持接上（{e}）")),
         Err(e) => println!("警告: 客户端配置保持接上（{e}）"),
     }
 }
 
-/// CLI 专属开关都放在 cli.json，默认一律 false：文件不存在或解析失败时按关处理，
-/// 避免一次写坏配置就让后台代理偷偷记用量 / 写日志。
+/// 仅文件不存在时使用空对象；无法读取或损坏的配置必须显式报错，不能当成空配置覆盖。
+fn read_json_object_or_default(path: &Path) -> Result<serde_json::Value, String> {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(serde_json::json!({}))
+        }
+        Err(error) => return Err(format!("读取 {} 失败: {error}", path.display())),
+    };
+    let value: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|error| format!("解析 {} 失败: {error}", path.display()))?;
+    if !value.is_object() {
+        return Err(format!("{} 必须是 JSON 对象，原文件未修改", path.display()));
+    }
+    Ok(value)
+}
+
 fn read_cli_config() -> serde_json::Value {
-    fs::read_to_string(cli_config_path())
-        .ok()
-        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-        .filter(|v| v.is_object())
-        .unwrap_or_else(|| serde_json::json!({}))
+    read_json_object_or_default(&cli_config_path()).unwrap_or_else(|message| err(&message))
 }
 
 fn cli_config_bool(key: &str) -> bool {
@@ -467,8 +600,7 @@ fn set_cli_config_bool(key: &str, enabled: bool) {
         "note".to_string(),
         serde_json::json!("仅对 CLI 自己的代理进程生效，GUI 不受影响"),
     );
-    let text = serde_json::to_string_pretty(&cfg).unwrap_or_else(|_| "{}".to_string());
-    if let Err(e) = fs::write(cli_config_path(), format!("{text}\n")) {
+    if let Err(e) = config::write_json_file_private(&cli_config_path(), &cfg) {
         err(&format!("写 {} 失败: {e}", cli_config_path().display()));
     }
 }
@@ -591,7 +723,7 @@ impl EventSink for QuietEventSink {
 /// 因此能正常拿凭据）；Copilot/xAI 没有登录流程，保持 None。
 ///
 /// 存 `Weak`：hooks 挂在 `AppState::proxy_service` 上，这里持强引用会和
-/// `failover_state` 一样绕出 Arc 环，进程退出前内存都放不掉。
+/// 核心故障转移执行器一样避免 Arc 环。
 struct CliOAuthStateProvider(Weak<AppState>);
 
 impl OAuthStateProvider for CliOAuthStateProvider {
@@ -626,10 +758,14 @@ fn open_state() -> Arc<AppState> {
     }
 }
 
-/// `proxy enable` / `disable` 的客户端收尾用：代理已经起/停成功了，这时数据库打不开
-/// 也不能把整条命令判成失败，只能放弃重写客户端配置并给出警告。
+/// `proxy enable` / `disable` 的客户端收尾用：代理起停与配置更新分别报告错误，
+/// 数据库打不开时让调用方返回失败，避免把客户端未接上或未分离误报为成功。
 fn try_open_state() -> Result<Arc<AppState>, String> {
-    let db = Arc::new(Database::init().map_err(|e| format!("打开数据库失败: {e}"))?);
+    let db = Arc::new(
+        cc_switch_core::startup::open_database().map_err(|e| format!("打开数据库失败: {e}"))?,
+    );
+    cc_switch_core::startup::init_outbound_http(&db)
+        .map_err(|e| format!("初始化出站代理失败: {e}"))?;
     let state = Arc::new(AppState::new(db));
     // 不注入钩子时 ProxyService 用 FrontendHooks::default()：故障转移永不执行、
     // OAuth 路由直接报错、事件静默丢弃。CLI 要的是和 GUI 不同的最小实现，
@@ -711,7 +847,24 @@ fn tune_allocator() {
 #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
 fn tune_allocator() {}
 
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn trim_process_memory() {
+    // SAFETY: malloc_trim(0) 是 glibc 线程安全的无状态堆整理接口。
+    unsafe {
+        libc::malloc_trim(0);
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn trim_process_memory() {}
+
 fn main() {
+    // Captured standard handles arrive inheritable on Windows. Rust's child
+    // spawn can inherit them even when the daemon redirects its own stdio.
+    // Clear the original handles before any threads or children are created.
+    #[cfg(windows)]
+    windows_stdio::prevent_inheritance()
+        .unwrap_or_else(|error| err(&format!("初始化标准输入输出句柄失败: {error}")));
     // 必须在任何线程/运行时创建之前调用。
     tune_allocator();
     // 实测 AMD 的 Azure 网关会拒绝 rustls 的 HTTP/2 请求（400 HTML），走 h1 正常。
@@ -722,7 +875,20 @@ fn main() {
     let _ = config::apply_startup_app_config_dir_override();
 
     let raw: Vec<String> = env::args().skip(1).collect();
+    // Informational commands remain usable when the application whitelist is empty.
+    if raw.is_empty() || matches!(raw[0].as_str(), "--help" | "-h" | "help") {
+        print!("{}", help());
+        return;
+    }
+    if matches!(raw[0].as_str(), "version" | "--version" | "-V") {
+        if raw.len() != 1 {
+            err("version 不接受额外参数");
+        }
+        println!("{VERSION}");
+        return;
+    }
     let (app, args) = parse_app(&raw);
+    validate_command_args(&args).unwrap_or_else(|message| err(&message));
     if args.is_empty() || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
         print!("{}", help());
         return;
@@ -739,6 +905,24 @@ fn main() {
         println!("应用白名单: {}", frontend_apps::whitelist_path().display());
         return;
     }
+
+    if args[0] == "tui" {
+        tui::run(app).unwrap_or_else(|message| err(&message));
+        return;
+    }
+
+    // Serialize PID/config transitions across separate CLI processes. The daemon
+    // does not acquire this lock: its parent holds it through readiness and attach.
+    let _control_guard = if matches!(args[0].as_str(), "proxy" | "use" | "provider")
+        && args.get(1).map(String::as_str) != Some(PROXY_DAEMON_CMD)
+    {
+        Some(
+            lock_proxy_control(&app_dir().join("cli-control.lock"))
+                .unwrap_or_else(|message| err(&message)),
+        )
+    } else {
+        None
+    };
 
     // enable / disable 自己控制开库时机：先起/停代理，再做客户端接上/分离，
     // 不走下面统一 open_state() 的命令分派。
@@ -776,17 +960,90 @@ fn main() {
             if app != AppType::Agy {
                 err("launch 只适用于 agy；codex 请用 provider switch");
             }
-            cmd_agy_launch(&state, id, &args);
+            let offset = if args[0] == "agy" { 3 } else { 2 };
+            cmd_agy_launch(&state, id, &args[offset..]);
         }
         "proxy" => cmd_proxy(&state, app, &args[1..]),
         other => err(&format!("未知命令: {other}\n{}", help())),
     }
 }
 
+fn lock_proxy_control(path: &Path) -> Result<fs::File, String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let mut options = OpenOptions::new();
+    options.create(true).truncate(false).read(true).write(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.share_mode(0);
+    }
+    let file = options
+        .open(path)
+        .map_err(|error| format!("无法锁定 CLI 控制文件（另一条命令可能正在执行）: {error}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        // SAFETY: the file remains open until the command finishes; closing releases the lock.
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            return Err(format!(
+                "另一条 CLI 命令正在执行: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+    }
+    Ok(file)
+}
+
+fn parse_launch_flags(args: &[String]) -> Result<(bool, &[String]), String> {
+    let split = args
+        .iter()
+        .position(|arg| arg == "--")
+        .unwrap_or(args.len());
+    let mut execute = false;
+    for arg in &args[..split] {
+        if arg != "--exec" {
+            return Err(format!("launch 不认识参数 {arg}；子程序参数请放在 -- 后"));
+        }
+        execute = true;
+    }
+    Ok((execute, args.get(split + 1..).unwrap_or_default()))
+}
+
+fn validate_command_args(args: &[String]) -> Result<(), String> {
+    let values: Vec<&str> = args.iter().map(String::as_str).collect();
+    match values.as_slice() {
+        []
+        | ["help" | "--help" | "-h" | "version" | "--version" | "-V"]
+        | ["config", "path"]
+        | ["tui"]
+        | ["provider", "list" | "current"]
+        | ["proxy", "show" | "enable" | "disable" | "usage" | "log"] => Ok(()),
+        ["proxy", command] if *command == PROXY_DAEMON_CMD => Ok(()),
+        ["proxy", "usage" | "log", "on" | "off"] => Ok(()),
+        ["launch", _, ..] => parse_launch_flags(&args[2..]).map(|_| ()),
+        ["agy", "launch", _, ..] => parse_launch_flags(&args[3..]).map(|_| ()),
+        ["use", _, flags @ ..] | ["provider", "switch", _, flags @ ..]
+            if flags.iter().all(|flag| *flag == "--no-attach") =>
+        {
+            Ok(())
+        }
+        ["provider", "reasoning", _, ..] => {
+            merge_reasoning_options(&mut serde_json::json!({}), &args[3..])
+        }
+        _ => Err(format!(
+            "无效命令或多余参数: {}\n{}",
+            args.join(" "),
+            help()
+        )),
+    }
+}
+
 fn cmd_provider(state: &AppState, app: AppType, args: &[String]) {
     match args.first().map(|s| s.as_str()) {
         Some("list") => {
-            let list = match ProviderService::list(state, app.clone()) {
+            let list = match ProviderService::refresh(state, app.clone()) {
                 Ok(v) => v,
                 Err(e) => err(&format!("列供应商失败: {e}")),
             };
@@ -884,7 +1141,7 @@ fn cmd_switch(state: &AppState, app: AppType, id: &str, attach: bool) {
                 println!("警告: {w}");
             }
             if attach {
-                ensure_client_live(state, &app);
+                ensure_client_live(state, &app).unwrap_or_else(|message| err(&message));
             }
         }
         Err(e) => err(&format!("切换失败: {e}")),
@@ -922,9 +1179,9 @@ fn proxy_port_serving(rt: &tokio::runtime::Runtime, state: &AppState) -> bool {
 /// - 已接上但代理没人服务（比如重启过机器）：客户端还指着代理端口，得把代理拉回来。
 ///
 /// 客户端一旦指向代理，代理就必须在跑，否则每个请求都打到没人监听的端口，所以先确保代理。
-fn ensure_client_live(state: &AppState, app: &AppType) {
+fn ensure_client_live(state: &AppState, app: &AppType) -> Result<(), String> {
     if !app.has_route_mode() || !cc_switch_core::mode::current::is_proxy(app) {
-        return;
+        return Ok(());
     }
     let attached = cc_switch_core::mode::current::mode_state(app).attached;
     let rt = match tokio::runtime::Builder::new_current_thread()
@@ -933,31 +1190,28 @@ fn ensure_client_live(state: &AppState, app: &AppType) {
     {
         Ok(rt) => rt,
         Err(e) => {
-            println!("警告: 建运行时失败（{e}），客户端配置保持分离");
-            return;
+            return Err(format!("建运行时失败，客户端配置未更新: {e}"));
         }
     };
     if running_proxy_pid().is_none() && !proxy_port_serving(&rt, state) {
         match start_proxy_daemon(app, proxy_log_enabled()) {
             Ok(pid) => println!("后台代理已启动（pid {pid}）"),
             Err(e) => {
-                println!(
-                    "警告: 拉起后台代理失败（{e}）。客户端配置保持分离，先 `proxy enable` 再切换才会更新"
-                );
-                return;
+                return Err(format!("拉起后台代理失败，客户端配置未更新: {e}"));
             }
         }
     }
     // 已接上时客户端文件本来就指着代理，只差代理在跑。
     if attached {
-        return;
+        return Ok(());
     }
     match rt.block_on(cc_switch_core::mode::controller::attach_files(state, app)) {
         Ok(()) => println!(
             "已接上代理：config.toml 与 cc-switch-model-catalog.json 已按当前路由 / 聚合重写"
         ),
-        Err(e) => println!("警告: 接上客户端配置失败: {e}"),
+        Err(e) => return Err(format!("接上客户端配置失败: {e}")),
     }
+    Ok(())
 }
 
 /// 把 `--key value` 选项合进已有的 codexChatReasoning。
@@ -1096,7 +1350,7 @@ fn merge_reasoning_options(
 }
 
 fn cmd_reasoning(state: &AppState, id: &str, opts: &[String]) {
-    let mut provider = match state.db.get_provider_by_id(id, "codex") {
+    let mut provider = match state.db.get_provider_by_id(id, &AppType::Codex) {
         Ok(Some(p)) => p,
         Ok(None) => err(&format!("codex 供应商 {id} 不存在")),
         Err(e) => err(&format!("读供应商失败: {e}")),
@@ -1140,7 +1394,7 @@ fn cmd_reasoning(state: &AppState, id: &str, opts: &[String]) {
         Err(e) => eprintln!("警告: 数据库备份失败（继续写入）: {e}"),
     }
     provider.meta = Some(parsed_meta);
-    if let Err(e) = state.db.save_provider("codex", &provider) {
+    if let Err(e) = state.db.save_provider(&AppType::Codex, &provider) {
         err(&format!("保存推理参数失败: {e}"));
     }
     println!(
@@ -1182,7 +1436,13 @@ fn safe_profile_dir_name(provider_id: &str) -> String {
 fn link_shared_dir(link: &Path, shared: &Path) {
     match fs::symlink_metadata(link) {
         Ok(meta) if meta.file_type().is_symlink() => {
-            if fs::read_link(link).ok().as_deref() == Some(shared) {
+            // Windows junction targets may use a verbatim/Global prefix.
+            // Compare resolved paths too, so an existing correct link is left intact.
+            let same_target = fs::canonicalize(link)
+                .ok()
+                .zip(fs::canonicalize(shared).ok())
+                .is_some_and(|(current, expected)| current == expected);
+            if fs::read_link(link).ok().as_deref() == Some(shared) || same_target {
                 return;
             }
             // 指向别处：摘掉旧的再建（junction 要用 remove_dir）。
@@ -1218,13 +1478,14 @@ fn create_dir_link(shared: &Path, link: &Path) -> std::io::Result<()> {
     match std::os::windows::fs::symlink_dir(shared, link) {
         Ok(()) => Ok(()),
         Err(symlink_err) => {
-            let status = Command::new("cmd")
-                .args(["/C", "mklink", "/J"])
-                .arg(link)
-                .arg(shared)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
+            let status = output_with_timeout(
+                Command::new("cmd")
+                    .args(["/D", "/V:OFF", "/C", "mklink", "/J"])
+                    .arg(link)
+                    .arg(shared),
+                Duration::from_secs(10),
+            )
+            .map(|output| output.status);
             match status {
                 Ok(s) if s.success() => Ok(()),
                 _ => Err(symlink_err),
@@ -1242,7 +1503,8 @@ fn create_dir_link(_shared: &Path, _link: &Path) -> std::io::Result<()> {
 }
 
 fn cmd_agy_launch(state: &AppState, id: &str, args: &[String]) {
-    let provider = match state.db.get_provider_by_id(id, "agy") {
+    let (exec, extra) = parse_launch_flags(args).unwrap_or_else(|message| err(&message));
+    let provider = match state.db.get_provider_by_id(id, &AppType::Agy) {
         Ok(Some(p)) => p,
         Ok(None) => err(&format!("agy 供应商 {id} 不存在")),
         Err(e) => err(&format!("读供应商失败: {e}")),
@@ -1271,11 +1533,6 @@ fn cmd_agy_launch(state: &AppState, id: &str, args: &[String]) {
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
         });
-    let exec = args.iter().any(|a| a == "--exec");
-    let extra: Vec<String> = match args.iter().position(|a| a == "--") {
-        Some(pos) => args[pos + 1..].to_vec(),
-        None => Vec::new(),
-    };
     if !key.is_empty() {
         if base_url.is_empty() {
             err("该 agy 供应商有 Key 但没有 GOOGLE_GEMINI_BASE_URL，拒绝启动（上游同规则）");
@@ -1283,49 +1540,46 @@ fn cmd_agy_launch(state: &AppState, id: &str, args: &[String]) {
         // Key 模式：建私有目录，写 modelProvider/model，不写真实 settings.json。
         let dir = app_dir().join("agy").join(safe_profile_dir_name(id));
         let settings_path = dir.join("antigravity-cli").join("settings.json");
-        let mut existing = fs::read_to_string(&settings_path)
-            .ok()
-            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-            .unwrap_or(serde_json::json!({}));
-        existing["modelProvider"] = serde_json::Value::String("gemini".to_string());
-        match &model {
-            Some(m) => existing["model"] = serde_json::Value::String(m.clone()),
-            None => {
-                if let Some(obj) = existing.as_object_mut() {
-                    obj.remove("model");
+        if exec {
+            let mut existing =
+                read_json_object_or_default(&settings_path).unwrap_or_else(|message| err(&message));
+            existing["modelProvider"] = serde_json::Value::String("gemini".to_string());
+            match &model {
+                Some(m) => existing["model"] = serde_json::Value::String(m.clone()),
+                None => {
+                    if let Some(obj) = existing.as_object_mut() {
+                        obj.remove("model");
+                    }
                 }
             }
-        }
-        if let Some(parent) = settings_path.parent() {
-            if let Err(e) = fs::create_dir_all(parent) {
-                err(&format!("建私有目录失败: {e}"));
+            if let Some(parent) = settings_path.parent() {
+                if let Err(e) = fs::create_dir_all(parent) {
+                    err(&format!("建私有目录失败: {e}"));
+                }
             }
+            if let Err(e) = config::write_json_file_private(&settings_path, &existing) {
+                err(&format!("写私有 settings.json 失败: {e}"));
+            }
+            // <私有目录>/config 指回共享的 ~/.gemini/config；已是真实目录时不动它。
+            // 用核心的 get_home_dir：Windows 上没有 HOME，原来会退化成 "." 并在当前目录
+            // 建出一份假的共享目录。
+            let shared = cc_switch_core::config::get_home_dir()
+                .join(".gemini")
+                .join("config");
+            if let Err(e) = fs::create_dir_all(&shared) {
+                println!("警告: 建共享配置目录 {} 失败: {e}", shared.display());
+            }
+            link_shared_dir(&dir.join("config"), &shared);
         }
-        if let Err(e) = fs::write(
-            &settings_path,
-            serde_json::to_string_pretty(&existing).unwrap(),
-        ) {
-            err(&format!("写私有 settings.json 失败: {e}"));
-        }
-        // <私有目录>/config 指回共享的 ~/.gemini/config；已是真实目录时不动它。
-        // 用核心的 get_home_dir：Windows 上没有 HOME，原来会退化成 "." 并在当前目录
-        // 建出一份假的共享目录。
-        let shared = cc_switch_core::config::get_home_dir()
-            .join(".gemini")
-            .join("config");
-        if let Err(e) = fs::create_dir_all(&shared) {
-            println!("警告: 建共享配置目录 {} 失败: {e}", shared.display());
-        }
-        link_shared_dir(&dir.join("config"), &shared);
         let mut cmd = vec!["agy".to_string(), format!("--gemini_dir={}", dir.display())];
-        cmd.extend(extra.clone());
+        cmd.extend(extra.iter().cloned());
         println!("启动命令（Key 不进命令文本，只经子进程环境传入）:");
         println!("  {}", cmd.join(" "));
         println!("  环境: GEMINI_API_KEY=<已设置，不打印> GOOGLE_GEMINI_BASE_URL={base_url}");
         if exec {
             let status = Command::new("agy")
                 .arg(format!("--gemini_dir={}", dir.display()))
-                .args(&extra)
+                .args(extra)
                 .env("GEMINI_API_KEY", &key)
                 .env("GOOGLE_GEMINI_BASE_URL", &base_url)
                 .status();
@@ -1339,7 +1593,7 @@ fn cmd_agy_launch(state: &AppState, id: &str, args: &[String]) {
         if let Some(m) = &model {
             cmd.push(format!("--model={m}"));
         }
-        cmd.extend(extra.clone());
+        cmd.extend(extra.iter().cloned());
         println!("启动命令（官方登录卡，直接跑原生 agy，模型只对这次会话生效）:");
         println!("  {}", cmd.join(" "));
         if exec {
@@ -1347,7 +1601,7 @@ fn cmd_agy_launch(state: &AppState, id: &str, args: &[String]) {
             if let Some(m) = &model {
                 c.arg(format!("--model={m}"));
             }
-            c.args(&extra);
+            c.args(extra);
             match c.status() {
                 Ok(s) => exit(s.code().unwrap_or(1)),
                 Err(e) => err(&format!("启动 agy 失败（是否已装 agy？）: {e}")),
@@ -1442,7 +1696,6 @@ fn run_proxy_daemon(state: &AppState, app: AppType) {
         err("后台代理只适用于 codex；agy 不走代理，请用 agy launch");
     }
     let pid = std::process::id();
-    write_proxy_pid(pid);
 
     let enabled = usage_recording_enabled();
     cc_switch_core::set_cli_usage_recording(enabled);
@@ -1474,8 +1727,21 @@ fn run_proxy_daemon(state: &AppState, app: AppType) {
         Ok(info) => info,
         Err(e) => err(&format!("启动代理失败: {e}")),
     };
-    // enable 靠这行判定「已就绪」，别改掉前缀。
     println!("代理已起: {}:{}", info.address, info.port);
+    if let Some(path) = env::var_os("CC_SWITCH_DAEMON_READY") {
+        if let Err(error) =
+            config::atomic_write_private(Path::new(&path), pid.to_string().as_bytes())
+        {
+            let _ = rt.block_on(state.proxy_service.stop());
+            err(&format!("写入代理就绪确认失败: {error}"));
+        }
+    } else if let Err(error) = write_proxy_pid(pid) {
+        let _ = rt.block_on(state.proxy_service.stop());
+        err(&error);
+    }
+
+    let _ = state.db.shrink_memory();
+    trim_process_memory();
 
     rt.block_on(wait_for_proxy_shutdown());
     let _ = rt.block_on(state.proxy_service.stop());
@@ -1488,6 +1754,141 @@ fn run_proxy_daemon(state: &AppState, app: AppType) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn launch_separator_keeps_exec_in_child_arguments() {
+        let args = ["--", "--exec", "--app", "other"].map(str::to_string);
+        let (execute, child) = parse_launch_flags(&args).unwrap();
+        assert!(!execute);
+        assert_eq!(child, &args[1..]);
+        let args = ["--exec", "--", "--model", "two words"].map(str::to_string);
+        assert_eq!(parse_launch_flags(&args).unwrap(), (true, &args[2..]));
+        assert!(parse_launch_flags(&["--exce".into()]).is_err());
+    }
+
+    #[test]
+    fn command_validation_rejects_typos_and_trailing_arguments() {
+        for args in [
+            vec!["proxy", "usage", "onn"],
+            vec!["proxy", "disable", "--typo"],
+            vec!["provider", "list", "extra"],
+            vec!["launch", "id", "--exce"],
+            vec!["tui", "extra"],
+        ] {
+            assert!(validate_command_args(
+                &args.into_iter().map(str::to_string).collect::<Vec<_>>()
+            )
+            .is_err());
+        }
+        for args in [
+            vec!["proxy", "usage"],
+            vec!["tui"],
+            vec!["proxy", "usage", "on"],
+            vec!["use", "id", "--no-attach"],
+            vec!["launch", "id", "--", "--exec"],
+        ] {
+            validate_command_args(&args.into_iter().map(str::to_string).collect::<Vec<_>>())
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn control_lock_excludes_other_handles_and_releases_on_drop() {
+        let path = std::env::temp_dir().join(format!(
+            "cc-switch-control-test-{}.lock",
+            std::process::id()
+        ));
+        let first = lock_proxy_control(&path).unwrap();
+        assert!(lock_proxy_control(&path).is_err());
+        drop(first);
+        drop(lock_proxy_control(&path).unwrap());
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn daemon_readiness_probe_child() {
+        if env::var_os("CC_SWITCH_TEST_DAEMON_PROBE").is_some() {
+            thread::sleep(Duration::from_secs(10));
+        }
+    }
+
+    #[test]
+    fn daemon_readiness_requires_matching_child_acknowledgement() {
+        let mut command = Command::new(env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "tests::daemon_readiness_probe_child",
+                "--nocapture",
+            ])
+            .env("CC_SWITCH_TEST_DAEMON_PROBE", "1")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000);
+        }
+        let mut child = command.spawn().unwrap();
+        let path = env::temp_dir().join(format!(
+            "cc-switch-ready-test-{}-{}",
+            std::process::id(),
+            child.id()
+        ));
+        fs::write(&path, "wrong child").unwrap();
+        let result = wait_for_daemon_ready(&mut child, &path, Duration::from_millis(20));
+        assert!(result.is_err());
+        assert!(child.try_wait().unwrap().is_none());
+        fs::write(&path, child.id().to_string()).unwrap();
+        let result = wait_for_daemon_ready(&mut child, &path, Duration::from_secs(1));
+        child.kill().unwrap();
+        child.wait().unwrap();
+        fs::remove_file(path).unwrap();
+        assert_eq!(result.unwrap(), child.id());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn daemon_readiness_windows_identity_matches_current_process() {
+        let identity = process_identity(std::process::id()).unwrap();
+        let (started, executable) = identity.split_once('|').unwrap();
+        assert!(started.parse::<u64>().unwrap() > 0);
+        assert!(executable.eq_ignore_ascii_case(&env::current_exe().unwrap().to_string_lossy()));
+        assert_eq!(
+            process_identity(std::process::id()).as_deref(),
+            Some(identity.as_str())
+        );
+    }
+
+    #[test]
+    fn configuration_reads_reject_corruption_without_replacing_it_with_defaults() {
+        let root = env::temp_dir().join(format!(
+            "ccsw-json-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&root).unwrap();
+        let path = root.join("settings.json");
+        assert_eq!(
+            read_json_object_or_default(&path).unwrap(),
+            serde_json::json!({})
+        );
+        for content in ["{truncated", "[]", "null", "123"] {
+            fs::write(&path, content).unwrap();
+            assert!(read_json_object_or_default(&path).is_err());
+            assert_eq!(fs::read_to_string(&path).unwrap(), content);
+        }
+        fs::write(&path, r#"{"other":"keep","model":"old"}"#).unwrap();
+        let mut config = read_json_object_or_default(&path).unwrap();
+        config["model"] = serde_json::json!("new");
+        config::write_json_file_private(&path, &config).unwrap();
+        assert_eq!(read_json_object_or_default(&path).unwrap()["other"], "keep");
+        fs::remove_file(&path).unwrap();
+        fs::remove_dir(&root).unwrap();
+    }
 
     #[test]
     fn display_width_counts_cjk_as_two_columns() {
@@ -1613,9 +2014,15 @@ mod tests {
         // 指向别处：改指回共享目录。
         fs::remove_dir(&link).unwrap();
         link_shared_dir(&link, &other);
-        assert_eq!(fs::read_link(&link).unwrap(), other);
+        assert_eq!(
+            fs::canonicalize(&link).unwrap(),
+            fs::canonicalize(&other).unwrap()
+        );
         link_shared_dir(&link, &shared);
-        assert_eq!(fs::read_link(&link).unwrap(), shared);
+        assert_eq!(
+            fs::canonicalize(&link).unwrap(),
+            fs::canonicalize(&shared).unwrap()
+        );
 
         let _ = fs::remove_dir_all(&root);
     }

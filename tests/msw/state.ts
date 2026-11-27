@@ -7,15 +7,10 @@ import type {
   Settings,
 } from "@/types";
 import { deepClone } from "@/utils/deepClone";
-
 type ProvidersByApp = Record<AppId, Record<string, Provider>>;
 type CurrentProviderState = Record<AppId, string>;
 type McpConfigState = Record<AppId, Record<string, McpServer>>;
-type LiveProviderIdsByApp = Record<
-  "opencode" | "openclaw" | "hermes",
-  string[]
->;
-
+type LiveProviderIdsByApp = Record<"opencode", string[]>;
 const createDefaultProviders = (): ProvidersByApp => ({
   claude: {
     "claude-1": {
@@ -35,7 +30,6 @@ const createDefaultProviders = (): ProvidersByApp => ({
       createdAt: Date.now() + 1,
     },
   },
-  "claude-desktop": {},
   codex: {
     "codex-1": {
       id: "codex-1",
@@ -54,56 +48,21 @@ const createDefaultProviders = (): ProvidersByApp => ({
       createdAt: Date.now() + 1,
     },
   },
-  gemini: {
-    "gemini-1": {
-      id: "gemini-1",
-      name: "Gemini Default",
-      settingsConfig: {
-        env: {
-          GEMINI_API_KEY: "test-key",
-          GOOGLE_GEMINI_BASE_URL: "https://generativelanguage.googleapis.com",
-        },
-      },
-      category: "official",
-      sortIndex: 0,
-      createdAt: Date.now(),
-    },
-  },
-  grokbuild: {},
   opencode: {},
-  openclaw: {},
-  hermes: {},
-  pi: {},
-  mcode: {},
-  kimi: {},
   dsh: {},
   agy: {},
-  omp: {},
 });
-
 const createDefaultCurrent = (): CurrentProviderState => ({
   claude: "claude-1",
-  "claude-desktop": "",
   codex: "codex-1",
-  gemini: "gemini-1",
-  grokbuild: "",
   opencode: "",
-  openclaw: "",
-  hermes: "",
-  pi: "",
-  mcode: "",
-  kimi: "",
   dsh: "",
   agy: "",
-  omp: "",
 });
-
 let providers = createDefaultProviders();
 let current = createDefaultCurrent();
 let liveProviderIds: LiveProviderIdsByApp = {
   opencode: [],
-  openclaw: [],
-  hermes: [],
 };
 let settingsState: Settings = {
   showInTray: true,
@@ -116,7 +75,6 @@ let settingsState: Settings = {
 let appConfigDirOverride: string | null = null;
 const sessionMessageKey = (providerId: string, sourcePath: string) =>
   `${providerId}:${sourcePath}`;
-
 const createDefaultSessions = (): SessionMeta[] => {
   const now = Date.now();
   return [
@@ -144,7 +102,6 @@ const createDefaultSessions = (): SessionMeta[] => {
     },
   ];
 };
-
 const createDefaultSessionMessages = (): Record<string, SessionMessage[]> => ({
   [sessionMessageKey("codex", "/mock/codex/session-1.jsonl")]: [
     {
@@ -161,7 +118,6 @@ const createDefaultSessionMessages = (): Record<string, SessionMessage[]> => ({
     },
   ],
 });
-
 let sessionsState = createDefaultSessions();
 let sessionMessagesState = createDefaultSessionMessages();
 let mcpConfigs: McpConfigState = {
@@ -173,10 +129,7 @@ let mcpConfigs: McpConfigState = {
       apps: {
         claude: true,
         codex: false,
-        gemini: false,
         opencode: false,
-        openclaw: false,
-        hermes: false,
       },
       server: {
         type: "stdio",
@@ -184,7 +137,6 @@ let mcpConfigs: McpConfigState = {
       },
     },
   },
-  "claude-desktop": {},
   codex: {
     httpServer: {
       id: "httpServer",
@@ -193,10 +145,7 @@ let mcpConfigs: McpConfigState = {
       apps: {
         claude: false,
         codex: true,
-        gemini: false,
         opencode: false,
-        openclaw: false,
-        hermes: false,
       },
       server: {
         type: "http",
@@ -204,51 +153,36 @@ let mcpConfigs: McpConfigState = {
       },
     },
   },
-  gemini: {},
-  grokbuild: {},
   opencode: {},
-  openclaw: {},
-  hermes: {},
-  pi: {},
-  mcode: {},
-  kimi: {},
   dsh: {},
   agy: {},
-  omp: {},
 };
-
 const cloneProviders = (value: ProvidersByApp) =>
   deepClone(value) as ProvidersByApp;
-
 // 后端暂存、等前端处理的深链接：peek 不清除，ack 按编号清除
-let pendingDeepLink: { id: number; link: unknown } | null = null;
+let pendingDeepLink: {
+  id: number;
+  link: unknown;
+} | null = null;
 let nextPendingDeepLinkId = 1;
-
 export const setPendingDeepLink = (link: unknown) => {
   pendingDeepLink = { id: nextPendingDeepLinkId++, link };
 };
-
 export const peekPendingDeepLink = () => pendingDeepLink;
-
 export const ackPendingDeepLink = (id: number) => {
   if (pendingDeepLink?.id === id) pendingDeepLink = null;
 };
-
 export interface CustomIconFixture {
   id: string;
   name: string;
   data: string;
   createdAt: number;
 }
-
 let customIconsState: CustomIconFixture[] = [];
-
 export const listCustomIcons = () => deepClone(customIconsState);
-
 export const setCustomIcons = (icons: CustomIconFixture[]) => {
   customIconsState = deepClone(icons);
 };
-
 /** 和后端一样：同一张图不重复存，新的排最前面 */
 export const addCustomIcon = (name: string, data: string) => {
   const existing = customIconsState.find((icon) => icon.data === data);
@@ -262,18 +196,15 @@ export const addCustomIcon = (name: string, data: string) => {
   customIconsState = [icon, ...customIconsState];
   return { icon: deepClone(icon), existed: false };
 };
-
 export const renameCustomIcon = (id: string, name: string) => {
   const icon = customIconsState.find((item) => item.id === id);
   if (!icon) throw new Error("not found");
   icon.name = name.trim();
   return deepClone(icon);
 };
-
 export const deleteCustomIcon = (id: string) => {
   customIconsState = customIconsState.filter((icon) => icon.id !== id);
 };
-
 export const resetProviderState = () => {
   pendingDeepLink = null;
   customIconsState = [];
@@ -281,8 +212,6 @@ export const resetProviderState = () => {
   current = createDefaultCurrent();
   liveProviderIds = {
     opencode: [],
-    openclaw: [],
-    hermes: [],
   };
   sessionsState = createDefaultSessions();
   sessionMessagesState = createDefaultSessionMessages();
@@ -304,10 +233,7 @@ export const resetProviderState = () => {
         apps: {
           claude: true,
           codex: false,
-          gemini: false,
           opencode: false,
-          openclaw: false,
-          hermes: false,
         },
         server: {
           type: "stdio",
@@ -315,7 +241,6 @@ export const resetProviderState = () => {
         },
       },
     },
-    "claude-desktop": {},
     codex: {
       httpServer: {
         id: "httpServer",
@@ -324,10 +249,7 @@ export const resetProviderState = () => {
         apps: {
           claude: false,
           codex: true,
-          gemini: false,
           opencode: false,
-          openclaw: false,
-          hermes: false,
         },
         server: {
           type: "http",
@@ -335,40 +257,23 @@ export const resetProviderState = () => {
         },
       },
     },
-    gemini: {},
-    grokbuild: {},
     opencode: {},
-    openclaw: {},
-    hermes: {},
-    pi: {},
-    mcode: {},
-    kimi: {},
     dsh: {},
     agy: {},
-    omp: {},
   };
 };
-
 export const getProviders = (appType: AppId) =>
   cloneProviders(providers)[appType] ?? {};
-
 export const getCurrentProviderId = (appType: AppId) => current[appType] ?? "";
-
-export const getLiveProviderIds = (
-  appType: "opencode" | "openclaw" | "hermes",
-) => [...liveProviderIds[appType]];
-
-export const setLiveProviderIds = (
-  appType: "opencode" | "openclaw" | "hermes",
-  ids: string[],
-) => {
+export const getLiveProviderIds = (appType: "opencode") => [
+  ...liveProviderIds[appType],
+];
+export const setLiveProviderIds = (appType: "opencode", ids: string[]) => {
   liveProviderIds[appType] = [...ids];
 };
-
 export const setCurrentProviderId = (appType: AppId, providerId: string) => {
   current[appType] = providerId;
 };
-
 export const updateProviders = (
   appType: AppId,
   data: Record<string, Provider>,
@@ -377,19 +282,16 @@ export const updateProviders = (
     appType
   ];
 };
-
 export const setProviders = (
   appType: AppId,
   data: Record<string, Provider>,
 ) => {
   providers[appType] = deepClone(data) as Record<string, Provider>;
 };
-
 export const addProvider = (appType: AppId, provider: Provider) => {
   providers[appType] = providers[appType] ?? {};
   providers[appType][provider.id] = provider;
 };
-
 export const updateProvider = (appType: AppId, provider: Provider) => {
   if (!providers[appType]) return;
   providers[appType][provider.id] = {
@@ -397,7 +299,6 @@ export const updateProvider = (appType: AppId, provider: Provider) => {
     ...provider,
   };
 };
-
 export const deleteProvider = (appType: AppId, providerId: string) => {
   if (!providers[appType]) return;
   delete providers[appType][providerId];
@@ -406,10 +307,12 @@ export const deleteProvider = (appType: AppId, providerId: string) => {
     current[appType] = fallback;
   }
 };
-
 export const updateSortOrder = (
   appType: AppId,
-  updates: { id: string; sortIndex: number }[],
+  updates: {
+    id: string;
+    sortIndex: number;
+  }[],
 ) => {
   if (!providers[appType]) return;
   updates.forEach(({ id, sortIndex }) => {
@@ -419,22 +322,23 @@ export const updateSortOrder = (
     }
   });
 };
-
 export const listProviders = (appType: AppId) =>
   deepClone(providers[appType] ?? {}) as Record<string, Provider>;
-
 export const getSettings = () => deepClone(settingsState) as Settings;
-
-export const setSettings = (data: Partial<Settings>) => {
-  settingsState = { ...settingsState, ...data };
+export const setSettings = (data: {
+  [Key in keyof Settings]?: Settings[Key] | null;
+}) => {
+  settingsState = {
+    ...settingsState,
+    ...Object.fromEntries(
+      Object.entries(data).map(([key, value]) => [key, value ?? undefined]),
+    ),
+  };
 };
-
 export const getAppConfigDirOverride = () => appConfigDirOverride;
-
 export const setAppConfigDirOverrideState = (value: string | null) => {
   appConfigDirOverride = value;
 };
-
 export const getMcpConfig = (appType: AppId) => {
   const servers = deepClone(mcpConfigs[appType] ?? {}) as Record<
     string,
@@ -445,14 +349,12 @@ export const getMcpConfig = (appType: AppId) => {
     servers,
   };
 };
-
 export const setMcpConfig = (
   appType: AppId,
   value: Record<string, McpServer>,
 ) => {
   mcpConfigs[appType] = deepClone(value) as Record<string, McpServer>;
 };
-
 export const setMcpServerEnabled = (
   appType: AppId,
   id: string,
@@ -464,7 +366,6 @@ export const setMcpServerEnabled = (
     enabled,
   };
 };
-
 export const upsertMcpServer = (
   appType: AppId,
   id: string,
@@ -475,19 +376,15 @@ export const upsertMcpServer = (
   }
   mcpConfigs[appType][id] = deepClone(server) as McpServer;
 };
-
 export const deleteMcpServer = (appType: AppId, id: string) => {
   if (!mcpConfigs[appType]) return;
   delete mcpConfigs[appType][id];
 };
-
 export const listSessions = () => deepClone(sessionsState) as SessionMeta[];
-
 export const getSessionMessages = (providerId: string, sourcePath: string) =>
   deepClone(
     sessionMessagesState[sessionMessageKey(providerId, sourcePath)] ?? [],
   ) as SessionMessage[];
-
 export const deleteSession = (
   providerId: string,
   sessionId: string,
@@ -504,7 +401,6 @@ export const deleteSession = (
   delete sessionMessagesState[sessionMessageKey(providerId, sourcePath)];
   return true;
 };
-
 export const setSessionFixtures = (
   sessions: SessionMeta[],
   messages: Record<string, SessionMessage[]>,

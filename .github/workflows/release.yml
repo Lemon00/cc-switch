@@ -1,12 +1,12 @@
 name: Release
 
 on:
-  # 推 tag 直接发布：检查 →（签名）→ 打包 → 创建/更新 GitHub Release
+  # 推 tag 直接打包发布：（签名）→ 打包 → 创建/更新 GitHub Release
   # 产物：Windows MSI + 便携版 zip；Linux .deb + 绿色压缩包（仅含 GUI）+ 独立 CLI 文件。
   # 配置签名密钥时 Windows MSI / Linux deb 额外带 .sig 和 latest.json（应用内更新）。
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 permissions:
   contents: write
@@ -16,60 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # 应用内更新摘要（src/whats-new/<版本>.json，见同目录 README）随安装包发出。
-  # 漏写不再挡发布（弹窗只是空着）；结构写坏仍然挡——弹窗渲染出错会让
-  # 整个应用落进错误页。
-  whats-new-check:
-    name: Check in-app what's new summaries
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Check this version's summary (warn only)
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          file="src/whats-new/${TAG#v}.json"
-          if [ ! -f "$file" ]; then
-            echo "::warning file=$file::Missing $file. The in-app upgrade popup will be empty for $TAG; add it (\"items\": [] to skip the popup, see src/whats-new/README.md)."
-          else
-            echo "Summary present: $file"
-          fi
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '20'
-
-      - name: Setup pnpm
-        env:
-          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
-        run: |
-          corepack enable
-          corepack install
-          pnpm --version
-
-      - name: Get pnpm store directory
-        id: pnpm-store
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Setup pnpm cache
-        uses: actions/cache@v5
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
-
-      - name: Install frontend deps
-        run: pnpm install --frozen-lockfile
-
-      - name: Validate all summaries
-        run: pnpm vitest run tests/config/whatsNewEntries.test.ts
-
   release:
-    needs: whats-new-check
     runs-on: ${{ matrix.os }}
     # fork 可能没有 updater 私钥：没有就发无签名版（无 .sig、无 latest.json）
     env:
@@ -88,7 +35,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version-file: ".node-version"
 
       # rust-toolchain.toml 是编译器版本的唯一来源：直接装它，免得先装 stable 再被 rustup 换掉
       - name: Read pinned Rust toolchain
@@ -132,11 +79,10 @@ jobs:
             || sudo apt-get install -y --no-install-recommends libsoup2.4-dev
 
       - name: Setup pnpm
-        env:
-          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+        uses: pnpm/action-setup@v4
+
+      - name: Check Node and pnpm versions
         run: |
-          corepack enable
-          corepack install
           node --version
           pnpm --version
 
@@ -171,14 +117,14 @@ jobs:
           $ErrorActionPreference = 'Stop'
           # 只打 MSI 安装器（和便携版 exe），不打用不上的 NSIS 安装包
           if ($env:HAS_SIGNING_KEY -eq 'true') {
-            pnpm tauri build --bundles msi
+            pnpm tauri build --bundles msi -- --locked
           } else {
             # fork 没配 updater 私钥：关掉 updater 产物，否则 Tauri CLI 见到 pubkey
             # 就强制要 TAURI_SIGNING_PRIVATE_KEY，构建阶段直接失败，走不到后面
             # "发无签名版"的降级逻辑。
             $config = Join-Path $env:RUNNER_TEMP 'no-updater.json'
             '{"bundle":{"createUpdaterArtifacts":false}}' | Set-Content -Encoding utf8 $config
-            pnpm tauri build --bundles msi --config "$config"
+            pnpm tauri build --bundles msi --config "$config" -- --locked
           }
 
       - name: Build Tauri App (Linux)
@@ -186,18 +132,18 @@ jobs:
         run: |
           if [ "$HAS_SIGNING_KEY" = 'true' ]; then
             # 有私钥：deb 及其 .sig 一起产出，供 Linux 应用内更新使用。
-            pnpm tauri build --bundles deb
+            pnpm tauri build --bundles deb -- --locked
           else
             # 没配私钥时仍要发 deb，但关掉 updater 产物：否则 Tauri CLI 见到
             # pubkey 就强制要 TAURI_SIGNING_PRIVATE_KEY，构建阶段直接失败。
             printf '%s' '{"bundle":{"createUpdaterArtifacts":false}}' > "$RUNNER_TEMP/no-updater.json"
-            pnpm tauri build --bundles deb --config "$RUNNER_TEMP/no-updater.json"
+            pnpm tauri build --bundles deb --config "$RUNNER_TEMP/no-updater.json" -- --locked
           fi
 
-      - name: Build CLI (Linux)
+      - name: Build CLI and TUI (Linux)
         if: runner.os == 'Linux'
         run: |
-          cargo build --release --manifest-path crates/cc-switch-cli/Cargo.toml
+          cargo build --locked --release --manifest-path crates/cc-switch-cli/Cargo.toml
 
       - name: Prepare Windows Assets
         if: runner.os == 'Windows'
@@ -270,7 +216,7 @@ jobs:
             Remove-Item -Recurse -Force $portableDir
             Write-Host "Windows portable zip created: CC-Switch-$VERSION-Windows$assetSuffix-Portable.zip"
           } else {
-            Write-Warning 'Portable exe not found'
+            throw 'Portable exe not found'
           }
 
       - name: Prepare Linux Assets
@@ -330,12 +276,14 @@ jobs:
             echo ""
             echo "Run ./cc-switch directly."
             echo "The CLI (cc-switch-cli) is a separate download on the release page."
+            echo "Run ./cc-switch-cli tui in a terminal to edit providers and CLI settings."
             echo "Install the .deb package for in-app updates; this portable archive needs manual downloads."
           } > "$STAGE/README.txt"
           tar -czf "release-assets/${NAME}.tar.gz" -C "$STAGE_ROOT" "$NAME"
           rm -rf "$STAGE_ROOT"
           echo "Archive created: ${NAME}.tar.gz (GUI only)"
           echo "CLI asset created: cc-switch-cli (standalone)"
+          cp docs/cli-tui.md release-assets/CLI-TUI-README.md
 
       - name: List prepared assets
         shell: bash
@@ -365,6 +313,14 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout release notes
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: ".node-version"
+
       - name: Download built release artifacts
         uses: actions/download-artifact@v8
         with:
@@ -378,9 +334,9 @@ jobs:
           set -euo pipefail
           ls -la release-assets
 
-      # 签名就在刚下载的产物里：latest.json 随安装包一起上传。没有配置签名密钥
-      # 时产物里没有 .sig——跳过 latest.json（应用内更新不可用），安装包照常发布。
-      - name: Generate latest.json
+      # 签名就在刚下载的产物里：latest.json 与 manifest.json 共用同一个时间戳并随安装包一起上传。
+      # 没有配置签名密钥时产物里没有 .sig——跳过 latest.json（应用内更新不可用），下载清单和安装包照常发布。
+      - name: Generate download and updater manifests
         env:
           # 本 fork 的 updater 端点固定指向 Lemon00/cc-switch（见
           # tauri.conf.json），清单里的下载地址必须和它是同一个仓库；
@@ -389,52 +345,18 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          if ! ls release-assets/*.sig >/dev/null 2>&1; then
-            echo "WARNING: no .sig in release-assets (signing key not configured); skipping latest.json — in-app updates will be unavailable"
-            exit 0
-          fi
-          VERSION="${TAG#v}"
           PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          base_url="https://github.com/$REPO/releases/download/$TAG"
-          win_x64_url=""; win_x64_sig=""
-          linux_x64_deb_url=""; linux_x64_deb_sig=""
-          shopt -s nullglob
-          for sig in release-assets/*.sig; do
-            base=${sig%.sig}
-            fname=$(basename "$base")
-            url="$base_url/$fname"
-            sig_content=$(cat "$sig")
-            case "$fname" in
-              *-Windows.msi)
-                win_x64_url="$url"; win_x64_sig="$sig_content";;
-              *-Linux-x86_64.deb)
-                linux_x64_deb_url="$url"; linux_x64_deb_sig="$sig_content";;
-            esac
-          done
-          # 缺任一平台都不能发：缺的那批用户会静默收不到更新
-          missing=""
-          [ -n "$win_x64_sig" ] || missing="$missing windows-x86_64"
-          [ -n "$linux_x64_deb_sig" ] || missing="$missing linux-x86_64-deb"
-          if [ -n "$missing" ]; then
-            echo "❌ Missing updater signatures for:$missing" >&2
-            exit 1
+          BASE_URL="https://github.com/$REPO/releases/download"
+          node scripts/generate-download-manifest.mjs release-assets "$TAG" \
+            "$BASE_URL" release-assets/manifest.json "$PUB_DATE"
+          if ls release-assets/*.sig >/dev/null 2>&1; then
+            node scripts/generate-updater-manifest.mjs release-assets "$TAG" \
+              "$BASE_URL" release-assets/latest.json "$PUB_DATE"
+            echo "Generated latest.json:"
+            cat release-assets/latest.json
+          else
+            echo "WARNING: no .sig in release-assets (signing key not configured); skipping latest.json — in-app updates will be unavailable"
           fi
-          # 构造 JSON
-          tmp_json=$(mktemp)
-          {
-            echo '{'
-            echo "  \"version\": \"$VERSION\",";
-            echo "  \"notes\": \"Release $TAG\",";
-            echo "  \"pub_date\": \"$PUB_DATE\",";
-            echo '  "platforms": {'
-            # 两个平台的 sig/url 已在上面校验齐备，不会留下尾随逗号。
-            echo "    \"windows-x86_64\": {\"signature\": \"$win_x64_sig\", \"url\": \"$win_x64_url\"},"
-            echo "    \"linux-x86_64-deb\": {\"signature\": \"$linux_x64_deb_sig\", \"url\": \"$linux_x64_deb_url\"}"
-            echo '  }'
-            echo '}'
-          } > "$tmp_json"
-          echo "Generated latest.json:" && cat "$tmp_json"
-          mv "$tmp_json" release-assets/latest.json
 
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v3
@@ -442,20 +364,7 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: CC Switch ${{ github.ref_name }}
           prerelease: false
-          body: |
-            ## CC Switch ${{ github.ref_name }}
-
-            🌐 **Only Official Website / 唯一官方网站 / 唯一の公式サイト**: [ccswitch.io](https://ccswitch.io)
-
-            Claude Code 供应商切换工具
-
-            ### 下载
-
-            - **Windows (x86_64)**: `CC-Switch-${{ github.ref_name }}-Windows.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-Portable.zip`（绿色版）
-            - **Ubuntu / Linux (x86_64)**: `CC-Switch-${{ github.ref_name }}-Linux-x86_64.deb`（安装版，支持应用内更新）或 `CC-Switch-${{ github.ref_name }}-Ubuntu-x86_64.tar.gz`（绿色压缩包，**仅含 GUI** `cc-switch`；需系统已装 WebKitGTK 4.1 等运行库）
-            - **Linux CLI (x86_64)**: `cc-switch-cli`（独立可执行文件，单独下载；`chmod +x cc-switch-cli` 后 `./cc-switch-cli --help`）
-
-            > 安装 `.deb` 的版本支持应用内自动更新；绿色压缩包仍需手动下载新版。`.sig` / `latest.json` 用于 Windows MSI 与 Linux deb 的更新签名。
+          body_path: docs/release-notes/${{ github.ref_name }}-zh.md
           files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

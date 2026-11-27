@@ -3,26 +3,24 @@
 //! Implements manifest-based synchronization on top of the HTTP transport
 //! primitives in [`super::webdav`]. Artifact set: `db.sql` + `skills.zip`.
 
-use std::collections::BTreeMap;
-
 use chrono::Utc;
 use serde_json::Value;
 
 use crate::error::AppError;
 use crate::services::webdav::{
-    auth_from_credentials, build_remote_url, ensure_remote_directories, get_bytes, head_etag,
-    path_segments, put_bytes, test_connection, WebDavAuth,
+    auth_from_credentials, build_remote_url, ensure_remote_directories, get_bytes,
+    path_segments, put_bytes, put_bytes_conditional, test_connection, WebDavAuth,
 };
 use crate::settings::{update_webdav_sync_status, WebDavSyncSettings, WebDavSyncStatus};
 
 // 本分支 GUI commands 仍经此重导出拿锁；上游已改为直接用 sync_protocol。
 pub use super::sync_protocol::run_with_sync_lock;
 use super::sync_protocol::{
-    apply_snapshot, build_local_snapshot, effective_db_compat_version, localized,
+    apply_snapshot, artifact_path, build_local_snapshot, effective_db_compat_version, localized,
     persist_sync_success_best_effort, sha256_hex, validate_artifact_size_limit,
-    validate_manifest_compat, verify_artifact, ArtifactMeta, RemoteLayout, SyncManifest,
-    DB_COMPAT_VERSION, MAX_MANIFEST_BYTES, MAX_SYNC_ARTIFACT_BYTES, PROTOCOL_VERSION,
-    REMOTE_DB_SQL, REMOTE_MANIFEST, REMOTE_SKILLS_ZIP,
+    validate_manifest_compat, verify_artifact, PublishCondition, RemoteLayout, SyncManifest,
+    DB_COMPAT_VERSION, MAX_MANIFEST_BYTES, STORAGE_VERSION, REMOTE_DB_SQL, REMOTE_MANIFEST,
+    REMOTE_SKILLS_ZIP,
 };
 
 #[cfg(any(test, feature = "test-support"))]
@@ -46,6 +44,26 @@ struct RemoteSnapshot {
 }
 // ─── Public API ──────────────────────────────────────────────
 
+pub async fn auto_upload(
+    db: &crate::database::Database,
+    settings: &mut WebDavSyncSettings,
+) -> Result<Value, AppError> {
+    settings.validate()?;
+    let remote = find_remote_snapshot(settings, &auth_for(settings)).await?;
+    super::sync_protocol::validate_auto_upload_revision(
+        settings.status.last_remote_manifest_hash.as_deref(),
+        remote
+            .as_ref()
+            .map(|snapshot| snapshot.manifest_bytes.as_slice()),
+    )?;
+    // Legacy discovery is read-only: publication creates the current manifest.
+    let current = remote.as_ref().filter(|s| s.layout == RemoteLayout::Current);
+    let condition = PublishCondition::from_remote(
+        current.and_then(|s| s.manifest_etag.as_deref()), current.is_some(),
+    )?;
+    upload_with_condition(db, settings, &condition).await
+}
+
 /// Check WebDAV connectivity and ensure remote directory structure.
 pub async fn check_connection(settings: &WebDavSyncSettings) -> Result<(), AppError> {
     settings.validate()?;
@@ -61,37 +79,37 @@ pub async fn upload(
     db: &crate::database::Database,
     settings: &mut WebDavSyncSettings,
 ) -> Result<Value, AppError> {
+    upload_with_condition(db, settings, &PublishCondition::Overwrite).await
+}
+
+async fn upload_with_condition(
+    db: &crate::database::Database,
+    settings: &mut WebDavSyncSettings,
+    condition: &PublishCondition,
+) -> Result<Value, AppError> {
     settings.validate()?;
     let auth = auth_for(settings);
-    let dir_segs = remote_dir_segments(settings, RemoteLayout::Current);
+    let snapshot = build_local_snapshot(db)?;
+    let mut dir_segs = remote_dir_segments(settings, RemoteLayout::Current);
+    dir_segs.extend(path_segments(&snapshot.artifact_dir).map(str::to_string));
     ensure_remote_directories(&settings.base_url, &dir_segs, &auth).await?;
 
-    let snapshot = build_local_snapshot(db)?;
-
-    // Upload order: artifacts first, manifest last (best-effort consistency)
-    let db_url = remote_file_url(settings, RemoteLayout::Current, REMOTE_DB_SQL)?;
+    // Immutable artifacts keep the last committed snapshot readable after any failed PUT.
+    let db_url = remote_file_url(settings, RemoteLayout::Current, &format!("{}/{REMOTE_DB_SQL}", snapshot.artifact_dir))?;
     put_bytes(&db_url, &auth, snapshot.db_sql, "application/sql").await?;
 
-    let skills_url = remote_file_url(settings, RemoteLayout::Current, REMOTE_SKILLS_ZIP)?;
+    let skills_url = remote_file_url(settings, RemoteLayout::Current, &format!("{}/{REMOTE_SKILLS_ZIP}", snapshot.artifact_dir))?;
     put_bytes(&skills_url, &auth, snapshot.skills_zip, "application/zip").await?;
 
     let manifest_url = remote_file_url(settings, RemoteLayout::Current, REMOTE_MANIFEST)?;
-    put_bytes(
+    let etag = put_bytes_conditional(
         &manifest_url,
         &auth,
         snapshot.manifest_bytes,
         MANIFEST_CONTENT_TYPE,
+        condition,
     )
     .await?;
-
-    // Fetch etag (best-effort, don't fail the upload)
-    let etag = match head_etag(&manifest_url, &auth).await {
-        Ok(e) => e,
-        Err(e) => {
-            log::debug!("[WebDAV] Failed to fetch ETag after upload: {e}");
-            None
-        }
-    };
 
     let _persisted = persist_sync_success_best_effort(
         settings,
@@ -127,7 +145,7 @@ pub async fn download(
         &auth,
         snapshot.layout,
         REMOTE_DB_SQL,
-        &snapshot.manifest.artifacts,
+        &snapshot.manifest,
     )
     .await?;
     let skills_zip = download_and_verify(
@@ -135,7 +153,7 @@ pub async fn download(
         &auth,
         snapshot.layout,
         REMOTE_SKILLS_ZIP,
-        &snapshot.manifest.artifacts,
+        &snapshot.manifest,
     )
     .await?;
 
@@ -243,9 +261,9 @@ async fn download_and_verify(
     auth: &WebDavAuth,
     layout: RemoteLayout,
     artifact_name: &str,
-    artifacts: &BTreeMap<String, ArtifactMeta>,
+    manifest: &SyncManifest,
 ) -> Result<Vec<u8>, AppError> {
-    let meta = artifacts.get(artifact_name).ok_or_else(|| {
+    let meta = manifest.artifacts.get(artifact_name).ok_or_else(|| {
         localized(
             "webdav.sync.manifest_missing_artifact",
             format!("manifest 中缺少 artifact: {artifact_name}"),
@@ -254,8 +272,8 @@ async fn download_and_verify(
     })?;
     validate_artifact_size_limit(artifact_name, meta.size)?;
 
-    let url = remote_file_url(settings, layout, artifact_name)?;
-    let (bytes, _) = get_bytes(&url, auth, MAX_SYNC_ARTIFACT_BYTES as usize)
+    let url = remote_file_url(settings, layout, &artifact_path(manifest, artifact_name)?)?;
+    let (bytes, _) = get_bytes(&url, auth, meta.size as usize)
         .await?
         .ok_or_else(|| {
             localized(
@@ -274,7 +292,7 @@ async fn download_and_verify(
 fn remote_dir_segments(settings: &WebDavSyncSettings, layout: RemoteLayout) -> Vec<String> {
     let mut segs = Vec::new();
     segs.extend(path_segments(&settings.remote_root).map(str::to_string));
-    segs.push(format!("v{PROTOCOL_VERSION}"));
+    segs.push(format!("v{STORAGE_VERSION}"));
     if layout == RemoteLayout::Current {
         segs.push(format!("db-v{DB_COMPAT_VERSION}"));
     }

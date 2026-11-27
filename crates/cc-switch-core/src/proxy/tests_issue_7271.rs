@@ -10,6 +10,7 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::app_config::AppType;
     use crate::database::Database;
     use crate::provider::Provider;
     use crate::proxy::server::ProxyServer;
@@ -134,8 +135,9 @@ mod tests {
             }),
             None,
         );
-        db.save_provider("claude", &provider).unwrap();
-        db.set_current_provider("claude", &provider.id).unwrap();
+        db.save_provider(&AppType::Claude, &provider).unwrap();
+        db.set_current_provider(&AppType::Claude, &provider.id)
+            .unwrap();
 
         let proxy = ProxyServer::new(
             ProxyConfig {
@@ -183,7 +185,8 @@ mod tests {
             env::set_var("HOME", dir.path());
             env::set_var("USERPROFILE", dir.path());
             env::set_var("CC_SWITCH_TEST_HOME", dir.path());
-            crate::settings::reload_settings().expect("reload settings");
+            crate::settings::update_settings(Default::default())
+                .expect("initialize settings for isolated test home");
 
             Self {
                 dir,

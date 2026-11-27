@@ -1,15 +1,12 @@
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-} from "react";
-import { listen } from "@tauri-apps/api/event";
+import { ProviderIcon } from "@/components/ProviderIcon";
+import { AppGlyph } from "@/components/shell/AppGlyph";
+import { cleanupTauriListener } from "@/lib/tauriEventCleanup";
+import { cn } from "@/lib/utils";
+import type { AppMode } from "@/types/proxy";
 import { useQueryClient } from "@tanstack/react-query";
+import { listen } from "@tauri-apps/api/event";
 import i18n from "i18next";
+import { supportedLanguage } from "@/i18n/language";
 import {
   AlertTriangle,
   Check,
@@ -23,12 +20,20 @@ import {
   Search,
   Settings,
 } from "lucide-react";
-import { AppGlyph } from "@/components/shell/AppGlyph";
-import { ProviderIcon } from "@/components/ProviderIcon";
-import { cn } from "@/lib/utils";
-import type { AppMode } from "@/types/proxy";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import {
   CHANGED_EVENT,
+  HIDE_EVENT,
   SHOW_EVENT,
   trayPanelApi,
   type CardRect,
@@ -37,12 +42,14 @@ import {
   type PanelQuota,
   type PanelRow,
   type PanelTexts,
-  type TrayPanelState,
 } from "./api";
 import { aimingAt, type Point } from "./menuAim";
+import { usePanelState } from "./usePanelState";
 import { usePanelTheme } from "./usePanelTheme";
-import { UsageTab } from "./UsageTab";
 
+const UsageTab = lazy(() =>
+  import("./UsageTab").then((module) => ({ default: module.UsageTab })),
+);
 type Tab = "config" | "usage";
 const TAB_KEY = "cc-switch-tray-tab";
 /** 主界面保存语言用的键 */
@@ -64,11 +71,9 @@ const AIM_RECHECK_MS = 120;
 const COLD_DATA_WAIT_MS = 100;
 /** 鼠标停在主面板里不是应用行的项上（`hovered` 的取值） */
 const OTHER_ITEM = "";
-
 const ROW_HOVER = "hover:bg-black/[0.06] dark:hover:bg-white/[0.08]";
 const FOCUS_RING =
   "outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60";
-
 function readTab(): Tab {
   try {
     return window.localStorage.getItem(TAB_KEY) === "usage"
@@ -78,10 +83,11 @@ function readTab(): Tab {
     return "config";
   }
 }
-
 function syncLanguage() {
   try {
-    const language = window.localStorage.getItem(LANGUAGE_KEY);
+    const language = supportedLanguage(
+      window.localStorage.getItem(LANGUAGE_KEY),
+    );
     if (language && language !== i18n.language) {
       void i18n.changeLanguage(language);
     }
@@ -89,20 +95,16 @@ function syncLanguage() {
     // 读不到沿用当前语言
   }
 }
-
 /** 分开摆时窗口的纵向范围（相对贴图标那条边）。 */
 function floatingCanvas(p: PanelPlacement, maxHeight = CANVAS_MAX_HEIGHT) {
   return p.edge === "top"
     ? { top: 0, bottom: Math.min(p.boundsBottom, maxHeight) }
     : { top: Math.max(p.boundsTop, -maxHeight), bottom: 0 };
 }
-
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), Math.max(min, max));
 }
-
 // ─── 额度 ────────────────────────────────────────────────────────────────────
-
 /**
  * 还有多久重置，写短：最多两级（天+小时、小时+分、分），零的那级不写；
  * 不足一分钟按一分钟算，已经过了的不写。
@@ -116,7 +118,7 @@ export function formatResetIn(
   if (Number.isNaN(at.getTime()) || at <= now) return null;
   const totalMinutes = Math.max(
     1,
-    Math.floor((at.getTime() - now.getTime()) / 60_000),
+    Math.floor((at.getTime() - now.getTime()) / 60000),
   );
   const days = Math.floor(totalMinutes / 1440);
   const hours = Math.floor((totalMinutes % 1440) / 60);
@@ -140,7 +142,6 @@ export function formatResetIn(
     parts.filter(Boolean).join(texts.durationSep),
   );
 }
-
 /** 只给数值上绿色（「余额 82.10 CNY」里的金额），和主界面 `TONE_TEXT.normal` 同色。 */
 function EmphasizedText({
   text,
@@ -159,7 +160,6 @@ function EmphasizedText({
     </>
   );
 }
-
 function QuotaBlock({
   quota,
   texts,
@@ -240,16 +240,13 @@ function QuotaBlock({
     </div>
   );
 }
-
 // ─── 主面板的应用行 ───────────────────────────────────────────────────────────
-
 // 模式名用主界面的模式色（与 ModeTabs 的 MODE_TONE.text 同一组 token），一眼分出直连 / 路由 / 聚合。
 const MODE_TEXT: Record<AppMode, string> = {
   direct: "text-direct-text",
   route: "text-route-text",
   stack: "text-stack-text",
 };
-
 function AppRow({
   app,
   texts,
@@ -328,9 +325,7 @@ function AppRow({
     </button>
   );
 }
-
 // ─── 子面板 ───────────────────────────────────────────────────────────────────
-
 function matches(row: PanelRow, query: string) {
   const haystack = [row.text, row.provider?.name, row.provider?.hint]
     .filter(Boolean)
@@ -338,7 +333,6 @@ function matches(row: PanelRow, query: string) {
     .toLowerCase();
   return haystack.includes(query);
 }
-
 function SubRow({
   row,
   texts,
@@ -417,7 +411,6 @@ function SubRow({
     </button>
   );
 }
-
 function SubPanel({
   app,
   texts,
@@ -440,7 +433,6 @@ function SubPanel({
     ? rows.filter((row) => row.kind === "provider" && matches(row, needle))
     : rows;
   const providerCount = rows.filter((row) => row.kind === "provider").length;
-
   return (
     <>
       <div className="shrink-0 px-4 pb-2 pt-3">
@@ -484,7 +476,6 @@ function SubPanel({
     </>
   );
 }
-
 function FooterButton({
   icon,
   text,
@@ -517,9 +508,7 @@ function FooterButton({
     </button>
   );
 }
-
 // ─── 面板 ─────────────────────────────────────────────────────────────────────
-
 export function TrayPanel() {
   const [nativePlacement, setPlacement] = useState<PanelPlacement | null>(null);
   const [pixelRatio, setPixelRatio] = useState(window.devicePixelRatio || 1);
@@ -543,7 +532,9 @@ export function TrayPanel() {
       },
     [nativePlacement, coordinateScale],
   );
-  const [state, setState] = useState<TrayPanelState | null>(null);
+  const { state, load, clearFeedback, hasSnapshot } = usePanelState();
+  const [visible, setVisible] = useState(false);
+  const visibleRef = useRef(false);
   const [tab, setTab] = useState<Tab>(readTab);
   const [openApp, setOpenApp] = useState<string | null>(null);
   /** 子面板是从另一个应用换过来的（不是刚展开）：内容做一次很短的淡入 */
@@ -552,7 +543,6 @@ export function TrayPanel() {
   const [shownCount, setShownCount] = useState(0);
   const theme = usePanelTheme(shownCount);
   const queryClient = useQueryClient();
-
   const mainRef = useRef<HTMLDivElement>(null);
   const subRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -562,7 +552,6 @@ export function TrayPanel() {
   /** 上次因为「正朝子面板移动」而暂缓切换时的鼠标位置 */
   const aimedAt = useRef<Point | null>(null);
   const hovered = useRef<string | null>(null);
-  const lastState = useRef("");
   const layoutFrame = useRef<number | undefined>(undefined);
   const lastLayout = useRef("");
   const placementRef = useRef(placement);
@@ -571,7 +560,6 @@ export function TrayPanel() {
   openAppRef.current = openApp;
   /** 已经开始处理的最新一次弹出（`seq`） */
   const shownSeq = useRef(0);
-
   useEffect(() => {
     const update = () => setPixelRatio(window.devicePixelRatio || 1);
     // 跨屏时 DPR 可能晚于显示事件更新，固定画布也不一定触发 resize。
@@ -585,20 +573,6 @@ export function TrayPanel() {
       window.removeEventListener("resize", update);
     };
   }, [pixelRatio]);
-
-  const load = useCallback(async () => {
-    try {
-      const next = await trayPanelApi.state();
-      // 额度刷新会连着通知好几次，内容没变就不重新渲染
-      const key = JSON.stringify(next);
-      if (key === lastState.current) return;
-      lastState.current = key;
-      setState(next);
-    } catch (error) {
-      console.error("[TrayPanel] 读取托盘面板数据失败", error);
-    }
-  }, []);
-
   // 每次弹出：收起子面板、清空搜索，数据另取，热开不让排版等它——取数要读库，启动期的
   // 会话用量导入可能占着库好几秒，等它就是点了没反应。热开先按上次的内容排版显示，
   // 数据到了再更新；冷开最多等 `COLD_DATA_WAIT_MS`。
@@ -609,22 +583,21 @@ export function TrayPanel() {
       // 否则按旧 seq 回报的尺寸会被后端丢掉，Windows 上面板就不显示了。
       if (next.seq <= shownSeq.current) return;
       shownSeq.current = next.seq;
+      visibleRef.current = true;
+      setVisible(true);
+      window.clearTimeout(hoverTimer.current);
+      hovered.current = null;
+      aimedAt.current = null;
+      trail.current = [];
       syncLanguage();
       setOpenApp(null);
       setQuery("");
-      const cold = !lastState.current;
+      const cold = !hasSnapshot.current;
       const loading = load();
       void queryClient.invalidateQueries({ queryKey: ["settings"] });
       // 反馈行（切换后的「重启生效」）收起即算看过（后端 `mark_feedback_seen`）：沿用上次
       // 内容时先去掉。缓存键跟着换，收起之后才记下的（还没看过）等数据回来照样显示。
-      if (lastState.current) {
-        const previous = JSON.parse(lastState.current) as TrayPanelState;
-        if (previous.feedback) {
-          const cleared = { ...previous, feedback: null };
-          lastState.current = JSON.stringify(cleared);
-          setState(cleared);
-        }
-      }
+      clearFeedback();
       if (cold) {
         await Promise.race([
           loading,
@@ -633,52 +606,74 @@ export function TrayPanel() {
           ),
         ]);
         // 等的时候又弹出了一次：按最新那次排版
-        if (shownSeq.current !== next.seq) return;
+        if (shownSeq.current !== next.seq || !visibleRef.current) return;
       }
       lastLayout.current = "";
       setShownCount((count) => count + 1);
       setPixelRatio(window.devicePixelRatio || 1);
       setPlacement(next);
     },
-    [load, queryClient],
+    [load, clearFeedback, hasSnapshot, queryClient],
   );
-
   useEffect(() => {
     let disposed = false;
     const offs: Array<() => void> = [];
     void (async () => {
-      const offShow = await listen<PanelPlacement>(SHOW_EVENT, (event) => {
-        void begin(event.payload);
-      });
-      const offChanged = await listen(CHANGED_EVENT, () => void load());
-      if (disposed) {
-        offShow();
-        offChanged();
-        return;
+      try {
+        const offShow = await listen<PanelPlacement>(SHOW_EVENT, (event) => {
+          void begin(event.payload);
+        });
+        if (disposed) {
+          offShow();
+          return;
+        }
+        offs.push(offShow);
+        const offChanged = await listen(CHANGED_EVENT, () => {
+          if (visibleRef.current) void load();
+        });
+        if (disposed) {
+          offChanged();
+          return;
+        }
+        offs.push(offChanged);
+        const offHide = await listen<number>(HIDE_EVENT, (event) => {
+          if (event.payload < shownSeq.current) return;
+          shownSeq.current = event.payload;
+          visibleRef.current = false;
+          setVisible(false);
+          window.clearTimeout(hoverTimer.current);
+        });
+        if (disposed) {
+          cleanupTauriListener(offHide, HIDE_EVENT);
+          return;
+        }
+        offs.push(offHide);
+        // 第一次弹出时窗口是新建的，事件可能早于这里开始监听
+        const pending = await trayPanelApi.placement();
+        if (pending && !disposed) void begin(pending);
+      } catch (error) {
+        console.error("[TrayPanel] failed to register listeners", error);
+        if (disposed) return;
+        // 第二个 listen 失败时，已登记的第一个仍由 cleanup 释放。
       }
-      offs.push(offShow, offChanged);
-      // 第一次弹出时窗口是新建的，事件可能早于这里开始监听
-      const pending = await trayPanelApi.placement();
-      if (pending && !disposed) void begin(pending);
     })();
     return () => {
       disposed = true;
-      offs.forEach((off) => off());
+      visibleRef.current = false;
+      window.clearTimeout(hoverTimer.current);
+      offs.forEach((off) => cleanupTauriListener(off, "tray panel"));
     };
   }, [begin, load]);
-
   useEffect(() => {
     if (!placement) return;
     document.documentElement.dataset.glass = placement.glass;
     document.documentElement.dataset.layout = placement.layout;
   }, [placement]);
-
   const apps = state?.apps ?? [];
   const openEntry =
     tab === "config"
       ? apps.find((app) => app.app === openApp && !app.addId)
       : undefined;
-
   /**
    * 量出两块卡片的高度，算好它们在窗口里的位置，回报给后端摆窗口和玻璃。
    * 直接改 DOM 样式（不经 state），量和摆在同一帧里完成。
@@ -691,7 +686,6 @@ export function TrayPanel() {
     const floating = p.layout === "floating";
     const windowsJoined = p.platform === "windows" && !floating;
     const fixedCanvas = floating || windowsJoined;
-
     const mainHeight = main.getBoundingClientRect().height;
     if (sub) {
       // 两栏以主面板的高度为准，供应商列表在子面板内部滚动。
@@ -699,7 +693,6 @@ export function TrayPanel() {
       sub.style.height = floating ? "" : `${mainHeight}px`;
     }
     const subHeight = sub ? sub.getBoundingClientRect().height : 0;
-
     const mainTop = p.edge === "top" ? 0 : -mainHeight;
     let subX = p.side === "left" ? 0 : p.mainWidth + p.gap;
     let subTop = mainTop;
@@ -739,7 +732,6 @@ export function TrayPanel() {
       subX += SHADOW_MARGIN;
       width += SHADOW_MARGIN * 2;
     }
-
     main.style.left = `${mainX}px`;
     main.style.top = `${mainTop - top}px`;
     const cards: CardRect[] = [
@@ -755,7 +747,6 @@ export function TrayPanel() {
         height: subHeight,
       });
     }
-
     const layout = {
       seq: p.seq,
       width: width * coordinateScale,
@@ -790,7 +781,6 @@ export function TrayPanel() {
       void trayPanelApi.layout(layout);
     }
   }, [openApp, theme.explicit, coordinateScale]);
-
   useEffect(
     () => () => {
       if (layoutFrame.current !== undefined) {
@@ -799,22 +789,18 @@ export function TrayPanel() {
     },
     [],
   );
-
   useLayoutEffect(() => {
     relayout();
   });
-
   useEffect(() => {
     const observer = new ResizeObserver(() => relayout());
     if (mainRef.current) observer.observe(mainRef.current);
     if (subRef.current) observer.observe(subRef.current);
     return () => observer.disconnect();
   }, [relayout, openEntry, placement]);
-
   const action = useCallback((id: string) => {
     void trayPanelApi.action(id);
   }, []);
-
   const openSub = useCallback((app: PanelApp | null) => {
     window.clearTimeout(hoverTimer.current);
     const next = app && !app.addId ? app.app : null;
@@ -823,7 +809,6 @@ export function TrayPanel() {
     setOpenApp(next);
     setQuery("");
   }, []);
-
   useEffect(() => {
     const onMove = (event: MouseEvent) => {
       const points = trail.current;
@@ -833,7 +818,6 @@ export function TrayPanel() {
     window.addEventListener("mousemove", onMove);
     return () => window.removeEventListener("mousemove", onMove);
   }, []);
-
   /**
    * 子面板开着时换到另一个应用（`null`＝移到了主面板里别的项上，收起子面板）：
    * 鼠标正斜着朝子面板移动（途经别的行）就先不换，隔一会儿再看；鼠标停下了、
@@ -866,7 +850,6 @@ export function TrayPanel() {
     aimedAt.current = null;
     openSub(app);
   };
-
   const hoverApp = (app: PanelApp) => {
     window.clearTimeout(hoverTimer.current);
     hovered.current = app.app;
@@ -878,7 +861,6 @@ export function TrayPanel() {
     }
     hoverTimer.current = window.setTimeout(() => openSub(app), HOVER_OPEN_MS);
   };
-
   // 和原生菜单一样：移到主面板里别的项（标签、设置、底部按钮）上就收起子面板；
   // 移出整个面板不收，手滑出去再回来不用重新展开
   const hoverOtherItem = (event: React.MouseEvent) => {
@@ -889,12 +871,10 @@ export function TrayPanel() {
     aimedAt.current = null;
     switchTo(null);
   };
-
   const leaveApp = () => {
     window.clearTimeout(hoverTimer.current);
     hovered.current = null;
   };
-
   const changeTab = (next: Tab) => {
     setTab(next);
     setOpenApp(null);
@@ -904,7 +884,6 @@ export function TrayPanel() {
       // 记不住也不影响使用
     }
   };
-
   // 键盘：Esc 逐级退出；← → 收起 / 展开子面板；↑ ↓ 在行之间移动
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -970,7 +949,6 @@ export function TrayPanel() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [apps, openApp, openSub, query]);
-
   const radius = placement?.radius ?? 12;
   const joined = placement?.layout === "joined";
   const cornerStyle = (card: "main" | "sub"): CSSProperties => {
@@ -983,7 +961,6 @@ export function TrayPanel() {
         : `0 ${radius}px ${radius}px 0`,
     };
   };
-
   const mainMaxHeight = useMemo(() => {
     if (!placement) return MAIN_MAX_HEIGHT / coordinateScale;
     const room =
@@ -998,10 +975,8 @@ export function TrayPanel() {
         : placement.boundsBottom - placement.boundsTop;
     return Math.max(0, Math.min(SUB_MAX_HEIGHT / coordinateScale, room));
   }, [placement, coordinateScale]);
-
   if (!placement) return null;
   const { texts } = placement;
-
   return (
     <div
       className="relative h-full w-full"
@@ -1117,7 +1092,21 @@ export function TrayPanel() {
               ))}
             </div>
           ) : (
-            <UsageTab refreshKey={shownCount} visible={tab === "usage"} />
+            <Suspense
+              fallback={
+                <div
+                  role="status"
+                  className="flex h-32 items-center justify-center"
+                >
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                </div>
+              }
+            >
+              <UsageTab
+                refreshKey={shownCount}
+                visible={visible && tab === "usage"}
+              />
+            </Suspense>
           )}
         </div>
 

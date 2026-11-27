@@ -4,9 +4,7 @@
 // endpoint 与 env 是第三方供应商的正常配置能力（`http://localhost:11434` 就是
 // Ollama / LM Studio 的常规用法），拦下来会打断合法场景。真正的缺口是用户在
 // 点「导入」时看不到自己在同意什么——所以补的是可见性，不是黑名单。
-
 export type RiskKind = "envHijack" | "privateEndpoint" | "shellCommand";
-
 const SENSITIVE_CONFIG_KEY_MARKERS = [
   "TOKEN",
   "KEY",
@@ -17,7 +15,6 @@ const SENSITIVE_CONFIG_KEY_MARKERS = [
   "CREDENTIAL",
 ];
 const SENSITIVE_CONFIG_KEY_NAMES = new Set(["AUTH", "BEARER"]);
-
 export function isSensitiveConfigKey(key: string): boolean {
   const normalizedKey = key.toUpperCase();
   return (
@@ -27,14 +24,12 @@ export function isSensitiveConfigKey(key: string): boolean {
     )
   );
 }
-
 export function maskSensitiveValue(value: string): string {
   if (value.length === 0) return value;
   return value.length > 8
     ? `${value.substring(0, 4)}${"*".repeat(12)}`
     : "****";
 }
-
 /**
  * 能改变子进程加载行为的环境变量。
  *
@@ -55,9 +50,8 @@ const ENV_HIJACK_PATTERNS: RegExp[] = [
   /^ENV$/i,
   /^IFS$/i,
   /^PATH$/i, // 整体劫持命令解析
-  /^HTTPS?_PROXY$/i, // 全量流量转发
+  /^HTTPS?_PROXY$/i,
 ];
-
 /** 会被 shell 解释成"执行下面这段字符串"的调用形态。 */
 const SHELL_INTERPRETERS = new Set([
   "sh",
@@ -75,7 +69,6 @@ const SHELL_INTERPRETERS = new Set([
   "pwsh",
   "pwsh.exe",
 ]);
-
 /**
  * 「下一个参数是要执行的命令串」这一族开关。
  *
@@ -85,22 +78,17 @@ const SHELL_INTERPRETERS = new Set([
  */
 function isInlineCommandFlag(arg: string): boolean {
   const lower = arg.toLowerCase();
-
   // cmd.exe：/c、/k，可带后缀（/c:）
   if (/^\/[ck]\b/.test(lower)) return true;
-
   // PowerShell：-Command / -c 及其任意合法缩写（-comm、-comma…）
   if (/^-c(o(m(m(a(n(d)?)?)?)?)?)?$/.test(lower)) return true;
   if (lower === "-encodedcommand" || lower === "-e" || lower === "-ec") {
     return true;
   }
-
   // POSIX shell：单横线 + 一串短开关，其中含 c（-c、-lc、-ec、-eco…）
   if (/^-[a-z]*c[a-z]*$/.test(lower)) return true;
-
   return false;
 }
-
 /**
  * 判定是否为环回 / 私网 / 云元数据地址。
  *
@@ -120,7 +108,6 @@ function isInlineCommandFlag(arg: string): boolean {
 function extractIpv4Octets(bare: string): [number, number] | null {
   const dotted = bare.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (dotted) return [Number(dotted[1]), Number(dotted[2])];
-
   // IPv6 嵌入 IPv4 形式（十六进制归一化）：
   // - IPv4-mapped: ::ffff:7f00:1
   // - SIIT IPv4-translated (RFC 6052 / RFC 7915): ::ffff:0:7f00:1
@@ -133,7 +120,6 @@ function extractIpv4Octets(bare: string): [number, number] | null {
     const high = parseInt(hexMapped[1], 16);
     return [(high >> 8) & 0xff, high & 0xff];
   }
-
   // 少数实现或原始形式保留点分尾巴：
   // ::ffff:127.0.0.1, ::ffff:0:127.0.0.1, 64:ff9b::127.0.0.1, ::127.0.0.1
   const dottedMapped = bare.match(
@@ -142,24 +128,19 @@ function extractIpv4Octets(bare: string): [number, number] | null {
   if (dottedMapped) {
     return [Number(dottedMapped[1]), Number(dottedMapped[2])];
   }
-
   return null;
 }
-
 export function classifyEndpoint(rawUrl: unknown): RiskKind | null {
   if (typeof rawUrl !== "string") return null;
-
   let host: string;
   try {
     host = new URL(rawUrl).hostname.toLowerCase();
   } catch {
     return null;
   }
-
   // URL 会把 IPv6 主机保留在方括号里
   const bare =
     host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
-
   if (
     bare === "localhost" ||
     bare.endsWith(".localhost") ||
@@ -171,7 +152,6 @@ export function classifyEndpoint(rawUrl: unknown): RiskKind | null {
   ) {
     return "privateEndpoint";
   }
-
   const octets = extractIpv4Octets(bare);
   if (octets) {
     const [a, b] = octets;
@@ -186,22 +166,18 @@ export function classifyEndpoint(rawUrl: unknown): RiskKind | null {
       return "privateEndpoint";
     }
   }
-
   // IPv6 唯一本地地址 fc00::/7 与链路本地 fe80::/10
   if (/^f[cd][0-9a-f]{2}:/.test(bare) || /^fe[89ab][0-9a-f]:/.test(bare)) {
     return "privateEndpoint";
   }
-
   return null;
 }
-
 export function classifyEnvKey(key: unknown): RiskKind | null {
   if (typeof key !== "string") return null;
   return ENV_HIJACK_PATTERNS.some((pattern) => pattern.test(key))
     ? "envHijack"
     : null;
 }
-
 /**
  * MCP server 的 `command` + `args`。
  *
@@ -218,17 +194,14 @@ export function classifyCommand(
   args?: unknown,
 ): RiskKind | null {
   if (typeof command !== "string" || !command) return null;
-
   // 只取基名：`/bin/sh` 与 `sh` 是同一回事
   const base = command.split(/[/\\]/).pop()?.toLowerCase() ?? "";
   if (!SHELL_INTERPRETERS.has(base)) return null;
-
   if (!Array.isArray(args)) return null;
   return args.some((arg) => typeof arg === "string" && isInlineCommandFlag(arg))
     ? "shellCommand"
     : null;
 }
-
 /**
  * 凭据类取值的展示脱敏。
  *
@@ -238,12 +211,10 @@ export function classifyCommand(
 export function maskValue(key: string, value: string): string {
   return isSensitiveConfigKey(key) ? maskSensitiveValue(value) : value;
 }
-
 /** 风险种类 → i18n key。 */
 export function riskI18nKey(kind: RiskKind): string {
   return `deeplink.risk.${kind}`;
 }
-
 /**
  * 解码 deeplink 携带的 base64 载荷，供确认框展示。
  *

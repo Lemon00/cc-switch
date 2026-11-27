@@ -9,48 +9,48 @@ pub use crate::services::ProviderService;
 pub use crate::store::AppState;
 
 pub mod agy_config;
+pub mod app;
 pub mod app_config;
+pub mod auth_state;
 pub mod background;
-pub mod claude_desktop_config;
 pub mod claude_mcp;
 pub mod codex_config;
 pub mod codex_rollout_file;
 pub mod codex_state_db;
 pub mod config;
+pub mod coordination;
 pub mod database;
 pub mod dsh_config;
 pub mod error;
 pub mod events;
 pub mod frontend_apps;
-pub mod gemini_config;
-pub mod gemini_mcp;
-pub mod grok_config;
-pub mod hermes_config;
+pub mod icon;
 pub mod jsonc_document;
-pub mod kimi_config;
-#[cfg(feature = "session-monitor")]
-pub mod kimi_session;
 pub mod live;
-pub mod mcode_config;
 pub mod mcp;
 pub mod mode;
 pub mod model_capabilities;
-pub mod omp_config;
-pub mod openclaw_config;
+pub mod model_names;
 pub mod opencode_config;
-pub mod pi_config;
+pub mod pricing;
+pub mod process_output;
 pub mod process_util;
 pub mod prompt;
 pub mod prompt_files;
 pub mod provider;
+pub mod provider_identity;
 pub mod provider_routing;
 pub mod proxy;
+pub mod proxy_config;
+pub mod runtime_hooks;
 pub mod services;
 #[cfg(feature = "session-monitor")]
 pub mod session_manager;
 pub mod settings;
+pub mod skill_model;
 pub mod startup;
 pub mod store;
+pub mod sync_utils;
 pub mod usage_events;
 pub mod usage_script;
 
@@ -105,23 +105,39 @@ fn redact_known_secrets_with_min_length(
     known_secrets: &[String],
     minimum_chars: usize,
 ) -> String {
+    let mut secrets: Vec<&str> = known_secrets
+        .iter()
+        .map(String::as_str)
+        .filter(|secret| secret.chars().count() >= minimum_chars)
+        .collect();
+    secrets
+        .sort_unstable_by(|left, right| right.len().cmp(&left.len()).then_with(|| left.cmp(right)));
+    secrets.dedup();
     let mut output = text.to_string();
-    for secret in known_secrets {
-        if secret.chars().count() >= minimum_chars {
-            output = output.replace(secret.as_str(), "[REDACTED]");
-        }
+    for secret in secrets {
+        output = output.replace(secret, "[REDACTED]");
     }
     output
 }
 
 /// 无 scheme 的裸 authority 形态(如 `user:pass@host/path`)剥掉 userinfo：
 /// 仅当 `@` 出现在第一个 `/` 之前时才视为凭据。
-fn strip_bare_userinfo(input: &str) -> &str {
-    let authority_end = input.find('/').unwrap_or(input.len());
-    match input[..authority_end].rfind('@') {
-        Some(at) => &input[at + 1..],
-        None => input,
+fn redact_bare_url(input: &str, origin_only: bool) -> String {
+    if input.contains("://") || input.starts_with("//") {
+        return "[INVALID URL]".to_string();
     }
+    let input = input.split(['?', '#']).next().unwrap_or(input);
+    if !url::Url::parse(&format!("https://{input}")).is_ok_and(|url| url.has_host()) {
+        return "[INVALID URL]".to_string();
+    }
+    let authority_end = input.find(['/', '\\']).unwrap_or(input.len());
+    let start = input[..authority_end].rfind('@').map_or(0, |at| at + 1);
+    let end = if origin_only {
+        authority_end
+    } else {
+        input.len()
+    };
+    input[start..end].to_string()
 }
 
 pub fn redact_url_for_log(url_str: &str) -> String {
@@ -154,10 +170,7 @@ pub fn redact_url_for_log_with_secrets(url_str: &str, known_secrets: &[String]) 
                 rendered.to_string()
             }
         }
-        _ => {
-            let without_tail = url_str.split(['?', '#']).next().unwrap_or(url_str);
-            strip_bare_userinfo(without_tail).to_string()
-        }
+        _ => redact_bare_url(url_str, false),
     };
 
     redact_known_secrets(&sanitized, known_secrets)
@@ -183,10 +196,7 @@ pub fn redact_url_origin_for_log(url_str: &str) -> String {
                 format!("{}://{authority}", url.scheme())
             }
         }
-        _ => {
-            let without_tail = url_str.split(['?', '#']).next().unwrap_or(url_str);
-            strip_bare_userinfo(without_tail).to_string()
-        }
+        _ => redact_bare_url(url_str, true),
     }
 }
 
@@ -222,3 +232,60 @@ pub fn redact_known_secrets_strict(text: &str, known_secrets: &[String]) -> Stri
 }
 
 pub use startup::initialize_common_config_snippets;
+
+#[cfg(test)]
+mod log_redaction_tests {
+    use super::*;
+
+    #[test]
+    fn malformed_urls_never_fall_back_to_logging_credentials() {
+        for input in [
+            "https://user:secret@bad host/private?key=secret",
+            "//user:secret@bad host/private",
+            "https://user:secret@[invalid/private",
+            "user:secret@bad host/private",
+        ] {
+            assert_eq!(redact_url_for_log(input), "[INVALID URL]");
+            assert_eq!(redact_url_origin_for_log(input), "[INVALID URL]");
+        }
+    }
+
+    #[test]
+    fn bare_urls_keep_diagnostic_paths_only_when_requested() {
+        assert_eq!(redact_url_for_log("not-a-url?key=secret"), "not-a-url");
+        assert_eq!(
+            redact_url_for_log("user:secret@host:8443/private?key=secret"),
+            "host:8443/private"
+        );
+        for input in [
+            "host:8443/path-secret?key=secret",
+            "user:secret@host:8443/path-secret#secret",
+            "host:8443\\path-secret",
+        ] {
+            assert_eq!(redact_url_origin_for_log(input), "host:8443");
+        }
+        assert_eq!(
+            redact_url_for_log("https://user:secret@host/path?key=secret"),
+            "https://host/path"
+        );
+        assert_eq!(redact_url_origin_for_log("//host/path-secret"), "//host");
+    }
+
+    #[test]
+    fn overlapping_known_secrets_are_redacted_longest_first() {
+        let secrets = vec![
+            "secret12".to_string(),
+            "secret12-private-suffix".to_string(),
+        ];
+        assert_eq!(
+            redact_known_secrets("secret12-private-suffix secret12", &secrets),
+            "[REDACTED] [REDACTED]"
+        );
+        assert_eq!(
+            redact_known_secrets_strict("abc abcdef", &["abc".into(), "abcdef".into()]),
+            "[REDACTED] [REDACTED]"
+        );
+    }
+}
+#[cfg(test)]
+mod test_support;

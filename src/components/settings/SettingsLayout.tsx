@@ -1,8 +1,7 @@
-import type { ReactNode } from "react";
-import { Switch } from "@/components/ui/switch";
 import { HelpTip } from "@/components/ui/help-tip";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-
+import type { ReactNode } from "react";
 /**
  * 设置页的版式（v7）：分节标题 15/600 → 带边框的卡片 → 一行一项，左边名称、右边控件。
  */
@@ -17,7 +16,10 @@ export function SettingsBlock({
   id?: string;
   title?: ReactNode;
   /** 标题旁的「?」：规则和术语放这里，后果不放 */
-  help?: { title: string; body: ReactNode };
+  help?: {
+    title: string;
+    body: ReactNode;
+  };
   /** 分节右侧的操作（如本节的「保存」） */
   actions?: ReactNode;
   children: ReactNode;
@@ -38,7 +40,6 @@ export function SettingsBlock({
     </section>
   );
 }
-
 /** 一组设置行：白底卡片，行与行之间一条细线。 */
 export function SettingsCard({
   children,
@@ -58,7 +59,6 @@ export function SettingsCard({
     </div>
   );
 }
-
 export function SettingsRow({
   label,
   help,
@@ -69,7 +69,10 @@ export function SettingsRow({
   className,
 }: {
   label: ReactNode;
-  help?: { title: string; body: ReactNode };
+  help?: {
+    title: string;
+    body: ReactNode;
+  };
   /** 只有真正的数据（路径、地址）才写在名称下面；说明进「?」 */
   description?: ReactNode;
   control?: ReactNode;
@@ -106,7 +109,6 @@ export function SettingsRow({
     </div>
   );
 }
-
 export function SettingsSwitchRow({
   label,
   help,
@@ -116,7 +118,10 @@ export function SettingsSwitchRow({
   disabled,
 }: {
   label: string;
-  help?: { title: string; body: ReactNode };
+  help?: {
+    title: string;
+    body: ReactNode;
+  };
   description?: ReactNode;
   checked: boolean;
   onCheckedChange: (value: boolean) => void;
@@ -138,7 +143,6 @@ export function SettingsSwitchRow({
     />
   );
 }
-
 /** 设置页正文：最大宽度 760，左右 24 的内边距，分节间距 28。 */
 export function SettingsBody({ children }: { children: ReactNode }) {
   return (

@@ -1,11 +1,4 @@
-import React from "react";
-import type { TFunction } from "i18next";
-import { useTranslation } from "react-i18next";
-import type { AppId } from "@/lib/api";
-import { useSubscriptionQuota } from "@/lib/query/subscription";
-import type { QuotaTier, SubscriptionQuota } from "@/types/subscription";
 import { QuotaBars, QuotaLines } from "@/components/quota/QuotaLines";
-import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
 import {
   creditsBreakdownItem,
   creditsLine,
@@ -17,16 +10,20 @@ import {
   type QuotaDisplay,
   type QuotaLine,
 } from "@/components/quota/quotaRules";
-
+import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
+import type { AppId } from "@/lib/api";
+import { useSubscriptionQuota } from "@/lib/query/subscription";
+import type { QuotaTier, SubscriptionQuota } from "@/types/subscription";
+import type { TFunction } from "i18next";
+import React from "react";
+import { useTranslation } from "react-i18next";
 export { countdownStr } from "@/components/quota/quotaRules";
-
 interface SubscriptionQuotaFooterProps {
   appId: AppId;
   inline?: boolean;
   isCurrent?: boolean;
   autoQueryInterval?: number;
 }
-
 interface SubscriptionQuotaViewProps {
   quota: SubscriptionQuota | undefined;
   loading: boolean;
@@ -43,7 +40,6 @@ interface SubscriptionQuotaViewProps {
   /** 查询成功但一档都没有时写的一句（Kimi 没订阅的号返回空对象）；不给时不显示 */
   emptyText?: string;
 }
-
 /** 已知 tier 名称的显示映射（官方订阅 + Token Plan 共用） */
 export const TIER_I18N_KEYS: Record<string, string> = {
   five_hour: "subscription.fiveHour",
@@ -72,10 +68,8 @@ export const TIER_I18N_KEYS: Record<string, string> = {
   // GitHub Copilot
   premium: "subscription.copilotPremium",
 };
-
 /** 卡片上不显示的档（展开时仍列出） */
 const HIDDEN_INLINE_TIERS = new Set(["seven_day_sonnet"]);
-
 /**
  * 卡片上按组只留剩余最少的一档、标签写组名（展开时仍逐档列出）：
  * Antigravity 的 Gemini、Claude 和 GPT 两组各有 5 小时和每周两档（Pro 档 Gemini 组另有 Argon 每周），
@@ -88,7 +82,6 @@ const INLINE_TIER_GROUPS: Record<string, string> = {
   agy_third_party_five_hour: "subscription.agyThirdParty",
   agy_third_party_weekly: "subscription.agyThirdParty",
 };
-
 function collapseInlineGroups(tiers: QuotaTier[]): QuotaTier[] {
   const kept = new Map<string, QuotaTier>();
   for (const tier of tiers) {
@@ -102,7 +95,6 @@ function collapseInlineGroups(tiers: QuotaTier[]): QuotaTier[] {
     [...kept.values()].some((keptTier) => keptTier === tier),
   );
 }
-
 /**
  * 卡片按组合并过档位时（Antigravity），整列做成一个下拉逐档列出：
  * 「Gemini 5 小时  4h59m后重置  剩余 100%」。没合并时不需要（null）
@@ -130,17 +122,14 @@ export function tierBreakdown(
     }),
   };
 }
-
 export function tierLabel(t: TFunction, name: string): string {
   return TIER_I18N_KEYS[name] ? t(TIER_I18N_KEYS[name]) : name;
 }
-
 /** 卡片合并行里的短档名（`subscription.short.*`，英日用缩写） */
 export function tierShortLabel(t: TFunction, name: string): string {
   const key = TIER_I18N_KEYS[name];
   return key ? t(key.replace("subscription.", "subscription.short.")) : name;
 }
-
 /** 已知档位 → 额度行 */
 export function tierLines(
   t: TFunction,
@@ -148,8 +137,14 @@ export function tierLines(
   {
     inline = false,
     display = "left",
-  }: { inline?: boolean; display?: QuotaDisplay } = {},
-): { label: string; line: QuotaLine }[] {
+  }: {
+    inline?: boolean;
+    display?: QuotaDisplay;
+  } = {},
+): {
+  label: string;
+  line: QuotaLine;
+}[] {
   const known = tiers
     .filter((tier) => tier.name in TIER_I18N_KEYS)
     .filter((tier) => !inline || !HIDDEN_INLINE_TIERS.has(tier.name));
@@ -165,7 +160,6 @@ export function tierLines(
     };
   });
 }
-
 /**
  * 一份查询成功的订阅额度要画的行：各档，再加存下的重置次数和 Credits 余额（只有 ChatGPT 订阅有）。
  * Credits 要等额度用完才扣，卡片上平时不占位置（点开重置次数能看到），有一档用完才露出来，并排在重置次数前面：
@@ -178,8 +172,14 @@ export function quotaRows(
   {
     inline = false,
     display = "left",
-  }: { inline?: boolean; display?: QuotaDisplay } = {},
-): { label: string; line: QuotaLine }[] {
+  }: {
+    inline?: boolean;
+    display?: QuotaDisplay;
+  } = {},
+): {
+  label: string;
+  line: QuotaLine;
+}[] {
   const rows = tierLines(t, quota.tiers || [], { inline, display });
   // 一档都没有时额度整块不显示，重置次数、余额也不单独出来
   if (rows.length === 0) return rows;
@@ -205,7 +205,6 @@ export function quotaRows(
     ...extras.filter((row): row is NonNullable<typeof row> => Boolean(row)),
   ];
 }
-
 /** 额度查询失败的原因：登录过期 / 令牌待刷新写固定文案，其余写后端给的错误 */
 export function quotaFailureReason(
   t: TFunction,
@@ -219,7 +218,6 @@ export function quotaFailureReason(
   }
   return quota.error || t("subscription.queryFailed");
 }
-
 /**
  * 纯展示组件：渲染 SubscriptionQuota 的状态（not_found / parse_error 不显示；
  * 登录过期 / 令牌待刷新 / 查询失败写「额度查询失败」+ 原因；成功按档写剩余或已用），支持卡片（inline）和展开两种布局。
@@ -238,11 +236,9 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
   emptyText,
 }) => {
   const { t, i18n } = useTranslation();
-
   // 无凭据 / 凭据解析错误 → 不显示（静默）
   if (!quota || quota.credentialStatus === "not_found") return null;
   if (quota.credentialStatus === "parse_error") return null;
-
   if (!quota.success) {
     // 登录过期和令牌待刷新都是重新登录一次就能解决，展开时给同一条提示
     const expired =
@@ -284,7 +280,6 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
       />
     );
   }
-
   const rows = quotaRows(t, quota, i18n.language, { inline, display });
   if (rows.length === 0) {
     if (!emptyText) return null;
@@ -312,7 +307,6 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
       />
     );
   }
-
   if (inline) {
     return (
       <QuotaLines
@@ -324,7 +318,6 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
       />
     );
   }
-
   const extra = quota.extraUsage;
   return (
     <QuotaBars
@@ -357,7 +350,6 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
     />
   );
 };
-
 /**
  * CLI 凭据路径下的薄 wrapper：通过 useSubscriptionQuota(appId) 自取数据
  * 后转发到 SubscriptionQuotaView。
@@ -379,20 +371,17 @@ const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
     isCurrent && autoQueryInterval > 0,
     autoQueryInterval,
   );
-
   if (!isCurrent) return null;
-
   return (
     <SubscriptionQuotaView
       quota={quota}
       loading={loading}
       refetch={refetch}
       // expiredHint 里的 {tool} 是 CLI 命令名：Grok 的命令是 `grok` 而非 appId
-      appIdForExpiredHint={appId === "grokbuild" ? "grok" : appId}
+      appIdForExpiredHint={appId}
       inline={inline}
       display={display}
     />
   );
 };
-
 export default SubscriptionQuotaFooter;

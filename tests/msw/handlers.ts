@@ -46,18 +46,37 @@ const withJson = async <T>(request: Request): Promise<T> => {
 const success = <T>(payload: T) => HttpResponse.json(payload as any);
 
 export const handlers = [
-  http.post(`${TAURI_ENDPOINT}/fetch_models_dev`, () =>
-    success(JSON.stringify({})),
+  http.post(`${TAURI_ENDPOINT}/fetch_models_dev`, () => success({})),
+  http.post(`${TAURI_ENDPOINT}/sync_models_dev_pricing`, () =>
+    success({
+      skipped: true,
+      selected: 0,
+      imported: 0,
+      changed: 0,
+      syncedAt: null,
+    }),
   ),
   http.post(`${TAURI_ENDPOINT}/get_migration_result`, () => success(false)),
   http.post(`${TAURI_ENDPOINT}/get_skills_migration_result`, () =>
     success(null),
   ),
-  http.post(`${TAURI_ENDPOINT}/list_profiles`, () => success([])),
+  http.post(`${TAURI_ENDPOINT}/list_profiles`, () =>
+    success({
+      profiles: [],
+      currentIds: { claude: null, claudeDesktop: null, codex: null },
+    }),
+  ),
   http.post(`${TAURI_ENDPOINT}/get_providers`, async ({ request }) => {
     const { app } = await withJson<{ app: AppId }>(request);
     return success(getProviders(app));
   }),
+  http.post(`${TAURI_ENDPOINT}/refresh_providers`, async ({ request }) => {
+    const { app } = await withJson<{ app: AppId }>(request);
+    return success(getProviders(app));
+  }),
+
+  http.post(`${TAURI_ENDPOINT}/get_unreadable_providers`, () => success([])),
+  http.post(`${TAURI_ENDPOINT}/get_unreadable_mcp_servers`, () => success([])),
 
   http.post(`${TAURI_ENDPOINT}/get_current_provider`, async ({ request }) => {
     const { app } = await withJson<{ app: AppId }>(request);
@@ -101,7 +120,7 @@ export const handlers = [
   ),
 
   http.post(`${TAURI_ENDPOINT}/get_openclaw_live_provider_ids`, () =>
-    success(getLiveProviderIds("openclaw")),
+    success([]),
   ),
 
   http.post(`${TAURI_ENDPOINT}/get_openclaw_default_model`, () =>
@@ -218,7 +237,13 @@ export const handlers = [
   // MCP APIs
   http.post(`${TAURI_ENDPOINT}/get_mcp_config`, async ({ request }) => {
     const { app } = await withJson<{ app: AppId }>(request);
-    return success(getMcpConfig(app));
+    const { configPath, servers } = getMcpConfig(app);
+    return success({
+      config_path: configPath,
+      servers: Object.fromEntries(
+        Object.entries(servers).map(([id, server]) => [id, server.server]),
+      ),
+    });
   }),
 
   http.post(`${TAURI_ENDPOINT}/import_mcp_from_claude`, () => success(1)),
@@ -288,7 +313,9 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/check_env_conflicts`, () => success([])),
 
   http.post(`${TAURI_ENDPOINT}/save_settings`, async ({ request }) => {
-    const { settings } = await withJson<{ settings: Settings }>(request);
+    const { settings } = await withJson<{
+      settings: { [Key in keyof Settings]?: Settings[Key] | null };
+    }>(request);
     setSettings(settings);
     return success(true);
   }),
@@ -555,14 +582,7 @@ export const handlers = [
     `${TAURI_ENDPOINT}/get_prompt_file_location`,
     async ({ request }) => {
       const { app } = await withJson<{ app: AppId }>(request);
-      const file =
-        app === "claude"
-          ? "CLAUDE.md"
-          : app === "gemini"
-            ? "GEMINI.md"
-            : app === "hermes"
-              ? "SOUL.md"
-              : "AGENTS.md";
+      const file = app === "claude" ? "CLAUDE.md" : "AGENTS.md";
       return success({
         path: `/home/test/.${app}/${file}`,
         displayPath: `~/.${app}/${file}`,

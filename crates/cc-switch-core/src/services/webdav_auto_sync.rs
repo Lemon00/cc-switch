@@ -38,7 +38,7 @@ impl AutoSyncBackend for WebDavAutoSync {
         db: &'a Database,
         settings: &'a mut WebDavSyncSettings,
     ) -> impl Future<Output = Result<Value, AppError>> + Send + 'a {
-        webdav_sync::upload(db, settings)
+        webdav_sync::auto_upload(db, settings)
     }
 }
 

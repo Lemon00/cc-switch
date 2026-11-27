@@ -72,14 +72,14 @@ impl JsonPatch {
             if targets.contains(key_path) {
                 continue;
             }
-            let (parent, key) = split(key_path);
+            let (parent, key) = split(key_path)?;
             if let Some(map) = object_at_mut(path, doc, parent)? {
                 map.shift_remove(key);
             }
         }
 
         for (key_path, value) in &self.set {
-            let (parent, key) = split(key_path);
+            let (parent, key) = split(key_path)?;
             let map = ensure_object_mut(path, doc, parent)?;
             match map.get_mut(key) {
                 Some(slot) => *slot = value.clone(),
@@ -90,7 +90,7 @@ impl JsonPatch {
         }
 
         for (key_path, value) in &self.seed {
-            let (parent, key) = split(key_path);
+            let (parent, key) = split(key_path)?;
             let map = ensure_object_mut(path, doc, parent)?;
             if !map.contains_key(key) {
                 map.insert(key.clone(), value.clone());
@@ -101,7 +101,7 @@ impl JsonPatch {
             if targets.contains(key_path) {
                 continue;
             }
-            let (parent, key) = split(key_path);
+            let (parent, key) = split(key_path)?;
             let Some(map) = object_at_mut(path, doc, parent)? else {
                 continue;
             };
@@ -114,7 +114,7 @@ impl JsonPatch {
             if targets.contains(key_path) {
                 continue;
             }
-            let (parent, key) = split(key_path);
+            let (parent, key) = split(key_path)?;
             let Some(map) = object_at_mut(path, doc, parent)? else {
                 continue;
             };
@@ -277,10 +277,10 @@ fn detect_indent(text: &str) -> Option<Vec<u8>> {
     })
 }
 
-fn split(key_path: &KeyPath) -> (&[String], &String) {
-    key_path
-        .split_last()
-        .expect("patch paths must name a key, not the document root")
+fn split(key_path: &KeyPath) -> Result<(&[String], &String), LiveWriteError> {
+    key_path.split_last().ok_or_else(|| {
+        LiveWriteError::Invalid("patch paths must name a key, not the document root".into())
+    })
 }
 
 fn shape_error(path: &Path, segments: &[String]) -> LiveWriteError {

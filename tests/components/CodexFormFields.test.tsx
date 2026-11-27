@@ -7,44 +7,36 @@ import { CodexFormFields } from "@/components/providers/forms/CodexFormFields";
 import { Form } from "@/components/ui/form";
 import type { FetchedModel } from "@/lib/api/model-fetch";
 import type { CodexChatReasoning } from "@/types";
-
 const modelFetchApiMock = vi.hoisted(() => ({
   fetchModelsForConfig: vi.fn(),
   fetchXaiOauthModels: vi.fn(),
   modelFetchRequestHeaders: vi.fn(),
   showFetchModelsError: vi.fn(),
 }));
-
-vi.mock("@/lib/api/model-fetch", () => ({
+vi.mock("@/lib/api/model-fetch", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api/model-fetch")>()),
   fetchModelsForConfig: modelFetchApiMock.fetchModelsForConfig,
   fetchXaiOauthModels: modelFetchApiMock.fetchXaiOauthModels,
   modelFetchRequestHeaders: modelFetchApiMock.modelFetchRequestHeaders,
   showFetchModelsError: modelFetchApiMock.showFetchModelsError,
 }));
-
 // 上游 v4.0.0 起 CodexFormFields 内部使用 useModelMetadataFill（依赖
 // QueryClientProvider）；本文件只测 model fetch 行为，mock 成 no-op 即可。
 vi.mock("@/hooks/useModelMetadataFill", () => ({
   useModelMetadataFill: () => () => {},
 }));
-
 type CodexFormFieldsProps = ComponentProps<typeof CodexFormFields>;
-
 const FormShell = ({ children }: PropsWithChildren) => {
   const form = useForm();
-
   return <Form {...form}>{children}</Form>;
 };
-
 // RTL's default whitespace normalizer collapses the multi-line placeholder,
 // so query by a distinctive fragment instead of the exact string.
 const HEADERS_PLACEHOLDER = /X-Provider/;
-
 // The harness owns the headers override state so editing the textarea
 // reproduces the exact user flow: an existing header override is changed
 // while Base URL / API Key stay untouched.
 const INITIAL_HEADERS_OVERRIDE = '{"X-Tenant": "tenant-1"}';
-
 function baseCodexProps(): CodexFormFieldsProps {
   return {
     codexApiKey: "sk-test",
@@ -82,15 +74,12 @@ function baseCodexProps(): CodexFormFieldsProps {
     shouldShowSpeedTest: true,
   };
 }
-
 function renderCodexForm() {
   const baseProps = baseCodexProps();
-
   function Harness() {
     const [headersOverride, setHeadersOverride] = useState(
       INITIAL_HEADERS_OVERRIDE,
     );
-
     return (
       <FormShell>
         <CodexFormFields
@@ -101,21 +90,20 @@ function renderCodexForm() {
       </FormShell>
     );
   }
-
   return render(<Harness />);
 }
-
-function renderReasoningForm() {
+function renderReasoningForm(initial?: CodexChatReasoning) {
   function Harness() {
-    const [reasoning, setReasoning] = useState<CodexChatReasoning>({
-      supportsThinking: true,
-      supportsEffort: true,
-      thinkingParam: "thinking",
-      effortParam: "reasoning_effort",
-      effortValueMode: "passthrough",
-      outputFormat: "auto",
-    });
-
+    const [reasoning, setReasoning] = useState<CodexChatReasoning>(
+      initial ?? {
+        supportsThinking: true,
+        supportsEffort: true,
+        thinkingParam: "thinking",
+        effortParam: "reasoning_effort",
+        effortValueMode: "passthrough",
+        outputFormat: "auto",
+      },
+    );
     return (
       <FormShell>
         <output data-testid="reasoning-state">
@@ -130,55 +118,42 @@ function renderReasoningForm() {
       </FormShell>
     );
   }
-
   return render(<Harness />);
 }
-
 async function fetchAndSettleModels(models: FetchedModel[]) {
   modelFetchApiMock.fetchModelsForConfig.mockResolvedValueOnce(models);
-
   fireEvent.click(
     screen.getByRole("button", { name: "providerForm.fetchModels" }),
   );
-
   await waitFor(() => {
     expect(modelFetchApiMock.fetchModelsForConfig).toHaveBeenCalled();
   });
-
   return screen.findByRole("button", { name: "Select model" });
 }
-
 function changeHeadersOverride(value: string) {
   fireEvent.change(screen.getByPlaceholderText(HEADERS_PLACEHOLDER), {
     target: { value },
   });
 }
-
 describe("CodexFormFields model fetch identity", () => {
   beforeEach(() => {
     modelFetchApiMock.fetchModelsForConfig.mockReset();
     modelFetchApiMock.showFetchModelsError.mockReset();
   });
-
   it("修改 Header 覆盖后清空已取到的模型列表", async () => {
     renderCodexForm();
-
     // Header 覆盖已有初值，高级区自动展开，textarea 可直接编辑
     await fetchAndSettleModels([{ id: "model-a", ownedBy: "vendor" }]);
     expect(
       screen.getByRole("button", { name: "Select model" }),
     ).toBeInTheDocument();
-
     changeHeadersOverride('{"X-Tenant": "tenant-2"}');
-
     await waitFor(() => {
       expect(screen.queryByRole("button", { name: "Select model" })).toBeNull();
     });
   });
-
   it("Header 覆盖在途变更后丢弃旧请求返回的模型", async () => {
     renderCodexForm();
-
     let resolveFetch!: (models: FetchedModel[]) => void;
     modelFetchApiMock.fetchModelsForConfig.mockImplementationOnce(
       () =>
@@ -186,35 +161,76 @@ describe("CodexFormFields model fetch identity", () => {
           resolveFetch = resolve;
         }),
     );
-
     fireEvent.click(
       screen.getByRole("button", { name: "providerForm.fetchModels" }),
     );
     await waitFor(() => {
       expect(modelFetchApiMock.fetchModelsForConfig).toHaveBeenCalled();
     });
-
     changeHeadersOverride('{"X-Tenant": "tenant-2"}');
-
     // 旧身份的响应此时才落地。先正向等待响应链走完（按钮恢复可用），
     // 再断言模型未上榜——否则否定断言会在响应落地前抢先通过。
     resolveFetch([{ id: "stale-model", ownedBy: "vendor" }]);
-
     const fetchButton = screen.getByRole("button", {
       name: "providerForm.fetchModels",
     });
     await waitFor(() => {
       expect(fetchButton).toBeEnabled();
     });
-
     expect(screen.queryByRole("button", { name: "Select model" })).toBeNull();
   });
 });
-
 describe("CodexFormFields reasoning effort", () => {
+  it("#8970: enables effort without injecting a thinking parameter and survives reopening", () => {
+    const view = renderReasoningForm({
+      supportsThinking: false,
+      supportsEffort: false,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "高级选项" }));
+    fireEvent.click(screen.getByRole("switch", { name: "支持思考等级" }));
+    const saved = JSON.parse(
+      screen.getByTestId("reasoning-state").textContent!,
+    );
+    expect(saved).toMatchObject({
+      supportsThinking: false,
+      thinkingParam: "none",
+      supportsEffort: true,
+      effortParam: "reasoning_effort",
+    });
+    expect(
+      screen.getByRole("switch", { name: "支持思考模式" }),
+    ).toHaveAttribute("aria-checked", "false");
+    view.unmount();
+    renderReasoningForm(saved);
+    expect(
+      screen.getByRole("switch", { name: "支持思考模式" }),
+    ).toHaveAttribute("aria-checked", "false");
+    expect(
+      screen.getByRole("switch", { name: "支持思考等级" }),
+    ).toHaveAttribute("aria-checked", "true");
+  });
+  it("#8970: turning thinking off preserves effort, and turning it back on restores its parameter", () => {
+    renderReasoningForm();
+    const toggle = screen.getByRole("switch", { name: "支持思考模式" });
+    fireEvent.click(toggle);
+    expect(
+      JSON.parse(screen.getByTestId("reasoning-state").textContent!),
+    ).toMatchObject({
+      supportsThinking: false,
+      thinkingParam: "none",
+      supportsEffort: true,
+    });
+    fireEvent.click(toggle);
+    expect(
+      JSON.parse(screen.getByTestId("reasoning-state").textContent!),
+    ).toMatchObject({
+      supportsThinking: true,
+      thinkingParam: "thinking",
+      supportsEffort: true,
+    });
+  });
   it("restores the default parameter after effort support is disabled and re-enabled", () => {
     renderReasoningForm();
-
     const toggle = screen.getByRole("switch", {
       name: "支持思考等级",
     });
@@ -225,7 +241,6 @@ describe("CodexFormFields reasoning effort", () => {
     expect(screen.getByTestId("reasoning-state")).toHaveTextContent(
       '"effortParam":"none"',
     );
-
     fireEvent.click(toggle);
     expect(screen.getByTestId("reasoning-state")).toHaveTextContent(
       '"supportsEffort":true',

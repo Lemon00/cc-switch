@@ -189,47 +189,7 @@ fn get_model_pricing_blocking(
     db.ensure_model_pricing_seeded()?;
     crate::services::model_pricing::sync_local_model_pricing(db)?;
 
-    let conn = db
-        .conn
-        .lock()
-        .map_err(|e| AppError::Database(format!("Mutex lock failed: {e}")))?;
-
-    // 检查表是否存在
-    let table_exists: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='model_pricing'",
-            [],
-            |row| row.get::<_, i64>(0).map(|count| count > 0),
-        )
-        .unwrap_or(false);
-
-    if !table_exists {
-        log::error!("model_pricing 表不存在,可能需要重启应用以触发数据库迁移");
-        return Ok(Vec::new());
-    }
-
-    let mut stmt = conn.prepare(
-        "SELECT model_id, display_name, input_cost_per_million, output_cost_per_million,
-                cache_read_cost_per_million, cache_creation_cost_per_million
-         FROM model_pricing
-         ORDER BY display_name",
-    )?;
-
-    let rows = stmt.query_map([], |row| {
-        Ok(ModelPricingInfo {
-            model_id: row.get(0)?,
-            display_name: row.get(1)?,
-            input_cost_per_million: row.get(2)?,
-            output_cost_per_million: row.get(3)?,
-            cache_read_cost_per_million: row.get(4)?,
-            cache_creation_cost_per_million: row.get(5)?,
-        })
-    })?;
-
-    let mut pricing = Vec::new();
-    for row in rows {
-        pricing.push(row?);
-    }
+    let pricing = db.list_model_pricing()?;
 
     log::info!("成功获取 {} 条模型定价数据", pricing.len());
     Ok(pricing)
@@ -310,8 +270,16 @@ pub async fn record_models_dev_sync_result(
 
 /// 拉取 models.dev 数据，走后端代理感知 HTTP 客户端，避免 WebView 直连在代理环境下超时
 #[tauri::command]
-pub async fn fetch_models_dev() -> Result<String, String> {
-    crate::services::model_pricing::fetch_models_dev().await
+pub async fn fetch_models_dev() -> Result<cc_switch_core::services::models_dev::Catalog, String> {
+    cc_switch_core::services::models_dev::catalog().await
+}
+
+#[tauri::command]
+pub async fn sync_models_dev_pricing(
+    state: State<'_, AppState>,
+    force: bool,
+) -> Result<cc_switch_core::services::models_dev::SyncResult, String> {
+    cc_switch_core::services::models_dev::sync_pricing(state.db.clone(), force).await
 }
 
 #[tauri::command]
@@ -340,6 +308,7 @@ pub async fn delete_model_pricing(
 }
 
 /// 手动触发会话日志同步
+#[cfg(feature = "session-monitor")]
 #[tauri::command]
 pub async fn sync_session_usage(
     state: State<'_, AppState>,
@@ -357,6 +326,7 @@ pub async fn sync_session_usage(
 
 /// 会话日志扫描（后台定时或手动同步）最近一次完成的时间，毫秒时间戳；
 /// 本次启动后还没扫过时为 `null`。
+#[cfg(feature = "session-monitor")]
 #[tauri::command]
 pub fn get_session_usage_last_sync() -> Option<i64> {
     crate::services::session_usage::last_sync_completed_at()
@@ -364,6 +334,7 @@ pub fn get_session_usage_last_sync() -> Option<i64> {
 
 /// Codex reset 成功后，无论重导是否导入新行或返回错误，都必须通知前端刷新。
 /// 调用方应只在 reset 成功后调用，避免把未发生的数据变更误报为重建完成。
+#[cfg(feature = "session-monitor")]
 fn finish_codex_rebuild(
     result: Result<crate::services::session_usage::SessionSyncResult, AppError>,
 ) -> Result<crate::services::session_usage::SessionSyncResult, AppError> {
@@ -373,6 +344,7 @@ fn finish_codex_rebuild(
 
 /// 备份数据库后，仅重建 Codex session 用量。锁覆盖 backup → reset → import
 /// 整个序列，避免后台同步在清理和重导之间插入数据。
+#[cfg(feature = "session-monitor")]
 #[tauri::command]
 pub async fn rebuild_codex_usage(
     state: State<'_, AppState>,
@@ -391,6 +363,7 @@ pub async fn rebuild_codex_usage(
     .map_err(|error| AppError::Message(format!("Codex 用量重建任务失败: {error}")))?
 }
 
+#[cfg(feature = "session-monitor")]
 #[tauri::command]
 pub async fn get_usage_data_sources(
     state: State<'_, AppState>,
@@ -410,7 +383,7 @@ pub async fn fetch_exchange_rates(
     crate::services::exchange_rates::fetch_usd_rates().await
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "session-monitor"))]
 mod tests {
     use super::*;
 

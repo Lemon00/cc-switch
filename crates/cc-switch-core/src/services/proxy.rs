@@ -7,7 +7,6 @@ use crate::config::{get_claude_settings_path, read_json_file};
 use crate::database::Database;
 use crate::provider::Provider;
 use crate::proxy::server::ProxyServer;
-use crate::proxy::switch_lock::SwitchLockManager;
 use crate::proxy::types::*;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -19,10 +18,11 @@ use crate::live::project::claude::PROXY_TOKEN_PLACEHOLDER;
 pub struct ProxyService {
     db: Arc<Database>,
     server: Arc<RwLock<Option<ProxyServer>>>,
+    /// Serializes the complete start/stop/reconfigure operation across clones.
+    lifecycle: Arc<tokio::sync::Mutex<()>>,
     /// 前端钩子（事件、OAuth、托盘刷新、故障转移状态），GUI/CLI 在
     /// AppState 建好后注入；默认全部是 no-op/None。
     hooks: Arc<RwLock<crate::events::FrontendHooks>>,
-    switch_locks: SwitchLockManager,
 }
 
 /// 重启失败时写回库的那份配置：设置页只动四个全局字段，旧接口是整份七个字段。
@@ -61,8 +61,8 @@ impl ProxyService {
         Self {
             db,
             server: Arc::new(RwLock::new(None)),
+            lifecycle: Arc::new(tokio::sync::Mutex::new(())),
             hooks: Arc::new(RwLock::new(crate::events::FrontendHooks::default())),
-            switch_locks: SwitchLockManager::new(),
         }
     }
 
@@ -73,20 +73,20 @@ impl ProxyService {
         });
     }
 
-    pub async fn lock_switch_for_app(&self, app_type: &str) -> tokio::sync::OwnedMutexGuard<()> {
-        self.switch_locks.lock_for_app(app_type).await
-    }
-
     /// 启动代理服务器。成功、失败都让托盘比对一次（图标圆点、问题区、「退出」的后果跟着变）。
     pub async fn start(&self) -> Result<ProxyServerInfo, String> {
+        let _lifecycle = self.lifecycle.lock().await;
         let result = self.start_server().await;
+        drop(_lifecycle);
         self.notify_tray().await;
         result
     }
 
     /// 停止代理服务器。同 [`Self::start`]，结束后让托盘比对一次。
     pub async fn stop(&self) -> Result<(), String> {
+        let _lifecycle = self.lifecycle.lock().await;
         let result = self.stop_server().await;
+        drop(_lifecycle);
         self.notify_tray().await;
         result
     }
@@ -102,20 +102,12 @@ impl ProxyService {
     }
 
     async fn start_server(&self) -> Result<ProxyServerInfo, String> {
-        // 1. 启动时自动设置 proxy_enabled = true
+        // Read the previous flag; publish enabled only after a successful start.
         let mut global_config = self
             .db
             .get_global_proxy_config()
             .await
             .map_err(|e| format!("获取全局代理配置失败: {e}"))?;
-
-        if !global_config.proxy_enabled {
-            global_config.proxy_enabled = true;
-            self.db
-                .update_global_proxy_config(global_config.clone())
-                .await
-                .map_err(|e| format!("更新代理总开关失败: {e}"))?;
-        }
 
         // 2. 获取配置
         let config = self
@@ -127,6 +119,13 @@ impl ProxyService {
         // 3. 若已在运行：确保持久化状态（如需要）并返回当前信息
         if let Some(server) = self.server.read().await.as_ref() {
             let status = server.get_status().await;
+            if !global_config.proxy_enabled {
+                global_config.proxy_enabled = true;
+                self.db
+                    .update_global_proxy_config(global_config)
+                    .await
+                    .map_err(|e| format!("更新代理总开关失败: {e}"))?;
+            }
             return Ok(ProxyServerInfo {
                 address: status.address,
                 port: status.port,
@@ -148,6 +147,17 @@ impl ProxyService {
         {
             let _ = server.stop().await;
             return Err(e);
+        }
+
+        // Publish the enabled flag only after binding and persisting the port.
+        // A failed start must not claim the proxy is enabled on the next launch.
+        if !global_config.proxy_enabled {
+            global_config.proxy_enabled = true;
+            global_config.listen_port = info.port;
+            if let Err(error) = self.db.update_global_proxy_config(global_config).await {
+                let _ = server.stop().await;
+                return Err(format!("更新代理总开关失败: {error}"));
+            }
         }
 
         // 5. 保存服务器实例
@@ -182,20 +192,13 @@ impl ProxyService {
     /// 各应用是否处于代理模式（读设备本地的模式状态，不读会随云同步的
     /// `proxy_config.enabled`）。
     pub async fn get_takeover_status(&self) -> Result<ProxyTakeoverStatus, String> {
-        let [claude, codex, gemini, grokbuild, claude_desktop] =
-            crate::mode::current::proxy_flags([
-                AppType::Claude,
-                AppType::Codex,
-                AppType::Gemini,
-                AppType::GrokBuild,
-                AppType::ClaudeDesktop,
-            ]);
+        let [claude, codex] = crate::mode::current::proxy_flags([AppType::Claude, AppType::Codex]);
         Ok(ProxyTakeoverStatus {
             claude,
             codex,
-            gemini,
-            grokbuild,
-            claude_desktop,
+            gemini: false,
+            grokbuild: false,
+            claude_desktop: false,
             // OpenCode and OpenClaw don't support proxy features
             opencode: false,
             openclaw: false,
@@ -290,14 +293,7 @@ impl ProxyService {
                     Err(_) => false,
                 }
             }
-            AppType::Gemini => match self.read_gemini_live() {
-                Ok(config) => Self::is_gemini_live_taken_over(&config),
-                Err(_) => false,
-            },
-            AppType::GrokBuild => match self.read_grok_live() {
-                Ok(config) => Self::is_grok_live_taken_over(&config),
-                Err(_) => false,
-            },
+
             _ => false,
         }
     }
@@ -308,8 +304,7 @@ impl ProxyService {
         match app_type {
             AppType::Claude => Self::is_claude_live_taken_over(config),
             AppType::Codex => Self::is_codex_live_taken_over(config),
-            AppType::Gemini => Self::is_gemini_live_taken_over(config),
-            AppType::GrokBuild => Self::is_grok_live_taken_over(config),
+
             _ => false,
         }
     }
@@ -371,23 +366,6 @@ impl ProxyService {
                 .is_some_and(crate::codex_config::codex_config_has_official_proxy_route)
     }
 
-    fn is_gemini_live_taken_over(config: &Value) -> bool {
-        let env = match config.get("env").and_then(|v| v.as_object()) {
-            Some(env) => env,
-            None => return false,
-        };
-        env.get("GEMINI_API_KEY").and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER)
-    }
-
-    fn is_grok_live_taken_over(config: &Value) -> bool {
-        config
-            .get("config")
-            .and_then(Value::as_str)
-            .is_some_and(|config_toml| {
-                crate::grok_config::has_proxy_placeholder(config_toml, PROXY_TOKEN_PLACEHOLDER)
-            })
-    }
-
     // ==================== Live 配置读写辅助方法 ====================
 
     fn read_claude_live(&self) -> Result<Value, String> {
@@ -426,23 +404,6 @@ impl ProxyService {
             .map_err(|e| format!("读取 Codex Live 配置失败: {e}"))
     }
 
-    fn read_gemini_live(&self) -> Result<Value, String> {
-        use crate::gemini_config::{env_to_json, get_gemini_env_path, read_gemini_env};
-
-        let env_path = get_gemini_env_path();
-        if !env_path.exists() {
-            return Err("Gemini .env 文件不存在".to_string());
-        }
-
-        let env_map = read_gemini_env().map_err(|e| format!("读取 Gemini env 失败: {e}"))?;
-        Ok(env_to_json(&env_map))
-    }
-
-    fn read_grok_live(&self) -> Result<Value, String> {
-        crate::grok_config::read_grok_live_settings()
-            .map_err(|e| format!("读取 Grok Build 配置失败: {e}"))
-    }
-
     // ==================== 原有方法 ====================
 
     /// 获取服务器状态
@@ -469,6 +430,7 @@ impl ProxyService {
     /// 更新代理配置（旧接口：七个字段整份写进四行）。返回代理是否因地址或端口变了而重启：
     /// 重启后调用方要按新地址重写接上代理的客户端（`mode::controller::resync_route`）。
     pub async fn update_config(&self, config: &ProxyConfig) -> Result<bool, String> {
+        let _lifecycle = self.lifecycle.lock().await;
         // 记录旧配置用于判定是否需要重启
         let previous = self
             .db
@@ -496,6 +458,7 @@ impl ProxyService {
     /// [`Self::update_config`] 走的旧 DAO 读的是 claude 行、写的是四行，会把 claude 的
     /// 应用级字段广播给其他三家。返回值同 [`Self::update_config`]。
     pub async fn update_global_config(&self, config: &GlobalProxyConfig) -> Result<bool, String> {
+        let _lifecycle = self.lifecycle.lock().await;
         let previous = self
             .db
             .get_global_proxy_config()
@@ -621,7 +584,7 @@ impl ProxyService {
     /// 热更新指定应用的熔断器配置
     pub async fn update_circuit_breaker_config_for_app(
         &self,
-        app_type: &str,
+        app_type: &crate::app_config::AppType,
         config: crate::proxy::CircuitBreakerConfig,
     ) -> Result<(), String> {
         if let Some(server) = self.server.read().await.as_ref() {
@@ -651,15 +614,92 @@ impl ProxyService {
         }
         Ok(())
     }
+
+    /// 移出故障转移队列：DB 清掉它的健康状态，运行中的路由也丢掉它的熔断器，
+    /// 再加回队列时路由和卡片显示的一样是健康的。
+    pub async fn remove_from_failover_queue(
+        &self,
+        app_type: &crate::app_config::AppType,
+        provider_id: &str,
+    ) -> Result<(), crate::error::AppError> {
+        self.db.remove_from_failover_queue(app_type, provider_id)?;
+        self.forget_circuit_breakers(app_type.as_str(), Some(provider_id))
+            .await;
+        Ok(())
+    }
+
+    /// 清掉一个应用的健康状态，DB 和运行中路由的熔断器一起清。
+    pub async fn clear_provider_health_for_app(
+        &self,
+        app_type: &crate::app_config::AppType,
+    ) -> Result<(), crate::error::AppError> {
+        self.db.clear_provider_health_for_app(app_type).await?;
+        self.forget_circuit_breakers(app_type.as_str(), None).await;
+        Ok(())
+    }
+
+    async fn forget_circuit_breakers(&self, app_type: &str, provider_id: Option<&str>) {
+        if let Some(server) = self.server.read().await.as_ref() {
+            server.forget_circuit_breakers(app_type, provider_id).await;
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn concurrent_starts_share_one_listener_and_stop_releases_it() {
+        let db = Arc::new(Database::memory().unwrap());
+        let service = ProxyService::new(db.clone());
+        let mut config = db.get_global_proxy_config().await.unwrap();
+        config.listen_port = 0;
+        config.proxy_enabled = false;
+        db.update_global_proxy_config(config).await.unwrap();
+        let other = service.clone();
+        let hooks = service.hooks.write().await;
+        let first = service.start();
+        let second = other.start();
+        tokio::pin!(first, second);
+        assert!(matches!(
+            futures::poll!(&mut first),
+            std::task::Poll::Pending
+        ));
+        assert!(matches!(
+            futures::poll!(&mut second),
+            std::task::Poll::Pending
+        ));
+        drop(hooks);
+        let (first, second) = tokio::join!(first, second);
+        let first = first.unwrap();
+        let second = second.unwrap();
+        assert_eq!(first.port, second.port);
+        assert!(db.get_global_proxy_config().await.unwrap().proxy_enabled);
+        service.stop().await.unwrap();
+        assert!(!db.get_global_proxy_config().await.unwrap().proxy_enabled);
+        let _rebound = tokio::net::TcpListener::bind(("127.0.0.1", first.port))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn failed_start_keeps_the_global_switch_disabled() {
+        let db = Arc::new(Database::memory().unwrap());
+        let service = ProxyService::new(db.clone());
+        let blocker = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut config = db.get_global_proxy_config().await.unwrap();
+        config.listen_port = blocker.local_addr().unwrap().port();
+        config.proxy_enabled = false;
+        db.update_global_proxy_config(config).await.unwrap();
+        assert!(service.start().await.is_err());
+        assert!(!service.is_running().await);
+        assert!(!db.get_global_proxy_config().await.unwrap().proxy_enabled);
+    }
     async fn seed_distinct_app_proxy_configs(db: &Database) -> Vec<Value> {
         let mut configs = Vec::new();
-        for (app, retries) in [("claude", 6), ("codex", 0), ("gemini", 2), ("grokbuild", 3)] {
-            let mut config = db.get_proxy_config_for_app(app).await.unwrap();
+        for (app, retries) in [(AppType::Claude, 6), (AppType::Codex, 0)] {
+            let mut config = db.get_proxy_config_for_app(&app).await.unwrap();
             config.enabled = retries % 2 == 0;
             config.auto_failover_enabled = retries % 2 != 0;
             config.max_retries = retries;
@@ -675,8 +715,8 @@ mod tests {
 
     async fn assert_app_proxy_configs_unchanged(db: &Database, configs: &[Value]) {
         for expected in configs {
-            let app = expected["appType"].as_str().unwrap();
-            let actual = db.get_proxy_config_for_app(app).await.unwrap();
+            let app: AppType = expected["appType"].as_str().unwrap().parse().unwrap();
+            let actual = db.get_proxy_config_for_app(&app).await.unwrap();
             assert_eq!(serde_json::to_value(actual).unwrap(), *expected, "{app}");
         }
     }

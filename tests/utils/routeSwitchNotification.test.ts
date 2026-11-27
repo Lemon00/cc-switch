@@ -3,36 +3,20 @@ import { createInstance } from "i18next";
 import { routeSwitchNotification } from "@/utils/routeSwitchNotification";
 import type { RouteSwitchResult } from "@/types/proxy";
 import type { AppId } from "@/lib/api/types";
-import en from "@/i18n/locales/en.json";
 import zh from "@/i18n/locales/zh.json";
-import tw from "@/i18n/locales/zh-TW.json";
-import ja from "@/i18n/locales/ja.json";
-import tr from "@/i18n/locales/tr.json";
-
 async function translate(locale = "zh") {
   const i18n = createInstance();
   await i18n.init({
     lng: locale,
     resources: {
-      en: { translation: en },
       zh: { translation: zh },
-      "zh-TW": { translation: tw },
-      ja: { translation: ja },
-      tr: { translation: tr },
     },
     interpolation: { escapeValue: false },
   });
   return i18n.t;
 }
-
 describe("route switch notifications", () => {
-  it.each([
-    "codex",
-    "gemini",
-    "grokbuild",
-    "claude",
-    "claude-desktop",
-  ] as const)(
+  it.each(["codex", "claude"] as const)(
     "does not require restarting %s when only the upstream changes",
     async (app) => {
       const t = await translate();
@@ -46,8 +30,7 @@ describe("route switch notifications", () => {
       ).toBe("路由已切换至 B，后续新请求将使用该供应商。");
     },
   );
-
-  it.each(["codex", "gemini", "grokbuild", "claude-desktop"] as const)(
+  it.each(["codex"] as const)(
     "retains the %s reload hint for a changed route or aggregation contract",
     async (app) => {
       const t = await translate();
@@ -63,7 +46,6 @@ describe("route switch notifications", () => {
       }
     },
   );
-
   it("does not promise immediate use of changed client-side credentials", async () => {
     const t = await translate();
     expect(
@@ -77,7 +59,6 @@ describe("route switch notifications", () => {
       "路由目标已设为 Official B。客户端配置也已更新；重启 Codex 以加载更新后的配置。",
     );
   });
-
   it("does not request a restart for Claude Code's live config reload", async () => {
     const t = await translate();
     expect(
@@ -87,9 +68,8 @@ describe("route switch notifications", () => {
         "B",
         t,
       ),
-    ).toBe("聚合默认供应商已设为 B；已选聚合模型仍使用各自的供应商。");
+    ).toBe("聚合默认账号已设为 B；公共模型继续轮询，独有模型使用对应账号。");
   });
-
   it("does not claim that a remembered choice is already routing", async () => {
     const t = await translate();
     expect(
@@ -101,8 +81,7 @@ describe("route switch notifications", () => {
       ),
     ).toBe("已记住供应商 B，客户端接入路由或聚合后使用。");
   });
-
-  it.each(["en", "zh", "zh-TW", "ja", "tr"])(
+  it.each(["zh"])(
     "has complete translations and interpolation for %s",
     async (locale) => {
       const t = await translate(locale);

@@ -1,6 +1,5 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-
 import { WindowControlsContext } from "@/components/shell/AppPageHeader";
 import {
   Dialog,
@@ -15,7 +14,6 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { DRAG_REGION_ENABLED } from "@/lib/platform";
-
 function renderDialog(onInteractOutside?: () => void, onMinimize?: () => void) {
   return render(
     <WindowControlsContext.Provider
@@ -30,7 +28,6 @@ function renderDialog(onInteractOutside?: () => void, onMinimize?: () => void) {
     </WindowControlsContext.Provider>,
   );
 }
-
 function renderSheet() {
   const onOpenChange = vi.fn();
   render(
@@ -45,10 +42,8 @@ function renderSheet() {
   );
   return { onOpenChange };
 }
-
 const getStrip = () =>
   document.querySelector<HTMLElement>("[data-tauri-drag-region]");
-
 /** Radix 在下一帧才开始听外部 pointerdown：先让它挂上，再按 */
 async function pressOutside(target: Element) {
   await act(async () => {
@@ -58,7 +53,6 @@ async function pressOutside(target: Element) {
     fireEvent.pointerDown(target, { button: 0, pointerType: "mouse" });
   });
 }
-
 describe("ModalDragStrip", () => {
   it("puts a drag region under the dialog so the overlay doesn't block moving the window", () => {
     renderDialog();
@@ -72,7 +66,6 @@ describe("ModalDragStrip", () => {
     ).toBeTruthy();
     expect(dialog).not.toContainElement(strip);
   });
-
   it("leaves the overlay's drag region out where the platform disables dragging", () => {
     render(
       <Dialog open>
@@ -84,19 +77,15 @@ describe("ModalDragStrip", () => {
     );
     expect(getStrip() !== null).toBe(DRAG_REGION_ENABLED);
   });
-
   it("doesn't dismiss click-outside dialogs when dragging the window", async () => {
     const onInteractOutside = vi.fn();
     renderDialog(onInteractOutside);
     const strip = getStrip()!;
-
     await pressOutside(strip);
     expect(onInteractOutside).not.toHaveBeenCalled();
-
     await pressOutside(strip.parentElement!);
     expect(onInteractOutside).toHaveBeenCalledOnce();
   });
-
   it("keeps the window controls usable while a dialog is open", async () => {
     const onInteractOutside = vi.fn();
     const onMinimize = vi.fn();
@@ -110,17 +99,14 @@ describe("ModalDragStrip", () => {
     expect(strip).toContainElement(minimize);
     // Tauri 只认按下的元素自身带属性：按钮上按下去不能变成拖窗口
     expect(minimize).not.toHaveAttribute("data-tauri-drag-region");
-
     await pressOutside(minimize);
     // 返回 false 说明默认动作被拦了：焦点留在弹窗里，不算「点外面」
     expect(fireEvent.mouseDown(minimize)).toBe(false);
     fireEvent.click(minimize);
-
     expect(onMinimize).toHaveBeenCalledOnce();
     expect(onInteractOutside).not.toHaveBeenCalled();
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
-
   it("reaches down to the page header when a banner pushes it below the top", () => {
     const header = document.createElement("header");
     vi.spyOn(header, "getBoundingClientRect").mockReturnValue({
@@ -137,19 +123,15 @@ describe("ModalDragStrip", () => {
       main.remove();
     }
   });
-
   it("covers sheets, including ones dismissed by clicking the overlay", async () => {
     const { onOpenChange } = renderSheet();
     const strip = getStrip()!;
     expect(strip.parentElement).toHaveClass("fixed", "inset-0");
-
     await pressOutside(strip);
     expect(onOpenChange).not.toHaveBeenCalled();
-
     await pressOutside(strip.parentElement!);
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
-
   it("starts sheets below the strip so the drawer doesn't cover the window controls", () => {
     // 页头上方有警告条时也得接得上：抽屉顶边要和拖动条下沿是同一个量出来的值
     const header = document.createElement("header");
@@ -178,7 +160,6 @@ describe("ModalDragStrip", () => {
       main.remove();
     }
   });
-
   it("re-measures the header when a mounted-but-closed sheet opens", () => {
     // 路由设置这类抽屉随页面常驻、只切换 open；警告条是异步检查完才出现的，
     // 抽屉挂载时量到的值到打开时已经过时，得在打开时重新量
@@ -203,13 +184,11 @@ describe("ModalDragStrip", () => {
     try {
       const { rerender } = render(drawer(false));
       expect(screen.queryByRole("dialog")).toBeNull();
-
       // 关着的时候警告条出现，页头被推下去
       rect.mockReturnValue({ bottom: 119 } as DOMRect);
       rerender(drawer(true));
       expect(getStrip()).toHaveStyle({ height: "119px" });
       expect(screen.getByRole("dialog")).toHaveStyle({ top: "119px" });
-
       // 反过来：关掉警告条后再打开，抽屉顶边也跟着回到 52，不留空隙
       rerender(drawer(false));
       rect.mockReturnValue({ bottom: 52 } as DOMRect);
@@ -220,7 +199,6 @@ describe("ModalDragStrip", () => {
       main.remove();
     }
   });
-
   it("keeps sheets full height when there are no in-app window controls", () => {
     render(
       <Sheet open>

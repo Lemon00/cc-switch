@@ -1,6 +1,3 @@
-import { useEffect, useId, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -10,37 +7,38 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { UsageDisplaySettings } from "@/types";
 import { usageApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import type { UsageDisplaySettings } from "@/types";
+import { RefreshCw } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { ChecklistMenu } from "./ChecklistMenu";
 import {
   DISPLAY_CURRENCIES,
+  type DisplayCurrency,
   formatRelativeTime,
   getResolvedLang,
   isValidExchangeRate,
   RATE_SOURCES,
+  type RateSource,
   resolveMoneyDisplay,
   resolveRateProvider,
   resolveRateSource,
   resolveSidebarToday,
   resolveTrendChartType,
   shouldRefreshRates,
-  type DisplayCurrency,
-  type RateSource,
   SIDEBAR_TODAY_ITEMS,
   SIDEBAR_TODAY_MAX_ITEMS,
   type SidebarTodayItem,
   TREND_CHART_TYPES,
   type TrendChartType,
 } from "./format";
-import { ChecklistMenu } from "./ChecklistMenu";
 import { settingsCardClass, settingsGroupTitleClass } from "./settingsStyles";
-
 interface UsageDisplaySectionProps {
   value: UsageDisplaySettings | undefined;
   onChange: (next: UsageDisplaySettings) => Promise<boolean> | boolean | void;
 }
-
 /** 「美元」「日元」：按界面语言取币种名，取不到就只写代码 */
 function currencyName(code: DisplayCurrency, lang: string): string | undefined {
   try {
@@ -50,7 +48,6 @@ function currencyName(code: DisplayCurrency, lang: string): string | undefined {
     return undefined;
   }
 }
-
 /**
  * 用量设置抽屉里的「显示」：币种、汇率来源（自动获取每日汇率，或手填）与手填汇率
  * （只改显示，库里照旧存美元）、侧栏「今日」显示什么、趋势图用柱形图还是曲线面积图。
@@ -67,7 +64,6 @@ export function UsageDisplaySection({
   // 保存要等设置重新读回来才生效，先按用户刚选的显示，免得下拉闪回旧值
   const [currency, setCurrency] = useState<DisplayCurrency>(savedCurrency);
   useEffect(() => setCurrency(savedCurrency), [savedCurrency]);
-
   // 选中币种的汇率（填过的，或预置值）；切币种时输入框跟着换
   const rate = resolveMoneyDisplay({ ...value, currency }).rate;
   const [rateDraft, setRateDraft] = useState(String(rate));
@@ -76,7 +72,6 @@ export function UsageDisplaySection({
     setRateDraft(String(rate));
     setRateInvalid(false);
   }, [currency, rate]);
-
   // 每次读出来都是新数组，按内容判断设置有没有变
   const savedTodayItems = resolveSidebarToday(value);
   const savedTodayKey = savedTodayItems.join(",");
@@ -84,7 +79,6 @@ export function UsageDisplaySection({
     useState<SidebarTodayItem[]>(savedTodayItems);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => setTodayItems(savedTodayItems), [savedTodayKey]);
-
   // 异步保存（取汇率）可能在用户又改了币种 / 来源之后才回来，
   // 要用最新一版设置与最新的 onChange 做底，别把发起时的整份 value
   // 和当时的保存闭包（autoSaveSettings 会拿它闭包里的整份设置合并）写回去
@@ -92,10 +86,8 @@ export function UsageDisplaySection({
   valueRef.current = value;
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
-
   const save = (next: Partial<UsageDisplaySettings>) =>
     onChangeRef.current({ ...valueRef.current, ...next });
-
   // 请求在途时离开页面：这次汇率结果作废，不能再保存
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -104,15 +96,12 @@ export function UsageDisplaySection({
       mountedRef.current = false;
     };
   }, []);
-
   // 汇率来源：保存要等设置重新读回来才生效，先按用户刚选的显示
   const savedRateSource = resolveRateSource(value);
   const [rateSource, setRateSource] = useState<RateSource>(savedRateSource);
   useEffect(() => setRateSource(savedRateSource), [savedRateSource]);
-
   const [rateFetching, setRateFetching] = useState(false);
   const [rateFetchFailed, setRateFetchFailed] = useState(false);
-
   const refreshRates = async () => {
     if (rateFetching) return;
     setRateFetching(true);
@@ -132,7 +121,6 @@ export function UsageDisplaySection({
       if (mountedRef.current) setRateFetching(false);
     }
   };
-
   // 打开用量页时已由 useAutoExchangeRates 自动取过，这里只在切到自动、或点「立即更新」时取
   const changeRateSource = async (next: RateSource) => {
     setRateSource(next);
@@ -144,7 +132,6 @@ export function UsageDisplaySection({
       void refreshRates();
     }
   };
-
   const toggleTodayItem = async (item: SidebarTodayItem) => {
     // 按菜单顺序存，侧栏上也按这个顺序排
     const next = SIDEBAR_TODAY_ITEMS.filter((i) =>
@@ -159,18 +146,15 @@ export function UsageDisplaySection({
   const todayLabel = (item: SidebarTodayItem) =>
     t(`usage.display.sidebarTodayItems.${item}`);
   const todayFull = todayItems.length >= SIDEBAR_TODAY_MAX_ITEMS;
-
   const savedChartType = resolveTrendChartType(value);
   const [chartType, setChartType] = useState<TrendChartType>(savedChartType);
   useEffect(() => setChartType(savedChartType), [savedChartType]);
-
   const changeChartType = async (next: TrendChartType) => {
     setChartType(next);
     if ((await save({ trendChartType: next })) === false) {
       setChartType(savedChartType);
     }
   };
-
   const changeCurrency = async (next: DisplayCurrency) => {
     setCurrency(next);
     // 保存失败（useSettings 已提示）就退回原来的币种
@@ -183,7 +167,6 @@ export function UsageDisplaySection({
       void refreshRates();
     }
   };
-
   const commitRate = () => {
     if (currency === "USD") return;
     const parsed = Number(rateDraft.trim());
@@ -198,16 +181,13 @@ export function UsageDisplaySection({
       exchangeRates: { ...value?.exchangeRates, [currency]: parsed },
     });
   };
-
   const optionLabel = (code: DisplayCurrency) => {
     const name = currencyName(code, lang);
     return name ? `${code} · ${name}` : code;
   };
-
   // 各句自带句号：中日文直接相连，其他语言隔一个空格
   const clauseSeparator = /^(zh|ja)/i.test(lang) ? "" : " ";
   const rateProvider = resolveRateProvider(value?.rateProvider);
-
   return (
     <section
       aria-labelledby={`${rateId}-title`}

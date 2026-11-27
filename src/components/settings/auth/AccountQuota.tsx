@@ -1,9 +1,7 @@
-import { useId, type ReactNode } from "react";
-import type { TFunction } from "i18next";
-import { RefreshCw } from "lucide-react";
-import { useTranslation } from "react-i18next";
-import { cn } from "@/lib/utils";
-import { HoverTip } from "@/components/ui/hover-tip";
+import {
+  QuotaBreakdownChevron,
+  QuotaBreakdownRow,
+} from "@/components/quota/QuotaBreakdown";
 import {
   ResetSlot,
   TONE_FILL,
@@ -11,11 +9,6 @@ import {
   TonedText,
   useNow,
 } from "@/components/quota/QuotaLines";
-import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
-import {
-  QuotaBreakdownChevron,
-  QuotaBreakdownRow,
-} from "@/components/quota/QuotaBreakdown";
 import {
   barPercent,
   countdownStr,
@@ -25,33 +18,47 @@ import {
   type QuotaDisplay,
   type QuotaLine,
 } from "@/components/quota/quotaRules";
+import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
 import {
   quotaFailureReason,
   quotaRows,
 } from "@/components/SubscriptionQuotaFooter";
-import type { SubscriptionQuota } from "@/types/subscription";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { useCopilotQuota } from "@/lib/query/copilot";
 import {
   useAgyAccountQuota,
   useClaudeAccountQuota,
-  useKimiAccountQuota,
   useXaiOauthQuotaByAccountId,
 } from "@/lib/query/subscription";
+import { cn } from "@/lib/utils";
+import type { SubscriptionQuota } from "@/types/subscription";
 import { extractErrorMessage } from "@/utils/errorUtils";
-
+import type { TFunction } from "i18next";
+import { RefreshCw } from "lucide-react";
+import { useId, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 export interface AccountQuotaRow {
   label: string;
   line: QuotaLine;
 }
-
 /** 额度列要画的东西：成功按档画条；查询失败写「额度查询失败」+ 原因；查成功但没有额度时写一句灰字；null 表示不显示 */
 export type AccountQuotaState =
-  | { kind: "rows"; rows: AccountQuotaRow[] }
-  | { kind: "failed"; reason: string }
-  | { kind: "note"; text: string }
-  | { kind: "loading" }
+  | {
+      kind: "rows";
+      rows: AccountQuotaRow[];
+    }
+  | {
+      kind: "failed";
+      reason: string;
+    }
+  | {
+      kind: "note";
+      text: string;
+    }
+  | {
+      kind: "loading";
+    }
   | null;
-
 interface AccountQuotaColumnProps {
   /** 账号名，拼进刷新按钮的无障碍名字 */
   login: string;
@@ -60,7 +67,6 @@ interface AccountQuotaColumnProps {
   loading: boolean;
   onRefresh: () => void;
 }
-
 /**
  * 授权中心账号行右侧的额度（v7 Auth 画板）：额度条（条和数字按设置写剩余或已用，
  * 平时 --chart-1；不到 20% 换 warning，用完换 danger）+ 84 宽的「x 分钟前 ↻」。
@@ -85,7 +91,6 @@ export function AccountQuotaColumn({
   const resetCell = (line: QuotaLine) => (
     <ResetSlot countdown={countdownStr(line.resetsAt, now)} className="" />
   );
-
   return (
     <>
       <div className="auth-quota-col flex shrink-0 flex-col gap-0.5">
@@ -150,7 +155,6 @@ export function AccountQuotaColumn({
     </>
   );
 }
-
 interface QuotaRefreshCellProps {
   /** 账号名，拼进刷新按钮的无障碍名字 */
   login: string;
@@ -158,7 +162,6 @@ interface QuotaRefreshCellProps {
   loading: boolean;
   onRefresh: () => void;
 }
-
 /**
  * 额度列右边 84 宽的「x 分钟前 ↻」。各服务的账号行共用，刷新按钮的位置和样式一致；
  * 不是额度条的服务（DeepSeek 账号的余额）也直接用它。
@@ -176,7 +179,6 @@ export function QuotaRefreshCell({
   const agoText = loading
     ? t("authCenter.quota.updating", { defaultValue: "更新中…" })
     : ago;
-
   return (
     <div className="flex w-[84px] shrink-0 items-center justify-end gap-0.5 whitespace-nowrap text-caption text-fg-3">
       <span id={agoId} className="truncate">
@@ -210,9 +212,7 @@ export function QuotaRefreshCell({
     </div>
   );
 }
-
 const ROW_CLASS = "flex h-[18px] items-center gap-2 text-caption";
-
 /** 一行额度：档名 + 额度条（或一句说明）+ 剩余 */
 function QuotaRowCells({
   label,
@@ -270,7 +270,6 @@ function QuotaRowCells({
     </>
   );
 }
-
 /** SubscriptionQuota（ChatGPT / xAI 账号的订阅额度）→ 额度列状态 */
 export function subscriptionQuotaState(
   t: TFunction,
@@ -296,7 +295,6 @@ export function subscriptionQuotaState(
   const rows = quotaRows(t, quota, locale, { display });
   return rows.length > 0 ? { kind: "rows", rows } : null;
 }
-
 /** GitHub Copilot 账号的高级请求额度（copilot_get_usage_for_account） */
 export function CopilotAccountQuota({
   accountId,
@@ -309,7 +307,6 @@ export function CopilotAccountQuota({
   const display = useQuotaDisplay();
   const query = useCopilotQuota(accountId, { enabled: true, autoQuery: false });
   const { data: quota, isFetching: loading } = query;
-
   let state: AccountQuotaState;
   if (quota?.success) {
     const label = t("subscription.copilotPremium");
@@ -336,7 +333,6 @@ export function CopilotAccountQuota({
   } else {
     state = loading ? { kind: "loading" } : null;
   }
-
   return (
     <AccountQuotaColumn
       login={login}
@@ -347,122 +343,60 @@ export function CopilotAccountQuota({
     />
   );
 }
-
+/** 按账号查的订阅额度列：xAI、Antigravity、Claude 只是查询 hook 不同 */
+function subscriptionAccountQuota(
+  useQuota: (
+    accountId: string,
+    options: {
+      enabled: boolean;
+      autoQuery: boolean;
+    },
+  ) => {
+    data: SubscriptionQuota | undefined;
+    isFetching: boolean;
+    refetch: () => unknown;
+  },
+) {
+  return function SubscriptionAccountQuota({
+    accountId,
+    login,
+  }: {
+    accountId: string;
+    login: string;
+  }) {
+    const { t, i18n } = useTranslation();
+    const display = useQuotaDisplay();
+    const {
+      data: quota,
+      isFetching: loading,
+      refetch,
+    } = useQuota(accountId, { enabled: true, autoQuery: false });
+    return (
+      <AccountQuotaColumn
+        login={login}
+        state={subscriptionQuotaState(
+          t,
+          quota,
+          loading,
+          i18n.language,
+          display,
+        )}
+        queriedAt={quota?.queriedAt ?? null}
+        loading={loading}
+        onRefresh={() => void refetch()}
+      />
+    );
+  };
+}
 /** xAI 账号的订阅额度（get_xai_oauth_quota(accountId)） */
-export function XaiAccountQuota({
-  accountId,
-  login,
-}: {
-  accountId: string;
-  login: string;
-}) {
-  const { t, i18n } = useTranslation();
-  const display = useQuotaDisplay();
-  const {
-    data: quota,
-    isFetching: loading,
-    refetch,
-  } = useXaiOauthQuotaByAccountId(accountId, {
-    enabled: true,
-    autoQuery: false,
-  });
-  return (
-    <AccountQuotaColumn
-      login={login}
-      state={subscriptionQuotaState(t, quota, loading, i18n.language, display)}
-      queriedAt={quota?.queriedAt ?? null}
-      loading={loading}
-      onRefresh={() => void refetch()}
-    />
-  );
-}
-
+export const XaiAccountQuota = subscriptionAccountQuota(
+  useXaiOauthQuotaByAccountId,
+);
 /** Kimi 官方账号的剩余额度（kimi_oauth_quota(accountId)，不用先切号） */
-export function KimiAccountQuota({
-  accountId,
-  login,
-}: {
-  accountId: string;
-  login: string;
-}) {
-  const { t, i18n } = useTranslation();
-  const display = useQuotaDisplay();
-  const {
-    data: quota,
-    isFetching: loading,
-    refetch,
-  } = useKimiAccountQuota(accountId, { enabled: true, autoQuery: false });
-  const state = subscriptionQuotaState(
-    t,
-    quota,
-    loading,
-    i18n.language,
-    display,
-  );
-  return (
-    <AccountQuotaColumn
-      login={login}
-      // 没订阅 Kimi Code 的号，额度接口返回空对象：查成功但一档都没有
-      state={
-        !state && quota?.success
-          ? { kind: "note", text: t("kimi.oauth.noSubscription") }
-          : state
-      }
-      queriedAt={quota?.queriedAt ?? null}
-      loading={loading}
-      onRefresh={() => void refetch()}
-    />
-  );
-}
 
 /** Antigravity 账号的剩余额度（agy_account_quota(accountId)，不用先切号） */
-export function AgyAccountQuota({
-  accountId,
-  login,
-}: {
-  accountId: string;
-  login: string;
-}) {
-  const { t, i18n } = useTranslation();
-  const display = useQuotaDisplay();
-  const {
-    data: quota,
-    isFetching: loading,
-    refetch,
-  } = useAgyAccountQuota(accountId, { enabled: true, autoQuery: false });
-  return (
-    <AccountQuotaColumn
-      login={login}
-      state={subscriptionQuotaState(t, quota, loading, i18n.language, display)}
-      queriedAt={quota?.queriedAt ?? null}
-      loading={loading}
-      onRefresh={() => void refetch()}
-    />
-  );
-}
-
+export const AgyAccountQuota = subscriptionAccountQuota(useAgyAccountQuota);
 /** Claude 官方账号的订阅额度（get_claude_account_quota(accountId)，不用先切号） */
-export function ClaudeAccountQuota({
-  accountId,
-  login,
-}: {
-  accountId: string;
-  login: string;
-}) {
-  const { t, i18n } = useTranslation();
-  const display = useQuotaDisplay();
-  const {
-    data: quota,
-    isFetching: loading,
-    refetch,
-  } = useClaudeAccountQuota(accountId, { enabled: true, autoQuery: false });
-  return (
-    <AccountQuotaColumn
-      login={login}
-      state={subscriptionQuotaState(t, quota, loading, i18n.language, display)}
-      queriedAt={quota?.queriedAt ?? null}
-      loading={loading}
-      onRefresh={() => void refetch()}
-    />
-  );
-}
+export const ClaudeAccountQuota = subscriptionAccountQuota(
+  useClaudeAccountQuota,
+);

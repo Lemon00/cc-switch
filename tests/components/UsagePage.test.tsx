@@ -2,7 +2,6 @@ import { render } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UsagePage } from "@/components/usage/UsagePage";
 import { UsageDashboard } from "@/components/usage/UsageDashboard";
-
 const autoSaveSettings = vi.hoisted(() => vi.fn());
 const settingsState = vi.hoisted(() => ({
   current: null as null | {
@@ -16,7 +15,6 @@ vi.mock("@/hooks/useSettings", () => ({
 vi.mock("@/components/usage/UsageDashboard", () => ({
   UsageDashboard: vi.fn(() => null),
 }));
-
 describe("UsagePage settings persistence", () => {
   beforeEach(() => {
     autoSaveSettings.mockReset();
@@ -26,7 +24,6 @@ describe("UsagePage settings persistence", () => {
       sessionAutoSyncEnabled: true,
     };
   });
-
   it("tells the dashboard settings are not ready until they load", () => {
     settingsState.current = null;
     const { rerender } = render(<UsagePage />);
@@ -43,7 +40,6 @@ describe("UsagePage settings persistence", () => {
       sessionAutoSyncEnabled: false,
     });
   });
-
   it("waits for saving before reporting success to the dashboard", async () => {
     let finish!: (value: { requiresRestart: boolean }) => void;
     autoSaveSettings.mockReturnValue(
@@ -65,7 +61,6 @@ describe("UsagePage settings persistence", () => {
     await save;
     expect(settled).toHaveBeenCalledWith(true);
   });
-
   it.each(["rejected", "not loaded"])(
     "reports a failed save when settings are %s",
     async (failure) => {

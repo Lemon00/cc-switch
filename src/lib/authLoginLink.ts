@@ -1,47 +1,44 @@
-import { useSyncExternalStore } from "react";
-import type { TFunction } from "i18next";
 import { settingsApi } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 import { toast } from "@/lib/toast";
-
+import type { TFunction } from "i18next";
+import { useSyncExternalStore } from "react";
 /**
  * 授权中心「登录时自动打开浏览器」：关掉后各服务的登录只复制登录链接，由用户自己选浏览器打开
  * （用独立浏览器环境管多个账号时，不让登录混进系统默认浏览器）。
  * 只是本机的界面偏好，记在 localStorage，不进 settings.json、不随云同步；读不到时按默认（打开）。
  */
 const STORAGE_KEY = "cc-switch.authCenter.openBrowser";
-
 const listeners = new Set<() => void>();
-
+let sessionPreference: boolean | undefined;
 export function readAuthOpenBrowser(): boolean {
+  if (sessionPreference !== undefined) return sessionPreference;
   try {
     return window.localStorage.getItem(STORAGE_KEY) !== "0";
   } catch {
     return true;
   }
 }
-
 export function writeAuthOpenBrowser(open: boolean) {
   try {
     if (open) window.localStorage.removeItem(STORAGE_KEY);
     else window.localStorage.setItem(STORAGE_KEY, "0");
+    sessionPreference = undefined;
   } catch {
     // 写不了就只在本次生效
+    sessionPreference = open;
   }
   listeners.forEach((listener) => listener());
 }
-
 function subscribe(listener: () => void) {
   listeners.add(listener);
   return () => {
     listeners.delete(listener);
   };
 }
-
 export function useAuthOpenBrowser() {
   return useSyncExternalStore(subscribe, readAuthOpenBrowser, () => true);
 }
-
 /**
  * 登录开始时把登录页交给用户：按偏好打开系统浏览器，或复制链接并提示。
  * 返回是否只复制了链接（设备码登录据此不再自动复制验证码，免得盖掉链接）。
@@ -49,7 +46,9 @@ export function useAuthOpenBrowser() {
 export async function deliverLoginLink(
   url: string,
   t: TFunction,
-): Promise<{ linkOnly: boolean }> {
+): Promise<{
+  linkOnly: boolean;
+}> {
   if (readAuthOpenBrowser()) {
     try {
       await settingsApi.openExternal(url);

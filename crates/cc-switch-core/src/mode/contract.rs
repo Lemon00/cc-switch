@@ -8,8 +8,6 @@ use crate::live::engine::sha256_hex;
 use serde_json::{json, Map, Value};
 
 use crate::live::project::claude::ClaudeProjection;
-use crate::live::project::gemini::GeminiProjection;
-use crate::live::project::grok::GrokProjection;
 
 use super::state::Contract;
 
@@ -35,47 +33,6 @@ pub fn claude(projection: &ClaudeProjection) -> Contract {
         version: CONTRACT_VERSION,
         key: key_of(&parts),
         exclusive: projection.exclusive.clone(),
-    }
-}
-
-/// Gemini CLI：代理地址、占位 Key 和路由供应商的模型名（都在投影里）。
-pub fn gemini(projection: &GeminiProjection) -> Contract {
-    Contract {
-        version: CONTRACT_VERSION,
-        key: key_of(&json!({
-            "app": "gemini",
-            "version": CONTRACT_VERSION,
-            "projection": projection.to_value(),
-        })),
-        exclusive: Map::new(),
-    }
-}
-
-/// Grok Build：路由供应商的整张模型表（地址、Key 已换成本地代理的）。模型表里其余的键
-/// （模型名、窗口、推理摘要等）不同，客户端就要跟着改。
-pub fn grok(projection: &GrokProjection) -> Contract {
-    Contract {
-        version: CONTRACT_VERSION,
-        key: key_of(&json!({
-            "app": "grokbuild",
-            "version": CONTRACT_VERSION,
-            "projection": projection.to_value(),
-        })),
-        exclusive: Map::new(),
-    }
-}
-
-/// Claude Desktop：路由模式写进 profile 的网关设置（本地路由地址、gateway token、路由那家的
-/// 模型列表）。模型列表跟着路由那家变，换路由时多半要重写文件、重启 Desktop。
-pub fn claude_desktop(profile: &Value) -> Contract {
-    Contract {
-        version: CONTRACT_VERSION,
-        key: key_of(&json!({
-            "app": "claude-desktop",
-            "version": CONTRACT_VERSION,
-            "profile": profile,
-        })),
-        exclusive: Map::new(),
     }
 }
 

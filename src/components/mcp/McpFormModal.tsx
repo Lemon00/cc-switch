@@ -1,29 +1,29 @@
-import React, { useMemo, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { toast } from "@/lib/toast";
-import { Check, Eye, EyeOff, Plus, X } from "lucide-react";
+import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
+import { HoverTip } from "@/components/ui/hover-tip";
+import { Notice } from "@/components/ui/notice";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
   Sheet,
   SheetBody,
-  SheetPageContent,
   SheetFooter,
+  SheetPageContent,
 } from "@/components/ui/sheet";
-import { HoverTip } from "@/components/ui/hover-tip";
-import { Notice } from "@/components/ui/notice";
-import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
-import type { McpServer, McpServerSpec } from "@/types";
 import type { McpAppId } from "@/config/appConfig";
 import { MCP_APP_IDS } from "@/config/appConfig";
-import { mcpPresets, getMcpPresetWithDescription } from "@/config/mcpPresets";
+import { getMcpPresetWithDescription, mcpPresets } from "@/config/mcpPresets";
+import { useUpsertMcpServer } from "@/hooks/useMcp";
+import { toast } from "@/lib/toast";
+import { cn } from "@/lib/utils";
+import type { McpServer, McpServerSpec } from "@/types";
 import {
   extractErrorMessage,
   translateMcpBackendError,
 } from "@/utils/errorUtils";
-import { useUpsertMcpServer } from "@/hooks/useMcp";
-import { cn } from "@/lib/utils";
+import { Check, Eye, EyeOff, Plus, X } from "lucide-react";
+import React, { useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { NeutralBadge } from "./AppMatrix";
 import {
   CHECKBOX_CLASS,
@@ -50,20 +50,17 @@ import {
   type McpDraftConnection,
   type McpDraftErrors,
   type McpTransport,
-  type PasteFormat,
   type PastedServer,
+  type PasteFormat,
 } from "./mcpDraft";
-
 type AppsState = Record<McpAppId, boolean>;
-
 /**
  * 不支持 SSE 的应用。Codex 的 `[mcp_servers.*]` 只有 stdio / Streamable HTTP，
  * 写进去的 SSE 地址会被当成 Streamable HTTP 连接（#8882）；Pi、Antigravity 的
  * 写入直接拒绝 SSE（`mcp/pi.rs`、`mcp/agy.rs`）。
  */
 const SSE_AS_HTTP_APPS: readonly McpAppId[] = ["codex"];
-const SSE_REJECTED_APPS: readonly McpAppId[] = ["pi", "agy"];
-
+const SSE_REJECTED_APPS: readonly McpAppId[] = ["agy"];
 interface MetaDraft {
   name: string;
   description: string;
@@ -71,12 +68,10 @@ interface MetaDraft {
   homepage: string;
   docs: string;
 }
-
 interface BatchItem extends PastedServer {
   exists: boolean;
   include: boolean;
 }
-
 interface McpFormModalProps {
   /** 编辑时传：服务器的键名（不能改） */
   editingId?: string;
@@ -88,7 +83,6 @@ interface McpFormModalProps {
   onSave: () => void | Promise<void>;
   onClose: () => void;
 }
-
 const emptyMeta = (): MetaDraft => ({
   name: "",
   description: "",
@@ -96,7 +90,6 @@ const emptyMeta = (): MetaDraft => ({
   homepage: "",
   docs: "",
 });
-
 function metaOf(server?: McpServer): MetaDraft {
   if (!server) return emptyMeta();
   return {
@@ -108,7 +101,6 @@ function metaOf(server?: McpServer): MetaDraft {
     docs: server.docs ?? "",
   };
 }
-
 function appsOf(
   server: McpServer | undefined,
   defaults: readonly McpAppId[],
@@ -119,7 +111,6 @@ function appsOf(
   }
   return out;
 }
-
 /**
  * MCP 添加 / 编辑抽屉（宽 560）：模板、粘贴识别、表单 ⇄ JSON、写入到、说明与链接。
  * 旧版的「配置向导」并进了表单。
@@ -139,7 +130,6 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     () => Object.keys(existingServers),
     [existingServers],
   );
-
   const [name, setName] = useState(editingId ?? "");
   const [conn, setConn] = useState<McpDraftConnection>(() =>
     connectionOf(initialData?.server ?? { type: "stdio" }),
@@ -158,8 +148,15 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
   const [template, setTemplate] = useState<string | null>(null);
   const [pasteText, setPasteText] = useState("");
   const [paste, setPaste] = useState<
-    | { ok: true; format: PasteFormat; name: string; count: number }
-    | { ok: false }
+    | {
+        ok: true;
+        format: PasteFormat;
+        name: string;
+        count: number;
+      }
+    | {
+        ok: false;
+      }
     | null
   >(null);
   const [batch, setBatch] = useState<{
@@ -169,7 +166,6 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
   const [batchError, setBatchError] = useState(false);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
-
   const errors: McpDraftErrors = useMemo(
     () =>
       validateDraft(name, conn, {
@@ -184,7 +180,6 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     : errors.name === "nameExists"
       ? { name: errors.name }
       : {};
-
   // JSON 页签里的改动要到切回表单才进草稿，这里按当前文字判断
   const isSse = useMemo(() => {
     if (tab === "json") {
@@ -200,15 +195,12 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
   const sseRejectedApps = sseAppsIn(SSE_REJECTED_APPS);
   const appNames = (list: McpAppId[]) =>
     list.map((app) => APP_DISPLAY_NAME[app]).join(t("mcpPage.listSeparator"));
-
   const fieldErrorText = (code?: string) => {
     if (!code) return "";
     return t(`mcpPage.drawer.errors.${code}`, { name: name.trim() });
   };
-
   const formatLabel = (format: PasteFormat) =>
     t(`mcpPage.drawer.pasteFormats.${format}`);
-
   // ─── 模板 / 粘贴 ─────────────────────────────────────────────────────
   const pickTemplate = (id: string) => {
     const preset = mcpPresets.find((item) => item.id === id);
@@ -230,7 +222,6 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     setJsonError(null);
     setAttempted(false);
   };
-
   const handlePaste = (text: string) => {
     const result = recognizePaste(text);
     if (!result) {
@@ -279,7 +270,6 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       count: result.items.length,
     });
   };
-
   // ─── 表单 ⇄ JSON ─────────────────────────────────────────────────────
   const switchTab = (next: "form" | "json") => {
     if (next === tab) return;
@@ -298,23 +288,24 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     setJsonError(null);
     setTab("form");
   };
-
   const handleJsonChange = (text: string) => {
     setJsonText(text);
     const parsed = parseJsonText(text, conn);
     setJsonError(parsed.ok ? null : parsed.error);
   };
-
   const toggleRevealJson = () => {
     // 先把当前文字里的改动收进草稿，再换显示方式
     const parsed = parseJsonText(jsonText, conn);
-    const base = parsed.ok ? connectionOf(parsed.spec) : conn;
-    if (parsed.ok) setConn(base);
+    if (!parsed.ok) {
+      setJsonError(parsed.error);
+      return;
+    }
+    const base = connectionOf(parsed.spec);
+    setConn(base);
     const next = !revealJson;
     setRevealJson(next);
     setJsonText(jsonTextOf(base, next));
   };
-
   const jsonErrorText = (error: JsonParseError) =>
     error.kind === "notObject"
       ? t("mcpPage.drawer.jsonNotObject")
@@ -323,20 +314,16 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
         : error.line
           ? t("mcpPage.drawer.jsonSyntaxLine", { line: error.line })
           : t("mcpPage.drawer.jsonSyntax");
-
   // ─── 连接字段编辑 ───────────────────────────────────────────────────
   const patchConn = (patch: Partial<McpDraftConnection>) =>
     setConn((prev) => ({ ...prev, ...patch }));
-
   const updateRows = (
     field: "env" | "headers",
     updater: (rows: KeyValueRow[]) => KeyValueRow[],
   ) => setConn((prev) => ({ ...prev, [field]: updater(prev[field]) }));
-
   // ─── 提交 ───────────────────────────────────────────────────────────
   const focusSoon = (id: string) =>
     window.setTimeout(() => document.getElementById(id)?.focus(), 0);
-
   const buildEntry = (
     id: string,
     spec: McpServerSpec,
@@ -355,7 +342,6 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       name: id,
       server: spec,
       apps: {
-        openclaw: false,
         ...(base?.apps ?? appsOf(undefined, [])),
         ...visibleApps,
       } as McpServer["apps"],
@@ -381,7 +367,6 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     else delete entry.tags;
     return entry;
   };
-
   const reportSaveError = (error: unknown) => {
     const detail = extractErrorMessage(error);
     const mapped = translateMcpBackendError(detail, t);
@@ -389,7 +374,6 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       duration: 6000,
     });
   };
-
   const submitBatch = async () => {
     if (!batch) return;
     const chosen = batch.items.filter((item) => item.include);
@@ -406,9 +390,12 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       for (const item of chosen) {
         const base = item.exists ? existingServers[item.name] : undefined;
         try {
-          await upsertMutation.mutateAsync(
-            buildEntry(item.name, item.spec, base),
-          );
+          // 覆盖已有项时保留其 apps（含可见列开关）；新建才用表单「写入到」勾选
+          const entry = buildEntry(item.name, item.spec, base);
+          if (item.exists && base) {
+            entry.apps = base.apps;
+          }
+          await upsertMutation.mutateAsync(entry);
           if (item.exists) replaced += 1;
           else added += 1;
         } catch (error) {
@@ -432,8 +419,17 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       );
     }
     if (failed.length === 0) await onSave();
+    else
+      setBatch(
+        (previous) =>
+          previous && {
+            ...previous,
+            items: previous.items.filter(
+              (item) => failed.includes(item.name) || !item.include,
+            ),
+          },
+      );
   };
-
   const submitSingle = async () => {
     let current = conn;
     if (tab === "json") {
@@ -480,17 +476,14 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       setSaving(false);
     }
   };
-
   const handleSubmit = () => {
     if (savingRef.current) return;
     void (batch ? submitBatch() : submitSingle());
   };
-
   // ─── 渲染 ───────────────────────────────────────────────────────────
   const title = isEdit
     ? t("mcpPage.drawer.editTitle")
     : t("mcpPage.drawer.addTitle");
-
   const batchChosen = batch?.items.filter((item) => item.include) ?? [];
   const batchNew = batchChosen.filter((item) => !item.exists).length;
   const batchOver = batchChosen.length - batchNew;
@@ -506,7 +499,6 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     : isEdit
       ? t("common.save")
       : t("common.add");
-
   const renderKvRows = (field: "env" | "headers", label: string) => {
     const rows = conn[field];
     return (
@@ -629,10 +621,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       </div>
     );
   };
-
   const extraKeys = Object.keys(conn.extra);
   const hasSecrets = secretCountOf(conn) > 0;
-
   return (
     <Sheet
       open
@@ -660,10 +650,10 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                 >
                   {mcpPresets.map((preset) => (
                     <HoverTip
+                      key={preset.id}
                       content={t(`mcp.presets.${preset.id}.description`)}
                     >
                       <button
-                        key={preset.id}
                         type="button"
                         aria-pressed={template === preset.id}
                         onClick={() => pickTemplate(preset.id)}
@@ -1422,7 +1412,6 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     </Sheet>
   );
 };
-
 function AddRowButton({
   onClick,
   children,
@@ -1441,5 +1430,4 @@ function AddRowButton({
     </button>
   );
 }
-
 export default McpFormModal;

@@ -1,8 +1,4 @@
-import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useTranslation } from "react-i18next";
-import { getVersion } from "@tauri-apps/api/app";
-import { Sparkles } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -11,15 +7,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
 import { APP_IDS } from "@/config/appConfig";
 import { providersApi, settingsApi } from "@/lib/api";
 import { useSettingsQuery } from "@/lib/query";
 import { markSeen } from "@/lib/whatsNew";
 import type { Settings } from "@/types";
-
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { getVersion } from "@tauri-apps/api/app";
+import { Sparkles } from "lucide-react";
+import { useState } from "react";
+import { useTranslation } from "react-i18next";
 const RELEASES_URL = "https://github.com/Lemon00/cc-switch/releases";
-
 /** 任一应用的数据库里已经有供应商（找到一家就停） */
 async function hasAnyProvider(): Promise<boolean> {
   for (const app of APP_IDS) {
@@ -32,7 +30,6 @@ async function hasAnyProvider(): Promise<boolean> {
   }
   return false;
 }
-
 /**
  * 「界面改版了」弹窗这次会不会出现：true 会，false 不会，undefined 还在查供应商。
  * - 必须已经确认过首次启动的欢迎弹窗。全新安装时后端会先导入当前配置、再预置官方
@@ -48,17 +45,14 @@ export function useNewLayoutNoticePending(
     settings != null &&
     settings.firstRunNoticeConfirmed === true &&
     settings.newLayoutNoticeConfirmed !== true;
-
   const { data: hasProviders } = useQuery({
     queryKey: ["new-layout-notice", "has-providers"],
     queryFn: hasAnyProvider,
     enabled: eligible,
     staleTime: Infinity,
   });
-
   return eligible ? hasProviders : false;
 }
-
 /**
  * 「界面改版了」一次性弹窗：只给升级上来的老用户看，确认后写 newLayoutNoticeConfirmed。
  * 弹窗盖在页面上，不占布局，晚一点出来也不会推动内容区。
@@ -70,29 +64,27 @@ export function NewLayoutDialog() {
   // 点了就先关，不等保存回来
   const [closed, setClosed] = useState(false);
   const pending = useNewLayoutNoticePending(settings);
-
   const isOpen = !closed && pending === true;
-
   const handleAcknowledge = async () => {
     setClosed(true);
     if (!settings) return;
     try {
-      const { webdavSync: _, ...rest } = settings;
       // 更新摘要一并记成已看，不再接着弹第二个。看到这里的是从 3.x 升上来的用户，
       // 之前没有记录，摘要本来也只会显示当前这一版；那几条是相对上一个 4.x 预览版
       // 的改动，对他们不如这个弹窗和「查看更新说明」（正式版页面是 4.0 完整说明）有用。
       const version = await getVersion().catch(() => undefined);
       await settingsApi.save({
-        ...rest,
         newLayoutNoticeConfirmed: true,
-        whatsNewSeenVersion: markSeen(settings.whatsNewSeenVersion, version),
+        independentWhatsNewSeenVersion: markSeen(
+          settings.independentWhatsNewSeenVersion,
+          version,
+        ),
       });
       await queryClient.invalidateQueries({ queryKey: ["settings"] });
     } catch (error) {
       console.error("Failed to save newLayoutNoticeConfirmed:", error);
     }
   };
-
   const handleViewReleaseNotes = async () => {
     try {
       const version = await getVersion();
@@ -104,7 +96,6 @@ export function NewLayoutDialog() {
     }
     await handleAcknowledge();
   };
-
   return (
     <Dialog
       open={isOpen}

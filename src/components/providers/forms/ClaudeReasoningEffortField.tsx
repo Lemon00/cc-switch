@@ -1,6 +1,5 @@
-import { useTranslation } from "react-i18next";
-import { Label } from "@/components/ui/label";
 import { HelpTip } from "@/components/ui/help-tip";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -9,11 +8,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { ClaudeReasoningEffortMode } from "@/types";
-
+import { useTranslation } from "react-i18next";
 export type ClaudeReasoningEffortChoice = ClaudeReasoningEffortMode | "auto";
-
 const CHOICES: ClaudeReasoningEffortChoice[] = ["auto", "passthrough", "off"];
-
 export function toClaudeReasoningEffortChoice(
   value: string | undefined,
 ): ClaudeReasoningEffortChoice {
@@ -21,14 +18,12 @@ export function toClaudeReasoningEffortChoice(
     ? (value as ClaudeReasoningEffortChoice)
     : "auto";
 }
-
 interface ClaudeReasoningEffortFieldProps {
   /** 下拉框的 id（用于 label htmlFor）；两个表单需传入各自唯一值。 */
   id: string;
   value: ClaudeReasoningEffortChoice;
   onChange: (value: ClaudeReasoningEffortChoice) => void;
 }
-
 /**
  * Claude 路由转成 OpenAI Chat / Responses 时思考档位的发法（Claude Code / Claude
  * Desktop 表单共用）。后端判定见 `proxy/providers/claude_reasoning.rs`。
@@ -51,7 +46,6 @@ export function ClaudeReasoningEffortField({
     }),
     off: t("providerForm.reasoningEffortOff", { defaultValue: "不发送" }),
   };
-
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-0.5">

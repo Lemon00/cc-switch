@@ -2,7 +2,6 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 import JsonEditor from "@/components/JsonEditor";
-
 /**
  * 锁住 JsonEditor 的一条不变量：把 value 属性同步进编辑器的那次程序化替换，
  * 不得被当成用户输入回吐给 onChange。
@@ -16,7 +15,6 @@ import JsonEditor from "@/components/JsonEditor";
  */
 const CONFIG_A = JSON.stringify({ env: { A: "1" } }, null, 2);
 const CONFIG_B = JSON.stringify({ env: { B: "2", C: "3" } }, null, 2);
-
 function Harness({ onChange }: { onChange: (value: string) => void }) {
   const [value, setValue] = useState(CONFIG_A);
   return (
@@ -34,31 +32,25 @@ function Harness({ onChange }: { onChange: (value: string) => void }) {
     </div>
   );
 }
-
 describe("JsonEditor 外部同步不得回吐成用户输入", () => {
   it("把新 value 推进编辑器时不触发 onChange", async () => {
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
-
     // 挂载本身不算用户输入
     await waitFor(() =>
       expect(document.querySelector(".cm-content")).toBeTruthy(),
     );
     expect(onChange).not.toHaveBeenCalled();
-
     screen.getByText("push-b").click();
-
     // 外部推入新值后，文档要更新，但 onChange 必须一次都不响
     await waitFor(() =>
       expect(document.querySelector(".cm-content")?.textContent).toContain("C"),
     );
     expect(onChange).not.toHaveBeenCalled();
   });
-
   it("onChange 换成新的闭包后，监听器必须用最新那个", async () => {
     const first = vi.fn();
     const second = vi.fn();
-
     function SwapHarness() {
       const [useSecond, setUseSecond] = useState(false);
       const [value, setValue] = useState(CONFIG_A);
@@ -77,18 +69,19 @@ describe("JsonEditor 外部同步不得回吐成用户输入", () => {
         </div>
       );
     }
-
     render(<SwapHarness />);
     await waitFor(() =>
       expect(document.querySelector(".cm-content")).toBeTruthy(),
     );
-
     fireEvent.click(screen.getByText("swap"));
-
     // 模拟用户输入：直接改 CodeMirror 文档（非外部同步事务）
     const view = (
       document.querySelector(".cm-content") as HTMLElement & {
-        cmView?: { view: { dispatch: (spec: unknown) => void } };
+        cmView?: {
+          view: {
+            dispatch: (spec: unknown) => void;
+          };
+        };
       }
     )?.cmView?.view;
     expect(view).toBeTruthy();
@@ -96,7 +89,6 @@ describe("JsonEditor 外部同步不得回吐成用户输入", () => {
       throw new Error("CodeMirror view was not attached to .cm-content");
     }
     view.dispatch({ changes: { from: 0, to: 0, insert: " " } });
-
     await waitFor(() => expect(second).toHaveBeenCalled());
     expect(first).not.toHaveBeenCalled();
   });

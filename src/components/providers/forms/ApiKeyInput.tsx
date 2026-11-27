@@ -1,10 +1,9 @@
-import React, { useState } from "react";
-import { Eye, EyeOff } from "lucide-react";
-import { useTranslation } from "react-i18next";
 import { fieldClass } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { Eye, EyeOff } from "lucide-react";
+import React, { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { REQUIRED_LABEL } from "./BasicFormFields";
-
 interface ApiKeyInputProps {
   value: string;
   onChange: (value: string) => void;
@@ -18,7 +17,6 @@ interface ApiKeyInputProps {
   /** 输入框下方的说明文字 */
   hint?: React.ReactNode;
 }
-
 const ApiKeyInput: React.FC<ApiKeyInputProps> = ({
   value,
   onChange,
@@ -32,7 +30,6 @@ const ApiKeyInput: React.FC<ApiKeyInputProps> = ({
 }) => {
   const { t } = useTranslation();
   const [showKey, setShowKey] = useState(false);
-
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-2">
@@ -84,5 +81,4 @@ const ApiKeyInput: React.FC<ApiKeyInputProps> = ({
     </div>
   );
 };
-
 export default ApiKeyInput;

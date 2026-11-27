@@ -1,81 +1,41 @@
+import { providersApi, sessionsApi, settingsApi, type AppId } from "@/lib/api";
+import type { ProviderEditorSave, SwitchResult } from "@/lib/api/providers";
+import type { DeleteSessionOptions } from "@/lib/api/sessions";
+import { parseLiveEditConflict } from "@/lib/errors/liveEditConflict";
+import { sessionKeys } from "@/lib/query/sessions";
+import { toast } from "@/lib/toast";
+import type { Provider, SessionMeta, Settings } from "@/types";
+import { extractErrorMessage } from "@/utils/errorUtils";
+import { generateUUID } from "@/utils/uuid";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { toast } from "@/lib/toast";
-import { providersApi, sessionsApi, settingsApi, type AppId } from "@/lib/api";
-import type { DeleteSessionOptions } from "@/lib/api/sessions";
-import type { ProviderEditorSave, SwitchResult } from "@/lib/api/providers";
-import { parseLiveEditConflict } from "@/lib/errors/liveEditConflict";
-import type { Provider, SessionMeta, Settings } from "@/types";
+import { invalidateQueriesAfterChange } from "./invalidation";
 import {
-  extractErrorMessage,
-  translateKimiProviderMutationError,
-  translatePiProviderMutationError,
-} from "@/utils/errorUtils";
-import { generateUUID } from "@/utils/uuid";
-import { openclawKeys } from "@/hooks/useOpenClaw";
-import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
-import { proxyKeys } from "@/lib/query/proxy";
-import { usageKeys } from "@/lib/query/usage";
-import { sessionKeys } from "@/lib/query/sessions";
-import { invalidatePiProviderCaches } from "@/lib/query/pi";
-import { isPiFamilyApp } from "@/config/appConfig";
-import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
-
+  deleteProviderAndRefresh,
+  refreshProviderTray,
+  settleProviderChange,
+} from "./providerActions";
+import { invalidateProviderCaches } from "./providerCache";
 export const useAddProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
-
   return useMutation({
+    mutationKey: ["providers", appId, "add"],
     mutationFn: async (
       providerInput: Omit<Provider, "id"> & {
         providerKey?: string;
         addToLive?: boolean;
-        ensureClaudeDesktopOfficialSeed?: boolean;
-        ensureGrokBuildOfficialSeed?: boolean;
         editorSave?: ProviderEditorSave;
       },
     ) => {
       const {
         providerKey: _providerKey,
         addToLive,
-        ensureClaudeDesktopOfficialSeed,
-        ensureGrokBuildOfficialSeed,
         editorSave,
         ...rest
       } = providerInput;
-
-      if (appId === "claude-desktop" && ensureClaudeDesktopOfficialSeed) {
-        await providersApi.ensureClaudeDesktopOfficialProvider();
-        const providers = await providersApi.getAll(appId);
-        const officialProvider = providers["claude-desktop-official"];
-        if (!officialProvider) {
-          throw new Error("Claude Desktop official provider was not created");
-        }
-        return officialProvider;
-      }
-
-      if (appId === "grokbuild" && ensureGrokBuildOfficialSeed) {
-        await providersApi.ensureGrokBuildOfficialProvider();
-        const providers = await providersApi.getAll(appId);
-        const officialProvider = providers[GROKBUILD_OFFICIAL_PROVIDER_ID];
-        if (!officialProvider) {
-          throw new Error("Grok Build official provider was not created");
-        }
-        return officialProvider;
-      }
-
       let id: string;
-
-      if (
-        appId === "opencode" ||
-        appId === "openclaw" ||
-        appId === "hermes" ||
-        appId === "pi" ||
-        appId === "mcode" ||
-        appId === "kimi" ||
-        appId === "dsh" ||
-        appId === "omp"
-      ) {
+      if (appId === "opencode" || appId === "dsh") {
         if (
           providerInput.category === "omo" ||
           providerInput.category === "omo-slim"
@@ -91,53 +51,31 @@ export const useAddProviderMutation = (appId: AppId) => {
       } else {
         id = generateUUID();
       }
-
       const newProvider: Provider = {
         ...rest,
         id,
         createdAt: Date.now(),
       };
       delete (newProvider as any).providerKey;
-
-      await providersApi.add(newProvider, appId, addToLive, editorSave);
+      const added = await providersApi.add(
+        newProvider,
+        appId,
+        addToLive,
+        editorSave,
+      );
+      if (!added) {
+        throw new Error(
+          t("notifications.addFailed", {
+            defaultValue: "添加供应商失败: {{error}}",
+            error: t("common.unknown"),
+          }),
+        );
+      }
       return newProvider;
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
-
-      if (appId === "opencode") {
-        await queryClient.invalidateQueries({
-          queryKey: ["omo", "current-provider-id"],
-        });
-        await queryClient.invalidateQueries({
-          queryKey: ["omo", "provider-count"],
-        });
-        await queryClient.invalidateQueries({
-          queryKey: ["omo-slim", "current-provider-id"],
-        });
-        await queryClient.invalidateQueries({
-          queryKey: ["omo-slim", "provider-count"],
-        });
-      }
-
-      if (appId === "openclaw") {
-        await queryClient.invalidateQueries({
-          queryKey: openclawKeys.health,
-        });
-      }
-
-      if (appId === "hermes") {
-        await invalidateHermesProviderCaches(queryClient);
-      }
-      try {
-        await providersApi.updateTrayMenu();
-      } catch (trayError) {
-        console.error(
-          "Failed to update tray menu after adding provider",
-          trayError,
-        );
-      }
-
+      await invalidateProviderCaches(queryClient, appId, "add");
+      await refreshProviderTray();
       toast.success(
         t("notifications.providerAdded", {
           defaultValue: "供应商已添加",
@@ -151,14 +89,7 @@ export const useAddProviderMutation = (appId: AppId) => {
       // 编辑冲突由对话框让用户选保留哪一边，不弹失败提示。
       if (parseLiveEditConflict(error)) return;
       const rawDetail = extractErrorMessage(error);
-      const detail =
-        (isPiFamilyApp(appId)
-          ? translatePiProviderMutationError(rawDetail, t)
-          : appId === "kimi"
-            ? translateKimiProviderMutationError(rawDetail, t)
-            : "") ||
-        rawDetail ||
-        t("common.unknown");
+      const detail = rawDetail || t("common.unknown");
       toast.error(
         t("notifications.addFailed", {
           defaultValue: "添加供应商失败: {{error}}",
@@ -166,19 +97,14 @@ export const useAddProviderMutation = (appId: AppId) => {
         }),
       );
     },
-    onSettled: async () => {
-      if (isPiFamilyApp(appId)) {
-        await invalidatePiProviderCaches(queryClient, appId);
-      }
-    },
+    onSettled: () => settleProviderChange(queryClient, appId),
   });
 };
-
 export const useUpdateProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
-
   return useMutation({
+    mutationKey: ["providers", appId, "update"],
     mutationFn: async ({
       provider,
       originalId,
@@ -188,27 +114,28 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       originalId?: string;
       editorSave?: ProviderEditorSave;
     }) => {
-      await providersApi.update(provider, appId, originalId, editorSave);
+      const updated = await providersApi.update(
+        provider,
+        appId,
+        originalId,
+        editorSave,
+      );
+      if (!updated) {
+        throw new Error(
+          t("notifications.updateFailed", {
+            defaultValue: "更新供应商失败: {{error}}",
+            error: t("common.unknown"),
+          }),
+        );
+      }
       return provider;
     },
     onSuccess: async (provider, variables) => {
-      await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
-      await queryClient.invalidateQueries({
-        queryKey: usageKeys.script(provider.id, appId),
-      });
-      if (variables.originalId && variables.originalId !== provider.id) {
-        await queryClient.invalidateQueries({
-          queryKey: usageKeys.script(variables.originalId, appId),
-        });
-      }
-      if (appId === "openclaw") {
-        await queryClient.invalidateQueries({
-          queryKey: openclawKeys.health,
-        });
-      }
-      if (appId === "hermes") {
-        await invalidateHermesProviderCaches(queryClient);
-      }
+      await invalidateProviderCaches(queryClient, appId, "update", [
+        provider.id,
+        ...(variables.originalId ? [variables.originalId] : []),
+      ]);
+      await refreshProviderTray();
       toast.success(
         t("notifications.updateSuccess", {
           defaultValue: "供应商更新成功",
@@ -221,14 +148,7 @@ export const useUpdateProviderMutation = (appId: AppId) => {
     onError: (error: Error) => {
       if (parseLiveEditConflict(error)) return;
       const rawDetail = extractErrorMessage(error);
-      const detail =
-        (isPiFamilyApp(appId)
-          ? translatePiProviderMutationError(rawDetail, t)
-          : appId === "kimi"
-            ? translateKimiProviderMutationError(rawDetail, t)
-            : "") ||
-        rawDetail ||
-        t("common.unknown");
+      const detail = rawDetail || t("common.unknown");
       toast.error(
         t("notifications.updateFailed", {
           defaultValue: "更新供应商失败: {{error}}",
@@ -236,63 +156,30 @@ export const useUpdateProviderMutation = (appId: AppId) => {
         }),
       );
     },
-    onSettled: async () => {
-      if (isPiFamilyApp(appId)) {
-        await invalidatePiProviderCaches(queryClient, appId);
-      } else if (appId === "kimi") {
-        // 默认模型可能在 Kimi Code 里改过：失败时也重读，页面上的「默认」才跟得上
-        await queryClient.invalidateQueries({
-          queryKey: ["providers", "kimi"],
-        });
-      }
-    },
+    onSettled: () => settleProviderChange(queryClient, appId),
   });
 };
-
 export const useDeleteProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
-
   return useMutation({
+    mutationKey: ["providers", appId, "delete"],
     mutationFn: async (providerId: string) => {
-      await providersApi.delete(providerId, appId);
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
-
-      if (appId === "opencode") {
-        await queryClient.invalidateQueries({
-          queryKey: ["omo", "current-provider-id"],
-        });
-        await queryClient.invalidateQueries({
-          queryKey: ["omo", "provider-count"],
-        });
-        await queryClient.invalidateQueries({
-          queryKey: ["omo-slim", "current-provider-id"],
-        });
-        await queryClient.invalidateQueries({
-          queryKey: ["omo-slim", "provider-count"],
-        });
-      }
-
-      if (appId === "openclaw") {
-        await queryClient.invalidateQueries({
-          queryKey: openclawKeys.health,
-        });
-      }
-
-      if (appId === "hermes") {
-        await invalidateHermesProviderCaches(queryClient);
-      }
-      try {
-        await providersApi.updateTrayMenu();
-      } catch (trayError) {
-        console.error(
-          "Failed to update tray menu after deleting provider",
-          trayError,
+      const deleted = await deleteProviderAndRefresh(
+        queryClient,
+        appId,
+        providerId,
+      );
+      if (!deleted) {
+        throw new Error(
+          t("notifications.deleteFailed", {
+            defaultValue: "删除供应商失败: {{error}}",
+            error: t("common.unknown"),
+          }),
         );
       }
-
+    },
+    onSuccess: async () => {
       toast.success(
         t("notifications.deleteSuccess", {
           defaultValue: "供应商已删除",
@@ -304,14 +191,7 @@ export const useDeleteProviderMutation = (appId: AppId) => {
     },
     onError: (error: Error) => {
       const rawDetail = extractErrorMessage(error);
-      const detail =
-        (isPiFamilyApp(appId)
-          ? translatePiProviderMutationError(rawDetail, t)
-          : appId === "kimi"
-            ? translateKimiProviderMutationError(rawDetail, t)
-            : "") ||
-        rawDetail ||
-        t("common.unknown");
+      const detail = rawDetail || t("common.unknown");
       toast.error(
         t("notifications.deleteFailed", {
           defaultValue: "删除供应商失败: {{error}}",
@@ -319,83 +199,22 @@ export const useDeleteProviderMutation = (appId: AppId) => {
         }),
       );
     },
-    onSettled: async () => {
-      if (isPiFamilyApp(appId)) {
-        await invalidatePiProviderCaches(queryClient, appId);
-      } else if (appId === "kimi") {
-        // 默认模型可能在 Kimi Code 里改过：失败时也重读，页面上的「默认」才跟得上
-        await queryClient.invalidateQueries({
-          queryKey: ["providers", "kimi"],
-        });
-      }
-    },
   });
 };
-
 export const useSwitchProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
-
   return useMutation({
+    mutationKey: ["providers", appId, "switch"],
     mutationFn: async (providerId: string): Promise<SwitchResult> => {
       return await providersApi.switch(providerId, appId);
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
-      if (appId === "claude") {
-        // 切到绑了账号的官方卡时，后端可能把原来的默认登录收成了新账号：授权中心要重读
-        await queryClient.invalidateQueries({
-          queryKey: ["managed-auth-status", "claude_official"],
-        });
-      }
-      if (appId === "claude-desktop") {
-        await queryClient.invalidateQueries({ queryKey: proxyKeys.status });
-        await queryClient.invalidateQueries({
-          queryKey: ["claudeDesktopStatus"],
-        });
-      }
-
-      // OpenCode/OpenClaw: also invalidate live provider IDs cache to update button state
-      if (appId === "opencode") {
-        await queryClient.invalidateQueries({
-          queryKey: ["opencodeLiveProviderIds"],
-        });
-        await queryClient.invalidateQueries({
-          queryKey: ["opencode", "runtime-models"],
-        });
-        await queryClient.invalidateQueries({
-          queryKey: ["omo", "current-provider-id"],
-        });
-        await queryClient.invalidateQueries({
-          queryKey: ["omo-slim", "current-provider-id"],
-        });
-      }
-      if (appId === "openclaw") {
-        await queryClient.invalidateQueries({
-          queryKey: openclawKeys.liveProviderIds,
-        });
-        await queryClient.invalidateQueries({
-          queryKey: openclawKeys.defaultModel,
-        });
-        await queryClient.invalidateQueries({
-          queryKey: openclawKeys.health,
-        });
-      }
-      if (appId === "hermes") {
-        await invalidateHermesProviderCaches(queryClient);
-      }
-      try {
-        await providersApi.updateTrayMenu();
-      } catch (trayError) {
-        console.error(
-          "Failed to update tray menu after switching provider",
-          trayError,
-        );
-      }
+      await invalidateProviderCaches(queryClient, appId, "switch");
+      await refreshProviderTray();
     },
     onError: (error: Error) => {
       const detail = extractErrorMessage(error) || t("common.unknown");
-
       toast.error(
         t("notifications.switchFailedTitle", { defaultValue: "切换失败" }),
         {
@@ -413,24 +232,26 @@ export const useSwitchProviderMutation = (appId: AppId) => {
         },
       );
     },
-    onSettled: async () => {
-      if (isPiFamilyApp(appId)) {
-        await invalidatePiProviderCaches(queryClient, appId);
-      }
-    },
+    onSettled: () => settleProviderChange(queryClient, appId),
   });
 };
-
 export const useDeleteSessionMutation = () => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
-
   return useMutation({
     mutationFn: async (input: DeleteSessionOptions) => {
-      await sessionsApi.delete(input);
+      const deleted = await sessionsApi.delete(input);
+      if (!deleted) {
+        throw new Error(
+          t("sessionManager.deleteNotFound", {
+            defaultValue: "会话未删除（可能已不存在）",
+          }),
+        );
+      }
       return input;
     },
     onSuccess: async (input) => {
+      await queryClient.cancelQueries({ queryKey: ["sessions"] });
       const deleted = queryClient
         .getQueryData<SessionMeta[]>(["sessions"])
         ?.find(
@@ -456,9 +277,12 @@ export const useDeleteSessionMutation = () => {
       queryClient.removeQueries({
         queryKey: sessionKeys.transcript(input.providerId, input.sourcePath),
       });
-
-      await queryClient.invalidateQueries({ queryKey: ["sessions"] });
-
+      queryClient.removeQueries({
+        queryKey: sessionKeys.blockContents(input.providerId, input.sourcePath),
+      });
+      await invalidateQueriesAfterChange(queryClient, {
+        queryKey: ["sessions"],
+      });
       toast.success(
         deletedTitle
           ? t("sessionManager.sessionDeletedNamed", { title: deletedTitle })
@@ -478,17 +302,17 @@ export const useDeleteSessionMutation = () => {
     },
   });
 };
-
 export const useSaveSettingsMutation = () => {
   const queryClient = useQueryClient();
-
   return useMutation({
-    mutationFn: async (settings: Settings) => {
+    mutationFn: async (settings: Partial<Settings>) => {
       await settingsApi.save(settings);
     },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["settings"] });
-      await queryClient.invalidateQueries({
+    onSettled: async () => {
+      await invalidateQueriesAfterChange(queryClient, {
+        queryKey: ["settings"],
+      });
+      await invalidateQueriesAfterChange(queryClient, {
         queryKey: ["opencode", "runtime-models"],
       });
     },

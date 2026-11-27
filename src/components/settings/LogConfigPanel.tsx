@@ -1,9 +1,5 @@
-import { useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { toast } from "@/lib/toast";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
 import { HelpTip } from "@/components/ui/help-tip";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -11,10 +7,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { settingsApi, type LogConfig } from "@/lib/api/settings";
-
+import { toast } from "@/lib/toast";
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 const LOG_LEVELS = ["error", "warn", "info", "debug", "trace"] as const;
-
 export function LogConfigPanel() {
   const { t } = useTranslation();
   const [config, setConfig] = useState<LogConfig>({
@@ -22,7 +20,6 @@ export function LogConfigPanel() {
     level: "info",
   });
   const [isLoading, setIsLoading] = useState(true);
-
   useEffect(() => {
     settingsApi
       .getLogConfig()
@@ -30,7 +27,6 @@ export function LogConfigPanel() {
       .catch((e) => console.error("Failed to load log config:", e))
       .finally(() => setIsLoading(false));
   }, []);
-
   const handleChange = async (updates: Partial<LogConfig>) => {
     const newConfig = { ...config, ...updates };
     setConfig(newConfig);
@@ -42,9 +38,7 @@ export function LogConfigPanel() {
       setConfig(config);
     }
   };
-
   if (isLoading) return null;
-
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">

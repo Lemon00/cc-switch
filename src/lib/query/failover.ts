@@ -1,13 +1,12 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { getAppLabel } from "@/config/appCapabilities";
 import { failoverApi } from "@/lib/api/failover";
-import { toast } from "@/lib/toast";
-import { useTranslation } from "react-i18next";
-import { extractErrorMessage } from "@/utils/errorUtils";
 import { proxyKeys } from "@/lib/query/proxy";
-import { getAppLabel } from "@/config/appConfig";
-
+import { toast } from "@/lib/toast";
+import { extractErrorMessage } from "@/utils/errorUtils";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
+import { invalidateQueriesAfterChange } from "./invalidation";
 // ========== 熔断器 Hooks ==========
-
 /**
  * 获取供应商健康状态
  */
@@ -24,7 +23,6 @@ export function useProviderHealth(
     retry: false,
   });
 }
-
 /**
  * 重置熔断器
  *
@@ -33,7 +31,6 @@ export function useProviderHealth(
  */
 export function useResetCircuitBreaker() {
   const queryClient = useQueryClient();
-
   return useMutation({
     mutationFn: ({
       providerId,
@@ -43,22 +40,19 @@ export function useResetCircuitBreaker() {
       appType: string;
     }) => failoverApi.resetCircuitBreaker(providerId, appType),
     onSuccess: (_, variables) => {
-      // 刷新健康状态
-      queryClient.invalidateQueries({
-        queryKey: ["providerHealth", variables.providerId, variables.appType],
-      });
-      // 刷新供应商列表（因为可能发生了自动恢复切换）
-      queryClient.invalidateQueries({
-        queryKey: ["providers", variables.appType],
-      });
-      // 刷新代理状态（更新 active_targets）
-      queryClient.invalidateQueries({
-        queryKey: proxyKeys.status,
-      });
+      return Promise.all(
+        [
+          ["providerHealth", variables.providerId, variables.appType],
+          ["circuitBreakerStats", variables.providerId, variables.appType],
+          ["providers", variables.appType],
+          proxyKeys.status,
+        ].map((queryKey) =>
+          invalidateQueriesAfterChange(queryClient, { queryKey }),
+        ),
+      );
     },
   });
 }
-
 /**
  * 获取熔断器配置
  */
@@ -68,21 +62,23 @@ export function useCircuitBreakerConfig() {
     queryFn: () => failoverApi.getCircuitBreakerConfig(),
   });
 }
-
 /**
  * 更新熔断器配置
  */
 export function useUpdateCircuitBreakerConfig() {
   const queryClient = useQueryClient();
-
   return useMutation({
     mutationFn: failoverApi.updateCircuitBreakerConfig,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["circuitBreakerConfig"] });
+      // 兼容命令更新所有应用的 proxy_config 行。
+      return Promise.all(
+        [["circuitBreakerConfig"], ["appProxyConfig"]].map((queryKey) =>
+          invalidateQueriesAfterChange(queryClient, { queryKey }),
+        ),
+      );
     },
   });
 }
-
 /**
  * 获取熔断器统计信息
  */
@@ -94,9 +90,7 @@ export function useCircuitBreakerStats(providerId: string, appType: string) {
     refetchInterval: 5000, // 每 5 秒刷新一次
   });
 }
-
 // ========== 故障转移队列 Hooks（新） ==========
-
 /**
  * 获取故障转移队列
  */
@@ -107,7 +101,6 @@ export function useFailoverQueue(appType: string, enabled = true) {
     enabled: enabled && !!appType,
   });
 }
-
 /**
  * 获取可添加到队列的供应商
  */
@@ -118,14 +111,12 @@ export function useAvailableProvidersForFailover(appType: string) {
     enabled: !!appType,
   });
 }
-
 /**
  * 添加供应商到故障转移队列
  */
 export function useAddToFailoverQueue() {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
-
   return useMutation({
     mutationFn: ({
       appType,
@@ -135,15 +126,15 @@ export function useAddToFailoverQueue() {
       providerId: string;
     }) => failoverApi.addToFailoverQueue(appType, providerId),
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({
-        queryKey: ["failoverQueue", variables.appType],
-      });
-      queryClient.invalidateQueries({
-        queryKey: ["availableProvidersForFailover", variables.appType],
-      });
-      queryClient.invalidateQueries({
-        queryKey: ["providers", variables.appType],
-      });
+      return Promise.all(
+        [
+          ["failoverQueue", variables.appType],
+          ["availableProvidersForFailover", variables.appType],
+          ["providers", variables.appType],
+        ].map((queryKey) =>
+          invalidateQueriesAfterChange(queryClient, { queryKey }),
+        ),
+      );
     },
     onError: (error: Error) => {
       toast.error(
@@ -154,14 +145,12 @@ export function useAddToFailoverQueue() {
     },
   });
 }
-
 /**
  * 从故障转移队列移除供应商
  */
 export function useRemoveFromFailoverQueue() {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
-
   return useMutation({
     mutationFn: ({
       appType,
@@ -171,27 +160,17 @@ export function useRemoveFromFailoverQueue() {
       providerId: string;
     }) => failoverApi.removeFromFailoverQueue(appType, providerId),
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({
-        queryKey: ["failoverQueue", variables.appType],
-      });
-      queryClient.invalidateQueries({
-        queryKey: ["availableProvidersForFailover", variables.appType],
-      });
-      queryClient.invalidateQueries({
-        queryKey: ["providers", variables.appType],
-      });
-      // 清除该供应商的健康状态缓存（退出队列后不再需要健康监控）
-      queryClient.invalidateQueries({
-        queryKey: ["providerHealth", variables.providerId, variables.appType],
-      });
-      // 清除该供应商的熔断器统计缓存
-      queryClient.invalidateQueries({
-        queryKey: [
-          "circuitBreakerStats",
-          variables.providerId,
-          variables.appType,
-        ],
-      });
+      return Promise.all(
+        [
+          ["failoverQueue", variables.appType],
+          ["availableProvidersForFailover", variables.appType],
+          ["providers", variables.appType],
+          ["providerHealth", variables.providerId, variables.appType],
+          ["circuitBreakerStats", variables.providerId, variables.appType],
+        ].map((queryKey) =>
+          invalidateQueriesAfterChange(queryClient, { queryKey }),
+        ),
+      );
     },
     onError: (error: Error) => {
       toast.error(
@@ -202,9 +181,7 @@ export function useRemoveFromFailoverQueue() {
     },
   });
 }
-
 // ========== 自动故障转移开关 Hooks ==========
-
 /**
  * 获取指定应用的自动故障转移开关状态
  */
@@ -217,18 +194,15 @@ export function useAutoFailoverEnabled(appType: string, enabled = true) {
     placeholderData: false,
   });
 }
-
 /**
  * 设置指定应用的自动故障转移开关状态
  */
 export function useSetAutoFailoverEnabled() {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
-
   return useMutation({
     mutationFn: ({ appType, enabled }: { appType: string; enabled: boolean }) =>
       failoverApi.setAutoFailoverEnabled(appType, enabled),
-
     // 乐观更新
     onMutate: async ({ appType, enabled }) => {
       await queryClient.cancelQueries({
@@ -238,15 +212,12 @@ export function useSetAutoFailoverEnabled() {
         "autoFailoverEnabled",
         appType,
       ]);
-
+      const hadCachedValue = previousValue !== undefined;
       queryClient.setQueryData(["autoFailoverEnabled", appType], enabled);
-
-      return { previousValue, appType };
+      return { previousValue, appType, hadCachedValue };
     },
-
     onSuccess: (_data, variables) => {
       const appLabel = getAppLabel(variables.appType);
-
       toast.success(
         variables.enabled
           ? t("failover.enabled", {
@@ -260,16 +231,19 @@ export function useSetAutoFailoverEnabled() {
         { closeButton: true },
       );
     },
-
     // 错误时回滚
     onError: (error: Error, _variables, context) => {
-      if (context?.previousValue !== undefined) {
+      if (context?.hadCachedValue) {
         queryClient.setQueryData(
           ["autoFailoverEnabled", context.appType],
           context.previousValue,
         );
+      } else if (context) {
+        queryClient.removeQueries({
+          queryKey: ["autoFailoverEnabled", context.appType],
+          exact: true,
+        });
       }
-
       const detail =
         extractErrorMessage(error) ||
         t("common.unknown", { defaultValue: "未知错误" });
@@ -280,27 +254,25 @@ export function useSetAutoFailoverEnabled() {
         }),
       );
     },
-
     // 无论成功失败，都重新获取
     onSettled: (_, __, variables) => {
-      queryClient.invalidateQueries({
-        queryKey: ["autoFailoverEnabled", variables.appType],
-      });
+      // 主 Tab 开关与 AutoFailoverConfigPanel 共用 appConfig；不刷会导致
+      // 面板保存时用旧的 autoFailoverEnabled 覆写刚打开的开关。
       // 启用/关闭故障转移可能触发：
       // - 立即切到队列 P1（当前供应商变化）
       // - 队列为空时自动把当前供应商加入队列（队列内容变化）
-      queryClient.invalidateQueries({
-        queryKey: ["failoverQueue", variables.appType],
-      });
-      queryClient.invalidateQueries({
-        queryKey: ["availableProvidersForFailover", variables.appType],
-      });
-      queryClient.invalidateQueries({
-        queryKey: ["providers", variables.appType],
-      });
-      queryClient.invalidateQueries({
-        queryKey: proxyKeys.status,
-      });
+      return Promise.all(
+        [
+          ["autoFailoverEnabled", variables.appType],
+          proxyKeys.appConfig(variables.appType),
+          ["failoverQueue", variables.appType],
+          ["availableProvidersForFailover", variables.appType],
+          ["providers", variables.appType],
+          proxyKeys.status,
+        ].map((queryKey) =>
+          invalidateQueriesAfterChange(queryClient, { queryKey }),
+        ),
+      );
     },
   });
 }

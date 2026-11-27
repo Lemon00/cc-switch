@@ -42,6 +42,7 @@ pub mod transform;
 pub mod transform_codex_anthropic;
 pub mod transform_codex_chat;
 pub mod transform_codex_chat_moonshot_schema;
+pub mod transform_codex_gemini;
 pub mod transform_codex_responses_kimi_history;
 pub mod transform_codex_responses_namespace;
 pub mod transform_codex_responses_xai_sanitize;
@@ -56,6 +57,30 @@ use serde::{Deserialize, Serialize};
 pub const CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 pub const XAI_API_BASE_URL: &str = "https://api.x.ai/v1";
 
+/// 上游是不是 Mistral 官方 API。只认 `api.mistral.ai` 这个主机：名字、路径或
+/// 模型名里带 "mistral" 的中转站不算，它们照各自的协议处理。
+pub fn is_mistral_api(base_url: &str) -> bool {
+    url::Url::parse(base_url).is_ok_and(|url| url.host_str() == Some("api.mistral.ai"))
+}
+
+/// 上游主机是 `suffixes` 里的某一个，或是它的子域名（按标签边界比，不按子串）。
+/// 解析不了或没有主机时为 false。
+fn url_host_is_or_under(base_url: &str, suffixes: &[&str]) -> bool {
+    let Ok(url) = url::Url::parse(base_url.trim()) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let host = host.to_ascii_lowercase();
+    suffixes.iter().any(|suffix| {
+        host == *suffix
+            || host
+                .strip_suffix(suffix)
+                .is_some_and(|prefix| prefix.ends_with('.'))
+    })
+}
+
 // 公开导出
 pub use adapter::ProviderAdapter;
 pub use auth::{AuthInfo, AuthStrategy};
@@ -66,8 +91,7 @@ pub use claude::{
 };
 pub use codex::CodexAdapter;
 pub use codex::{
-    apply_codex_chat_upstream_model, apply_codex_upstream_model,
-    codex_chat_upstream_rejects_reasoning_content, codex_provider_upstream_model,
+    apply_codex_chat_upstream_model, apply_codex_upstream_model, codex_provider_upstream_model,
     codex_stack_upstream_rejects_web_search, inject_codex_chat_prompt_cache_key,
     is_codex_official_provider, is_codex_responses_endpoint,
     provider_needs_responses_late_arguments_repair, provider_needs_responses_namespace_flatten,
@@ -143,7 +167,7 @@ impl ProviderType {
     #[allow(dead_code)]
     pub fn from_app_type_and_config(app_type: &AppType, provider: &Provider) -> Option<Self> {
         let provider_type = match app_type {
-            AppType::Claude | AppType::ClaudeDesktop => {
+            AppType::Claude => {
                 if get_claude_api_format(provider) == "gemini_native" {
                     let adapter = ClaudeAdapter::new();
                     return Some(
@@ -202,30 +226,9 @@ impl ProviderType {
                 ProviderType::Claude
             }
             AppType::Codex => ProviderType::Codex,
-            AppType::Gemini => {
-                // 检测是否为 CLI 模式（OAuth）
-                let adapter = GeminiAdapter::new();
-                if let Some(auth) = adapter.extract_auth(provider) {
-                    let key = &auth.api_key;
-                    // OAuth access_token 以 ya29. 开头
-                    if key.starts_with("ya29.") {
-                        return Some(ProviderType::GeminiCli);
-                    }
-                    // JSON 格式的 OAuth 凭证
-                    if key.starts_with('{') {
-                        return Some(ProviderType::GeminiCli);
-                    }
-                }
-                ProviderType::Gemini
-            }
-            AppType::GrokBuild => ProviderType::Codex,
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => ProviderType::Codex,
-            AppType::Pi
-            | AppType::Mcode
-            | AppType::Kimi
-            | AppType::Dsh
-            | AppType::Omp
-            | AppType::Agy => return None,
+
+            AppType::OpenCode => ProviderType::Codex,
+            AppType::Dsh | AppType::Agy => return None,
         };
         Some(provider_type)
     }
@@ -276,17 +279,11 @@ impl std::str::FromStr for ProviderType {
 /// 根据 AppType 获取对应的适配器
 pub fn get_adapter(app_type: &AppType) -> Option<Box<dyn ProviderAdapter>> {
     Some(match app_type {
-        AppType::Claude | AppType::ClaudeDesktop => Box::new(ClaudeAdapter::new()),
+        AppType::Claude => Box::new(ClaudeAdapter::new()),
         AppType::Codex => Box::new(CodexAdapter::new()),
-        AppType::Gemini => Box::new(GeminiAdapter::new()),
-        AppType::GrokBuild => Box::new(CodexAdapter::new()),
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => Box::new(CodexAdapter::new()),
-        AppType::Pi
-        | AppType::Mcode
-        | AppType::Kimi
-        | AppType::Dsh
-        | AppType::Omp
-        | AppType::Agy => return None,
+
+        AppType::OpenCode => Box::new(CodexAdapter::new()),
+        AppType::Dsh | AppType::Agy => return None,
     })
 }
 
@@ -507,42 +504,6 @@ mod tests {
     }
 
     #[test]
-    fn test_from_app_type_gemini_api_key() {
-        let provider = create_provider(json!({
-            "env": {
-                "GEMINI_API_KEY": "AIza-test-key"
-            }
-        }));
-
-        let provider_type = ProviderType::from_app_type_and_config(&AppType::Gemini, &provider);
-        assert_eq!(provider_type, Some(ProviderType::Gemini));
-    }
-
-    #[test]
-    fn test_from_app_type_gemini_cli_oauth() {
-        let provider = create_provider(json!({
-            "env": {
-                "GEMINI_API_KEY": "ya29.test-access-token"
-            }
-        }));
-
-        let provider_type = ProviderType::from_app_type_and_config(&AppType::Gemini, &provider);
-        assert_eq!(provider_type, Some(ProviderType::GeminiCli));
-    }
-
-    #[test]
-    fn test_from_app_type_gemini_cli_json() {
-        let provider = create_provider(json!({
-            "env": {
-                "GEMINI_API_KEY": "{\"access_token\":\"ya29.test\",\"refresh_token\":\"1//test\"}"
-            }
-        }));
-
-        let provider_type = ProviderType::from_app_type_and_config(&AppType::Gemini, &provider);
-        assert_eq!(provider_type, Some(ProviderType::GeminiCli));
-    }
-
-    #[test]
     fn test_get_adapter_for_provider_type() {
         let adapter = get_adapter_for_provider_type(&ProviderType::Claude);
         assert_eq!(adapter.name(), "Claude");
@@ -564,5 +525,22 @@ mod tests {
 
         let adapter = get_adapter_for_provider_type(&ProviderType::GeminiCli);
         assert_eq!(adapter.name(), "Gemini");
+    }
+
+    #[test]
+    fn mistral_api_is_only_the_official_host() {
+        // 官方域名（含带路径 / 大小写差异 / 首尾空白的写法）。
+        assert!(is_mistral_api("https://api.mistral.ai/v1"));
+        assert!(is_mistral_api("https://api.mistral.ai"));
+        assert!(is_mistral_api("https://API.MISTRAL.AI/v1/chat/completions"));
+        assert!(is_mistral_api(" https://api.mistral.ai/v1\n"));
+
+        // 其他网关、相似域名、路径里带官方域名的中转、非法 URL 都不算。
+        assert!(!is_mistral_api("https://api.deepseek.com"));
+        assert!(!is_mistral_api("https://api.mistral.ai.example/v1"));
+        assert!(!is_mistral_api("https://relay.example/api.mistral.ai"));
+        assert!(!is_mistral_api("https://mistral-relay.example/v1"));
+        assert!(!is_mistral_api("not a url"));
+        assert!(!is_mistral_api(""));
     }
 }

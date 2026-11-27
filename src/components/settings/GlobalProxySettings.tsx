@@ -3,21 +3,19 @@
  *
  * 提供配置全局代理的输入界面，支持用户名密码认证。
  */
-
-import { useState, useEffect, useMemo } from "react";
-import { useTranslation } from "react-i18next";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { HoverTip } from "@/components/ui/hover-tip";
-import { Loader2, TestTube2, Search, Eye, EyeOff, X } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import {
   useGlobalProxyUrl,
+  useScanProxies,
   useSetGlobalProxyUrl,
   useTestProxy,
-  useScanProxies,
   type DetectedProxy,
 } from "@/hooks/useGlobalProxy";
-
+import { Eye, EyeOff, Loader2, Search, TestTube2, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 /** 从完整 URL 提取认证信息 */
 function extractAuth(url: string): {
   baseUrl: string;
@@ -25,7 +23,6 @@ function extractAuth(url: string): {
   password: string;
 } {
   if (!url.trim()) return { baseUrl: "", username: "", password: "" };
-
   try {
     const parsed = new URL(url);
     const username = decodeURIComponent(parsed.username || "");
@@ -38,7 +35,6 @@ function extractAuth(url: string): {
     return { baseUrl: url, username: "", password: "" };
   }
 }
-
 /** 将认证信息合并到 URL */
 function mergeAuth(
   baseUrl: string,
@@ -47,7 +43,6 @@ function mergeAuth(
 ): string {
   if (!baseUrl.trim()) return "";
   if (!username.trim()) return baseUrl;
-
   try {
     const parsed = new URL(baseUrl);
     // URL 对象的 username/password setter 会自动进行 percent-encoding
@@ -69,27 +64,23 @@ function mergeAuth(
     return baseUrl;
   }
 }
-
 export function GlobalProxySettings() {
   const { t } = useTranslation();
   const { data: savedUrl, isLoading } = useGlobalProxyUrl();
   const setMutation = useSetGlobalProxyUrl();
   const testMutation = useTestProxy();
   const scanMutation = useScanProxies();
-
   const [url, setUrl] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [detected, setDetected] = useState<DetectedProxy[]>([]);
-
   // 计算完整 URL（含认证信息）
   const fullUrl = useMemo(
     () => mergeAuth(url, username, password),
     [url, username, password],
   );
-
   // 同步远程配置
   useEffect(() => {
     if (savedUrl !== undefined) {
@@ -100,23 +91,19 @@ export function GlobalProxySettings() {
       setDirty(false);
     }
   }, [savedUrl]);
-
   const handleSave = async () => {
     await setMutation.mutateAsync(fullUrl);
     setDirty(false);
   };
-
   const handleTest = async () => {
     if (fullUrl) {
       await testMutation.mutateAsync(fullUrl);
     }
   };
-
   const handleScan = async () => {
     const result = await scanMutation.mutateAsync();
     setDetected(result);
   };
-
   const handleSelect = (proxyUrl: string) => {
     const { baseUrl, username: u, password: p } = extractAuth(proxyUrl);
     setUrl(baseUrl);
@@ -125,20 +112,17 @@ export function GlobalProxySettings() {
     setDirty(true);
     setDetected([]);
   };
-
   const handleClear = () => {
     setUrl("");
     setUsername("");
     setPassword("");
     setDirty(true);
   };
-
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && dirty && !setMutation.isPending) {
       handleSave();
     }
   };
-
   // 只在首次加载且无数据时显示加载状态
   if (isLoading && savedUrl === undefined) {
     return (
@@ -147,7 +131,6 @@ export function GlobalProxySettings() {
       </div>
     );
   }
-
   return (
     <div className="space-y-3">
       {/* 描述 */}

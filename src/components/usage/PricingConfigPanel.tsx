@@ -1,11 +1,6 @@
-import { useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { toast } from "@/lib/toast";
-import { Globe, Info, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { Button } from "@/components/ui/button";
-import { HoverTip } from "@/components/ui/hover-tip";
-import { HelpTip } from "@/components/ui/help-tip";
-import { Notice } from "@/components/ui/notice";
 import {
   Dialog,
   DialogContent,
@@ -14,6 +9,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { HelpTip } from "@/components/ui/help-tip";
+import { HoverTip } from "@/components/ui/hover-tip";
+import { Notice } from "@/components/ui/notice";
 import {
   Select,
   SelectContent,
@@ -21,16 +19,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
-import { useModelPricing, useDeleteModelPricing } from "@/lib/query/usage";
-import { TablePagination, useClientPagination } from "./TablePagination";
 import { proxyApi } from "@/lib/api/proxy";
-import type { ModelPricing } from "@/types/usage";
+import { useDeleteModelPricing, useModelPricing } from "@/lib/query/usage";
+import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
-import { PricingEditModal } from "./PricingEditModal";
+import type { ModelPricing } from "@/types/usage";
+import { Globe, Info, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ModelsDevAutoSyncPanel } from "./ModelsDevAutoSyncPanel";
 import { ModelsDevPickerDialog } from "./ModelsDevPickerDialog";
+import { PricingEditModal } from "./PricingEditModal";
+import { TablePagination, useClientPagination } from "./TablePagination";
 import {
   getResolvedLang,
   joinClauses,
@@ -38,28 +38,21 @@ import {
   parseFiniteNumber,
 } from "./format";
 import { usageTable } from "./usageTable";
-
 /** 计费默认配置只管这 4 个有路由用量管线的应用 */
-const PRICING_APPS = ["claude", "codex", "gemini", "grokbuild"] as const;
+const PRICING_APPS = ["claude", "codex"] as const;
 type PricingApp = (typeof PRICING_APPS)[number];
 type PricingModelSource = "request" | "response";
-
 type SourceState = Record<PricingApp, PricingModelSource>;
-
 const DEFAULT_SOURCES: SourceState = {
   claude: "response",
   codex: "response",
-  gemini: "response",
-  grokbuild: "response",
 };
-
 const errorText = (error: unknown) =>
   error instanceof Error
     ? error.message
     : typeof error === "string"
       ? error
       : "Unknown error";
-
 /** 「$4.00」「$0.075」：至少两位小数，多余的 0 去掉，最多 4 位。 */
 export function formatUnitPrice(value: string): string {
   const num = parseFiniteNumber(value);
@@ -68,12 +61,10 @@ export function formatUnitPrice(value: string): string {
   const [whole, frac = ""] = fixed.split(".");
   return `$${whole}.${frac.padEnd(2, "0")}`;
 }
-
 function useBillingSources() {
   const { t } = useTranslation();
   const [sources, setSources] = useState<SourceState>(DEFAULT_SOURCES);
   const [isLoading, setIsLoading] = useState(true);
-
   useEffect(() => {
     let isMounted = true;
     const loadAll = async () => {
@@ -109,10 +100,8 @@ function useBillingSources() {
       isMounted = false;
     };
   }, [t]);
-
   return { sources, setSources, isLoading };
 }
-
 function BillingDefaultsDialog({
   open,
   initial,
@@ -127,13 +116,10 @@ function BillingDefaultsDialog({
   const { t } = useTranslation();
   const [draft, setDraft] = useState<SourceState>(initial);
   const [isSaving, setIsSaving] = useState(false);
-
   useEffect(() => {
     if (open) setDraft(initial);
   }, [open, initial]);
-
   const isDirty = PRICING_APPS.some((app) => draft[app] !== initial[app]);
-
   const save = async () => {
     setIsSaving(true);
     try {
@@ -155,7 +141,6 @@ function BillingDefaultsDialog({
       setIsSaving(false);
     }
   };
-
   return (
     <Dialog
       open={open}
@@ -238,14 +223,12 @@ function BillingDefaultsDialog({
     </Dialog>
   );
 }
-
 /** 计费默认配置一行：当前配置的摘要 +「修改…」。 */
 function BillingDefaultsRow() {
   const { t, i18n } = useTranslation();
   const lang = getResolvedLang(i18n);
   const { sources, setSources, isLoading } = useBillingSources();
   const [dialogOpen, setDialogOpen] = useState(false);
-
   const groups = (["response", "request"] as const)
     .map((source) => ({
       source,
@@ -265,7 +248,6 @@ function BillingDefaultsRow() {
     ),
     lang,
   );
-
   return (
     <>
       <div className="flex items-center gap-3 rounded-panel border border-border px-4 py-2.5">
@@ -306,7 +288,6 @@ function BillingDefaultsRow() {
     </>
   );
 }
-
 /** 定价子页签（v7 S6）：models.dev 同步、计费默认配置、模型定价表。 */
 export function PricingConfigPanel() {
   const { t } = useTranslation();
@@ -316,7 +297,6 @@ export function PricingConfigPanel() {
   const [isAddingNew, setIsAddingNew] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ModelPricing | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
-
   const handleAddNew = () => {
     setIsAddingNew(true);
     setEditingModel({
@@ -328,10 +308,8 @@ export function PricingConfigPanel() {
       cacheCreationCostPerMillion: "0",
     });
   };
-
   const rows = pricing ?? [];
   const pagination = useClientPagination(rows);
-
   return (
     <div className="flex flex-col gap-3 pt-3">
       <ModelsDevAutoSyncPanel />

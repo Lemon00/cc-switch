@@ -1,7 +1,5 @@
-import { useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Folder, Loader2, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -10,20 +8,21 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
 import { authApi, providersApi, settingsApi } from "@/lib/api";
+import type { AppId } from "@/lib/api/types";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { isMac } from "@/lib/platform";
-import type { AppId } from "@/lib/api/types";
-import type { Provider } from "@/types";
 import { toast } from "@/lib/toast";
-import { extractErrorMessage } from "@/utils/errorUtils";
 import { cn } from "@/lib/utils";
+import type { Provider } from "@/types";
+import { extractErrorMessage } from "@/utils/errorUtils";
 import { providerNeedsRouting } from "@/utils/providerCapabilities";
-
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Folder, Loader2, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 const STORAGE_KEY = "cc-switch:terminal:recent-dirs";
 const MAX_RECENT = 5;
 /** 跳过权限确认按应用分别记住：同一个人可能只在其中一个工具里这么用 */
@@ -31,7 +30,6 @@ const skipPermissionsKey = (appId: AppId) =>
   `cc-switch:terminal:skip-permissions:${appId}`;
 /** 附加参数同样按应用记住：各个 CLI 的参数互不通用 */
 const extraArgsKey = (appId: AppId) => `cc-switch:terminal:extra-args:${appId}`;
-
 function readRecent(): string[] {
   try {
     const parsed = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "[]");
@@ -42,7 +40,6 @@ function readRecent(): string[] {
     return [];
   }
 }
-
 function writeRecent(dirs: string[]) {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(dirs));
@@ -50,7 +47,6 @@ function writeRecent(dirs: string[]) {
     // 只是记住用过的目录，存不了不影响打开终端
   }
 }
-
 function readSkipPermissions(appId: AppId): boolean {
   try {
     return window.localStorage.getItem(skipPermissionsKey(appId)) === "1";
@@ -58,7 +54,6 @@ function readSkipPermissions(appId: AppId): boolean {
     return false;
   }
 }
-
 function writeSkipPermissions(appId: AppId, value: boolean) {
   try {
     if (value) window.localStorage.setItem(skipPermissionsKey(appId), "1");
@@ -67,7 +62,6 @@ function writeSkipPermissions(appId: AppId, value: boolean) {
     // 同上，只是记住上次的选择
   }
 }
-
 function readExtraArgs(appId: AppId): string {
   try {
     return window.localStorage.getItem(extraArgsKey(appId)) ?? "";
@@ -75,7 +69,6 @@ function readExtraArgs(appId: AppId): string {
     return "";
   }
 }
-
 function writeExtraArgs(appId: AppId, value: string) {
   try {
     if (value) window.localStorage.setItem(extraArgsKey(appId), value);
@@ -84,9 +77,11 @@ function writeExtraArgs(appId: AppId, value: string) {
     // 同上，只是记住上次填的
   }
 }
-
 /** 最后一段当名字、其余当所在位置：路径长时项目名最要紧，不能被截掉 */
-function splitPath(dir: string): { name: string; parent: string } {
+function splitPath(dir: string): {
+  name: string;
+  parent: string;
+} {
   const trimmed = dir.replace(/[\\/]+$/, "");
   const index = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
   if (index < 0) return { name: trimmed || dir, parent: "" };
@@ -95,7 +90,6 @@ function splitPath(dir: string): { name: string; parent: string } {
     parent: trimmed.slice(0, index) || trimmed.slice(0, index + 1),
   };
 }
-
 function DirLabel({ dir }: { dir: string }) {
   const { name, parent } = splitPath(dir);
   return (
@@ -107,30 +101,31 @@ function DirLabel({ dir }: { dir: string }) {
     </span>
   );
 }
-
 /** 对话框里说「启动 X」用的产品名 */
 const TERMINAL_APP_NAMES: Partial<Record<AppId, string>> = {
   claude: "Claude Code",
   codex: "Codex",
   agy: "Antigravity CLI",
 };
-
 /** 跳过权限确认的参数：Claude Code 和 agy 同名，Codex 同时关掉沙箱 */
 function skipPermissionsFlag(appId: AppId): string {
   return appId === "codex"
     ? "--dangerously-bypass-approvals-and-sandbox"
     : "--dangerously-skip-permissions";
 }
-
 /** Codex 卡自己带路由表（第三方地址），终端能只对这一次用 `-c` 换成它 */
 function codexHasOwnRoute(provider: Provider): boolean {
   if (provider.category === "official") return false;
   if (providerNeedsRouting("codex", provider)) return false;
-  const config = (provider.settingsConfig as { config?: unknown } | undefined)
-    ?.config;
+  const config = (
+    provider.settingsConfig as
+      | {
+          config?: unknown;
+        }
+      | undefined
+  )?.config;
   return typeof config === "string" && /^\s*base_url\s*=/m.test(config);
 }
-
 /**
  * 卡片上显示不显示「打开终端」。Codex 的官方卡、没有路由的卡跟着 Codex 自己的登录走，
  * 只有是当前供应商时才能打开（直接跑 `codex`）；要经本地路由的卡终端直连不了。
@@ -140,12 +135,10 @@ export function terminalAvailable(
   appId: AppId,
   isCurrent: boolean,
 ): boolean {
-  if (appId === "grokbuild") return isCurrent;
   if (appId !== "codex") return true;
   if (terminalNeedsRoute(provider, appId)) return true;
   return isCurrent || codexHasOwnRoute(provider);
 }
-
 /** True when the card only works through the local proxy. */
 export function terminalNeedsRoute(provider: Provider, appId: AppId): boolean {
   return (
@@ -153,7 +146,6 @@ export function terminalNeedsRoute(provider: Provider, appId: AppId): boolean {
     providerNeedsRouting(appId, provider)
   );
 }
-
 /**
  * Claude Code：终端经 `claude --settings <临时文件>` 启动，临时文件只放这张卡的 env，没写的
  * 键仍从 ~/.claude/settings.json 读。卡上同时有地址和凭据才压得住全局配置。官方卡绑了授权
@@ -171,7 +163,13 @@ export function terminalIsIsolated(
   appId: AppId = "claude",
 ): boolean {
   if (appId === "codex") return codexHasOwnRoute(provider);
-  const env = (provider.settingsConfig as { env?: unknown } | undefined)?.env;
+  const env = (
+    provider.settingsConfig as
+      | {
+          env?: unknown;
+        }
+      | undefined
+  )?.env;
   if (!env || typeof env !== "object") return false;
   const filled = (key: string) => {
     const value = (env as Record<string, unknown>)[key];
@@ -190,14 +188,12 @@ export function terminalIsIsolated(
     (filled("ANTHROPIC_AUTH_TOKEN") || filled("ANTHROPIC_API_KEY"))
   );
 }
-
 interface OpenTerminalDialogProps {
   /** 有值即打开 */
   provider: Provider | null;
   appId: AppId;
   onClose: () => void;
 }
-
 /**
  * 「打开终端」：先说明要选的是启动 CLI 的目录，再让用户选。
  * 默认填上次成功打开的目录，最近用过的几个点一下就能换，不必每次都走系统选文件夹窗口。
@@ -214,7 +210,6 @@ export function OpenTerminalDialog({
   const [skipPermissions, setSkipPermissions] = useState(false);
   const [extraArgs, setExtraArgs] = useState("");
   const queryClient = useQueryClient();
-
   // Antigravity 官方卡绑了账号：打开前会把 agy 的全局登录切过去，先说清楚
   const boundAgyAccount =
     appId === "agy" && provider && provider.category === "official" && isMac()
@@ -238,7 +233,6 @@ export function OpenTerminalDialog({
   const agyTargetLogin = agyStatus?.accounts.find(
     (account) => account.id === boundAgyAccount,
   )?.login;
-
   useEffect(() => {
     if (!provider) return;
     const stored = readRecent();
@@ -248,7 +242,6 @@ export function OpenTerminalDialog({
     setExtraArgs(readExtraArgs(appId));
     setOpening(false);
   }, [provider, appId]);
-
   const handleChoose = async () => {
     try {
       const picked = await settingsApi.pickDirectory(dir ?? undefined);
@@ -260,13 +253,11 @@ export function OpenTerminalDialog({
       );
     }
   };
-
   const handleForget = (target: string) => {
     const next = recent.filter((item) => item !== target);
     setRecent(next);
     writeRecent(next);
   };
-
   const handleOpen = async () => {
     if (!provider || !dir || opening) return;
     setOpening(true);
@@ -298,9 +289,7 @@ export function OpenTerminalDialog({
       setOpening(false);
     }
   };
-
   const otherRecent = recent.filter((item) => item !== dir);
-
   return (
     <Dialog
       open={provider !== null}

@@ -107,10 +107,19 @@ impl Database {
 
     /// 删除项目，返回是否实际删除了记录
     pub fn delete_profile(&self, id: &str) -> Result<bool, AppError> {
-        let conn = lock_conn!(self.conn);
-        let affected = conn
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let affected = tx
             .execute("DELETE FROM profiles WHERE id = ?1", params![id])
             .map_err(|e| AppError::Database(e.to_string()))?;
+        tx.execute(
+            "DELETE FROM settings WHERE substr(key, 1, length(?1)) = ?1 AND value = ?2",
+            params![CURRENT_PROFILE_ID_KEY_PREFIX, id],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
         Ok(affected > 0)
     }
 
@@ -202,6 +211,22 @@ mod tests {
         // 重复清除应幂等
         db.set_current_profile_id("claude", None)?;
         assert_eq!(db.get_current_profile_id("claude")?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn deleting_profile_clears_only_its_current_references_atomically() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        db.save_profile(&sample("a", "A", None))?;
+        db.set_current_profile_id("claude", Some("a"))?;
+        db.set_current_profile_id("future-app", Some("a"))?;
+        db.set_current_profile_id("codex", Some("b"))?;
+        db.set_setting("unrelated", "a")?;
+        db.delete_profile("a")?;
+        assert_eq!(db.get_current_profile_id("claude")?, None);
+        assert_eq!(db.get_current_profile_id("future-app")?, None);
+        assert_eq!(db.get_current_profile_id("codex")?.as_deref(), Some("b"));
+        assert_eq!(db.get_setting("unrelated")?.as_deref(), Some("a"));
         Ok(())
     }
 }

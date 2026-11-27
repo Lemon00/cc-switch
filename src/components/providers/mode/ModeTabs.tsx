@@ -1,7 +1,3 @@
-import { useTranslation } from "react-i18next";
-import { Layers, Plug, Route, Settings2, Shuffle } from "lucide-react";
-import type { AppMode } from "@/types/proxy";
-import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
 import { HoverTip } from "@/components/ui/hover-tip";
@@ -9,14 +5,21 @@ import {
   SegmentThumb,
   useSlidingIndicator,
 } from "@/components/ui/sliding-indicator";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-
+import type { AppMode } from "@/types/proxy";
+import { Layers, Plug, Route, Settings2, Shuffle } from "lucide-react";
+import { useTranslation } from "react-i18next";
 const MODE_ICON = { direct: Plug, route: Route, stack: Layers } as const;
-
 /** 模式色用于页头状态、tab、侧栏标签、当前卡片和激活条的 CTA。 */
 export const MODE_TONE: Record<
   AppMode,
-  { soft: string; text: string; dot: string; border: string }
+  {
+    soft: string;
+    text: string;
+    dot: string;
+    border: string;
+  }
 > = {
   direct: {
     soft: "bg-direct-soft",
@@ -37,7 +40,6 @@ export const MODE_TONE: Record<
     border: "border-stack",
   },
 };
-
 interface ModeTabsProps {
   modes: AppMode[];
   active: AppMode;
@@ -49,12 +51,11 @@ interface ModeTabsProps {
     onChange: (enabled: boolean) => void;
   };
   onOpenRouteSettings?: () => void;
-  /** Codex 聚合页签上的「聚合设置」（子代理模型、经典子代理） */
+  /** 聚合设置（轮询、故障转移；Codex 另含子代理模型设置）。 */
   onOpenStackSettings?: () => void;
   /** 供应商搜索框挂在状态行右侧（由列表通过 portal 渲染进来） */
   searchSlotRef?: (node: HTMLDivElement | null) => void;
 }
-
 /**
  * 模式行：三段 tab 只负责查看。白底凸起只给正在看的那段；生效的那段只用模式色文字和圆点，
  * 不铺底（否则彩色那格比正在看的更抢眼）。组右边的「?」说明三种模式的区别。
@@ -75,7 +76,6 @@ export function ModeTabs({
     '[aria-pressed="true"]',
     view,
   );
-
   return (
     <div className="flex min-h-12 shrink-0 items-center gap-4 px-6 pt-3">
       <div

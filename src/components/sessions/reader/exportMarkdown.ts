@@ -12,12 +12,10 @@ import {
   type Translate,
 } from "./toolSummary";
 import type { SessionTurn, TimelineStep, TurnEvent } from "./turns";
-
 /**
  * 「复制这一轮 / 复制整段为 Markdown」（§3.4 旧功能落点）：提问原文、步骤写成
  * `- ⏺ Bash(cargo build) — 失败 · exit 101 · 12s` 列表、最终回复原文；思考默认不含（决策 D14）。
  */
-
 export interface MarkdownExportOptions {
   style: AgentReaderStyle;
   appName: string;
@@ -28,7 +26,6 @@ export interface MarkdownExportOptions {
   formatCost: (usd: number) => string;
   includeThinking?: boolean;
 }
-
 const metaText = (meta: StepMeta, { t, formatCost }: MarkdownExportOptions) => {
   const parts: string[] = [];
   if (isFailureStatus(meta.status)) parts.push(t(`status.${meta.status}`));
@@ -43,7 +40,6 @@ const metaText = (meta: StepMeta, { t, formatCost }: MarkdownExportOptions) => {
   if (meta.costUsd !== undefined) parts.push(formatCost(meta.costUsd));
   return parts.length ? ` — ${parts.join(" · ")}` : "";
 };
-
 /** 列表项里的多行文本：续行缩进两格 */
 const indentBody = (text: string, prefix = "  ") =>
   text
@@ -51,7 +47,6 @@ const indentBody = (text: string, prefix = "  ") =>
     .split("\n")
     .map((line, index) => (index === 0 ? line : `${prefix}${line}`))
     .join("\n");
-
 const stepLines = (
   step: TimelineStep,
   options: MarkdownExportOptions,
@@ -94,16 +89,13 @@ const stepLines = (
     }
   }
 };
-
 const eventLine = (event: TurnEvent, t: Translate) => {
   const { label, detail } = describeEvent(event.block, t, event.body);
   const url = event.block.kind === "pr_link" && event.block.url;
   return `> ${label}${url ? ` (${url})` : ""}${detail ? `\n>\n> ${detail.replace(/\n/g, "\n> ")}` : ""}`;
 };
-
 const heading = (label: string, ts?: number) =>
   `**${label}**${ts ? ` ${formatMessageTime(ts)}` : ""}`;
-
 export const turnToMarkdown = (
   turn: SessionTurn,
   options: MarkdownExportOptions,
@@ -136,7 +128,6 @@ export const turnToMarkdown = (
   turn.trailingEvents.forEach((event) => sections.push(eventLine(event, t)));
   return sections.join("\n\n");
 };
-
 export const transcriptToMarkdown = (
   title: string,
   turns: SessionTurn[],

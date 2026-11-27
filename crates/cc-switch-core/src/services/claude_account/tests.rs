@@ -1,5 +1,20 @@
 use super::*;
 
+#[tokio::test]
+async fn corrupt_account_index_is_not_overwritten_by_logout_or_new_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(STORE_FILENAME);
+    let corrupt = b"{broken-index: saved-account";
+    std::fs::write(&path, corrupt).unwrap();
+    let manager = ClaudeAccountManager::new(dir.path().into());
+    assert!(manager.remove_all().await.is_err());
+    assert!(manager.persist(&StoreFile::default()).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), corrupt);
+    // Repairing the file permits normal operations without restarting.
+    std::fs::write(&path, br#"{"version":1,"accounts":{}}"#).unwrap();
+    assert!(manager.remove_all().await.unwrap().is_empty());
+}
+
 impl ClaudeAccountManager {
     /// 测试用：不跑登录，直接收录一个账号并建好目录。
     async fn insert_for_test(&self, key: &str, email: &str) -> PathBuf {

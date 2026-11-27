@@ -1,37 +1,36 @@
-import { useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { Loader2, RefreshCw } from "lucide-react";
-import { toast } from "@/lib/toast";
+import {
+  RADIO_CLASS,
+  V7ConfirmDialog,
+  V7Dialog,
+} from "@/components/mcp/formBits";
+import { shortenHomePath } from "@/components/sessions/utils";
+import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
+import { Button } from "@/components/ui/button";
+import { DialogTitle } from "@/components/ui/dialog";
 import { useSettings } from "@/hooks/useSettings";
 import {
   useCcSwitchSkillsDir,
   useInstalledSkills,
   useResyncSkillsToApps,
 } from "@/hooks/useSkills";
-import { DialogTitle } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import {
-  RADIO_CLASS,
-  V7ConfirmDialog,
-  V7Dialog,
-} from "@/components/mcp/formBits";
-import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
-import { shortenHomePath } from "@/components/sessions/utils";
 import { skillsApi, type SkillAppSyncOutcome } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
+import { toast } from "@/lib/toast";
 import type { SkillStorageLocation, SkillSyncMethod } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
-
+import { useQueryClient } from "@tanstack/react-query";
+import { Loader2, RefreshCw } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 interface SkillsStorageSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** 迁移进行中时通知外层纳入写锁 / 导航阻塞 */
+  onMigratingChange?: (migrating: boolean) => void;
 }
-
 const appName = (app: string) => APP_DISPLAY_NAME[app as AppId] ?? app;
-
 const DEFAULT_CC_SWITCH_DIR = "~/.cc-switch/skills";
 const UNIFIED_DIR = "~/.agents/skills";
-
 /** 和后端 SyncMethod（auto / symlink / copy）一一对应。 */
 const SYNC_METHODS: {
   id: SkillSyncMethod;
@@ -50,22 +49,21 @@ const SYNC_METHODS: {
     descKey: "skills.storageSheet.syncCopyDesc",
   },
 ];
-
 const LEGEND_CLASS = "mb-2 p-0 text-body font-semibold text-fg-1";
 const RADIO_LABEL_CLASS =
   "flex cursor-pointer items-center gap-2.5 text-body text-fg-1 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60";
-
 /** Skills 页 ⋯ →「存储与同步」对话框：主副本放在哪、怎么同步到各应用（原来在设置 → 通用）。 */
 export function SkillsStorageSheet({
   open,
   onOpenChange,
+  onMigratingChange,
 }: SkillsStorageSheetProps) {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const { settings, updateSettings, autoSaveSettings } = useSettings();
   const { data: installedSkills } = useInstalledSkills();
   const { data: ccSwitchDirRaw } = useCcSwitchSkillsDir(open);
   const resyncMutation = useResyncSkillsToApps();
-
   const location: SkillStorageLocation =
     settings?.skillStorageLocation ?? "cc_switch";
   const syncMethod: SkillSyncMethod = settings?.skillSyncMethod ?? "auto";
@@ -73,23 +71,22 @@ export function SkillsStorageSheet({
   const ccSwitchDir = ccSwitchDirRaw
     ? shortenHomePath(ccSwitchDirRaw)
     : DEFAULT_CC_SWITCH_DIR;
-
   // 单选只是「想换到哪」；点「移动并切换…」才真正迁移
   const [pendingLocation, setPendingLocation] =
     useState<SkillStorageLocation>(location);
   const [confirmMove, setConfirmMove] = useState(false);
   const [isMigrating, setIsMigrating] = useState(false);
-
+  const [isSavingSyncMethod, setIsSavingSyncMethod] = useState(false);
+  const busy = isMigrating || isSavingSyncMethod || resyncMutation.isPending;
   useEffect(() => {
     if (open) setPendingLocation(location);
   }, [open, location]);
-
   const targetDir = pendingLocation === "unified" ? UNIFIED_DIR : ccSwitchDir;
   // 对话框里的禁用原因写成看得见的一行（HELP_BRIEF：菜单 / 对话框例外），不挂悬停气泡
   const locationUnchanged = pendingLocation === location;
-
   const doMigrate = async (target: SkillStorageLocation) => {
     setIsMigrating(true);
+    onMigratingChange?.(true);
     setConfirmMove(false);
     const path = target === "unified" ? UNIFIED_DIR : ccSwitchDir;
     try {
@@ -111,18 +108,25 @@ export function SkillsStorageSheet({
           { closeButton: true },
         );
       }
-      updateSettings({ skillStorageLocation: target });
+      // 后端有实际移动失败时不会切换活动根；仅在已切换时同步本地设置
+      if (result.locationChanged) {
+        updateSettings({ skillStorageLocation: target });
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
+        queryClient.invalidateQueries({ queryKey: ["skills", "unmanaged"] }),
+      ]);
     } catch (error) {
       toast.error(t("common.error"), {
         description: extractErrorMessage(error) || String(error),
       });
     } finally {
       setIsMigrating(false);
+      onMigratingChange?.(false);
     }
   };
-
   const handleMove = () => {
-    if (pendingLocation === location || isMigrating) return;
+    if (pendingLocation === location || busy) return;
     // 一个 Skill 都没有时没什么可移动的，直接切换
     if (installedCount > 0) {
       setConfirmMove(true);
@@ -130,7 +134,6 @@ export function SkillsStorageSheet({
       void doMigrate(pendingLocation);
     }
   };
-
   const handleOpenFolder = async () => {
     try {
       await skillsApi.openCcSwitchSkillsDir();
@@ -140,13 +143,21 @@ export function SkillsStorageSheet({
       });
     }
   };
-
-  const handleSyncMethod = (method: SkillSyncMethod) => {
-    if (method === syncMethod) return;
+  const handleSyncMethod = async (method: SkillSyncMethod) => {
+    if (method === syncMethod || busy) return;
+    setIsSavingSyncMethod(true);
     updateSettings({ skillSyncMethod: method });
-    void autoSaveSettings({ skillSyncMethod: method }).catch(() => undefined);
+    try {
+      await autoSaveSettings({ skillSyncMethod: method });
+    } catch (error) {
+      updateSettings({ skillSyncMethod: syncMethod });
+      toast.error(t("common.error"), {
+        description: extractErrorMessage(error) || String(error),
+      });
+    } finally {
+      setIsSavingSyncMethod(false);
+    }
   };
-
   const reportResync = (outcomes: SkillAppSyncOutcome[]) => {
     const failed = outcomes.filter((outcome) => !outcome.ok);
     if (failed.length === 0) {
@@ -158,10 +169,7 @@ export function SkillsStorageSheet({
         ? [`${appName(outcome.app)}: ${outcome.error}`]
         : outcome.failedSkills.map(
             (skill) =>
-              `${appName(outcome.app)} · ${t(
-                "skills.storageSheet.resyncSkillItem",
-                { directory: skill.directory, error: skill.error },
-              )}`,
+              `${appName(outcome.app)} · ${t("skills.storageSheet.resyncSkillItem", { directory: skill.directory, error: skill.error })}`,
           ),
     );
     toast.warning(
@@ -174,9 +182,8 @@ export function SkillsStorageSheet({
       { description: details.join("\n"), closeButton: true },
     );
   };
-
   const handleResync = async () => {
-    if (resyncMutation.isPending) return;
+    if (busy) return;
     try {
       reportResync(await resyncMutation.mutateAsync());
     } catch (error) {
@@ -185,13 +192,12 @@ export function SkillsStorageSheet({
       });
     }
   };
-
   return (
     <>
       <V7Dialog
         open={open}
         onOpenChange={(next) => {
-          if (!next && isMigrating) return;
+          if (!next && busy) return;
           onOpenChange(next);
         }}
         width={520}
@@ -211,7 +217,7 @@ export function SkillsStorageSheet({
                     name="skills-storage-location"
                     className={RADIO_CLASS}
                     checked={pendingLocation === "cc_switch"}
-                    disabled={isMigrating}
+                    disabled={busy}
                     aria-describedby="skills-storage-cc-path"
                     onChange={() => setPendingLocation("cc_switch")}
                   />
@@ -244,7 +250,7 @@ export function SkillsStorageSheet({
                     name="skills-storage-location"
                     className={RADIO_CLASS}
                     checked={pendingLocation === "unified"}
-                    disabled={isMigrating}
+                    disabled={busy}
                     aria-describedby="skills-storage-unified-warn"
                     onChange={() => setPendingLocation("unified")}
                   />
@@ -274,7 +280,7 @@ export function SkillsStorageSheet({
                   variant="neutral"
                   size="regular"
                   className="shrink-0"
-                  disabled={isMigrating || locationUnchanged}
+                  disabled={busy || locationUnchanged}
                   aria-describedby="skills-storage-move-hint"
                   onClick={handleMove}
                 >
@@ -300,7 +306,8 @@ export function SkillsStorageSheet({
                     value={option.id}
                     className={RADIO_CLASS}
                     checked={syncMethod === option.id}
-                    onChange={() => handleSyncMethod(option.id)}
+                    disabled={busy}
+                    onChange={() => void handleSyncMethod(option.id)}
                   />
                   <span>
                     {t(option.labelKey)}
@@ -321,7 +328,7 @@ export function SkillsStorageSheet({
                   variant="neutral"
                   size="compact"
                   className="shrink-0"
-                  disabled={resyncMutation.isPending}
+                  disabled={busy}
                   onClick={() => void handleResync()}
                 >
                   {resyncMutation.isPending ? (
@@ -344,7 +351,7 @@ export function SkillsStorageSheet({
             variant="solid"
             size="regular"
             autoFocus
-            disabled={isMigrating}
+            disabled={busy}
             onClick={() => onOpenChange(false)}
           >
             {t("common.done")}

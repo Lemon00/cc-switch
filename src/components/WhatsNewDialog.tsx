@@ -1,8 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useTranslation } from "react-i18next";
-import { getVersion } from "@tauri-apps/api/app";
-import { ChevronRight, ExternalLink, Sparkles } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -11,23 +7,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { useNewLayoutNoticePending } from "@/components/shell/NewLayoutDialog";
 import { settingsApi } from "@/lib/api";
-import { useSettingsQuery } from "@/lib/query";
 import {
-  WHATS_NEW_ENTRIES,
   changelogUrl,
-  entriesSince,
-  isNewerThanSeen,
-  markSeen,
   resolveWhatsNewLanguage,
   type WhatsNewEntry,
 } from "@/lib/whatsNew";
-
+import { ChevronRight, ExternalLink, Sparkles } from "lucide-react";
+import { useState } from "react";
+import { useTranslation } from "react-i18next";
 /** 默认展开的版本数，更早的折叠起来，跳了很多版本也不会撑满弹窗 */
 const EXPANDED_VERSIONS = 3;
-
 interface WhatsNewDialogProps {
   open: boolean;
   onClose: () => void;
@@ -38,7 +28,6 @@ interface WhatsNewDialogProps {
   /** 上次看过的版本，副标题写「自 vX 以来的更新」 */
   since?: string;
 }
-
 export function WhatsNewDialog({
   open,
   onClose,
@@ -49,16 +38,13 @@ export function WhatsNewDialog({
   const { t, i18n } = useTranslation();
   const language = resolveWhatsNewLanguage(i18n.language);
   const [showAll, setShowAll] = useState(false);
-
   const visible = showAll ? entries : entries.slice(0, EXPANDED_VERSIONS);
   const hiddenCount = entries.length - visible.length;
-
   const openExternal = (url: string) => {
     settingsApi.openExternal(url).catch((error) => {
       console.error("Failed to open changelog:", error);
     });
   };
-
   const handleViewFull = () => {
     // 只有一个版本就直接打开这一版，多个版本打开更新日志列表
     openExternal(
@@ -69,7 +55,6 @@ export function WhatsNewDialog({
     );
     onClose();
   };
-
   return (
     <Dialog
       open={open}
@@ -151,83 +136,8 @@ export function WhatsNewDialog({
     </Dialog>
   );
 }
-
 /**
- * 启动时的更新摘要：当前版本比 settings.json 里记的 whatsNewSeenVersion 新，
+ * 启动时的更新摘要：当前版本比 settings.json 里记的 independentWhatsNewSeenVersion 新，
  * 就把这之间有内容的版本弹给用户看，关掉后记下当前版本。
  * 排在欢迎弹窗和「界面改版了」后面，那两个确认时会顺手记下当前版本，不会接着弹。
  */
-export function WhatsNewNotice() {
-  const queryClient = useQueryClient();
-  const { data: settings } = useSettingsQuery();
-  const newLayoutPending = useNewLayoutNoticePending(settings);
-  const { data: currentVersion } = useQuery({
-    queryKey: ["app-version"],
-    queryFn: () => getVersion(),
-    staleTime: Infinity,
-  });
-  const [closed, setClosed] = useState(false);
-  const stampedRef = useRef(false);
-
-  const seen = settings?.whatsNewSeenVersion;
-  const due =
-    settings != null &&
-    settings.firstRunNoticeConfirmed === true &&
-    newLayoutPending === false &&
-    !!currentVersion &&
-    isNewerThanSeen(currentVersion, seen);
-
-  const entries = useMemo(
-    () =>
-      due && currentVersion
-        ? entriesSince(WHATS_NEW_ENTRIES, seen, currentVersion)
-        : [],
-    [due, seen, currentVersion],
-  );
-
-  // 打开时把内容定格：确认后设置刷新、区间变空，关闭动画里内容不会被清掉
-  const [shown, setShown] = useState<{
-    entries: WhatsNewEntry[];
-    since?: string;
-  } | null>(null);
-  if (shown === null && entries.length > 0) {
-    setShown({ entries, since: seen });
-  }
-
-  const acknowledge = useCallback(async () => {
-    setClosed(true);
-    if (!settings || !currentVersion) return;
-    try {
-      const { webdavSync: _, ...rest } = settings;
-      await settingsApi.save({
-        ...rest,
-        whatsNewSeenVersion: markSeen(
-          settings.whatsNewSeenVersion,
-          currentVersion,
-        ),
-      });
-      await queryClient.invalidateQueries({ queryKey: ["settings"] });
-    } catch (error) {
-      console.error("Failed to save whatsNewSeenVersion:", error);
-    }
-  }, [settings, currentVersion, queryClient]);
-
-  // 区间里没有可显示的内容：静默记下当前版本，下次升级才有准确的起点
-  useEffect(() => {
-    if (!due || entries.length > 0 || stampedRef.current) return;
-    stampedRef.current = true;
-    void acknowledge();
-  }, [due, entries.length, acknowledge]);
-
-  if (!shown) return null;
-
-  return (
-    <WhatsNewDialog
-      open={!closed}
-      onClose={() => void acknowledge()}
-      entries={shown.entries}
-      updatedTo={currentVersion}
-      since={shown.since}
-    />
-  );
-}

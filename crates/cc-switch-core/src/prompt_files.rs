@@ -4,65 +4,111 @@ use crate::app_config::AppType;
 use crate::codex_config::get_codex_auth_path;
 use crate::config::get_claude_settings_path;
 use crate::error::AppError;
-use crate::gemini_config::get_gemini_dir;
-use crate::openclaw_config::get_openclaw_dir;
+
 use crate::opencode_config::get_opencode_dir;
 
-pub fn validate_prompt_content(app: &AppType, content: &str) -> Result<(), AppError> {
-    if matches!(app, AppType::Mcode) && content.len() > 32 * 1024 {
+pub const MAX_TEXT_FILE_BYTES: u64 = 8 * 1024 * 1024;
+/// Serializes prompt and workspace writes, including their read/compare step.
+pub static CONTENT_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub fn read_text_file(path: &Path) -> Result<Option<String>, AppError> {
+    use std::io::Read;
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(AppError::io(path, error)),
+    };
+    if !metadata.is_file() || metadata.len() > MAX_TEXT_FILE_BYTES {
+        return Err(AppError::InvalidInput(format!(
+            "Expected a regular text file of at most 8 MiB: {}",
+            path.display()
+        )));
+    }
+    let file = std::fs::File::open(path).map_err(|error| AppError::io(path, error))?;
+    let mut content = String::new();
+    file.take(MAX_TEXT_FILE_BYTES + 1)
+        .read_to_string(&mut content)
+        .map_err(|error| AppError::io(path, error))?;
+    validate_text_size(&content)?;
+    Ok(Some(content))
+}
+
+pub fn validate_text_size(content: &str) -> Result<(), AppError> {
+    if content.len() as u64 > MAX_TEXT_FILE_BYTES {
         return Err(AppError::InvalidInput(
-            "MCode global instructions must not exceed 32 KiB".into(),
+            "Text file exceeds the 8 MiB limit".into(),
         ));
     }
     Ok(())
 }
 
+/// The configured root may itself be a linked user directory. Descendants must
+/// not redirect a whitelisted filename through a symlink or Windows junction.
+pub fn checked_child_path(root: &Path, relative: &Path) -> Result<PathBuf, AppError> {
+    let mut path = root.to_path_buf();
+    for component in relative.components() {
+        let std::path::Component::Normal(name) = component else {
+            return Err(AppError::InvalidInput(
+                "Invalid relative content path".into(),
+            ));
+        };
+        path.push(name);
+        match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => {
+                let mut linked = metadata.file_type().is_symlink();
+                #[cfg(windows)]
+                {
+                    use std::os::windows::fs::MetadataExt;
+                    linked |= metadata.file_attributes() & 0x400 != 0;
+                }
+                if linked || (!metadata.is_file() && !metadata.is_dir()) {
+                    return Err(AppError::InvalidInput(format!(
+                        "Linked or special content paths are not supported: {}",
+                        path.display()
+                    )));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(AppError::io(&path, error)),
+        }
+    }
+    Ok(path)
+}
+
+pub fn validate_prompt_content(app: &AppType, content: &str) -> Result<(), AppError> {
+    validate_text_size(content)?;
+
+    Ok(())
+}
+
 /// 返回指定应用所使用的提示词文件路径。
 pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
-    if matches!(app, AppType::ClaudeDesktop) {
-        return Err(AppError::localized(
-            "app.prompts_unsupported",
-            "当前应用暂不支持 Prompts",
-            "This app does not support Prompts",
-        ));
-    }
-
     let base_dir: PathBuf = match app {
         AppType::Claude => get_base_dir_with_fallback(get_claude_settings_path(), ".claude")?,
         AppType::Codex => get_base_dir_with_fallback(get_codex_auth_path(), ".codex")?,
-        AppType::Gemini => get_gemini_dir(),
-        AppType::GrokBuild => crate::grok_config::get_grok_config_dir(),
+
         AppType::OpenCode => get_opencode_dir(),
-        AppType::OpenClaw => get_openclaw_dir(),
-        AppType::Hermes => crate::hermes_config::get_hermes_dir(),
-        AppType::Pi => crate::pi_config::get_pi_agent_dir()?,
-        AppType::Mcode => crate::mcode_config::data_dir(),
+
         AppType::Dsh => crate::dsh_config::data_dir(),
-        AppType::Kimi => crate::kimi_config::data_dir(),
+
         // agy 只从各「定制根目录」读独立的 AGENTS.md；全局那一个是 ~/.gemini/config，Key 模式的
         // 私有 --gemini_dir 也经软链共享它。别用 ~/.gemini/GEMINI.md：那是 Gemini CLI 的。
         AppType::Agy => crate::agy_config::customizations_dir(),
         // omp 只读按 profile 切换的 agent 目录里的 AGENTS.md（上游 discovery/builtin.ts）
-        AppType::Omp => crate::omp_config::get_omp_agent_dir()?,
-        AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
     let filename = match app {
         AppType::Claude => "CLAUDE.md",
         AppType::Codex => "AGENTS.md",
-        AppType::Gemini => "GEMINI.md",
-        AppType::GrokBuild | AppType::OpenCode | AppType::OpenClaw => "AGENTS.md",
-        AppType::Hermes => "SOUL.md",
-        AppType::Pi
-        | AppType::Mcode
-        | AppType::Agy
-        | AppType::Kimi
-        | AppType::Dsh
-        | AppType::Omp => "AGENTS.md",
-        AppType::ClaudeDesktop => unreachable!("handled above"),
+
+        AppType::OpenCode => "AGENTS.md",
+
+        AppType::Agy | AppType::Dsh => "AGENTS.md",
     };
 
-    Ok(base_dir.join(filename))
+    {
+        Ok(base_dir.join(filename))
+    }
 }
 
 /// 把用户主目录前缀换成 `~`，给界面显示用（复制路径仍用完整路径）。
@@ -100,11 +146,75 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mcode_instructions_limit_counts_utf8_bytes() {
-        assert!(validate_prompt_content(&AppType::Mcode, &"a".repeat(32768)).is_ok());
-        assert!(validate_prompt_content(&AppType::Mcode, &"a".repeat(32769)).is_err());
-        assert!(validate_prompt_content(&AppType::Mcode, &"中".repeat(10923)).is_err());
-        assert!(validate_prompt_content(&AppType::OpenCode, &"中".repeat(10923)).is_ok());
+    fn text_reads_distinguish_missing_empty_invalid_and_oversized_files() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("MEMORY.md");
+        assert_eq!(read_text_file(&path).unwrap(), None);
+        std::fs::write(&path, "").unwrap();
+        assert_eq!(read_text_file(&path).unwrap(), Some(String::new()));
+        std::fs::write(&path, "  中文\r\n").unwrap();
+        assert_eq!(
+            read_text_file(&path).unwrap().as_deref(),
+            Some("  中文\r\n")
+        );
+        std::fs::write(&path, [0xff]).unwrap();
+        assert!(read_text_file(&path).is_err());
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len(MAX_TEXT_FILE_BYTES + 1).unwrap();
+        assert!(read_text_file(&path)
+            .unwrap_err()
+            .to_string()
+            .contains("8 MiB"));
+        assert!(read_text_file(root.path()).is_err());
+    }
+
+    #[test]
+    fn content_paths_reject_traversal() {
+        let root = tempfile::tempdir().unwrap();
+        for name in ["../MEMORY.md", "/MEMORY.md", "memory/../../outside.md"] {
+            assert!(checked_child_path(root.path(), Path::new(name)).is_err());
+        }
+        assert_eq!(
+            checked_child_path(root.path(), Path::new("memory/2026-11-25.md")).unwrap(),
+            root.path().join("memory/2026-11-25.md")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn content_paths_reject_linked_files_and_directories() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("memory")).unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("missing"),
+            root.path().join("MEMORY.md"),
+        )
+        .unwrap();
+        assert!(checked_child_path(root.path(), Path::new("memory/new.md")).is_err());
+        assert!(checked_child_path(root.path(), Path::new("MEMORY.md")).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn content_paths_reject_windows_directory_junctions() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let junction = root.path().join("memory");
+        let result = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(outside.path())
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(checked_child_path(root.path(), Path::new("memory/new.md")).is_err());
+        std::fs::remove_dir(junction).unwrap();
+        assert!(outside.path().is_dir());
     }
 
     #[test]
@@ -124,26 +234,6 @@ mod tests {
         assert_eq!(
             display_path_with_home(Path::new("/Users/meow/SOUL.md"), home),
             "/Users/meow/SOUL.md"
-        );
-    }
-
-    #[test]
-    fn hermes_prompt_file_uses_soul_md() {
-        let path = prompt_file_path(&AppType::Hermes).expect("Hermes prompt path");
-
-        assert_eq!(
-            path.file_name().and_then(|name| name.to_str()),
-            Some("SOUL.md")
-        );
-    }
-
-    #[test]
-    fn pi_prompt_file_uses_agents_md() {
-        let path = prompt_file_path(&AppType::Pi).expect("Pi prompt path");
-
-        assert_eq!(
-            path.file_name().and_then(|name| name.to_str()),
-            Some("AGENTS.md")
         );
     }
 }

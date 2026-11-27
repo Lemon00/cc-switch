@@ -45,7 +45,6 @@ impl From<Profile> for ProfileDto {
 #[serde(rename_all = "camelCase")]
 pub struct CurrentProfileIds {
     pub claude: Option<String>,
-    pub claude_desktop: Option<String>,
     pub codex: Option<String>,
 }
 
@@ -56,7 +55,7 @@ pub struct ProfilesResponse {
     pub current_ids: CurrentProfileIds,
 }
 
-/// Profile 应用完成后的统一收尾：发事件 + 重建托盘菜单
+/// Profile 应用结束后的统一收尾：成功或部分失败都刷新实际状态。
 ///
 /// 只对项目所属分组内的应用发 provider-switched。UI 与托盘两个入口必须
 /// 共用此函数，保证事件 payload 形状一致（前端 App.tsx 的
@@ -64,12 +63,11 @@ pub struct ProfilesResponse {
 pub fn emit_profile_apply_events(
     app: &tauri::AppHandle,
     state: &AppState,
-    profile_id: &str,
+    profile_id: Option<&str>,
     scope: ProfileScope,
 ) {
     for app_type in scope.apps().iter() {
-        let app_str = app_type.as_str();
-        let (_, auto_failover_enabled) = state.db.get_proxy_flags_sync(app_str);
+        let (_, auto_failover_enabled) = state.db.get_proxy_flags_sync(app_type);
         let proxy_enabled = crate::mode::current::is_proxy(app_type);
         let provider_id = crate::mode::current::provider_for(
             &state.db,
@@ -80,7 +78,7 @@ pub fn emit_profile_apply_events(
         .flatten()
         .unwrap_or_default();
         let event_data = serde_json::json!({
-            "appType": app_str,
+            "appType": app_type.as_str(),
             "proxyEnabled": proxy_enabled,
             "autoFailoverEnabled": auto_failover_enabled,
             "providerId": provider_id,
@@ -112,10 +110,6 @@ fn list_profiles_blocking(state: &AppState) -> Result<ProfilesResponse, String> 
         claude: state
             .db
             .get_current_profile_id(ProfileScope::Claude.as_str())
-            .map_err(|e| e.to_string())?,
-        claude_desktop: state
-            .db
-            .get_current_profile_id(ProfileScope::ClaudeDesktop.as_str())
             .map_err(|e| e.to_string())?,
         codex: state
             .db
@@ -192,10 +186,7 @@ pub async fn clear_current_profile(
 ) -> Result<(), String> {
     let scope = ProfileScope::parse(&scope).map_err(|e| e.to_string())?;
     profile_mutation(&state, move |state| {
-        state
-            .db
-            .set_current_profile_id(scope.as_str(), None)
-            .map_err(|e| e.to_string())
+        ProfileService::clear_current(state, scope).map_err(|e| e.to_string())
     })
     .await
 }
@@ -213,9 +204,16 @@ pub async fn apply_profile(
 ) -> Result<Vec<String>, String> {
     let scope = ProfileScope::parse(&scope).map_err(|e| e.to_string())?;
     profile_mutation(&state, move |state| {
-        let warnings = ProfileService::apply(state, &id, scope).map_err(|e| e.to_string())?;
-        emit_profile_apply_events(&app, state, &id, scope);
-        Ok(warnings)
+        let result = ProfileService::apply(state, &id, scope).map_err(|e| e.to_string());
+        // Earlier resources may already be committed when a later write fails.
+        // Notify other views of the actual state, keeping the original error.
+        let current_id = state
+            .db
+            .get_current_profile_id(scope.as_str())
+            .ok()
+            .flatten();
+        emit_profile_apply_events(&app, state, current_id.as_deref(), scope);
+        result
     })
     .await
 }

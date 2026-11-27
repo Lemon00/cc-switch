@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import { useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { useBaseUrlState } from "@/components/providers/forms/hooks";
-
 /**
  * 复刻 ProviderForm 对 settingsConfig 的接线方式：
  * - settingsConfig 只用 form.setValue 写；这个 harness 不订阅它，写入不触发
@@ -22,7 +21,6 @@ const INITIAL_CONFIG = JSON.stringify(
   null,
   2,
 );
-
 const CONFIG_FROM_JSON_EDITOR = JSON.stringify(
   {
     env: {
@@ -33,13 +31,13 @@ const CONFIG_FROM_JSON_EDITOR = JSON.stringify(
   null,
   2,
 );
-
 function Harness({ onReadConfig }: { onReadConfig: (config: string) => void }) {
-  const form = useForm<{ settingsConfig: string }>({
+  const form = useForm<{
+    settingsConfig: string;
+  }>({
     defaultValues: { settingsConfig: INITIAL_CONFIG },
     mode: "onSubmit",
   });
-
   const handleSettingsConfigChange = useCallback(
     (config: string) => {
       if (form.getValues("settingsConfig") === config) {
@@ -49,12 +47,10 @@ function Harness({ onReadConfig }: { onReadConfig: (config: string) => void }) {
     },
     [form],
   );
-
   const getSettingsConfig = useCallback(
     () => form.getValues("settingsConfig"),
     [form],
   );
-
   const { handleClaudeBaseUrlChange } = useBaseUrlState({
     appType: "claude",
     category: "custom",
@@ -64,7 +60,6 @@ function Harness({ onReadConfig }: { onReadConfig: (config: string) => void }) {
     onCodexConfigChange: () => {},
     getSettingsConfig,
   });
-
   return (
     <div>
       <button
@@ -85,7 +80,6 @@ function Harness({ onReadConfig }: { onReadConfig: (config: string) => void }) {
     </div>
   );
 }
-
 // 不能从渲染结果里读：这个 harness 写 settingsConfig 不触发重渲染（用来制造
 // 过期快照），渲染出来的文本会是旧值。改为按需从表单里现读。
 let lastRead = "{}";
@@ -93,36 +87,30 @@ const renderHarness = () =>
   render(<Harness onReadConfig={(config) => (lastRead = config)} />);
 const readConfig = () => {
   fireEvent.click(screen.getByText("read"));
-  return JSON.parse(lastRead) as { env?: Record<string, string> };
+  return JSON.parse(lastRead) as {
+    env?: Record<string, string>;
+  };
 };
-
 describe("ProviderForm settingsConfig 写入不能丢失前一次改动", () => {
   it("JSON 编辑器改完再改请求地址，两处改动都要保留", () => {
     renderHarness();
-
     fireEvent.click(screen.getByText("edit-json"));
     expect(readConfig().env?.ANTHROPIC_AUTH_TOKEN).toBe(
       "token-typed-in-json-editor",
     );
-
     fireEvent.click(screen.getByText("edit-base-url"));
-
     const config = readConfig();
     expect(config.env?.ANTHROPIC_BASE_URL).toBe("https://api.new.example");
     expect(config.env?.ANTHROPIC_AUTH_TOKEN).toBe("token-typed-in-json-editor");
   });
-
   it("改请求地址后再改 JSON，请求地址不被旧快照覆盖", () => {
     renderHarness();
-
     fireEvent.click(screen.getByText("edit-base-url"));
     expect(readConfig().env?.ANTHROPIC_BASE_URL).toBe(
       "https://api.new.example",
     );
-
     fireEvent.click(screen.getByText("edit-json"));
     fireEvent.click(screen.getByText("edit-base-url"));
-
     const config = readConfig();
     expect(config.env?.ANTHROPIC_BASE_URL).toBe("https://api.new.example");
     expect(config.env?.ANTHROPIC_AUTH_TOKEN).toBe("token-typed-in-json-editor");

@@ -1,6 +1,6 @@
 # 通过 CC Switch 在 Codex 中使用 Claude 模型
 
-> 适用版本：CC Switch 3.17.0 及以上（「Anthropic Messages 上游」自 3.17.0 引入）。本文根据仓库内文档与代码整理，以 Claude 系中转网关为例演示。截图来自当前前端界面，使用去敏示例数据生成，避免泄露真实 API Key。
+> 适用于独立版 1.0.0。截图使用示例数据，具体入口以当前界面及正文为准。
 
 ## 为什么需要本地路由
 
@@ -23,7 +23,7 @@ CC Switch 的做法是让 Codex 始终连本机路由，仍以 Responses API 发
 
 你需要先准备好三样东西：
 
-- 已安装并能启动的 CC Switch（3.17.0 及以上）。
+- 已安装并能启动的 CC Switch（独立版 1.0.0 及以上）。
 - 已安装 Codex CLI，并至少运行过一次，让 `~/.codex/` 目录结构存在。
 - 一个能访问 Anthropic Messages 协议端点（`/v1/messages`）的 API Key——来自某个 Claude 系中转网关，或企业内部的 Claude 网关；端点地址和认证方式以网关文档为准。注意：部分供应商会限制其 Claude API 只能在 Claude Code 中使用，这类 Key 走 Codex 可能会报错，拿不准就先咨询供应商。
 
@@ -58,10 +58,7 @@ Codex 页签目前没有 Anthropic 内置预设，下面走「自定义配置」
 
 ## 第二步：开启本地路由并接管 Codex
 
-进入设置里的 `路由` 页面，展开 `本地路由`，完成两个开关：
-
-1. 打开 `路由总开关`，启动本地服务（首次开启会弹出一个说明确认框）。默认地址是 `127.0.0.1:15721`。
-2. 在 `路由启用` 中打开 `Codex`。如果只想让 Codex 走路由，可以保持 Claude、Gemini 关闭。
+在左侧栏选中 **Codex**，切到页面顶部的「路由」标签，点击 **开始路由** 并在确认框中选择要路由到的供应商（如果只想让 Codex 走路由，保持 Claude 处于直连即可；服务运行状态可在「设置 → 本地路由」查看）。默认监听地址是 `127.0.0.1:15721`。
 
 ![本地路由页面中启用 Codex 接管](../images/codex-claude-routing/04-local-route-codex-takeover.png)
 
@@ -69,14 +66,14 @@ Codex 页签目前没有 Anthropic 内置预设，下面走「自定义配置」
 
 ## 第三步：切换供应商并重启 Codex
 
-回到 Codex 供应商列表，点击 Claude 供应商的 `启用`。如果路由没有在运行，CC Switch 会提示「此供应商使用 Anthropic Messages 接口格式，需要路由服务才能正常使用，请先启动路由」——回到第二步打开即可。
+在 Codex「路由」标签列表中，点击 Claude 供应商卡片上的 **路由到此**。如果路由服务没有运行，CC Switch 会提示启动路由服务。
 
 切换后建议重启当前 Codex 终端会话：`config.toml` 和模型目录是 Codex 进程启动时读取的，运行中的进程不保证热加载。
 
 进入 Codex 后可以逐级验证：
 
 - 配置了模型映射的话，用 `/model` 查看 Claude 模型是否已出现在菜单里；没配映射时 Codex 直接用默认模型。
-- 发一个小问题，观察设置 → 路由页面的「当前 Provider」从「等待首次请求」变成你的 Claude 供应商、「总请求数」开始增长。
+- 发一个小问题，观察「设置 → 本地路由」中的总请求数与「正在使用路由的应用」状态是否正常更新。
 - 用量看板里，这些请求的模型名会如实显示为 `claude-*`，可按供应商筛选核对 token 用量。
 
 ## 能力边界与已知限制
@@ -125,5 +122,4 @@ Codex 页签目前没有 Anthropic 内置预设，下面走「自定义配置」
 
 - [CC Switch 用户手册：代理服务](../user-manual/zh/4-proxy/4.1-service.md)
 - [CC Switch 用户手册：应用路由](../user-manual/zh/4-proxy/4.2-routing.md)
-- [CC Switch v3.17.0 发布说明](../release-notes/v3.17.0-zh.md)
 - 功能来自社区贡献 [#5071](https://github.com/farion1231/cc-switch/pull/5071)，感谢 @yeeyzy

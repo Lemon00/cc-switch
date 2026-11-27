@@ -25,28 +25,42 @@ import {
   type TimelineStep,
 } from "@/components/sessions/reader/turns";
 import { call, event, fixtures, msg, result, text, thinking } from "./helpers";
-
 const turnsOf = (id: keyof typeof fixtures) =>
   buildTurns(fixtures[id], { style: getAgentReaderStyle(id) });
-
 const rowKinds = (rows: ReaderRow[]) => rows.map((row) => row.kind);
-
 const stepRow = (rows: ReaderRow[], index: number) => {
   const row = rows[index];
   if (row.kind !== "step") throw new Error(`row ${index} is ${row.kind}`);
   return row;
 };
-
 const toolTitles = (steps: TimelineStep[]) =>
   steps.map((step) =>
     step.kind === "tool" ? (step.call?.title ?? "<output>") : step.kind,
   );
-
+it("keeps untagged replies and tool results in the current native turn", () => {
+  const turns = buildTurns([
+    { role: "user", content: "question", turnId: "native-1" },
+    {
+      role: "assistant",
+      blocks: [call("c1", "shell", { title: "pwd" })],
+      turnId: "native-1",
+    },
+    { role: "tool", blocks: [result("c1", "success", { preview: "/repo" })] },
+    { role: "assistant", content: "answer" },
+    { role: "user", content: "next question" },
+    { role: "assistant", content: "next answer" },
+  ]);
+  expect(turns).toHaveLength(2);
+  expect(turns[0].key).toBe("native-1");
+  expect(turns[0].steps[0]).toMatchObject({ kind: "tool", status: "success" });
+  expect(turns[0].final?.text).toBe("answer");
+  expect(turns[1].question?.text).toBe("next question");
+  expect(turns[1].final?.text).toBe("next answer");
+});
 describe("buildTurns · 6 份契约 fixture", () => {
   it("Claude：提问/过程/最终回复、注入、斜杠命令、中断与 Hook", () => {
     const turns = turnsOf("claude");
     expect(turns.map((turn) => turn.key)).toEqual(["t1", "t2", "t3", "t4"]);
-
     const [t1, t2, t3, t4] = turns;
     expect(t1.question).toMatchObject({ messageIndex: 0, ts: 1791014400000 });
     expect(t1.question?.text).toContain("tokio_util");
@@ -76,14 +90,12 @@ describe("buildTurns · 6 份契约 fixture", () => {
       status: "error",
       resultMessageIndex: 3,
     });
-
     expect(t2.question).toBeUndefined();
     expect(t2.leadingEvents.map((e) => e.block.kind)).toEqual([
       "slash_command",
       "compaction",
     ]);
     expect(t2.steps).toEqual([]);
-
     expect(t3.aborted).toBe(true);
     expect(t3.final).toBeUndefined();
     // 事件按出现顺序：先中断，再 Hook 错误
@@ -91,14 +103,19 @@ describe("buildTurns · 6 份契约 fixture", () => {
       "aborted",
       "hook",
     ]);
-    expect(t3.steps.map((step) => (step as { status: string }).status)).toEqual(
-      ["success", "pending", "interrupted"],
-    );
-
+    expect(
+      t3.steps.map(
+        (step) =>
+          (
+            step as {
+              status: string;
+            }
+          ).status,
+      ),
+    ).toEqual(["success", "pending", "interrupted"]);
     expect(t4.final?.messageIndex).toBe(30);
     expect(toolTitles(t4.steps)).toHaveLength(3);
   });
-
   it("Codex：注入的 developer/AGENTS.md、事件分前后、子代理正文并入事件、过程图片", () => {
     const [t1, t2, t3] = turnsOf("codex");
     expect(t1.injected).toEqual([0, 1, 2]);
@@ -107,12 +124,10 @@ describe("buildTurns · 6 份契约 fixture", () => {
     expect(t1.final?.messageIndex).toBe(14);
     // read 成功 + search 失败：失败不参与 Explored 合并
     expect(t1.steps.some((step) => step.kind === "merged")).toBe(false);
-
     expect(t2.leadingEvents.map((e) => e.block.kind)).toEqual(["model_change"]);
     expect(t2.aborted).toBe(true);
     expect(t2.final).toBeUndefined();
     expect(t2.trailingEvents.map((e) => e.block.kind)).toEqual(["aborted"]);
-
     expect(t3.leadingEvents.map((e) => e.block.kind)).toEqual(["compaction"]);
     const subAgent = t3.steps.find((step) => step.kind === "event");
     expect(subAgent).toMatchObject({ block: { kind: "sub_agent" } });
@@ -122,7 +137,6 @@ describe("buildTurns · 6 份契约 fixture", () => {
     expect(t3.steps.some((step) => step.kind === "image")).toBe(true);
     expect(t3.final?.messageIndex).toBe(30);
   });
-
   it("Gemini：纯注入轮不出行；同一条消息里调用、结果与最终回复", () => {
     const turns = turnsOf("gemini");
     expect(turns[0]).toMatchObject({ key: "t0", injected: [0], steps: [] });
@@ -134,7 +148,6 @@ describe("buildTurns · 6 份契约 fixture", () => {
     expect(rows[0].kind).toBe("question");
     expect(rows.every((row) => row.turn !== 0)).toBe(true);
   });
-
   it("OpenCode：step-finish 费用落到该段最后一步，纯文本段落到最终回复", () => {
     const [t1, t2] = turnsOf("opencode");
     expect(t1.stepCosts.map((cost) => cost.tokens)).toEqual([
@@ -145,13 +158,11 @@ describe("buildTurns · 6 份契约 fixture", () => {
     expect(tools[1].cost).toBeUndefined();
     expect(tools[3].cost).toMatchObject({ tokens: 21960 });
     expect(t1.final?.cost).toMatchObject({ tokens: 22410, reason: "stop" });
-
     // 提问消息里的 @agent 事件算提问前的事件
     expect(t2.leadingEvents.map((e) => e.block.kind)).toEqual(["other"]);
     expect(t2.final).toBeUndefined();
     expect(t2.steps.at(-1)?.cost).toMatchObject({ tokens: 30112 });
   });
-
   it("Pi：用户自己跑的命令单步成功直接显示；中断轮也有最终回复", () => {
     const turns = turnsOf("pi");
     expect(turns[0].leadingEvents.map((e) => e.block.kind)).toEqual([
@@ -177,7 +188,6 @@ describe("buildTurns · 6 份契约 fixture", () => {
       "truncated",
     ]);
   });
-
   it("generic：无配对的结果成通用「工具输出」步骤；纯对话轮没有过程", () => {
     const [t1, t2, t3] = turnsOf("generic");
     expect(t1.steps.map((step) => step.kind)).toEqual(["note", "tool", "tool"]);
@@ -189,7 +199,6 @@ describe("buildTurns · 6 份契约 fixture", () => {
     expect(t3.steps).toEqual([]);
     expect(t3.final?.messageIndex).toBe(11);
   });
-
   it("缺省风格为 generic：不合并", () => {
     const messages = [
       msg("user", [text("q")]),
@@ -208,13 +217,11 @@ describe("buildTurns · 6 份契约 fixture", () => {
     ).toEqual(["merged"]);
   });
 });
-
 describe("effectiveBlocks · 旧后端兜底", () => {
   it("有 blocks 原样返回", () => {
     const blocks = [text("hi")];
     expect(effectiveBlocks(msg("user", blocks), 0)).toBe(blocks);
   });
-
   it("空 content 无块；tool 角色整段当无配对输出；user 当文本", () => {
     expect(effectiveBlocks({ role: "assistant", content: "  " }, 0)).toEqual(
       [],
@@ -236,7 +243,6 @@ describe("effectiveBlocks · 旧后端兜底", () => {
       text("hello"),
     ]);
   });
-
   it("assistant 的 `[Tool: X] title` 行拆成调用，其余行成文本", () => {
     const blocks = effectiveBlocks(
       {
@@ -262,7 +268,6 @@ describe("effectiveBlocks · 旧后端兜底", () => {
     expect(blocks[2]).toMatchObject({ rawName: "Tool", title: "Tool" });
     expect(blocks[3]).toMatchObject({ rawName: "Read", title: "Read" });
   });
-
   it("旧数据没有 turnId：按提问分轮，旧调用状态为 unknown", () => {
     const messages: SessionMessage[] = [
       { role: "system", content: "boot" },
@@ -280,12 +285,18 @@ describe("effectiveBlocks · 旧后端兜底", () => {
     ]);
     expect(turns[0].steps).toMatchObject([{ kind: "note", text: "boot" }]);
     expect(
-      turns[1].steps.map((step) => (step as { status: string }).status),
+      turns[1].steps.map(
+        (step) =>
+          (
+            step as {
+              status: string;
+            }
+          ).status,
+      ),
     ).toEqual(["unknown", "unknown"]);
     expect(turns[1].final?.text).toBe("done");
   });
 });
-
 describe("buildTurns · 分组、配对与最终回复判定", () => {
   it("同一 turnId 不连续出现时加后缀保证 key 唯一", () => {
     const turns = buildTurns([
@@ -302,7 +313,6 @@ describe("buildTurns · 分组、配对与最终回复判定", () => {
     // 同一轮里第二条提问当过程说明
     expect(turns[2].steps).toMatchObject([{ kind: "note", text: "d" }]);
   });
-
   it("配对：无结果 pending；重复结果与未知 callId 成孤儿步骤；空 callId 的调用不登记", () => {
     const [turn] = buildTurns([
       msg("user", [text("q")]),
@@ -319,7 +329,6 @@ describe("buildTurns · 分组、配对与最终回复判定", () => {
       [undefined, "success"],
     ]);
   });
-
   it("配对：结果先于调用写入（Claude 异步子代理）时等调用出现再配上", () => {
     const [turn] = buildTurns([
       msg("user", [text("q")]),
@@ -341,7 +350,6 @@ describe("buildTurns · 分组、配对与最终回复判定", () => {
       ["b", "error", 2],
     ]);
   });
-
   it("Codex：子调用 call_id#N、同一消息内调用 + 结果、思考 + 调用", () => {
     const [turn] = buildTurns(
       [
@@ -373,7 +381,6 @@ describe("buildTurns · 分组、配对与最终回复判定", () => {
     ]);
     expect(turn.final?.text).toBe("done");
   });
-
   it("思考：空且未加密、无摘要的块跳过", () => {
     const [turn] = buildTurns([
       msg("user", [text("q")]),
@@ -391,7 +398,6 @@ describe("buildTurns · 分组、配对与最终回复判定", () => {
     ]);
     expect(turn.final?.text).toBe("ok");
   });
-
   it("最终回复：同一条消息里调用之后的文本与图片；调用之前的文本是说明", () => {
     const image = {
       source: { kind: "local_file" as const, path: "/tmp/a.png" },
@@ -423,21 +429,18 @@ describe("buildTurns · 分组、配对与最终回复判定", () => {
     });
     expect(turn).toMatchObject({ ts: 10, endTs: 20 });
   });
-
   it("最后一个调用在文本之后，或在更晚的消息里 → 没有最终回复", () => {
     const sameMessage = buildTurns([
       msg("user", [text("q")]),
       msg("assistant", [text("let me check"), call("a")]),
     ])[0];
     expect(sameMessage.final).toBeUndefined();
-
     const laterMessage = buildTurns([
       msg("user", [text("q")]),
       msg("assistant", [text("answer")]),
       msg("user", [call("u", "shell", { byUser: true }), result("u")]),
     ])[0];
     expect(laterMessage.final).toBeUndefined();
-
     const injectedIgnored = buildTurns([
       msg("user", [text("q")]),
       msg("assistant", [text("answer")]),
@@ -447,7 +450,6 @@ describe("buildTurns · 分组、配对与最终回复判定", () => {
     expect(injectedIgnored.final?.text).toBe("answer");
     expect(injectedIgnored.injected).toEqual([2]);
   });
-
   it("事件：没有提问时、步骤之前的算提问前；过程中的留在时间线；system 正文无事件时成说明", () => {
     const [turn] = buildTurns([
       msg("system", [event("model_change", "m2")]),
@@ -471,7 +473,6 @@ describe("buildTurns · 分组、配对与最终回复判定", () => {
     expect(turn.steps[1]).toMatchObject({ body: "more" });
     expect(turn.trailingEvents.map((e) => e.block.kind)).toEqual(["error"]);
   });
-
   it("step-finish 段内没有步骤也没有最终回复：只计入轮费用", () => {
     const [turn] = buildTurns([
       msg("user", [text("q")]),
@@ -486,7 +487,6 @@ describe("buildTurns · 分组、配对与最终回复判定", () => {
     ]);
   });
 });
-
 describe("buildTurnIndex", () => {
   it("收有提问或斜杠命令的轮，排除纯注入 / 纯事件轮", () => {
     const index = buildTurnIndex(turnsOf("claude"));
@@ -510,7 +510,6 @@ describe("buildTurnIndex", () => {
       "t2",
     ]);
   });
-
   it("提问预览压空白、超过 80 字截断；斜杠命令没有文本时为空", () => {
     const long = `${"a ".repeat(30)}\n\n${"b".repeat(60)}`;
     const [first, second] = buildTurnIndex(
@@ -526,12 +525,10 @@ describe("buildTurnIndex", () => {
     expect(second.ts).toBeUndefined();
   });
 });
-
 describe("搜索", () => {
   it("空查询返回 null", () => {
     expect(findSearchHits(turnsOf("claude"), "  ")).toBeNull();
   });
-
   it("按文档顺序记录提问、步骤、最终回复、前后事件的命中", () => {
     const turns = buildTurns(
       [
@@ -584,7 +581,6 @@ describe("搜索", () => {
     // 合并步骤的子步骤命中 → 父步骤也要展开
     expect(hits!.stepIds.has(merged!.id)).toBe(true);
   });
-
   it("stepSearchText 覆盖每种步骤", () => {
     const [turn] = buildTurns([
       msg("user", [text("q")]),
@@ -607,7 +603,6 @@ describe("搜索", () => {
     ]);
   });
 });
-
 describe("flattenRows · 折叠规则 §6.5", () => {
   const failing = (count: number) => {
     const calls = Array.from({ length: count }, (_, i) => call(`f${i}`));
@@ -622,7 +617,6 @@ describe("flattenRows · 折叠规则 §6.5", () => {
       msg("assistant", [text("answer")], { turnId: "t" }),
     ];
   };
-
   it("规则 1/2：有最终回复的多步轮折叠成摘要行，失败步骤常显并预展开 6 行", () => {
     const rows = flattenRows(turnsOf("claude"));
     expect(rowKinds(rows).slice(0, 5)).toEqual([
@@ -639,7 +633,6 @@ describe("flattenRows · 折叠规则 §6.5", () => {
       previewLines: FAILURE_PREVIEW_LINES,
     });
   });
-
   it("规则 2：超过 5 个失败只列前 5 个", () => {
     const rows = flattenRows(buildTurns(failing(7)));
     expect(rows[1]).toMatchObject({ kind: "timeline", hiddenFailures: 2 });
@@ -647,7 +640,6 @@ describe("flattenRows · 折叠规则 §6.5", () => {
       MAX_PINNED_FAILURES,
     );
   });
-
   it("规则 3：中断 / 无最终回复自动展开；展开全部；查找命中；手动收起优先", () => {
     const turns = turnsOf("claude");
     const aborted = turns[2];
@@ -663,7 +655,6 @@ describe("flattenRows · 折叠规则 §6.5", () => {
     expect(
       isTimelineExpanded(aborted, { turnOverrides: new Map([["t3", false]]) }),
     ).toBe(false);
-
     const rows = flattenRows(turns, { expandAll: true });
     const t1Steps = rows.filter((row) => row.kind === "step" && row.turn === 0);
     expect(t1Steps).toHaveLength(turns[0].steps.length);
@@ -671,7 +662,6 @@ describe("flattenRows · 折叠规则 §6.5", () => {
       true,
     );
   });
-
   it("规则 4：最后一轮有回复时同样默认折叠（D5）", () => {
     const turns = turnsOf("claude");
     const rows = flattenRows(turns);
@@ -683,7 +673,6 @@ describe("flattenRows · 折叠规则 §6.5", () => {
       "final",
     ]);
   });
-
   it("规则 5：只有 1 步且成功不出摘要行；1 步失败仍出摘要行", () => {
     const one = buildTurns([
       msg("user", [text("q")]),
@@ -699,7 +688,6 @@ describe("flattenRows · 折叠规则 §6.5", () => {
       "final",
     ]);
   });
-
   it("步骤展开：手动覆盖优先，失败手动展开给 12 行；查找命中自动展开", () => {
     const turns = buildTurns(failing(2));
     const [first, second] = turns[0].steps;
@@ -717,7 +705,6 @@ describe("flattenRows · 折叠规则 §6.5", () => {
       expanded: true,
       previewLines: STEP_PREVIEW_LINES,
     });
-
     const claude = turnsOf("claude");
     const search = findSearchHits(claude, "tokio-util v0.7.12");
     const searched = flattenRows(claude, { search });
@@ -727,7 +714,6 @@ describe("flattenRows · 折叠规则 §6.5", () => {
     );
     expect(hit).toMatchObject({ expanded: true, pinned: false });
   });
-
   it("规则 9：合并步骤展开后列出子步骤（depth 1）", () => {
     const turns = buildTurns(
       [
@@ -753,7 +739,6 @@ describe("flattenRows · 折叠规则 §6.5", () => {
       expanded.map((row) => (row.kind === "step" ? row.depth : row.kind)),
     ).toEqual(["question", "timeline", 0, 1, 1, 0]);
   });
-
   it("显示注入的上下文：注入消息出 injected 行", () => {
     const rows = flattenRows(turnsOf("codex"), { showInjected: true });
     expect(rowKinds(rows).slice(0, 4)).toEqual([
@@ -767,7 +752,6 @@ describe("flattenRows · 折叠规则 §6.5", () => {
     const gemini = flattenRows(turnsOf("gemini"), { showInjected: true });
     expect(rowKinds(gemini).slice(0, 2)).toEqual(["injected", "turn_divider"]);
   });
-
   it("只看对话：只留提问与最终回复，空轮不出分轮线", () => {
     const rows = flattenRows(turnsOf("claude"), { filter: "conversation" });
     expect(rowKinds(rows)).toEqual([
@@ -780,7 +764,6 @@ describe("flattenRows · 折叠规则 §6.5", () => {
       "final",
     ]);
   });
-
   it("只看改动：只留有 edit/write/diff 的轮，改动步骤直接列出", () => {
     const rows = flattenRows(turnsOf("claude"), { filter: "changes" });
     expect(rowKinds(rows)).toEqual([
@@ -800,7 +783,6 @@ describe("flattenRows · 折叠规则 §6.5", () => {
       "step",
     ]);
   });
-
   it("isChangeStep", () => {
     const steps = buildTurns([
       msg("assistant", [
@@ -813,18 +795,15 @@ describe("flattenRows · 折叠规则 §6.5", () => {
     expect(steps.map(isChangeStep)).toEqual([true, true, false, false]);
   });
 });
-
 describe("行定位与行高", () => {
   const turns: SessionTurn[] = turnsOf("claude");
   const rows = flattenRows(turns);
-
   it("findTurnRowIndex：跳过分轮线；未知轮 -1", () => {
     expect(findTurnRowIndex(rows, turns, "t1")).toBe(0);
     const t2 = findTurnRowIndex(rows, turns, "t2");
     expect(rows[t2]).toMatchObject({ kind: "event", turn: 1 });
     expect(findTurnRowIndex(rows, turns, "nope")).toBe(-1);
   });
-
   it("findMatchRowIndex：提问 / 回复 / 步骤 / 事件行 / 事件步骤；被过滤时退回轮首行；整轮不在时 -1", () => {
     const hits = findSearchHits(turns, "PR #128")!;
     const prRow = findMatchRowIndex(rows, hits.matches[0]);
@@ -832,7 +811,6 @@ describe("行定位与行高", () => {
       kind: "event",
       block: { kind: "pr_link" },
     });
-
     const all = findSearchHits(turns, "tokio")!;
     const question = all.matches.find((m) => m.target === "question")!;
     expect(rows[findMatchRowIndex(rows, question)].kind).toBe("question");
@@ -843,13 +821,11 @@ describe("行定位与行高", () => {
     expect(searchRows[findMatchRowIndex(searchRows, step)]).toMatchObject({
       kind: "step",
     });
-
     // 折叠态下步骤行不存在 → 退回该轮第一行
     expect(findMatchRowIndex(rows, { ...step, targetId: "missing" })).toBe(0);
     expect(
       findMatchRowIndex(rows, { turn: 99, target: "question", count: 1 }),
     ).toBe(-1);
-
     const eventTurns = buildTurns([
       msg("user", [text("q")]),
       msg("assistant", [call("a")]),
@@ -865,7 +841,6 @@ describe("行定位与行高", () => {
       step: { kind: "event" },
     });
   });
-
   it("estimateRowHeight", () => {
     expect(rows.map(estimateRowHeight).slice(0, 4)).toEqual([96, 36, 32, 160]);
     expect(estimateRowHeight({ kind: "turn_divider", key: "k", turn: 0 })).toBe(
@@ -873,7 +848,6 @@ describe("行定位与行高", () => {
     );
   });
 });
-
 describe("查找命中在预览可见行之外", () => {
   // 失败步骤默认只露 FAILURE_PREVIEW_LINES 行；命中在后面的行时整段预览都要展开，
   // 否则查找计数里有、界面上看不见（对应旧阅读页 v7 的同类修复）
@@ -903,19 +877,16 @@ describe("查找命中在预览可见行之外", () => {
     if (!row || row.kind !== "step") throw new Error("no step row");
     return row;
   };
-
   it("命中在可见行内：保持默认预览行数", () => {
     const row = failedStepRow("hit");
     expect(row.expanded).toBe(true);
     expect(row.previewLines).toBe(FAILURE_PREVIEW_LINES);
   });
-
   it("命中在可见行之后：整段预览展开", () => {
     const row = failedStepRow("tail");
     expect(row.expanded).toBe(true);
     expect(row.previewLines).toBeGreaterThan(lines.length);
   });
-
   it("没有查找时不受影响", () => {
     const turns = failedTurn();
     const row = flattenRows(turns).find((r) => r.kind === "step");

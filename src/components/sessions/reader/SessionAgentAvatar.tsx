@@ -1,12 +1,9 @@
-import { memo } from "react";
-
-import type { SessionMessage } from "@/types";
-
 import { AppGlyph } from "@/components/shell/AppGlyph";
+import type { SessionMessage } from "@/types";
+import { memo } from "react";
 import { formatMessageTime, isSessionAppId } from "../utils";
 import { useReaderContext } from "./context";
 import type { SessionTurn } from "./turns";
-
 /**
  * 左侧 Agent 头像：每轮 Agent 输出的第一行左边显示一次。
  * 认识的来源用应用图标，其余退回风格里的 glyph 或 Agent 名首字。
@@ -15,7 +12,6 @@ export const SessionAgentAvatar = memo(function SessionAgentAvatar() {
   const { providerId, style, appName } = useReaderContext();
   const known = providerId && isSessionAppId(providerId) ? providerId : null;
   const fallback = style.assistantGlyph || appName.trim().charAt(0) || "·";
-
   return (
     <span
       aria-hidden
@@ -31,7 +27,6 @@ export const SessionAgentAvatar = memo(function SessionAgentAvatar() {
     </span>
   );
 });
-
 /** 这一轮 Agent 输出的起始时间：第一步的消息时间，没有步骤时取最终回复时间 */
 export const agentTurnTs = (
   turn: SessionTurn | undefined,
@@ -45,7 +40,6 @@ export const agentTurnTs = (
   }
   return turn.final?.ts;
 };
-
 /** 头像右侧的一行：Agent 名 · 时间 · 模型，高度和头像一致 */
 export const SessionAgentHeader = memo(function SessionAgentHeader({
   ts,

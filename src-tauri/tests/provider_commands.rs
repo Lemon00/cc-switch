@@ -43,7 +43,11 @@ fn agy_missing_native_config_is_not_imported_or_created_by_full_sync() {
             ..
         }
     ));
-    assert!(state.db.get_all_providers("agy").unwrap().is_empty());
+    assert!(state
+        .db
+        .get_all_providers(&AppType::Agy)
+        .unwrap()
+        .is_empty());
     assert!(cc_switch_lib::mode::current::provider_for(
         &state.db,
         &AppType::Agy,
@@ -86,7 +90,10 @@ fn agy_import_skips_empty_settings_but_keeps_model_configs() {
             Err(error) => panic!("{error}"),
         };
         assert_eq!(imported, should_import);
-        let provider = state.db.get_provider_by_id("default", "agy").unwrap();
+        let provider = state
+            .db
+            .get_provider_by_id("default", &AppType::Agy)
+            .unwrap();
         assert_eq!(provider.is_some(), should_import);
         if let Some(provider) = provider {
             assert_eq!(
@@ -106,156 +113,6 @@ fn agy_import_skips_empty_settings_but_keeps_model_configs() {
         assert_eq!(std::fs::read_to_string(root.join(file)).unwrap(), content);
         assert!(!root.join("bin").exists());
     }
-}
-
-fn grokbuild_config(name: &str, endpoint: &str, api_key: &str) -> String {
-    format!(
-        r#"[models]
-default = "grok-4.5"
-
-[model."grok-4.5"]
-model = "grok-4.5"
-base_url = "{endpoint}"
-name = "{name}"
-api_key = "{api_key}"
-api_backend = "responses"
-context_window = 500000
-"#
-    )
-}
-
-/// 切换时 `models.session_summary` 跟着目标模型表走（#7003），live 比行多这一行。
-fn with_session_summary(config: &str) -> String {
-    config.replacen(
-        "default = \"grok-4.5\"\n",
-        "default = \"grok-4.5\"\nsession_summary = \"grok-4.5\"\n",
-        1,
-    )
-}
-
-#[test]
-fn grokbuild_import_and_switch_write_live_config() {
-    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
-    reset_test_fs();
-    let home = ensure_test_home();
-    let live_path = home.join(".grok").join("config.toml");
-    std::fs::create_dir_all(live_path.parent().expect("grok config dir"))
-        .expect("create grok config dir");
-    let imported_config = grokbuild_config("Imported", "https://old.example/v1", "old-key");
-    std::fs::write(&live_path, &imported_config).expect("seed Grok Build config");
-
-    let state = create_test_state().expect("create test state");
-    import_default_config_test_hook(&state, AppType::GrokBuild)
-        .expect("import Grok Build default provider");
-
-    let imported = state
-        .db
-        .get_provider_by_id("default", AppType::GrokBuild.as_str())
-        .expect("query imported provider")
-        .expect("imported provider exists");
-    assert_eq!(
-        imported
-            .settings_config
-            .get("config")
-            .and_then(|value| value.as_str()),
-        Some(imported_config.as_str())
-    );
-
-    let next_config = grokbuild_config("Relay", "https://new.example/v1", "new-key");
-    state
-        .db
-        .save_provider(
-            AppType::GrokBuild.as_str(),
-            &Provider::with_id(
-                "relay".to_string(),
-                "Relay".to_string(),
-                json!({ "config": next_config }),
-                None,
-            ),
-        )
-        .expect("save second Grok Build provider");
-
-    switch_provider_test_hook(&state, AppType::GrokBuild, "relay")
-        .expect("switch Grok Build provider");
-
-    assert_eq!(
-        std::fs::read_to_string(&live_path).expect("read switched Grok Build config"),
-        with_session_summary(&next_config)
-    );
-    assert_eq!(
-        state
-            .db
-            .get_current_provider(AppType::GrokBuild.as_str())
-            .expect("read Grok Build current provider")
-            .as_deref(),
-        Some("relay")
-    );
-}
-
-/// Grok Build's `/settings` → Default model rewrites `models.default` in the live
-/// config. Picking a built-in model while a third-party provider is active leaves
-/// the provider's own `[model.*]` table unreferenced; switching away and back must
-/// still work.
-#[test]
-fn grokbuild_switch_back_after_client_changed_default_model() {
-    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
-    reset_test_fs();
-    let home = ensure_test_home();
-    let live_path = home.join(".grok").join("config.toml");
-    std::fs::create_dir_all(live_path.parent().expect("grok config dir"))
-        .expect("create grok config dir");
-
-    let state = create_test_state().expect("create test state");
-    let relay_a = grokbuild_config("RelayA", "https://a.example/v1", "key-a");
-    let relay_b = grokbuild_config("RelayB", "https://b.example/v1", "key-b");
-    for (id, name, config) in [("a", "RelayA", &relay_a), ("b", "RelayB", &relay_b)] {
-        state
-            .db
-            .save_provider(
-                AppType::GrokBuild.as_str(),
-                &Provider::with_id(
-                    id.to_string(),
-                    name.to_string(),
-                    json!({ "config": config }),
-                    None,
-                ),
-            )
-            .expect("save Grok Build provider");
-    }
-
-    switch_provider_test_hook(&state, AppType::GrokBuild, "a").expect("switch to provider a");
-    assert_eq!(
-        std::fs::read_to_string(&live_path).expect("read live after switching to a"),
-        with_session_summary(&relay_a)
-    );
-
-    // Simulate Grok's `/settings` → Default model picking the built-in grok-4.6.
-    let client_edited =
-        with_session_summary(&relay_a).replace("default = \"grok-4.5\"", "default = \"grok-4.6\"");
-    std::fs::write(&live_path, &client_edited).expect("simulate client edit");
-
-    switch_provider_test_hook(&state, AppType::GrokBuild, "b").expect("switch to provider b");
-
-    let backfilled_a = state
-        .db
-        .get_provider_by_id("a", AppType::GrokBuild.as_str())
-        .expect("query provider a")
-        .expect("provider a exists")
-        .settings_config
-        .get("config")
-        .and_then(|value| value.as_str())
-        .map(str::to_string)
-        .unwrap_or_default();
-
-    switch_provider_test_hook(&state, AppType::GrokBuild, "a").unwrap_or_else(|err| {
-        panic!("switching back to provider a failed: {err}\nbackfilled row a:\n{backfilled_a}")
-    });
-
-    let live = std::fs::read_to_string(&live_path).expect("read live after switching back");
-    assert!(
-        live.contains("default = \"grok-4.5\"") && live.contains("https://a.example/v1"),
-        "live should select provider a's own model table again, got:\n{live}"
-    );
 }
 
 #[test]
@@ -281,7 +138,7 @@ fn codex_startup_import_fresh_install_imports_once_and_syncs_current_setting() {
 
     let providers = state
         .db
-        .get_all_providers(AppType::Codex.as_str())
+        .get_all_providers(&AppType::Codex)
         .expect("get codex providers after import");
     assert_eq!(
         providers.len(),
@@ -295,7 +152,7 @@ fn codex_startup_import_fresh_install_imports_once_and_syncs_current_setting() {
 
     let current_id = state
         .db
-        .get_current_provider(AppType::Codex.as_str())
+        .get_current_provider(&AppType::Codex)
         .expect("get codex current provider");
     assert_eq!(current_id.as_deref(), Some("default"));
 
@@ -317,7 +174,7 @@ fn codex_startup_import_fresh_install_imports_once_and_syncs_current_setting() {
         .expect("seed official providers");
     let providers_after_seed = state
         .db
-        .get_all_providers(AppType::Codex.as_str())
+        .get_all_providers(&AppType::Codex)
         .expect("get codex providers after seed");
     assert_eq!(
         providers_after_seed.len(),
@@ -367,7 +224,7 @@ experimental_bearer_token = "live-key"
 
     let providers = state
         .db
-        .get_all_providers(AppType::Codex.as_str())
+        .get_all_providers(&AppType::Codex)
         .expect("get codex providers after import");
     let provider = providers.get("default").expect("default provider exists");
     assert_eq!(
@@ -409,7 +266,7 @@ command = "echo"
 
     let providers = state
         .db
-        .get_all_providers(AppType::Codex.as_str())
+        .get_all_providers(&AppType::Codex)
         .expect("get codex providers after import");
     let provider = providers.get("default").expect("default provider exists");
 
@@ -444,7 +301,7 @@ fn codex_startup_import_skips_when_only_official_seed_exists() {
 
     let providers_before = state
         .db
-        .get_all_providers(AppType::Codex.as_str())
+        .get_all_providers(&AppType::Codex)
         .expect("get codex providers before restart check");
     assert_eq!(
         providers_before.len(),
@@ -461,7 +318,7 @@ fn codex_startup_import_skips_when_only_official_seed_exists() {
 
     let providers_after = state
         .db
-        .get_all_providers(AppType::Codex.as_str())
+        .get_all_providers(&AppType::Codex)
         .expect("get codex providers after restart check");
     assert_eq!(
         providers_after.len(),
@@ -539,15 +396,8 @@ command = "say"
                 agy: false,
                 claude: false,
                 codex: true, // 启用 Codex
-                gemini: false,
-                grokbuild: false,
                 opencode: false,
-                hermes: false,
-                mcode: false,
-                kimi: false,
                 dsh: false,
-                pi: false,
-                omp: false,
             },
             description: None,
             homepage: None,
@@ -587,7 +437,7 @@ command = "say"
 
     let current_id = app_state
         .db
-        .get_current_provider(AppType::Codex.as_str())
+        .get_current_provider(&AppType::Codex)
         .expect("get current provider");
     assert_eq!(
         current_id.as_deref(),
@@ -597,7 +447,7 @@ command = "say"
 
     let providers = app_state
         .db
-        .get_all_providers(AppType::Codex.as_str())
+        .get_all_providers(&AppType::Codex)
         .expect("get all providers");
     let legacy = providers
         .get("old-provider")
@@ -707,7 +557,7 @@ fn switch_provider_updates_claude_live_and_state() {
 
     let current_id = app_state
         .db
-        .get_current_provider(AppType::Claude.as_str())
+        .get_current_provider(&AppType::Claude)
         .expect("get current provider");
     assert_eq!(
         current_id.as_deref(),
@@ -717,7 +567,7 @@ fn switch_provider_updates_claude_live_and_state() {
 
     let providers = app_state
         .db
-        .get_all_providers(AppType::Claude.as_str())
+        .get_all_providers(&AppType::Claude)
         .expect("get all providers");
 
     let legacy_provider = providers
@@ -760,7 +610,7 @@ fn switch_provider_updates_claude_live_and_state() {
     // 验证当前供应商已更新
     let current_id = app_state
         .db
-        .get_current_provider(AppType::Claude.as_str())
+        .get_current_provider(&AppType::Claude)
         .expect("get current provider");
     assert_eq!(
         current_id.as_deref(),
@@ -807,7 +657,7 @@ fn switch_provider_codex_missing_auth_returns_error_and_keeps_state() {
 
     let current_id = app_state
         .db
-        .get_current_provider(AppType::Codex.as_str())
+        .get_current_provider(&AppType::Codex)
         .expect("get current provider");
     // 切换失败后，由于数据库操作是先设置再验证，current 可能已被设为 "invalid"
     // 但由于 live 配置写入失败，状态应该回滚
@@ -837,7 +687,7 @@ fn import_refuses_live_config_under_proxy_takeover() {
 
     let providers = state
         .db
-        .get_all_providers(AppType::Codex.as_str())
+        .get_all_providers(&AppType::Codex)
         .expect("get codex providers");
     assert!(
         providers.is_empty(),

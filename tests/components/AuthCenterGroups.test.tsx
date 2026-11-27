@@ -5,13 +5,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CopilotAuthSection } from "@/components/providers/forms/CopilotAuthSection";
 import { CodexOAuthSection } from "@/components/providers/forms/CodexOAuthSection";
 import { XaiOAuthSection } from "@/components/providers/forms/XaiOAuthSection";
-
 const mocks = vi.hoisted(() => ({
   useCopilotAuth: vi.fn(),
   useCodexOauth: vi.fn(),
   useXaiOauth: vi.fn(),
 }));
-
 vi.mock("@/components/providers/forms/hooks/useCopilotAuth", () => ({
   useCopilotAuth: mocks.useCopilotAuth,
 }));
@@ -41,7 +39,6 @@ vi.mock("@/components/settings/auth/AccountQuota", async (importOriginal) => {
     ),
   };
 });
-
 const baseAuth = () => ({
   accounts: [],
   defaultAccountId: null,
@@ -66,7 +63,6 @@ const baseAuth = () => ({
   logout: vi.fn(),
   refetchStatus: vi.fn(),
 });
-
 const account = (
   id: string,
   login: string,
@@ -83,14 +79,12 @@ const account = (
   requires_reauth: false,
   ...extra,
 });
-
 describe("Auth Center account groups", () => {
   beforeEach(() => {
     mocks.useCopilotAuth.mockReturnValue(baseAuth());
     mocks.useCodexOauth.mockReturnValue(baseAuth());
     mocks.useXaiOauth.mockReturnValue(baseAuth());
   });
-
   it("asks for the GitHub deployment before signing in to Copilot", async () => {
     const user = userEvent.setup();
     const auth = {
@@ -104,26 +98,22 @@ describe("Auth Center account groups", () => {
     };
     mocks.useCopilotAuth.mockReturnValue(auth);
     render(<CopilotAuthSection />);
-
     // 第二行写部署位置；企业版带「Enterprise Server」
     expect(
       screen.getByText(/ghe\.example\.com · Enterprise Server/),
     ).toBeInTheDocument();
     expect(screen.getAllByTestId("copilot-quota")).toHaveLength(2);
-
     await user.click(screen.getByRole("button", { name: "添加账号" }));
     const deploy = screen.getByRole("group", { name: "GitHub 部署类型" });
     await user.click(
       within(deploy).getByRole("button", { name: "GitHub Enterprise Server" }),
     );
-
     // 企业域名没填：不登录，字段下面写怎么改
     await user.click(screen.getByRole("button", { name: "使用 GitHub 登录" }));
     expect(auth.addAccount).not.toHaveBeenCalled();
     expect(
       screen.getByText("先填企业域名，例如 company.ghe.com"),
     ).toBeInTheDocument();
-
     await user.type(
       screen.getByPlaceholderText("例如：company.ghe.com"),
       "https://company.ghe.com/",
@@ -132,7 +122,6 @@ describe("Auth Center account groups", () => {
     await user.click(screen.getByRole("button", { name: "使用 GitHub 登录" }));
     expect(auth.addAccount).toHaveBeenCalledTimes(1);
   });
-
   it("keeps Copilot re-login out of the account menu", async () => {
     const user = userEvent.setup();
     mocks.useCopilotAuth.mockReturnValue({
@@ -142,7 +131,6 @@ describe("Auth Center account groups", () => {
       defaultAccountId: "octocat",
     });
     render(<CopilotAuthSection />);
-
     // 标题行没有 ⋯，只有账号行有
     expect(
       screen.queryByRole("button", { name: "GitHub Copilot 的更多操作" }),
@@ -160,13 +148,11 @@ describe("Auth Center account groups", () => {
       screen.queryByRole("menuitem", { name: "设为默认" }),
     ).not.toBeInTheDocument();
   });
-
   it("offers a retry when the account status fails to load", async () => {
     const user = userEvent.setup();
     const auth = { ...baseAuth(), isStatusSuccess: false, isStatusError: true };
     mocks.useCopilotAuth.mockReturnValue(auth);
     render(<CopilotAuthSection />);
-
     expect(
       screen.getByText("无法加载 GitHub Copilot 账号状态，请重试。"),
     ).toBeInTheDocument();
@@ -175,18 +161,15 @@ describe("Auth Center account groups", () => {
     await user.click(screen.getByRole("button", { name: "重试" }));
     expect(auth.refetchStatus).toHaveBeenCalledTimes(1);
   });
-
   it("keeps the add button in the header when there are no accounts", async () => {
     const user = userEvent.setup();
     const auth = baseAuth();
     mocks.useCodexOauth.mockReturnValue(auth);
     render(<CodexOAuthSection showAccountQuota />);
-
     expect(screen.getByText("还没有登录 ChatGPT 账号。")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "添加账号" }));
     expect(auth.addAccount).toHaveBeenCalledTimes(1);
   });
-
   it("re-signs an expired xAI account and hides its quota", async () => {
     const user = userEvent.setup();
     const auth = {
@@ -204,7 +187,6 @@ describe("Auth Center account groups", () => {
     };
     mocks.useXaiOauth.mockReturnValue(auth);
     render(<XaiOAuthSection mode="manage" />);
-
     expect(
       screen.getAllByTestId("xai-quota").map((q) => q.textContent),
     ).toEqual(["ok"]);
@@ -212,12 +194,10 @@ describe("Auth Center account groups", () => {
     expect(
       screen.getByText("登录凭据已失效，用到它的供应商无法使用"),
     ).toBeInTheDocument();
-
     // xAI 不能指定账号重新登录：发起一次普通登录（同一个账号登录会替换旧凭据）
     await user.click(screen.getByRole("button", { name: "重新登录" }));
     expect(auth.addAccount).toHaveBeenCalledTimes(1);
   });
-
   it("uses the form layout when a provider form passes onAccountSelect", () => {
     mocks.useXaiOauth.mockReturnValue({
       ...baseAuth(),
@@ -229,16 +209,17 @@ describe("Auth Center account groups", () => {
     render(
       <XaiOAuthSection selectedAccountId={null} onAccountSelect={vi.fn()} />,
     );
-
     expect(screen.getByRole("combobox")).toBeInTheDocument();
     expect(screen.queryByTestId("xai-quota")).not.toBeInTheDocument();
   });
 });
-
 describe("subscriptionQuotaState", () => {
-  const t = ((key: string, opts?: { defaultValue?: string }) =>
-    opts?.defaultValue ?? key) as unknown as TFunction;
-
+  const t = ((
+    key: string,
+    opts?: {
+      defaultValue?: string;
+    },
+  ) => opts?.defaultValue ?? key) as unknown as TFunction;
   it("writes remaining quota per tier and flags a failed query", async () => {
     const { subscriptionQuotaState } = await import(
       "@/components/settings/auth/AccountQuota"
@@ -268,7 +249,6 @@ describe("subscriptionQuotaState", () => {
         [5, "warning"],
       ]);
     }
-
     expect(
       subscriptionQuotaState(
         t,
@@ -291,7 +271,6 @@ describe("subscriptionQuotaState", () => {
     });
   });
 });
-
 describe("AccountQuotaColumn", () => {
   it("opens the saved resets to list when each one expires", async () => {
     const user = userEvent.setup();
@@ -326,7 +305,12 @@ describe("AccountQuotaColumn", () => {
                       value: "2 次",
                       tone: "warning",
                     },
-                    { key: "b", label: "不会过期", value: "1 次", tone: "normal" },
+                    {
+                      key: "b",
+                      label: "不会过期",
+                      value: "1 次",
+                      tone: "normal",
+                    },
                   ],
                 },
               },
@@ -335,12 +319,13 @@ describe("AccountQuotaColumn", () => {
         }}
       />,
     );
-
     expect(screen.queryByText("存下的限额重置")).not.toBeInTheDocument();
     await user.click(
       screen.getByRole("button", { name: "查看 3 次重置各自的到期时间" }),
     );
-    const dialog = await screen.findByRole("dialog", { name: "存下的限额重置" });
+    const dialog = await screen.findByRole("dialog", {
+      name: "存下的限额重置",
+    });
     expect(
       within(dialog)
         .getAllByRole("listitem")

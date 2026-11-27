@@ -80,9 +80,8 @@ pub async fn import_config_from_file(
 
 #[tauri::command]
 pub async fn sync_current_providers_live(state: State<'_, AppState>) -> Result<Value, String> {
-    let db = state.db.clone();
+    let app_state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let app_state = AppState::new(db);
         ProviderService::sync_current_to_live(&app_state)?;
         Ok::<_, AppError>(json!({
             "success": true,
@@ -172,7 +171,7 @@ pub async fn list_db_backups() -> Result<Vec<BackupEntry>, String> {
 pub async fn restore_db_backup(
     state: State<'_, AppState>,
     filename: String,
-) -> Result<String, String> {
+) -> Result<Value, String> {
     let app_state_for_sync = state.inner().clone();
     let db = app_state_for_sync.db.clone();
     run_with_database_restore_lock(move || {
@@ -183,12 +182,10 @@ pub async fn restore_db_backup(
             };
             let warning =
                 post_sync_warning_from_result(Ok(run_post_import_sync(&app_state_for_sync)));
-            if let Some(message) = warning {
-                // This legacy command returns only the restored filename, so keep
-                // restore success and surface incomplete projection in the log.
+            if let Some(message) = warning.as_ref() {
                 log::warn!("[Restore] post-import sync warning: {message}");
             }
-            Ok::<_, AppError>(restored)
+            Ok::<_, AppError>(success_payload_with_warning(restored, warning))
         })
     })
     .await
@@ -225,6 +222,7 @@ pub async fn list_backup_locations(
 ) -> Result<Vec<crate::services::backup_storage::BackupLocation>, String> {
     tauri::async_runtime::spawn_blocking(crate::services::backup_storage::list_locations)
         .await
+        .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())
 }
 

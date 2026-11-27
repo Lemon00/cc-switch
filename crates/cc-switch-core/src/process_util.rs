@@ -6,8 +6,11 @@
 //! - Windows 下不走 WSL 分发，直接跑本机命令。
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Output, Stdio};
 use std::time::Duration;
+
+pub use crate::process_output::terminate_child_tree;
+use crate::process_output::{wait_child_output, CommandDeadline};
 
 const VALID_TOOLS: [&str; 13] = [
     "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "kimi",
@@ -96,7 +99,13 @@ pub fn local_tool_version(tool: &str) -> Option<String> {
     if !out.status.success() {
         return None;
     }
-    let text = decode_command_output(&out.stdout);
+    let stdout = decode_command_output(&out.stdout);
+    let stderr = decode_command_output(&out.stderr);
+    let text = if stdout.trim().is_empty() {
+        stderr
+    } else {
+        stdout
+    };
     text.split_whitespace().find_map(|token| {
         let token = token.trim_start_matches('v');
         let mut parts = token.split('.');
@@ -128,26 +137,16 @@ pub fn detected_tool_command(
         return Err(format!("Unsupported tool: {tool}"));
     }
     let tool_path = find_in_path(tool).ok_or_else(|| format!("{tool} is not installed"))?;
-    let dir = tool_path
-        .parent()
-        .ok_or_else(|| format!("Invalid {tool} executable path"))?;
     let mut cmd = std::process::Command::new(&tool_path);
     cmd.args(args);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
     #[cfg(not(target_os = "windows"))]
     {
-        let inherited = std::env::var_os("PATH")
-            .map(|value| value.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        cmd.env("PATH", format!("{}:{inherited}", dir.display()));
-        use std::os::unix::process::CommandExt;
-        unsafe {
-            cmd.pre_exec(|| {
-                if libc::setsid() == -1 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
+        crate::process_output::isolate_child_process_group(&mut cmd);
     }
     Ok(cmd)
 }
@@ -167,49 +166,120 @@ pub fn tool_runs_in_wsl(tool: &str) -> bool {
     }
 }
 
-/// 杀掉子进程整棵树：非 Windows 下 kill(-pid) 整组击杀（子进程须由
-/// detected_tool_command 建出、已 setsid）；Windows 下 taskkill /T /F。
-pub fn terminate_child_tree(child: &mut std::process::Child) -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        use std::process::{Command, Stdio};
-        let status = Command::new("taskkill")
-            .args(["/PID", &child.id().to_string(), "/T", "/F"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        matches!(status, Ok(status) if status.success()) || child.kill().is_ok()
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let process_group = -(child.id() as libc::pid_t);
-        // SAFETY: runtime commands are placed in a dedicated process group before spawn.
-        (unsafe { libc::kill(process_group, libc::SIGKILL) == 0 }) || child.kill().is_ok()
-    }
-}
-
 fn find_in_path(tool: &str) -> Option<PathBuf> {
     let path_var = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path_var) {
-        let candidate = dir.join(tool);
-        if candidate.is_file() {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                if let Ok(meta) = std::fs::metadata(&candidate) {
-                    if meta.permissions().mode() & 0o111 != 0 {
-                        return Some(candidate);
+    find_in_search_path(tool, &path_var, std::env::var("PATHEXT").ok().as_deref())
+}
+
+fn find_in_search_path(
+    tool: &str,
+    path_var: &std::ffi::OsStr,
+    pathext: Option<&str>,
+) -> Option<PathBuf> {
+    #[cfg(windows)]
+    let names: Vec<String> = pathext
+        .unwrap_or(".COM;.EXE;.BAT;.CMD")
+        .split(';')
+        .map(|ext| ext.trim().to_ascii_lowercase())
+        .filter(|ext| matches!(ext.as_str(), ".exe" | ".com" | ".cmd" | ".bat"))
+        .map(|ext| format!("{tool}{ext}"))
+        .collect();
+    #[cfg(not(windows))]
+    let names = {
+        let _ = pathext;
+        vec![tool.to_string()]
+    };
+    for dir in std::env::split_paths(path_var) {
+        for name in &names {
+            // Resolve relative PATH entries before applying the child's working directory.
+            let candidate = std::path::absolute(dir.join(name)).ok()?;
+            if candidate.is_file() {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Ok(meta) = std::fs::metadata(&candidate) {
+                        if meta.permissions().mode() & 0o111 != 0 {
+                            return Some(candidate);
+                        }
+                        continue;
                     }
-                    continue;
                 }
-            }
-            #[cfg(not(unix))]
-            {
-                return Some(candidate);
+                #[cfg(not(unix))]
+                {
+                    return Some(candidate);
+                }
             }
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolves_path_entries_before_changing_working_directory() {
+        let dir = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        let file = dir
+            .path()
+            .join(if cfg!(windows) { "codex.exe" } else { "codex" });
+        std::fs::write(&file, b"fixture").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let relative = dir
+            .path()
+            .strip_prefix(std::env::current_dir().unwrap())
+            .unwrap();
+        assert_eq!(
+            find_in_search_path("codex", relative.as_os_str(), None),
+            Some(file)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_lookup_ignores_posix_shim_and_honors_pathext() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["codex", "codex.cmd", "codex.exe"] {
+            std::fs::write(dir.path().join(name), b"fixture").unwrap();
+        }
+        assert_eq!(
+            find_in_search_path("codex", dir.path().as_os_str(), Some(".CMD;.EXE")),
+            Some(dir.path().join("codex.cmd"))
+        );
+        assert_eq!(
+            find_in_search_path("codex", dir.path().as_os_str(), Some(".EXE;.CMD")),
+            Some(dir.path().join("codex.exe"))
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_batch_launcher_preserves_arguments_and_exit_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("codex.cmd");
+        std::fs::write(&file, "@echo off\r\necho \"%~1\"\r\nexit /b 19\r\n").unwrap();
+        let mut command = std::process::Command::new(file);
+        command
+            .arg("two words & literal")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let output = wait_child_output(
+            command.spawn().unwrap(),
+            CommandDeadline::from_timeout(Some(Duration::from_secs(5))),
+        )
+        .unwrap();
+        assert_eq!(output.status.code(), Some(19));
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            "\"two words & literal\""
+        );
+    }
 }
 
 /// 在超时内跑工具命令；超时则杀掉子进程并返回超时错误。
@@ -233,39 +303,15 @@ pub fn run_detected_tool_command_with_timeout(
     }) {
         return Err("Invalid tool command arguments".to_string());
     }
-    let tool_path = find_in_path(tool).ok_or_else(|| format!("{tool} is not installed"))?;
-    let mut cmd = Command::new(tool_path);
-    cmd.args(args)
-        .stdin(Stdio::null())
+    let deadline = CommandDeadline::from_timeout(timeout);
+    let mut cmd = detected_tool_command(tool, args, timeout.unwrap_or(Duration::from_secs(10)))?;
+    cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .current_dir(working_dir);
     for (k, v) in extra_env {
         cmd.env(k, v);
     }
-    let mut child = cmd.spawn().map_err(|e| format!("启动 {tool} 失败: {e}"))?;
-    // 轮询 try_wait：超时时能主动 kill，退出后 wait_with_output 收输出。
-    let start = std::time::Instant::now();
-    loop {
-        match child
-            .try_wait()
-            .map_err(|e| format!("等待 {tool} 退出失败: {e}"))?
-        {
-            Some(_) => {
-                return child
-                    .wait_with_output()
-                    .map_err(|e| format!("等待 {tool} 退出失败: {e}"));
-            }
-            None => {
-                if let Some(limit) = timeout {
-                    if start.elapsed() >= limit {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        return Err(format!("{tool} 执行超时"));
-                    }
-                }
-                std::thread::sleep(Duration::from_millis(20));
-            }
-        }
-    }
+    let child = cmd.spawn().map_err(|e| format!("启动 {tool} 失败: {e}"))?;
+    wait_child_output(child, deadline)
 }

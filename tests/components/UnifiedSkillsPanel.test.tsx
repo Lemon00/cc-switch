@@ -1,9 +1,9 @@
-import { render, screen, waitFor, within, act } from "@testing-library/react";
+import zh from "@/i18n/locales/zh.json";
+import { screen, waitFor, within, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { renderWithQueryClient } from "../utils/testQueryClient";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import i18n from "i18next";
-import en from "@/i18n/locales/en.json";
-
 import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
 import { settingsApi, skillsApi } from "@/lib/api";
 import type {
@@ -12,7 +12,6 @@ import type {
   SkillRepoFailure,
   SkillUpdateInfo,
 } from "@/lib/api/skills";
-
 const m = vi.hoisted(() => ({
   scanUnmanaged: vi.fn(),
   toggle: vi.fn(),
@@ -34,9 +33,8 @@ const m = vi.hoisted(() => ({
   updates: [] as SkillUpdateInfo[],
   repoFailures: [] as SkillRepoFailure[],
   checking: false,
-  visibleApps: ["claude", "codex", "pi"] as string[],
+  visibleApps: ["claude", "codex", "dsh"] as string[],
 }));
-
 vi.mock("sonner", () => ({
   toast: {
     success: m.toastSuccess,
@@ -45,17 +43,14 @@ vi.mock("sonner", () => ({
     info: m.toastInfo,
   },
 }));
-
 vi.mock("@/components/mcp/useVisibleAppIds", () => ({
   useVisibleAppIds: (ids: string[]) =>
     ids.filter((id) => m.visibleApps.includes(id)),
 }));
-
 vi.mock("@/components/skills/SkillsStorageSheet", () => ({
   SkillsStorageSheet: ({ open }: { open: boolean }) =>
     open ? <div data-testid="storage-sheet" /> : null,
 }));
-
 vi.mock("@/hooks/useSkills", () => ({
   useInstalledSkills: () => ({
     data: m.installed,
@@ -88,7 +83,7 @@ vi.mock("@/hooks/useSkills", () => ({
       {
         directory: "shared-skill",
         name: "Shared Skill",
-        foundIn: ["grokbuild", "claude"],
+        foundIn: ["opencode", "claude"],
         path: "/tmp/shared-skill",
       },
     ],
@@ -121,11 +116,9 @@ vi.mock("@/hooks/useSkills", () => ({
   useSearchSkillsSh: () => ({ data: undefined, isLoading: false }),
   useInstallSkill: () => ({ mutateAsync: vi.fn() }),
 }));
-
 type Overrides = Omit<Partial<InstalledSkill>, "apps"> & {
   apps?: Partial<InstalledSkill["apps"]>;
 };
-
 const makeSkill = (overrides: Overrides = {}): InstalledSkill => {
   const { apps, ...rest } = overrides;
   return {
@@ -139,12 +132,7 @@ const makeSkill = (overrides: Overrides = {}): InstalledSkill => {
     apps: {
       claude: false,
       codex: false,
-      gemini: false,
-      grokbuild: false,
       opencode: false,
-      openclaw: false,
-      hermes: false,
-      pi: false,
       ...apps,
     },
     installedAt: 1,
@@ -152,19 +140,15 @@ const makeSkill = (overrides: Overrides = {}): InstalledSkill => {
     ...rest,
   };
 };
-
 const renderPanel = (
   props: React.ComponentProps<typeof UnifiedSkillsPanel> = {},
-) => render(<UnifiedSkillsPanel {...props} />);
-
+) => renderWithQueryClient(<UnifiedSkillsPanel {...props} />);
 const columns = () =>
   screen.getAllByRole("button", { name: /appMatrix.columnAria/ });
-
 async function openMenu(trigger: string, item: string) {
   await userEvent.click(screen.getByRole("button", { name: trigger }));
   await userEvent.click(await screen.findByRole("menuitem", { name: item }));
 }
-
 describe("UnifiedSkillsPanel", () => {
   beforeEach(() => {
     m.installed = [];
@@ -172,13 +156,13 @@ describe("UnifiedSkillsPanel", () => {
     m.updates = [];
     m.repoFailures = [];
     m.checking = false;
-    m.visibleApps = ["claude", "codex", "pi"];
+    m.visibleApps = ["claude", "codex", "dsh"];
     m.scanUnmanaged.mockReset().mockResolvedValue({
       data: [
         {
           directory: "shared-skill",
           name: "Shared Skill",
-          foundIn: ["grokbuild", "claude"],
+          foundIn: ["opencode", "claude"],
           path: "/tmp/shared-skill",
         },
       ],
@@ -208,43 +192,31 @@ describe("UnifiedSkillsPanel", () => {
       fn.mockReset();
     }
   });
-
-  it("always shows the Pi column and toggles it like the other apps", async () => {
-    m.installed = [makeSkill({ apps: { claude: true, pi: true } })];
+  it("always shows the DeepSeek Harness column and toggles it like the other apps", async () => {
+    m.installed = [makeSkill({ apps: { claude: true, dsh: true } })];
     renderPanel();
     expect(columns()).toHaveLength(3);
-    // Pi 列头的说明走 HoverTip（悬停即显），不再用原生 title
-    expect(columns()[2]).not.toHaveAttribute("title");
-    await userEvent.hover(columns()[2]);
-    expect(
-      (await screen.findAllByText("skillsPage.piColumnTitle")).length,
-    ).toBeGreaterThan(0);
-    await userEvent.unhover(columns()[2]);
-
     const cells = screen.getAllByRole("button", { name: /appMatrix.cell/ });
     expect(cells[2]).toHaveAttribute("aria-pressed", "true");
     await userEvent.click(cells[2]);
     await waitFor(() =>
       expect(m.toggle).toHaveBeenCalledWith({
         id: "owner/repo:alpha-skill",
-        app: "pi",
+        app: "dsh",
         enabled: false,
       }),
     );
   });
-
-  it("hides the Pi column only when Pi is hidden on the Apps page", () => {
+  it("hides the DeepSeek Harness column only when DeepSeek Harness is hidden on the Apps page", () => {
     m.visibleApps = ["claude", "codex"];
     m.installed = [makeSkill()];
     renderPanel();
     expect(columns()).toHaveLength(2);
   });
-
   it("distinguishes an empty list from a search miss", async () => {
     renderPanel();
     expect(screen.getByText("skillsPage.emptyTitle")).toBeInTheDocument();
   });
-
   it("shows a search miss with a way into Discover", async () => {
     m.installed = [makeSkill()];
     renderPanel();
@@ -257,7 +229,6 @@ describe("UnifiedSkillsPanel", () => {
       screen.getByRole("button", { name: "skillsPage.searchInDiscover" }),
     ).toBeInTheDocument();
   });
-
   it("bulk-enables only the disabled Skills in a column and offers undo", async () => {
     m.installed = [
       makeSkill({ id: "a", name: "A", apps: { codex: true } }),
@@ -287,14 +258,13 @@ describe("UnifiedSkillsPanel", () => {
       }),
     );
   });
-
   it.each([true, false])(
     "shows an error toast when every bulk toggle fails (enabled=%s)",
     async (enabled) => {
-      m.visibleApps = ["hermes"];
+      m.visibleApps = ["dsh"];
       m.installed = [
-        makeSkill({ id: "a", name: "A", apps: { hermes: !enabled } }),
-        makeSkill({ id: "b", name: "B", apps: { hermes: !enabled } }),
+        makeSkill({ id: "a", name: "A", apps: { dsh: !enabled } }),
+        makeSkill({ id: "b", name: "B", apps: { dsh: !enabled } }),
       ];
       m.bulkToggle.mockResolvedValueOnce({
         succeeded: [],
@@ -320,7 +290,7 @@ describe("UnifiedSkillsPanel", () => {
       );
       expect(m.bulkToggle).toHaveBeenCalledWith({
         ids: ["a", "b"],
-        app: "hermes",
+        app: "dsh",
         enabled,
       });
       expect(
@@ -330,7 +300,6 @@ describe("UnifiedSkillsPanel", () => {
       expect(m.toastWarning).not.toHaveBeenCalled();
     },
   );
-
   it("marks partial bulk failures in the matrix", async () => {
     m.installed = [
       makeSkill({ id: "a", name: "A" }),
@@ -375,24 +344,21 @@ describe("UnifiedSkillsPanel", () => {
     );
     expect(screen.getByTestId("storage-sheet")).toBeInTheDocument();
   });
-
   describe.each([true, false])("bulk undo feedback (enabled=%s)", (enabled) => {
     beforeEach(() => {
-      m.visibleApps = ["hermes"];
+      m.visibleApps = ["dsh"];
       m.installed = ["a", "b"].map((id) =>
-        makeSkill({ id, name: id, apps: { hermes: !enabled } }),
+        makeSkill({ id, name: id, apps: { dsh: !enabled } }),
       );
       // Check the actual outcome text and count without changing panel labels.
       i18n.addResourceBundle("zh", "translation", {
-        common: { bulkToggleFailed: en.common.bulkToggleFailed },
-        appMatrix: { toast: { undone: en.appMatrix.toast.undone } },
+        common: { bulkToggleFailed: zh.common.bulkToggleFailed },
+        appMatrix: { toast: { undone: zh.appMatrix.toast.undone } },
       });
     });
-
     afterEach(() => {
       i18n.removeResourceBundle("zh", "translation");
     });
-
     it.each(["success", "partial", "total", "rejected"] as const)(
       "reports %s undo results and preserves failed-cell retries",
       async (outcome) => {
@@ -408,7 +374,6 @@ describe("UnifiedSkillsPanel", () => {
         await waitFor(() => expect(m.toastSuccess).toHaveBeenCalledTimes(1));
         const [, options] = m.toastSuccess.mock.calls[0];
         m.toastSuccess.mockClear();
-
         const failedIds =
           outcome === "success"
             ? []
@@ -427,7 +392,6 @@ describe("UnifiedSkillsPanel", () => {
           });
         }
         act(() => options.action.onClick());
-
         const expectedToast =
           outcome === "success"
             ? m.toastSuccess
@@ -437,8 +401,8 @@ describe("UnifiedSkillsPanel", () => {
         await waitFor(() =>
           expect(expectedToast).toHaveBeenCalledWith(
             outcome === "success"
-              ? "Undone"
-              : `Failed to update ${failedIds.length} item(s)`,
+              ? "已撤销"
+              : `有 ${failedIds.length} 项更新失败`,
             { closeButton: true },
           ),
         );
@@ -447,21 +411,20 @@ describe("UnifiedSkillsPanel", () => {
         }
         expect(m.bulkToggle).toHaveBeenLastCalledWith({
           ids: ["a", "b"],
-          app: "hermes",
+          app: "dsh",
           enabled: !enabled,
         });
         const failedCells = screen.queryAllByRole("button", {
           name: "appMatrix.cell.fail",
         });
         expect(failedCells).toHaveLength(failedIds.length);
-
         if (failedIds.length > 0) {
           // Undo releases the write lock and retry keeps the inverse target.
           await userEvent.click(failedCells[0]);
           await waitFor(() =>
             expect(m.toggle).toHaveBeenCalledWith({
               id: failedIds[0],
-              app: "hermes",
+              app: "dsh",
               enabled: !enabled,
             }),
           );
@@ -474,7 +437,6 @@ describe("UnifiedSkillsPanel", () => {
       },
     );
   });
-
   it("enables the selected Skills in one app from the selection bar", async () => {
     m.installed = [
       makeSkill({ id: "a", name: "A" }),
@@ -502,7 +464,6 @@ describe("UnifiedSkillsPanel", () => {
       }),
     );
   });
-
   it("selects every listed Skill from the header checkbox", async () => {
     m.installed = [
       makeSkill({ id: "a", name: "A" }),
@@ -515,19 +476,15 @@ describe("UnifiedSkillsPanel", () => {
     const picks = screen.getAllByRole("checkbox", {
       name: "skillsPage.selectAria",
     });
-
     await userEvent.click(picks[0]);
     expect(all.indeterminate).toBe(true);
-
     await userEvent.click(all);
     expect(all.checked).toBe(true);
     for (const pick of picks) expect(pick).toBeChecked();
-
     await userEvent.click(all);
     expect(all.checked).toBe(false);
     for (const pick of picks) expect(pick).not.toBeChecked();
   });
-
   it("uninstalls through the row menu after confirming", async () => {
     m.installed = [makeSkill()];
     m.uninstall.mockResolvedValueOnce({
@@ -551,7 +508,6 @@ describe("UnifiedSkillsPanel", () => {
       ),
     );
   });
-
   it("filters to Skills with updates from the header count and updates them after confirming", async () => {
     m.installed = [
       makeSkill({ id: "a", name: "A" }),
@@ -572,7 +528,6 @@ describe("UnifiedSkillsPanel", () => {
     expect(
       screen.queryByRole("button", { name: "skills.checkUpdates" }),
     ).not.toBeInTheDocument();
-
     const chip = screen.getByRole("button", {
       name: "skillsPage.headerUpdates",
     });
@@ -580,12 +535,10 @@ describe("UnifiedSkillsPanel", () => {
     await userEvent.click(chip);
     expect(chip).toHaveAttribute("aria-pressed", "true");
     expect(screen.getAllByRole("listitem")).toHaveLength(1);
-
     // 再点一次恢复全部
     await userEvent.click(chip);
     expect(chip).toHaveAttribute("aria-pressed", "false");
     expect(screen.getAllByRole("listitem")).toHaveLength(2);
-
     await userEvent.click(chip);
     await userEvent.click(
       screen.getByRole("button", { name: "skillsPage.updateAllCount" }),
@@ -615,7 +568,6 @@ describe("UnifiedSkillsPanel", () => {
     await waitFor(() => expect(m.updateSkill).toHaveBeenCalledTimes(1));
     expect(m.updateSkill).toHaveBeenCalledWith("b");
   });
-
   it("switches Installed / Discover with page tabs", async () => {
     m.installed = [makeSkill()];
     renderPanel();
@@ -629,7 +581,6 @@ describe("UnifiedSkillsPanel", () => {
       ).getAllByRole("tab")[1],
     ).toHaveAttribute("aria-selected", "true");
   });
-
   it("lets the unmanaged notice be ignored with one control", async () => {
     m.installed = [makeSkill()];
     renderPanel();
@@ -648,7 +599,6 @@ describe("UnifiedSkillsPanel", () => {
       screen.queryByText("skillsPage.banner.unmanaged"),
     ).not.toBeInTheDocument();
   });
-
   it("highlights a column for its cells but shows the app name only when hovering the header", async () => {
     const user = userEvent.setup();
     m.installed = [makeSkill({ apps: { claude: true } })];
@@ -658,7 +608,6 @@ describe("UnifiedSkillsPanel", () => {
     expect(cells[0]).toHaveAttribute("data-state", "on");
     expect(cells[1]).toHaveAttribute("data-state", "off");
     expect(cells[0].className).toBe(cells[1].className);
-
     expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
     await user.hover(cells[1]);
     expect(columns()[1]).toHaveAttribute("data-highlighted");
@@ -672,22 +621,22 @@ describe("UnifiedSkillsPanel", () => {
     await user.unhover(cells[1]);
     expect(columns()[1]).not.toHaveAttribute("data-highlighted");
     expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
-
     await user.hover(columns()[1]);
     expect(screen.getByTestId("matrix-column-name")).toHaveTextContent("Codex");
     await user.unhover(columns()[1]);
     expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
-
     await user.hover(columns()[1]);
     await user.hover(cells[1]);
     expect(columns()[1]).toHaveAttribute("data-highlighted");
     expect(screen.queryByTestId("matrix-column-name")).not.toBeInTheDocument();
   });
-
   it("ignores a second check-update click while one is running", async () => {
     m.installed = [makeSkill()];
     let resolve!: (value: {
-      data: { updates: never[]; failures: never[] };
+      data: {
+        updates: never[];
+        failures: never[];
+      };
     }) => void;
     m.checkUpdates.mockReturnValue(
       new Promise((r) => {
@@ -703,7 +652,6 @@ describe("UnifiedSkillsPanel", () => {
       resolve({ data: { updates: [], failures: [] } });
     });
   });
-
   it("closes the confirm dialog right away and shows progress while updating", async () => {
     m.installed = [
       makeSkill({ id: "a", name: "A" }),
@@ -721,7 +669,6 @@ describe("UnifiedSkillsPanel", () => {
         }),
     );
     renderPanel();
-
     await userEvent.click(
       screen.getByRole("button", { name: "skillsPage.updateAllCount" }),
     );
@@ -740,7 +687,6 @@ describe("UnifiedSkillsPanel", () => {
     expect(
       screen.getByRole("button", { name: "skillsPage.updatingProgress" }),
     ).toBeDisabled();
-
     await act(async () => pending[0]?.(makeSkill()));
     await waitFor(() => expect(m.updateSkill).toHaveBeenCalledTimes(2));
     await act(async () => pending[1]?.(makeSkill()));
@@ -754,7 +700,6 @@ describe("UnifiedSkillsPanel", () => {
       expect.anything(),
     );
   });
-
   it("asks to update everything right after a check finds updates", async () => {
     m.installed = [makeSkill({ id: "a", name: "A" })];
     const updates = [
@@ -767,7 +712,6 @@ describe("UnifiedSkillsPanel", () => {
       return { data: { updates, failures: [] } };
     });
     renderPanel();
-
     await userEvent.click(
       screen.getByRole("button", { name: "skills.checkUpdates" }),
     );
@@ -779,7 +723,6 @@ describe("UnifiedSkillsPanel", () => {
     await waitFor(() => expect(m.updateSkill).toHaveBeenCalledTimes(1));
     expect(m.updateSkill).toHaveBeenCalledWith("a");
   });
-
   it("does not call everything up to date when a repository could not be read", async () => {
     m.installed = [makeSkill()];
     const failure = {
@@ -792,11 +735,9 @@ describe("UnifiedSkillsPanel", () => {
       data: { updates: [], failures: [failure] },
     });
     renderPanel();
-
     await userEvent.click(
       screen.getByRole("button", { name: "skills.checkUpdates" }),
     );
-
     await waitFor(() =>
       expect(m.toastWarning).toHaveBeenCalledWith(
         "skills.updatesIncomplete",
@@ -808,7 +749,6 @@ describe("UnifiedSkillsPanel", () => {
       expect.anything(),
     );
   });
-
   it("shows which repositories the update check could not read", () => {
     m.installed = [makeSkill()];
     m.repoFailures = [
@@ -820,7 +760,6 @@ describe("UnifiedSkillsPanel", () => {
       screen.getByText("skillsPage.repoFail.updatesBody"),
     ).toBeInTheDocument();
   });
-
   it("says which ZIP Skills were skipped because the folder name is taken", async () => {
     m.installed = [makeSkill()];
     const dialog = vi
@@ -837,14 +776,12 @@ describe("UnifiedSkillsPanel", () => {
       ],
     });
     renderPanel();
-
     await userEvent.click(
       screen.getByRole("button", { name: /skillsPage.add/ }),
     );
     await userEvent.click(
       await screen.findByRole("menuitem", { name: "skillsPage.addMenu.zip" }),
     );
-
     await waitFor(() =>
       expect(m.toastWarning).toHaveBeenCalledWith(
         "skills.installFromZip.allSkipped",
@@ -859,7 +796,6 @@ describe("UnifiedSkillsPanel", () => {
     );
     dialog.mockRestore();
   });
-
   it("blocks actions but not navigation while checking updates", async () => {
     m.installed = [makeSkill()];
     m.checking = true;
@@ -880,10 +816,9 @@ describe("UnifiedSkillsPanel", () => {
       ).toBeDisabled(),
     );
   });
-
   it("imports with apps chosen from where each Skill was found", async () => {
     m.installed = [makeSkill()];
-    m.visibleApps = ["claude", "codex", "grokbuild", "pi"];
+    m.visibleApps = ["claude", "codex", "opencode", "dsh"];
     m.importSkills.mockResolvedValueOnce([makeSkill({ id: "shared" })]);
     renderPanel();
     await userEvent.click(
@@ -905,21 +840,13 @@ describe("UnifiedSkillsPanel", () => {
         apps: {
           claude: true,
           codex: false,
-          gemini: false,
-          grokbuild: true,
-          opencode: false,
-          openclaw: false,
-          hermes: false,
-          pi: false,
-          mcode: false,
-          kimi: false,
+          opencode: true,
           dsh: false,
           agy: false,
         },
       },
     ]);
   });
-
   it("closes the backup dialog and reports an explicit refresh failure", async () => {
     m.refetchBackups.mockRejectedValueOnce(new Error("refresh failed"));
     renderPanel();
@@ -933,7 +860,6 @@ describe("UnifiedSkillsPanel", () => {
       screen.queryByText("skills.restoreFromBackup.title"),
     ).not.toBeInTheDocument();
   });
-
   it("does not report a completed backup deletion as failed when refresh rejects", async () => {
     const consoleErrorSpy = vi
       .spyOn(console, "error")

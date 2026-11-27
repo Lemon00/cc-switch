@@ -1,7 +1,6 @@
-import * as React from "react";
 import { cn } from "@/lib/utils";
+import * as React from "react";
 import { TabUnderline, useSlidingIndicator } from "./sliding-indicator";
-
 /**
  * 下划线页签：页面级导航（换的是整块内容，例如用量页的「请求日志 / 供应商 / …」、
  * OpenClaw 的「供应商 / 工作区 / 配置」）。
@@ -12,7 +11,6 @@ export interface PageTabItem<T extends string> {
   label: React.ReactNode;
   disabled?: boolean;
 }
-
 export interface PageTabsProps<T extends string> {
   items: PageTabItem<T>[];
   value: T;
@@ -31,7 +29,6 @@ export interface PageTabsProps<T extends string> {
   size?: "default" | "sm";
   className?: string;
 }
-
 export function PageTabs<T extends string>({
   items,
   value,
@@ -50,7 +47,6 @@ export function PageTabs<T extends string>({
     '[aria-selected="true"]',
     value,
   );
-
   const onKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
     const index = enabled.findIndex((item) => item.value === value);
     let next = -1;
@@ -65,7 +61,6 @@ export function PageTabs<T extends string>({
     onValueChange(target);
     refs.current[target]?.focus();
   };
-
   return (
     <div
       className={cn(

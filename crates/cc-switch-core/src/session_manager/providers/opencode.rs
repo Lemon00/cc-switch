@@ -189,7 +189,7 @@ fn parse_sqlite_session_row(
         created_at: Some(created),
         last_active_at: Some(updated),
         source_path: Some(format!("sqlite:{db_display}:{session_id}")),
-        resume_command: Some(format!("opencode -s {session_id}")),
+        resume_command: super::utils::resume_command("opencode -s", &session_id),
     })
 }
 
@@ -265,6 +265,11 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
         .parent()
         .and_then(|p| p.parent())
         .ok_or_else(|| "Cannot determine storage root from message path".to_string())?;
+    let session_id = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    validate_message_directory(storage, path, session_id)?;
 
     let mut msg_files = Vec::new();
     collect_json_files(path, &mut msg_files);
@@ -279,6 +284,11 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
         let Some(msg_id) = value.get("id").and_then(Value::as_str) else {
             continue;
         };
+        if !super::utils::is_safe_id(msg_id)
+            || msg_path.file_stem().and_then(|name| name.to_str()) != Some(msg_id)
+        {
+            continue;
+        }
         let role = value
             .get("role")
             .and_then(Value::as_str)
@@ -291,7 +301,8 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
 
         // storage/part/{messageID}/ 下的 part 文件；part id 按时间递增，按文件名排序即生成顺序
         let mut part_files = Vec::new();
-        collect_json_files(&storage.join("part").join(msg_id), &mut part_files);
+        let part_dir = checked_storage_path(storage, &Path::new("part").join(msg_id))?;
+        collect_json_files(&part_dir, &mut part_files);
         part_files.sort();
         let parts: Vec<(PartLocator, Value)> = part_files
             .iter()
@@ -524,12 +535,12 @@ fn load_messages_sqlite_v2(
 }
 
 pub fn delete_session(storage: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
-    if path.file_name().and_then(|name| name.to_str()) != Some(session_id) {
-        return Err(format!(
-            "OpenCode session path does not match session ID: expected {session_id}, found {}",
-            path.display()
-        ));
-    }
+    validate_message_directory(storage, path, session_id)?;
+    checked_storage_path(storage, Path::new("session"))?;
+    let session_diff_path = checked_storage_path(
+        storage,
+        &Path::new("session_diff").join(format!("{session_id}.json")),
+    )?;
 
     let mut message_files = Vec::new();
     collect_json_files(path, &mut message_files);
@@ -545,37 +556,20 @@ pub fn delete_session(storage: &Path, path: &Path, session_id: &str) -> Result<b
             Err(_) => continue,
         };
         if let Some(message_id) = value.get("id").and_then(Value::as_str) {
-            message_ids.push(message_id.to_string());
+            if !super::utils::is_safe_id(message_id)
+                || message_path.file_stem().and_then(|name| name.to_str()) != Some(message_id)
+            {
+                return Err("OpenCode message ID does not match its file".into());
+            }
+            message_ids.push(checked_storage_path(
+                storage,
+                &Path::new("part").join(message_id),
+            )?);
         }
     }
 
-    for message_id in &message_ids {
-        let part_dir = storage.join("part").join(message_id);
-        remove_dir_all_if_exists(&part_dir).map_err(|e| {
-            format!(
-                "Failed to delete OpenCode part directory {}: {e}",
-                part_dir.display()
-            )
-        })?;
-    }
-
-    let session_diff_path = storage
-        .join("session_diff")
-        .join(format!("{session_id}.json"));
-    remove_file_if_exists(&session_diff_path).map_err(|e| {
-        format!(
-            "Failed to delete OpenCode session diff {}: {e}",
-            session_diff_path.display()
-        )
-    })?;
-
-    remove_dir_all_if_exists(path).map_err(|e| {
-        format!(
-            "Failed to delete OpenCode message directory {}: {e}",
-            path.display()
-        )
-    })?;
-
+    // Drop the session row / message tree first so the session disappears from the
+    // list even if part/diff GC fails afterward.
     if let Some(session_file) = find_session_file(storage, session_id) {
         remove_file_if_exists(&session_file).map_err(|e| {
             format!(
@@ -585,7 +579,64 @@ pub fn delete_session(storage: &Path, path: &Path, session_id: &str) -> Result<b
         })?;
     }
 
+    remove_dir_all_if_exists(path).map_err(|e| {
+        format!(
+            "Failed to delete OpenCode message directory {}: {e}",
+            path.display()
+        )
+    })?;
+
+    for part_dir in &message_ids {
+        if let Err(e) = remove_dir_all_if_exists(part_dir) {
+            log::warn!(
+                "OpenCode session deleted but part cleanup failed for {}: {e}",
+                part_dir.display()
+            );
+        }
+    }
+
+    if let Err(e) = remove_file_if_exists(&session_diff_path) {
+        log::warn!(
+            "OpenCode session deleted but session_diff cleanup failed for {}: {e}",
+            session_diff_path.display()
+        );
+    }
+
     Ok(true)
+}
+
+fn validate_message_directory(storage: &Path, path: &Path, session_id: &str) -> Result<(), String> {
+    if !super::utils::is_safe_id(session_id) {
+        return Err("Invalid OpenCode session ID".into());
+    }
+    let expected = checked_storage_path(storage, &Path::new("message").join(session_id))?;
+    if expected.canonicalize().ok().filter(|p| p.is_dir()) != path.canonicalize().ok()
+        || !path.is_dir()
+    {
+        return Err("OpenCode session path does not match its message directory".into());
+    }
+    Ok(())
+}
+
+/// Check every existing component before using metadata-derived paths for I/O.
+/// Missing part/diff trees are normal; links must not redirect cleanup elsewhere.
+fn checked_storage_path(storage: &Path, relative: &Path) -> Result<PathBuf, String> {
+    let mut path = storage.to_path_buf();
+    for component in relative.components() {
+        let std::path::Component::Normal(name) = component else {
+            return Err("OpenCode path is outside storage".into());
+        };
+        path.push(name);
+        match std::fs::symlink_metadata(&path) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err("OpenCode storage path contains a link".into())
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("Failed to inspect OpenCode storage path: {error}")),
+        }
+    }
+    Ok(path)
 }
 
 /// Delete a session from the OpenCode SQLite database.
@@ -607,6 +658,14 @@ pub fn delete_session_sqlite(session_id: &str, source: &str) -> Result<bool, Str
     if db_path != expected_db_path {
         return Err("SQLite path does not match expected OpenCode database".to_string());
     }
+
+    let storage = get_opencode_data_dir();
+    let legacy = if super::utils::is_safe_id(session_id) {
+        checked_storage_path(&storage, Path::new("session"))?;
+        find_session_file(&storage, session_id)
+    } else {
+        None
+    };
 
     let conn =
         Connection::open(&db_path).map_err(|e| format!("Failed to open OpenCode database: {e}"))?;
@@ -684,7 +743,20 @@ pub fn delete_session_sqlite(session_id: &str, source: &str) -> Result<bool, Str
     tx.commit()
         .map_err(|e| format!("Failed to commit session deletion: {e}"))?;
 
-    Ok(deleted > 0)
+    if let Some(session_file) = &legacy {
+        let message_dir = checked_storage_path(&storage, &Path::new("message").join(session_id))?;
+        let result = if message_dir.is_dir() {
+            delete_session(&storage, &message_dir, session_id).map(|_| ())
+        } else {
+            remove_file_if_exists(session_file).map_err(|e| e.to_string())
+        };
+        result.map_err(|e| {
+            format!(
+                "OpenCode database session removed, but legacy cleanup failed: {e}; retry deletion"
+            )
+        })?;
+    }
+    Ok(deleted > 0 || legacy.is_some())
 }
 
 fn parse_session(storage: &Path, path: &Path) -> Option<SessionMeta> {
@@ -692,6 +764,9 @@ fn parse_session(storage: &Path, path: &Path) -> Option<SessionMeta> {
     let value: Value = serde_json::from_str(&data).ok()?;
 
     let session_id = value.get("id").and_then(Value::as_str)?.to_string();
+    if !super::utils::is_safe_id(&session_id) {
+        return None;
+    }
     let title = value
         .get("title")
         .and_then(Value::as_str)
@@ -721,7 +796,7 @@ fn parse_session(storage: &Path, path: &Path) -> Option<SessionMeta> {
     });
 
     // Build source_path = message directory for this session
-    let msg_dir = storage.join("message").join(&session_id);
+    let msg_dir = checked_storage_path(storage, &Path::new("message").join(&session_id)).ok()?;
     let source_path = msg_dir.to_string_lossy().to_string();
 
     // Skip expensive I/O if title already available from session JSON
@@ -740,7 +815,7 @@ fn parse_session(storage: &Path, path: &Path) -> Option<SessionMeta> {
         created_at,
         last_active_at: updated_at.or(created_at),
         source_path: Some(source_path),
-        resume_command: Some(format!("opencode -s {session_id}")),
+        resume_command: super::utils::resume_command("opencode -s", &session_id),
     })
 }
 
@@ -771,8 +846,13 @@ fn get_first_user_summary(storage: &Path, session_id: &str) -> Option<String> {
         }
 
         let msg_id = match value.get("id").and_then(Value::as_str) {
-            Some(id) => id.to_string(),
-            None => continue,
+            Some(id)
+                if super::utils::is_safe_id(id)
+                    && msg_path.file_stem().and_then(|name| name.to_str()) == Some(id) =>
+            {
+                id.to_string()
+            }
+            _ => continue,
         };
 
         let ts = value
@@ -788,7 +868,7 @@ fn get_first_user_summary(storage: &Path, session_id: &str) -> Option<String> {
 
     // Take first user message and get its parts
     let (_, first_id) = user_msgs.first()?;
-    let part_dir = storage.join("part").join(first_id);
+    let part_dir = checked_storage_path(storage, &Path::new("part").join(first_id)).ok()?;
     let text = collect_parts_text(&part_dir);
     if text.trim().is_empty() {
         return None;
@@ -844,23 +924,9 @@ fn collect_parts_text(part_dir: &Path) -> String {
 }
 
 fn collect_json_files(root: &Path, files: &mut Vec<PathBuf>) {
-    if !root.exists() {
-        return;
-    }
-
-    let entries = match std::fs::read_dir(root) {
-        Ok(entries) => entries,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_json_files(&path, files);
-        } else if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
-            files.push(path);
-        }
-    }
+    super::utils::collect_session_files(root, files, |path| {
+        path.extension().and_then(|ext| ext.to_str()) == Some("json")
+    });
 }
 
 fn find_session_file(storage: &Path, session_id: &str) -> Option<PathBuf> {
@@ -993,6 +1059,41 @@ mod tests {
             .join("project")
             .join(format!("{project_id}.json"))
             .exists());
+    }
+
+    #[test]
+    fn delete_rejects_metadata_path_traversal_before_removing_anything() {
+        let temp = tempdir().unwrap();
+        let storage = temp.path();
+        let messages = storage.join("message/ses_1");
+        let victim = storage.join("keep");
+        std::fs::create_dir_all(&messages).unwrap();
+        std::fs::create_dir_all(&victim).unwrap();
+        std::fs::create_dir_all(storage.join("part")).unwrap();
+        std::fs::write(victim.join("valuable.txt"), "keep me").unwrap();
+        std::fs::write(messages.join("msg_1.json"), r#"{"id":"../keep"}"#).unwrap();
+        assert!(delete_session(storage, &messages, "ses_1").is_err());
+        assert!(messages.join("msg_1.json").exists());
+        assert!(victim.join("valuable.txt").exists());
+        let wrong = storage.join("session/ses_1");
+        std::fs::create_dir_all(&wrong).unwrap();
+        assert!(delete_session(storage, &wrong, "ses_1").is_err());
+        assert!(wrong.exists());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn delete_rejects_linked_part_parent_before_removing_transcript() {
+        let temp = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let messages = temp.path().join("message/ses_1");
+        std::fs::create_dir_all(&messages).unwrap();
+        std::fs::create_dir_all(outside.path().join("msg_1")).unwrap();
+        std::fs::write(messages.join("msg_1.json"), r#"{"id":"msg_1"}"#).unwrap();
+        std::os::unix::fs::symlink(outside.path(), temp.path().join("part")).unwrap();
+        assert!(delete_session(temp.path(), &messages, "ses_1").is_err());
+        assert!(messages.exists());
+        assert!(outside.path().join("msg_1").exists());
     }
 
     #[test]
@@ -1203,8 +1304,17 @@ mod tests {
         drop(conn);
 
         let source = format!("sqlite:{}:ses_1", db_path.display());
+        let legacy_root = base_dir.join("storage");
+        let legacy_file = legacy_root.join("session/project/ses_1.json");
+        let legacy_messages = legacy_root.join("message/ses_1");
+        std::fs::create_dir_all(legacy_file.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(&legacy_messages).unwrap();
+        std::fs::write(&legacy_file, r#"{"id":"ses_1","title":"Old copy"}"#).unwrap();
         let deleted = delete_session_sqlite("ses_1", &source).expect("delete sqlite session");
         assert!(deleted);
+        assert!(!legacy_file.exists());
+        assert!(!legacy_messages.exists());
+        assert!(scan_sessions_json().is_empty());
 
         let conn = Connection::open(&db_path).expect("re-open sqlite db");
         let remaining_sessions: i64 = conn

@@ -1,7 +1,6 @@
+import type { ProviderCategory } from "@/types";
 import { useTranslation } from "react-i18next";
 import ApiKeyInput from "../ApiKeyInput";
-import type { ProviderCategory } from "@/types";
-
 interface ApiKeySectionProps {
   id?: string;
   label?: string;
@@ -20,7 +19,6 @@ interface ApiKeySectionProps {
   isPartner?: boolean;
   partnerPromotionKey?: string;
 }
-
 export function ApiKeySection({
   id,
   label,
@@ -35,7 +33,6 @@ export function ApiKeySection({
   partnerPromotionKey,
 }: ApiKeySectionProps) {
   const { t } = useTranslation();
-
   const defaultPlaceholder = {
     official: t("providerForm.officialNoApiKey", {
       defaultValue: "官方供应商无需 API Key",
@@ -44,7 +41,6 @@ export function ApiKeySection({
       defaultValue: "输入 API Key，将自动填充到配置",
     }),
   };
-
   const finalPlaceholder = placeholder || defaultPlaceholder;
   const isDisabled = disabled ?? category === "official";
   const isRequired =
@@ -52,7 +48,6 @@ export function ApiKeySection({
     !isDisabled &&
     category !== "official" &&
     category !== "cloud_provider";
-
   const showLink = shouldShowLink && Boolean(websiteUrl);
   // 推广语跟着「获取 API Key」走，按输入框说明文字的样式写在框下面（v7 不画推广框）
   const promotion =
@@ -61,7 +56,6 @@ export function ApiKeySection({
           defaultValue: "",
         })
       : "";
-
   return (
     <ApiKeyInput
       id={id}

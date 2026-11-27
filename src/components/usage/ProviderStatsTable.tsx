@@ -1,21 +1,20 @@
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
+import { useProviderStats } from "@/lib/query/usage";
+import { cn } from "@/lib/utils";
+import type { UsageRangeSelection } from "@/types/usage";
+import { ArrowDown } from "lucide-react";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowDown } from "lucide-react";
-import { useProviderStats } from "@/lib/query/usage";
-import { TablePagination, useClientPagination } from "./TablePagination";
-import { cn } from "@/lib/utils";
 import {
   fmtInt,
   formatTokensCompact,
   getLocaleFromLanguage,
   getResolvedLang,
 } from "./format";
-import { usageTable } from "./usageTable";
 import { getUsageProviderLabel, usageProviderTitle } from "./providerLabel";
 import { PerformanceCells, PerformanceHeaders } from "./statsColumns";
-import type { UsageRangeSelection } from "@/types/usage";
-import { useMoneyFormat } from "@/hooks/useMoneyFormat";
-
+import { TablePagination, useClientPagination } from "./TablePagination";
+import { usageTable } from "./usageTable";
 interface ProviderStatsTableProps {
   range: UsageRangeSelection;
   appType?: string;
@@ -23,7 +22,6 @@ interface ProviderStatsTableProps {
   model?: string;
   refreshIntervalMs: number;
 }
-
 export function ProviderStatsTable({
   range,
   appType,
@@ -41,7 +39,6 @@ export function ProviderStatsTable({
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },
   );
-
   // 画板：按请求数排序（后端按成本排）
   const rows = useMemo(
     () => [...(stats ?? [])].sort((a, b) => b.requestCount - a.requestCount),
@@ -51,11 +48,9 @@ export function ProviderStatsTable({
     rows,
     JSON.stringify([range, appType, providerName, model]),
   );
-
   if (isLoading) {
     return <div className={usageTable.skeleton} />;
   }
-
   return (
     <div className="flex flex-col">
       <div className={usageTable.scroller}>

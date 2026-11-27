@@ -22,7 +22,7 @@ use crate::database::Database;
 use axum::{
     extract::DefaultBodyLimit,
     middleware,
-    routing::{any, get, post},
+    routing::{get, post},
     Router,
 };
 use hyper_util::rt::TokioIo;
@@ -59,6 +59,8 @@ pub struct ProxyServer {
     shutdown_tx: Arc<RwLock<Option<oneshot::Sender<()>>>>,
     /// 服务器任务句柄，用于等待服务器实际关闭
     server_handle: Arc<RwLock<Option<JoinHandle<()>>>>,
+    /// Serialize start/stop so concurrent starts cannot orphan a listener.
+    lifecycle: Arc<tokio::sync::Mutex<()>>,
 }
 
 #[cfg(test)]
@@ -103,33 +105,57 @@ impl ProxyServer {
             state,
             shutdown_tx: Arc::new(RwLock::new(None)),
             server_handle: Arc::new(RwLock::new(None)),
+            lifecycle: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
     pub async fn start(&self) -> Result<ProxyServerInfo, ProxyError> {
+        let _lifecycle = self.lifecycle.lock().await;
         // 检查是否已在运行
         if self.shutdown_tx.read().await.is_some() {
             return Err(ProxyError::AlreadyRunning);
         }
 
-        let addr: SocketAddr =
-            format!("{}:{}", self.config.listen_address, self.config.listen_port)
+        let address = self.config.listen_address.trim().trim_matches(['[', ']']);
+        let address = if address.eq_ignore_ascii_case("localhost") {
+            "127.0.0.1"
+        } else {
+            address
+        };
+        let addr = SocketAddr::new(
+            address
                 .parse()
-                .map_err(|e| ProxyError::BindFailed(format!("无效的地址: {e}")))?;
+                .map_err(|e| ProxyError::BindFailed(format!("无效的地址: {e}")))?,
+            self.config.listen_port,
+        );
 
-        // 创建关闭通道
+        if !crate::proxy::browser_guard::is_loopback_listen_address(&self.config.listen_address) {
+            crate::settings::proxy_lan_token(false)
+                .map_err(|error| ProxyError::BindFailed(error.to_string()))?;
+        }
+
+        // 创建关闭通道 — claim running slot before bind so concurrent start fails fast
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        *self.shutdown_tx.write().await = Some(shutdown_tx);
 
         // 构建路由
         let app = self.build_router();
 
         // 绑定监听器
-        let listener = tokio::net::TcpListener::bind(&addr)
-            .await
-            .map_err(|e| ProxyError::BindFailed(e.to_string()))?;
-        let local_addr = listener
-            .local_addr()
-            .map_err(|e| ProxyError::BindFailed(e.to_string()))?;
+        let listener = match tokio::net::TcpListener::bind(&addr).await {
+            Ok(listener) => listener,
+            Err(e) => {
+                let _ = self.shutdown_tx.write().await.take();
+                return Err(ProxyError::BindFailed(e.to_string()));
+            }
+        };
+        let local_addr = match listener.local_addr() {
+            Ok(addr) => addr,
+            Err(e) => {
+                let _ = self.shutdown_tx.write().await.take();
+                return Err(ProxyError::BindFailed(e.to_string()));
+            }
+        };
         let actual_port = local_addr.port();
 
         log::info!("[{}] 代理服务器启动于 {local_addr}", log_srv::STARTED);
@@ -137,13 +163,10 @@ impl ProxyServer {
         // 更新全局代理端口，用于系统代理检测
         crate::proxy::http_client::set_proxy_port(actual_port);
 
-        // 保存关闭句柄
-        *self.shutdown_tx.write().await = Some(shutdown_tx);
-
         // 更新状态
         let mut status = self.state.status.write().await;
         status.running = true;
-        status.address = self.config.listen_address.clone();
+        status.address = local_addr.ip().to_string();
         status.port = actual_port;
         drop(status);
 
@@ -155,10 +178,18 @@ impl ProxyServer {
         let state = self.state.clone();
         let handle = tokio::spawn(async move {
             let mut shutdown_rx = shutdown_rx;
+            // 跟踪已接受连接，停止时 abort；accept 前拿 permit 限制并发。
+            const MAX_INBOUND_CONNECTIONS: usize = 256;
+            const PEEK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+            let conn_limit =
+                std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_INBOUND_CONNECTIONS));
+            let mut connections = tokio::task::JoinSet::new();
             loop {
+                // 回收已结束的连接任务，释放 JoinSet 槽位。
+                while connections.try_join_next().is_some() {}
                 tokio::select! {
                     result = listener.accept() => {
-                        let (stream, _remote_addr) = match result {
+                        let (stream, remote_addr) = match result {
                             Ok(v) => v,
                             Err(e) => {
                                 log::error!("[{SRV}] accept 失败: {e}", SRV = log_srv::ACCEPT_ERR);
@@ -167,14 +198,26 @@ impl ProxyServer {
                             }
                         };
 
+                        let Ok(permit) = conn_limit.clone().try_acquire_owned() else {
+                            log::warn!(
+                                "[{SRV}] 拒绝连接：已达并发上限 {MAX_INBOUND_CONNECTIONS}",
+                                SRV = log_srv::ACCEPT_ERR
+                            );
+                            drop(stream);
+                            continue;
+                        };
+
                         let app = app.clone();
-                        tokio::spawn(async move {
+                        connections.spawn(async move {
+                            let _permit = permit;
                             // Peek raw TCP bytes to capture original header casing
                             // before hyper parses (and lowercases) the header names.
-                            let original_cases = {
+                            // Only the first HTTP request on this connection uses the
+                            // peeked map; keep-alive request 2+ rebuild from HeaderMap.
+                            let peeked_cases = {
                                 let mut peek_buf = vec![0u8; 8192];
-                                match stream.peek(&mut peek_buf).await {
-                                    Ok(n) => {
+                                match tokio::time::timeout(PEEK_TIMEOUT, stream.peek(&mut peek_buf)).await {
+                                    Ok(Ok(n)) => {
                                         let cases = super::hyper_client::OriginalHeaderCases::from_raw_bytes(&peek_buf[..n]);
                                         log::debug!(
                                             "[ProxyServer] Peeked {} bytes, captured {} header casings",
@@ -182,23 +225,40 @@ impl ProxyServer {
                                         );
                                         cases
                                     }
-                                    Err(e) => {
+                                    Ok(Err(e)) => {
                                         log::debug!("[ProxyServer] peek failed (non-fatal): {e}");
                                         super::hyper_client::OriginalHeaderCases::default()
                                     }
+                                    Err(_) => {
+                                        log::debug!("[ProxyServer] peek timed out; dropping slow connection");
+                                        return;
+                                    }
                                 }
                             };
+                            let request_index =
+                                std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
                             // service_fn 将 axum Router（tower::Service）桥接到 hyper
                             let service = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
                                 let mut router = app.clone();
-                                let cases = original_cases.clone();
+                                let peeked = peeked_cases.clone();
+                                let request_index = request_index.clone();
                                 async move {
+                                    let idx = request_index
+                                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                    let cases = if idx == 0 {
+                                        peeked
+                                    } else {
+                                        super::hyper_client::OriginalHeaderCases::from_header_map(
+                                            req.headers(),
+                                        )
+                                    };
                                     // 将 hyper::body::Incoming 转为 axum::body::Body，保留 extensions
                                     let (mut parts, body) = req.into_parts();
 
                                     // Insert our own header case map alongside hyper's internal one
                                     parts.extensions.insert(cases);
+                                    parts.extensions.insert(super::browser_guard::PeerAddr(remote_addr));
 
                                     let body = axum::body::Body::new(body);
                                     let axum_req = http::Request::from_parts(parts, body);
@@ -207,6 +267,8 @@ impl ProxyServer {
                             });
 
                             if let Err(e) = hyper::server::conn::http1::Builder::new()
+                                .timer(hyper_util::rt::TokioTimer::new())
+                                .header_read_timeout(std::time::Duration::from_secs(30))
                                 .preserve_header_case(true)
                                 .serve_connection(TokioIo::new(stream), service)
                                 .await
@@ -219,6 +281,19 @@ impl ProxyServer {
                     _ = &mut shutdown_rx => {
                         break;
                     }
+                }
+            }
+
+            // 停止 accept 后强制结束仍在跑的连接，避免 keep-alive 继续打上游。
+            connections.abort_all();
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+            while !connections.is_empty() {
+                if tokio::time::timeout_at(deadline, connections.join_next())
+                    .await
+                    .is_err()
+                {
+                    connections.abort_all();
+                    break;
                 }
             }
 
@@ -238,6 +313,7 @@ impl ProxyServer {
     }
 
     pub async fn stop(&self) -> Result<(), ProxyError> {
+        let _lifecycle = self.lifecycle.lock().await;
         // 1. 发送关闭信号
         if let Some(tx) = self.shutdown_tx.write().await.take() {
             let _ = tx.send(());
@@ -245,22 +321,35 @@ impl ProxyServer {
             return Err(ProxyError::NotRunning);
         }
 
-        // 2. 等待服务器任务结束（带 5 秒超时保护）
+        // 2. 等待服务器任务结束（带 5 秒超时保护）；超时则 abort，避免孤儿监听。
         if let Some(handle) = self.server_handle.write().await.take() {
+            let abort = handle.abort_handle();
             match tokio::time::timeout(std::time::Duration::from_secs(5), handle).await {
                 Ok(Ok(())) => {
                     log::info!("[{}] 代理服务器已完全停止", log_srv::STOPPED);
                     Ok(())
                 }
+                Ok(Err(e)) if e.is_cancelled() => {
+                    log::info!("[{}] 代理服务器任务已 abort", log_srv::STOPPED);
+                    self.state.status.write().await.running = false;
+                    *self.state.start_time.write().await = None;
+                    Ok(())
+                }
                 Ok(Err(e)) => {
                     log::warn!("[{}] 代理服务器任务异常终止: {e}", log_srv::TASK_ERROR);
+                    self.state.status.write().await.running = false;
+                    *self.state.start_time.write().await = None;
                     Err(ProxyError::StopFailed(e.to_string()))
                 }
                 Err(_) => {
                     log::warn!(
-                        "[{}] 代理服务器停止超时（5秒），强制继续",
+                        "[{}] 代理服务器停止超时（5秒），强制 abort 监听任务",
                         log_srv::STOP_TIMEOUT
                     );
+                    abort.abort();
+                    // Abort skips the task's normal cleanup; clear status here.
+                    self.state.status.write().await.running = false;
+                    *self.state.start_time.write().await = None;
                     Err(ProxyError::StopTimeout)
                 }
             }
@@ -312,14 +401,6 @@ impl ProxyServer {
             .route("/v1/messages", post(handlers::handle_messages))
             .route("/claude/v1/messages", post(handlers::handle_messages))
             // Claude Desktop 3P 本地 gateway（独立 provider namespace）
-            .route(
-                "/claude-desktop/v1/models",
-                get(handlers::handle_claude_desktop_models),
-            )
-            .route(
-                "/claude-desktop/v1/messages",
-                post(handlers::handle_claude_desktop_messages),
-            )
             // OpenAI Chat Completions API (Codex CLI，支持带前缀和不带前缀)
             .route("/chat/completions", post(handlers::handle_chat_completions))
             .route(
@@ -357,10 +438,6 @@ impl ProxyServer {
             )
             // Grok Build uses the Responses protocol but has an independent
             // provider namespace and failover queue.
-            .route(
-                "/grokbuild/v1/responses",
-                post(handlers::handle_grokbuild_responses),
-            )
             // OpenAI Responses Compact API (Codex CLI 远程压缩，透传)
             .route(
                 "/responses/compact",
@@ -377,10 +454,6 @@ impl ProxyServer {
             .route(
                 "/codex/v1/responses/compact",
                 post(handlers::handle_responses_compact),
-            )
-            .route(
-                "/grokbuild/v1/responses/compact",
-                post(handlers::handle_grokbuild_responses_compact),
             )
             // Codex standalone Alpha Search API. All local aliases normalize to
             // the selected provider's canonical sibling `/alpha/search` route.
@@ -422,12 +495,8 @@ impl ProxyServer {
             // `:streamGenerateContent` / `:countTokens` 之外，Gemini SDK / CLI 还会发
             // GET `/models`、GET `/models/<id>` 等只读端点。如果只挂 POST，这些 GET
             // 请求会在路由层 404，绕过本地代理的统计、整流和故障转移。
-            .route("/v1beta/*path", any(handlers::handle_gemini))
-            .route("/gemini/v1beta/*path", any(handlers::handle_gemini))
-            // Gemini 的 GA 版本也叫 /v1，给原 SDK 留一条出口
-            .route("/gemini/v1/*path", any(handlers::handle_gemini))
             // 提高默认请求体大小限制（避免 413 Payload Too Large）
-            .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
+            .layer(DefaultBodyLimit::max(handlers::MAX_REQUEST_BODY_BYTES))
             // 拒绝网页发来的请求（最外层，读请求体之前）：见 browser_guard
             .layer(middleware::from_fn_with_state(
                 self.state.clone(),
@@ -438,7 +507,9 @@ impl ProxyServer {
 
     /// 在不重启服务的情况下更新运行时配置
     pub async fn apply_runtime_config(&self, config: &ProxyConfig) {
-        *self.state.config.write().await = config.clone();
+        let mut runtime = config.clone();
+        runtime.listen_address = self.config.listen_address.clone();
+        *self.state.config.write().await = runtime;
     }
 
     /// 热更新熔断器配置
@@ -453,7 +524,7 @@ impl ProxyServer {
 
     pub async fn update_circuit_breaker_config_for_app(
         &self,
-        app_type: &str,
+        app_type: &crate::app_config::AppType,
         config: super::circuit_breaker::CircuitBreakerConfig,
     ) {
         self.state
@@ -469,11 +540,19 @@ impl ProxyServer {
             .reset_provider_breaker(provider_id, app_type)
             .await;
     }
+
+    pub async fn forget_circuit_breakers(&self, app_type: &str, provider_id: Option<&str>) {
+        self.state
+            .provider_router
+            .forget(app_type, provider_id)
+            .await;
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_config::AppType;
     use crate::error::AppError;
     use crate::provider::{Provider, ProviderMeta};
     use axum::http::{header, HeaderMap, StatusCode};
@@ -485,6 +564,20 @@ mod tests {
         path_and_query: String,
         authorization: Option<String>,
         body: Value,
+    }
+
+    #[tokio::test]
+    async fn runtime_updates_cannot_downgrade_lan_authentication() {
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_address: "0.0.0.0".into(),
+                ..ProxyConfig::default()
+            },
+            Arc::new(Database::memory().unwrap()),
+            crate::events::FrontendHooks::default(),
+        );
+        proxy.apply_runtime_config(&ProxyConfig::default()).await;
+        assert_eq!(proxy.state.config.read().await.listen_address, "0.0.0.0");
     }
 
     /// Windows 上监听 socket 不能被子进程继承：从 CC Switch 拉起的终端、CLI 一旦继承它，
@@ -592,15 +685,6 @@ mod tests {
         let cli = client.get(format!("{base}/health")).send().await.unwrap();
         assert_eq!(cli.status(), StatusCode::OK);
 
-        // Claude Desktop 由网关 token 把关，带 Origin 也交给它自己的鉴权（401 而非 403）
-        let desktop = client
-            .get(format!("{base}/claude-desktop/v1/models"))
-            .header(header::ORIGIN, "app://claude")
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(desktop.status(), StatusCode::UNAUTHORIZED);
-
         proxy.stop().await.expect("stop test proxy");
     }
 
@@ -640,8 +724,9 @@ mod tests {
                 is_full_url: Some(full_url),
                 ..ProviderMeta::default()
             });
-            db.save_provider("codex", &provider).unwrap();
-            db.set_current_provider("codex", &provider.id).unwrap();
+            db.save_provider(&AppType::Codex, &provider).unwrap();
+            db.set_current_provider(&AppType::Codex, &provider.id)
+                .unwrap();
             let before = proxy.get_status().await.total_requests;
             let request = client
                 .post(format!(
@@ -804,9 +889,9 @@ mod tests {
                 }),
                 None,
             );
-            db.save_provider("codex", &provider)
+            db.save_provider(&AppType::Codex, &provider)
                 .expect("save pasted base URL provider");
-            db.set_current_provider("codex", &provider.id)
+            db.set_current_provider(&AppType::Codex, &provider.id)
                 .expect("select pasted base URL provider");
 
             let response = client
@@ -839,6 +924,122 @@ mod tests {
                 Some("Bearer upstream-secret")
             );
         }
+
+        proxy.stop().await.expect("stop test proxy");
+        mock_handle.abort();
+    }
+
+    /// Codex 对第三方原生 Responses 上游发起 V2 压缩（`/responses`，input 末尾是
+    /// `compaction_trigger`）时，上游只回普通消息，代理要补上 Codex 必需的 compaction 条目。
+    /// `/responses/compact` 是另一套接口，同样的请求体原样透传，不补条目。
+    #[tokio::test]
+    async fn codex_compaction_item_is_added_on_responses_but_not_on_compact() {
+        const UPSTREAM_SSE: &str = "event: response.output_item.done\n\
+data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"summary so far\"}]}}\n\n\
+event: response.completed\n\
+data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[]}}\n\n";
+        let paths = Arc::new(Mutex::new(Vec::<String>::new()));
+        let handler = {
+            let paths = paths.clone();
+            move |request: axum::extract::Request| {
+                let paths = paths.clone();
+                async move {
+                    paths.lock().await.push(request.uri().path().to_string());
+                    (
+                        StatusCode::OK,
+                        [(header::CONTENT_TYPE, "text/event-stream")],
+                        UPSTREAM_SSE,
+                    )
+                }
+            }
+        };
+        let mock_app = Router::new()
+            .route("/v1/responses", post(handler.clone()))
+            .route("/v1/responses/compact", post(handler));
+        let mock_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind mock upstream");
+        let mock_addr = mock_listener.local_addr().expect("mock upstream address");
+        let mock_handle = tokio::spawn(async move {
+            axum::serve(mock_listener, mock_app)
+                .await
+                .expect("serve mock upstream");
+        });
+
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let provider = Provider::with_id(
+            "relay".to_string(),
+            "Relay".to_string(),
+            json!({
+                "base_url": format!("http://{mock_addr}/v1"),
+                "auth": {"OPENAI_API_KEY": "upstream-secret"}
+            }),
+            None,
+        );
+        db.save_provider(&AppType::Codex, &provider)
+            .expect("save provider");
+        db.set_current_provider(&AppType::Codex, &provider.id)
+            .expect("select provider");
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                ..ProxyConfig::default()
+            },
+            db,
+            crate::events::FrontendHooks::default(),
+        );
+        let proxy_info = proxy.start().await.expect("start test proxy");
+        let client = reqwest::Client::new();
+        let compaction_body = json!({
+            "model": "gpt-5",
+            "stream": true,
+            "input": [
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+                {"type": "compaction_trigger"}
+            ]
+        });
+
+        let mut bodies = Vec::new();
+        for path in ["/v1/responses", "/v1/responses/compact"] {
+            let response = client
+                .post(format!("http://127.0.0.1:{}{path}", proxy_info.port))
+                .json(&compaction_body)
+                .send()
+                .await
+                .expect("send compaction request");
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            bodies.push(response.text().await.expect("read response body"));
+        }
+        assert_eq!(
+            *paths.lock().await,
+            vec![
+                "/v1/responses".to_string(),
+                "/v1/responses/compact".to_string()
+            ]
+        );
+
+        let compaction_items = |body: &str| {
+            body.split("\n\n")
+                .filter_map(|block| {
+                    block
+                        .lines()
+                        .find_map(|line| line.strip_prefix("data: "))
+                        .and_then(|data| serde_json::from_str::<Value>(data).ok())
+                })
+                .filter(|event| {
+                    event["type"] == "response.output_item.done"
+                        && event["item"]["type"] == "compaction"
+                })
+                .count()
+        };
+        assert_eq!(compaction_items(&bodies[0]), 1, "{}", bodies[0]);
+        assert!(
+            bodies[0].contains("ccswitch-compaction-v1:"),
+            "{}",
+            bodies[0]
+        );
+        assert_eq!(compaction_items(&bodies[1]), 0, "{}", bodies[1]);
+        assert!(bodies[1].contains("summary so far"), "{}", bodies[1]);
 
         proxy.stop().await.expect("stop test proxy");
         mock_handle.abort();
@@ -901,9 +1102,9 @@ mod tests {
             }),
             None,
         );
-        db.save_provider("codex", &provider)
+        db.save_provider(&AppType::Codex, &provider)
             .expect("save test provider");
-        db.set_current_provider("codex", &provider.id)
+        db.set_current_provider(&AppType::Codex, &provider.id)
             .expect("select test provider");
 
         let proxy = ProxyServer::new(
@@ -990,9 +1191,9 @@ mod tests {
             is_full_url: Some(true),
             ..ProviderMeta::default()
         });
-        db.save_provider("codex", &full_url_provider)
+        db.save_provider(&AppType::Codex, &full_url_provider)
             .expect("save full URL images provider");
-        db.set_current_provider("codex", &full_url_provider.id)
+        db.set_current_provider(&AppType::Codex, &full_url_provider.id)
             .expect("select full URL images provider");
 
         let response = client
@@ -1111,9 +1312,9 @@ mod tests {
             }),
             None,
         );
-        db.save_provider("codex", &provider)
+        db.save_provider(&AppType::Codex, &provider)
             .expect("save test provider");
-        db.set_current_provider("codex", &provider.id)
+        db.set_current_provider(&AppType::Codex, &provider.id)
             .expect("select test provider");
 
         let proxy = ProxyServer::new(
@@ -1203,9 +1404,9 @@ mod tests {
             is_full_url: Some(true),
             ..ProviderMeta::default()
         });
-        db.save_provider("codex", &full_url_provider)
+        db.save_provider(&AppType::Codex, &full_url_provider)
             .expect("save full URL images edit provider");
-        db.set_current_provider("codex", &full_url_provider.id)
+        db.set_current_provider(&AppType::Codex, &full_url_provider.id)
             .expect("select full URL images edit provider");
 
         let response = client
@@ -1336,9 +1537,9 @@ mod tests {
             }),
             None,
         );
-        db.save_provider("codex", &provider)
+        db.save_provider(&AppType::Codex, &provider)
             .expect("save test provider");
-        db.set_current_provider("codex", &provider.id)
+        db.set_current_provider(&AppType::Codex, &provider.id)
             .expect("select test provider");
 
         let proxy = ProxyServer::new(
@@ -1408,9 +1609,9 @@ mod tests {
             is_full_url: Some(true),
             ..ProviderMeta::default()
         });
-        db.save_provider("codex", &full_url_provider)
+        db.save_provider(&AppType::Codex, &full_url_provider)
             .expect("save full URL provider");
-        db.set_current_provider("codex", &full_url_provider.id)
+        db.set_current_provider(&AppType::Codex, &full_url_provider.id)
             .expect("select full URL provider");
 
         let response = client

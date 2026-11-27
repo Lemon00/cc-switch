@@ -1,46 +1,59 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n, { syncLanguageFromSettings } from "@/i18n";
+import en from "@/i18n/locales/en.json";
+import zh from "@/i18n/locales/zh.json";
 
 describe("syncLanguageFromSettings", () => {
+  beforeEach(() => {
+    i18n.addResourceBundle("zh", "translation", zh, true, true);
+    i18n.addResourceBundle("en", "translation", en, true, true);
+  });
   afterEach(async () => {
+    vi.restoreAllMocks();
     localStorage.removeItem("language");
-    await i18n.changeLanguage("en");
+    await i18n.changeLanguage("zh");
   });
-
-  it("switches to the saved language and refills the cache when localStorage is empty", async () => {
+  it.each(["zh", "en"])(
+    "restores saved %s over a conflicting cache",
+    async (language) => {
+      const stale = language === "zh" ? "en" : "zh";
+      await i18n.changeLanguage(stale);
+      localStorage.setItem("language", stale);
+      syncLanguageFromSettings(language);
+      expect(i18n.language).toBe(language);
+      expect(localStorage.getItem("language")).toBe(language);
+      expect(i18n.t("common.save")).toBe(language === "zh" ? "保存" : "Save");
+    },
+  );
+  it.each([
+    ["zh-TW", "zh"],
+    ["zh-Hant", "zh"],
+    ["en-US", "en"],
+    ["tr", "en"],
+    ["ja", "en"],
+  ])("normalizes legacy %s to %s", (language, expected) => {
+    syncLanguageFromSettings(language);
+    expect(i18n.language).toBe(expected);
+    expect(localStorage.getItem("language")).toBe(expected);
+  });
+  it("refills an empty cache even when English is already active", async () => {
     await i18n.changeLanguage("en");
     localStorage.removeItem("language");
-
-    syncLanguageFromSettings("zh");
-
-    expect(i18n.language).toBe("zh");
-    expect(localStorage.getItem("language")).toBe("zh");
+    syncLanguageFromSettings("en");
+    expect(localStorage.getItem("language")).toBe("en");
   });
-
-  it("overrides a stale cached language", async () => {
-    await i18n.changeLanguage("ja");
-    localStorage.setItem("language", "ja");
-
-    syncLanguageFromSettings("zh-TW");
-
-    expect(i18n.language).toBe("zh-TW");
-    expect(localStorage.getItem("language")).toBe("zh-TW");
-  });
-
-  it("restores Turkish and its translated labels from saved settings", async () => {
+  it("preserves the detected language when no setting exists", async () => {
     await i18n.changeLanguage("en");
-    syncLanguageFromSettings("tr");
-    expect(i18n.language).toBe("tr");
-    expect(localStorage.getItem("language")).toBe("tr");
-  });
-
-  it("leaves the current language alone when nothing is saved", async () => {
-    await i18n.changeLanguage("en");
-
     syncLanguageFromSettings(undefined);
-    syncLanguageFromSettings("fr");
-
+    syncLanguageFromSettings(null);
     expect(i18n.language).toBe("en");
-    expect(localStorage.getItem("language")).toBeNull();
+  });
+  it("still applies the saved language when storage is unavailable", () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("unavailable");
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(() => syncLanguageFromSettings("en")).not.toThrow();
+    expect(i18n.language).toBe("en");
   });
 });

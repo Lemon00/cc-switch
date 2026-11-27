@@ -976,49 +976,6 @@ mod tests {
 
     #[test]
     #[serial]
-    fn desktop_app_servers_are_reported_separately() {
-        let scope = Scope::new();
-        let store = scope.store();
-        let clock = Arc::new(AtomicU64::new(1_000_000));
-        let table = Arc::new(Mutex::new(String::new()));
-        fake_env(
-            clock.clone(),
-            table.clone(),
-            Arc::new(AtomicBool::new(false)),
-        );
-        point_at_catalog(Some("old"));
-        observe(&store);
-        clock.store(1_100_000, Ordering::SeqCst);
-        point_at_catalog(Some("new"));
-        observe(&store);
-        clock.store(1_200_000, Ordering::SeqCst);
-        // 桌面版在旧目录时启动；守护进程没在跑。
-        *table.lock().unwrap() =
-            "62347 02:30 /Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex -c features.code_mode_host=true app-server".to_string();
-        assert_eq!(
-            stale_clients(&store, true),
-            Some(StaleClients {
-                daemon: false,
-                others: true,
-                auth: false,
-                unverified: false
-            })
-        );
-        // 撤掉指针之后仍提示：桌面版还拿着 CC Switch 的旧目录，新启动的 Codex 读的是内置列表。
-        point_at_catalog(None);
-        assert_eq!(
-            stale_clients(&store, true),
-            Some(StaleClients {
-                daemon: false,
-                others: true,
-                auth: false,
-                unverified: false
-            })
-        );
-    }
-
-    #[test]
-    #[serial]
     fn account_switch_is_reported_without_a_catalog_and_refresh_is_not() {
         let scope = Scope::new();
         let store = scope.store();

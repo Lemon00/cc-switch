@@ -1,16 +1,17 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
 const mocks = vi.hoisted(() => ({
   getAll: vi.fn(),
   save: vi.fn(),
   openExternal: vi.fn(),
   settings: undefined as
-    | { firstRunNoticeConfirmed?: boolean; newLayoutNoticeConfirmed?: boolean }
+    | {
+        firstRunNoticeConfirmed?: boolean;
+        newLayoutNoticeConfirmed?: boolean;
+      }
     | undefined,
 }));
-
 vi.mock("@/lib/api", () => ({
   providersApi: { getAll: mocks.getAll },
   settingsApi: { save: mocks.save, openExternal: mocks.openExternal },
@@ -19,12 +20,10 @@ vi.mock("@/lib/query", () => ({
   useSettingsQuery: () => ({ data: mocks.settings }),
 }));
 vi.mock("@tauri-apps/api/app", () => ({
-  getVersion: async () => "4.0.0",
+  getVersion: async () => "1.0.0",
 }));
-
 import { NewLayoutDialog } from "@/components/shell/NewLayoutDialog";
 import { APP_IDS } from "@/config/appConfig";
-
 function renderDialog() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -35,7 +34,6 @@ function renderDialog() {
     </QueryClientProvider>,
   );
 }
-
 describe("NewLayoutDialog", () => {
   beforeEach(() => {
     mocks.settings = { firstRunNoticeConfirmed: true };
@@ -47,13 +45,11 @@ describe("NewLayoutDialog", () => {
         app === "codex" ? { p1: { id: "p1" } } : {},
       );
   });
-
   it("shows to returning users and records the confirmation", async () => {
     renderDialog();
     expect(
       await screen.findByText("newLayoutNotice.title"),
     ).toBeInTheDocument();
-
     fireEvent.click(
       screen.getByRole("button", { name: "newLayoutNotice.confirm" }),
     );
@@ -66,11 +62,10 @@ describe("NewLayoutDialog", () => {
     expect(mocks.save).toHaveBeenCalledWith(
       expect.objectContaining({
         newLayoutNoticeConfirmed: true,
-        whatsNewSeenVersion: "4.0.0",
+        independentWhatsNewSeenVersion: "1.0.0",
       }),
     );
   });
-
   it("opens this version's release notes and closes", async () => {
     renderDialog();
     fireEvent.click(
@@ -80,7 +75,7 @@ describe("NewLayoutDialog", () => {
     );
     await waitFor(() =>
       expect(mocks.openExternal).toHaveBeenCalledWith(
-        "https://github.com/Lemon00/cc-switch/releases/tag/v4.0.0",
+        "https://github.com/Lemon00/cc-switch/releases/tag/v1.0.0",
       ),
     );
     await waitFor(() =>
@@ -90,7 +85,6 @@ describe("NewLayoutDialog", () => {
     );
     expect(screen.queryByText("newLayoutNotice.title")).not.toBeInTheDocument();
   });
-
   it("stays closed once confirmed", async () => {
     mocks.settings = {
       firstRunNoticeConfirmed: true,
@@ -100,7 +94,6 @@ describe("NewLayoutDialog", () => {
     expect(mocks.getAll).not.toHaveBeenCalled();
     expect(screen.queryByText("newLayoutNotice.title")).not.toBeInTheDocument();
   });
-
   it("stays closed when no app has providers", async () => {
     mocks.getAll.mockResolvedValue({});
     renderDialog();
@@ -109,7 +102,6 @@ describe("NewLayoutDialog", () => {
     );
     expect(screen.queryByText("newLayoutNotice.title")).not.toBeInTheDocument();
   });
-
   it("never shows to a fresh install that is seeing the welcome dialog", async () => {
     mocks.settings = { firstRunNoticeConfirmed: undefined };
     renderDialog();

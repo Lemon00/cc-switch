@@ -101,9 +101,12 @@ fn decompress_single(
             let zlib = flate2::read::ZlibDecoder::new(body);
             match read_with_output_limit(zlib, max_output_bytes) {
                 Ok(decompressed) => Ok(Some(decompressed)),
+                // Never fall through TooLarge to raw: zlib bombs report TooLarge
+                // first, then raw DeflateDecoder fails with Io and masks the limit.
+                Err(DecompressError::TooLarge { limit }) => {
+                    Err(DecompressError::TooLarge { limit })
+                }
                 Err(zlib_err) => {
-                    // TooLarge 也要回退：raw 流被误判为 zlib 时可能在预算处截停，
-                    // 回退后若真是炸弹，raw 解码同样会触发 TooLarge。
                     log::debug!("deflate 按 zlib 解压失败（{zlib_err}），回退 raw deflate");
                     let raw = flate2::read::DeflateDecoder::new(body);
                     Ok(Some(read_with_output_limit(raw, max_output_bytes)?))

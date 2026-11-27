@@ -28,7 +28,8 @@ fn openai_cache_read_tokens(usage: &Value) -> u32 {
         // 故命中数直接作 cache_read 即可。
         .or_else(|| provided_nonzero(usage.get("prompt_cache_hit_tokens")))
         .and_then(Value::as_u64)
-        .unwrap_or(0) as u32
+        .unwrap_or(0)
+        .min(u32::MAX as u64) as u32
 }
 
 fn openai_cache_write_tokens(usage: &Value) -> u32 {
@@ -37,7 +38,8 @@ fn openai_cache_write_tokens(usage: &Value) -> u32 {
         .or_else(|| usage.pointer("/input_tokens_details/cache_write_tokens"))
         .or_else(|| usage.pointer("/prompt_tokens_details/cache_write_tokens"))
         .and_then(Value::as_u64)
-        .unwrap_or(0) as u32
+        .unwrap_or(0)
+        .min(u32::MAX as u64) as u32
 }
 
 /// Claude usage 中按 1 小时 TTL 写入的缓存 token（`cache_creation_input_tokens` 的子集）
@@ -45,7 +47,8 @@ pub fn claude_cache_creation_1h_tokens(usage: &Value) -> u32 {
     usage
         .pointer("/cache_creation/ephemeral_1h_input_tokens")
         .and_then(Value::as_u64)
-        .unwrap_or(0) as u32
+        .unwrap_or(0)
+        .min(u32::MAX as u64) as u32
 }
 
 /// Session 日志 request_id 前缀，与 `session_usage.rs` 中的格式保持一致
@@ -73,11 +76,10 @@ fn response_id(body: &Value, field: &str) -> Option<String> {
 /// Generative Language API 序列化为 JSON 数字，而 Vertex AI 遵循 protobuf 的
 /// int64→JSON string 映射返回字符串；两种形状都要认，否则 Vertex 形状的
 /// usage 会被整体丢弃。
-fn gemini_token_count(value: &Value) -> Option<u32> {
+fn gemini_token_count(value: &Value) -> Option<u64> {
     value
         .as_u64()
         .or_else(|| value.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
-        .map(|n| n as u32)
 }
 
 /// Token 使用量统计
@@ -139,16 +141,18 @@ impl TokenUsage {
         let message_id = response_id(body, "id");
 
         Some(Self {
-            input_tokens: usage.get("input_tokens")?.as_u64()? as u32,
-            output_tokens: usage.get("output_tokens")?.as_u64()? as u32,
+            input_tokens: usage.get("input_tokens")?.as_u64()?.min(u32::MAX as u64) as u32,
+            output_tokens: usage.get("output_tokens")?.as_u64()?.min(u32::MAX as u64) as u32,
             cache_read_tokens: usage
                 .get("cache_read_input_tokens")
                 .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32,
+                .unwrap_or(0)
+                .min(u32::MAX as u64) as u32,
             cache_creation_tokens: usage
                 .get("cache_creation_input_tokens")
                 .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32,
+                .unwrap_or(0)
+                .min(u32::MAX as u64) as u32,
             cache_creation_1h_tokens: claude_cache_creation_1h_tokens(usage),
             model,
             message_id,
@@ -184,17 +188,19 @@ impl TokenUsage {
                             if let Some(input) =
                                 msg_usage.get("input_tokens").and_then(|v| v.as_u64())
                             {
-                                usage.input_tokens = input as u32;
+                                usage.input_tokens = input.min(u32::MAX as u64) as u32;
                             }
                             usage.cache_read_tokens = msg_usage
                                 .get("cache_read_input_tokens")
                                 .and_then(|v| v.as_u64())
                                 .unwrap_or(0)
+                                .min(u32::MAX as u64)
                                 as u32;
                             usage.cache_creation_tokens = msg_usage
                                 .get("cache_creation_input_tokens")
                                 .and_then(|v| v.as_u64())
                                 .unwrap_or(0)
+                                .min(u32::MAX as u64)
                                 as u32;
                             usage.cache_creation_1h_tokens =
                                 claude_cache_creation_1h_tokens(msg_usage);
@@ -206,21 +212,21 @@ impl TokenUsage {
                             if let Some(output) =
                                 delta_usage.get("output_tokens").and_then(|v| v.as_u64())
                             {
-                                usage.output_tokens = output as u32;
+                                usage.output_tokens = output.min(u32::MAX as u64) as u32;
                             }
 
                             let delta_input = delta_usage
                                 .get("input_tokens")
                                 .and_then(|v| v.as_u64())
-                                .map(|v| v as u32);
+                                .map(|v| v.min(u32::MAX as u64) as u32);
                             let delta_cache_read = delta_usage
                                 .get("cache_read_input_tokens")
                                 .and_then(|v| v.as_u64())
-                                .map(|v| v as u32);
+                                .map(|v| v.min(u32::MAX as u64) as u32);
                             let delta_cache_creation = delta_usage
                                 .get("cache_creation_input_tokens")
                                 .and_then(|v| v.as_u64())
-                                .map(|v| v as u32);
+                                .map(|v| v.min(u32::MAX as u64) as u32);
 
                             // 部分 Anthropic-compatible SSE provider 会在 message_start 上报完整上下文，
                             // 但在 message_delta 上报修正后的 fresh input。遇到更小的正数 delta input
@@ -299,7 +305,7 @@ impl TokenUsage {
                 final_usage
                     .get(key)
                     .and_then(|v| v.as_u64())
-                    .map(|v| v as u32)
+                    .map(|v| v.min(u32::MAX as u64) as u32)
             };
             usage.input_tokens = read("input_tokens").unwrap_or(0);
             usage.cache_read_tokens = read("cache_read_input_tokens").unwrap_or(0);
@@ -340,8 +346,8 @@ impl TokenUsage {
         let cache_write_tokens = openai_cache_write_tokens(usage);
 
         Some(Self {
-            input_tokens: input_tokens? as u32,
-            output_tokens: output_tokens? as u32,
+            input_tokens: input_tokens?.min(u32::MAX as u64) as u32,
+            output_tokens: output_tokens?.min(u32::MAX as u64) as u32,
             cache_read_tokens: cached_tokens,
             cache_creation_tokens: cache_write_tokens,
             cache_creation_1h_tokens: 0,
@@ -383,9 +389,9 @@ impl TokenUsage {
         // 先尝试 Codex Responses API 格式 (response.completed 事件)
         for event in events {
             if let Some(event_type) = event.get("type").and_then(|v| v.as_str()) {
-                if event_type == "response.completed" {
+                if matches!(event_type, "response.completed" | "response.incomplete") {
                     if let Some(response) = event.get("response") {
-                        log::debug!("[Codex] 找到 response.completed 事件");
+                        log::debug!("[Codex] 找到 {event_type} 事件");
                         return Self::from_codex_response_auto(response);
                     }
                 }
@@ -433,8 +439,8 @@ impl TokenUsage {
             .map(|s| s.to_string());
 
         Some(Self {
-            input_tokens: prompt_tokens as u32,
-            output_tokens: completion_tokens as u32,
+            input_tokens: prompt_tokens.min(u32::MAX as u64) as u32,
+            output_tokens: completion_tokens.min(u32::MAX as u64) as u32,
             cache_read_tokens: cached_tokens,
             cache_creation_tokens: cache_write_tokens,
             cache_creation_1h_tokens: 0,
@@ -478,15 +484,18 @@ impl TokenUsage {
 
         // 输出 tokens = 总 tokens - 输入 tokens
         // 这包含了 candidatesTokenCount + thoughtsTokenCount
-        let output_tokens = total_tokens.saturating_sub(prompt_tokens);
+        let output_tokens = total_tokens
+            .saturating_sub(prompt_tokens)
+            .min(u32::MAX as u64) as u32;
 
         Some(Self {
-            input_tokens: prompt_tokens,
+            input_tokens: prompt_tokens.min(u32::MAX as u64) as u32,
             output_tokens,
             cache_read_tokens: usage
                 .get("cachedContentTokenCount")
                 .and_then(gemini_token_count)
-                .unwrap_or(0),
+                .unwrap_or(0)
+                .min(u32::MAX as u64) as u32,
             cache_creation_tokens: 0,
             cache_creation_1h_tokens: 0,
             model,
@@ -496,31 +505,26 @@ impl TokenUsage {
 
     /// 从 Gemini API 流式响应解析
     pub fn from_gemini_stream_chunks(chunks: &[Value]) -> Option<Self> {
-        let mut total_input = 0u32;
-        let mut total_tokens = 0u32;
-        let mut total_cache_read = 0u32;
+        let mut total_input = 0u64;
+        let mut total_tokens = 0u64;
+        let mut total_cache_read = 0u64;
         let mut model: Option<String> = None;
         let mut message_id: Option<String> = None;
 
         for chunk in chunks {
             if let Some(usage) = chunk.get("usageMetadata") {
-                // 输入 tokens (通常在所有 chunk 中保持不变)
-                total_input = usage
-                    .get("promptTokenCount")
-                    .and_then(gemini_token_count)
-                    .unwrap_or(0);
-
-                // 总 tokens (包含输入 + 输出 + 思考)
-                total_tokens = usage
-                    .get("totalTokenCount")
-                    .and_then(gemini_token_count)
-                    .unwrap_or(0);
-
-                // 缓存读取 tokens
-                total_cache_read = usage
+                if let Some(count) = usage.get("promptTokenCount").and_then(gemini_token_count) {
+                    total_input = total_input.max(count);
+                }
+                if let Some(count) = usage.get("totalTokenCount").and_then(gemini_token_count) {
+                    total_tokens = total_tokens.max(count);
+                }
+                if let Some(count) = usage
                     .get("cachedContentTokenCount")
                     .and_then(gemini_token_count)
-                    .unwrap_or(0);
+                {
+                    total_cache_read = total_cache_read.max(count);
+                }
             }
 
             // 提取实际使用的模型名称（modelVersion 字段）
@@ -537,11 +541,11 @@ impl TokenUsage {
         // 输出 tokens = 总 tokens - 输入 tokens
         let total_output = total_tokens.saturating_sub(total_input);
 
-        if total_input > 0 || total_output > 0 {
+        if total_input > 0 || total_output > 0 || total_cache_read > 0 {
             Some(Self {
-                input_tokens: total_input,
-                output_tokens: total_output,
-                cache_read_tokens: total_cache_read,
+                input_tokens: total_input.min(u32::MAX as u64) as u32,
+                output_tokens: total_output.min(u32::MAX as u64) as u32,
+                cache_read_tokens: total_cache_read.min(u32::MAX as u64) as u32,
                 cache_creation_tokens: 0,
                 cache_creation_1h_tokens: 0,
                 model,
@@ -555,6 +559,32 @@ impl TokenUsage {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn oversized_response_counters_saturate_instead_of_wrapping() {
+        let count = u64::from(u32::MAX) + 1;
+        let claude = serde_json::json!({"usage": {
+            "input_tokens": count, "output_tokens": count, "cache_read_input_tokens": count,
+            "cache_creation_input_tokens": count, "cache_creation": {"ephemeral_1h_input_tokens": count}
+        }});
+        let parsed = TokenUsage::from_claude_response(&claude).unwrap();
+        assert_eq!(parsed.input_tokens, u32::MAX);
+        assert_eq!(parsed.output_tokens, u32::MAX);
+        assert_eq!(parsed.cache_read_tokens, u32::MAX);
+        assert_eq!(parsed.cache_creation_1h_tokens, u32::MAX);
+        let openai =
+            serde_json::json!({"usage": {"prompt_tokens": count, "completion_tokens": count}});
+        assert_eq!(
+            TokenUsage::from_openai_response(&openai)
+                .unwrap()
+                .input_tokens,
+            u32::MAX
+        );
+        assert_eq!(
+            gemini_token_count(&serde_json::json!(count.to_string())),
+            Some(count)
+        );
+    }
+
     use super::*;
     use serde_json::json;
 

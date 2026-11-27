@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -7,12 +7,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { AlertTriangle } from "lucide-react";
-import { useTranslation } from "react-i18next";
 import type { ToolInstallationReport } from "@/lib/api/settings";
+import { AlertTriangle } from "lucide-react";
+import { useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { ToolInstallRow } from "./ToolInstallRow";
-
 interface ToolUpgradeConfirmDialogProps {
   isOpen: boolean;
   plans: ToolInstallationReport[];
@@ -20,7 +19,6 @@ interface ToolUpgradeConfirmDialogProps {
   onConfirm: () => void;
   onCancel: () => void;
 }
-
 /**
  * 升级前的「多处安装确认」。仅当某工具检测到 ≥2 处安装时弹出：展示命令行实际命中
  * 哪处（标「默认」= 升级目标）、各处版本，以及锚定后将执行的命令，让用户在
@@ -35,12 +33,10 @@ export function ToolUpgradeConfirmDialog({
 }: ToolUpgradeConfirmDialogProps) {
   const { t } = useTranslation();
   const titleRef = useRef<HTMLHeadingElement>(null);
-
   // 队首切换后移开操作按钮的焦点，按住 Enter/Space 不能继续处理下一项。
   useEffect(() => {
     if (isOpen) titleRef.current?.focus();
   }, [isOpen, plans]);
-
   return (
     <Dialog
       open={isOpen}

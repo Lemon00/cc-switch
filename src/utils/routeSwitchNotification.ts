@@ -1,8 +1,7 @@
-import type { TFunction } from "i18next";
+import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import type { AppId } from "@/lib/api/types";
 import type { RouteSwitchResult } from "@/types/proxy";
-import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
-
+import type { TFunction } from "i18next";
 /** Routing takes effect independently of client config loaded at startup. */
 export function routeSwitchNotification(
   result: RouteSwitchResult,
@@ -41,10 +40,7 @@ export function routeSwitchNotification(
   if (
     result.kind !== "remembered" &&
     result.clientConfigChanged &&
-    (app === "codex" ||
-      app === "gemini" ||
-      app === "grokbuild" ||
-      app === "claude-desktop")
+    app === "codex"
   ) {
     message += t("mode.toast.clientConfigChanged", {
       app: APP_DISPLAY_NAME[app],

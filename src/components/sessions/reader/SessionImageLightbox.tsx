@@ -1,7 +1,3 @@
-import { memo, useState } from "react";
-import { Copy, Maximize2, Minimize2, X } from "lucide-react";
-import { useTranslation } from "react-i18next";
-
 import {
   Dialog,
   DialogClose,
@@ -12,11 +8,12 @@ import {
 import { HoverTip } from "@/components/ui/hover-tip";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
+import { Copy, Maximize2, Minimize2, X } from "lucide-react";
+import { memo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useReaderT } from "./i18n";
-
 const toolButton =
   "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
-
 export interface SessionImageLightboxProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -25,7 +22,6 @@ export interface SessionImageLightboxProps {
   alt: string;
   mediaType?: string;
 }
-
 /** 写剪贴板：浏览器普遍只收 image/png，其他格式先经 canvas 转一次 */
 const copyImage = async (url: string) => {
   const blob = await fetch(url).then((response) => response.blob());
@@ -33,9 +29,15 @@ const copyImage = async (url: string) => {
   if (blob.type !== "image/png") {
     const bitmap = await createImageBitmap(blob);
     const canvas = document.createElement("canvas");
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
-    canvas.getContext("2d")?.drawImage(bitmap, 0, 0);
+    try {
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Image conversion is unavailable");
+      context.drawImage(bitmap, 0, 0);
+    } finally {
+      bitmap.close();
+    }
     png = await new Promise<Blob>((resolve, reject) =>
       canvas.toBlob(
         (result) => (result ? resolve(result) : reject(new Error("toBlob"))),
@@ -45,7 +47,6 @@ const copyImage = async (url: string) => {
   }
   await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
 };
-
 /**
  * 图片灯箱：基于 Dialog（焦点陷阱、Esc 关闭），原图默认适应窗口，可切到 100% 原始大小并滚动查看。
  */
@@ -59,7 +60,6 @@ export const SessionImageLightbox = memo(function SessionImageLightbox({
   const { t } = useTranslation();
   const rt = useReaderT();
   const [actualSize, setActualSize] = useState(false);
-
   const handleCopy = async () => {
     try {
       await copyImage(url);
@@ -68,7 +68,6 @@ export const SessionImageLightbox = memo(function SessionImageLightbox({
       toast.error(t("common.error", { defaultValue: "复制失败" }));
     }
   };
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent

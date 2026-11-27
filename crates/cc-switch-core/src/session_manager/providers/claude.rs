@@ -58,22 +58,25 @@ pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<boo
         ));
     }
 
-    if let Some(stem) = path.file_stem() {
-        let sibling = path.parent().unwrap_or_else(|| Path::new("")).join(stem);
-        remove_path_if_exists(&sibling).map_err(|e| {
-            format!(
-                "Failed to delete Claude session sidecar {}: {e}",
-                sibling.display()
-            )
-        })?;
-    }
-
+    // Delete the transcript first so a sidecar cleanup failure cannot leave the
+    // main session gone from the user's perspective while reporting total failure
+    // with the opposite leftover (sidecar gone, transcript still listed).
     std::fs::remove_file(path).map_err(|e| {
         format!(
             "Failed to delete Claude session file {}: {e}",
             path.display()
         )
     })?;
+
+    if let Some(stem) = path.file_stem() {
+        let sibling = path.parent().unwrap_or_else(|| Path::new("")).join(stem);
+        if let Err(e) = remove_path_if_exists(&sibling) {
+            log::warn!(
+                "Claude session deleted but sidecar cleanup failed for {}: {e}",
+                sibling.display()
+            );
+        }
+    }
 
     Ok(true)
 }
@@ -272,7 +275,7 @@ fn parse_session_lines(
         created_at,
         last_active_at,
         source_path: Some(path.to_string_lossy().to_string()),
-        resume_command: Some(format!("claude --resume {session_id}")),
+        resume_command: super::utils::resume_command("claude --resume", &session_id),
     })
 }
 
@@ -290,29 +293,19 @@ fn infer_session_id_from_filename(path: &Path) -> Option<String> {
 }
 
 fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
-    if !root.exists() {
-        return;
-    }
-
-    let entries = match std::fs::read_dir(root) {
-        Ok(entries) => entries,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_jsonl_files(&path, files);
-        } else if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
-            files.push(path);
-        }
-    }
+    super::utils::collect_session_files(root, files, |path| {
+        path.extension().and_then(|ext| ext.to_str()) == Some("jsonl")
+    });
 }
 
 fn remove_path_if_exists(path: &Path) -> std::io::Result<()> {
-    match std::fs::metadata(path) {
+    // Use symlink_metadata so a sidecar that is itself a symlink is unlinked
+    // without recursing into (or deleting) the link target — same as OMP.
+    match std::fs::symlink_metadata(path) {
         Ok(meta) => {
-            if meta.is_dir() {
+            if meta.file_type().is_symlink() {
+                std::fs::remove_file(path)
+            } else if meta.is_dir() {
                 std::fs::remove_dir_all(path)
             } else {
                 std::fs::remove_file(path)

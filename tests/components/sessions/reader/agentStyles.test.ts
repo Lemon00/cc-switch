@@ -7,16 +7,7 @@ import {
   type ReaderStyleId,
 } from "@/components/sessions/reader/agentStyles";
 import { SESSION_APP_IDS } from "@/components/sessions/utils";
-
-const STYLE_IDS: ReaderStyleId[] = [
-  "claude",
-  "codex",
-  "gemini",
-  "opencode",
-  "pi",
-  "generic",
-];
-
+const STYLE_IDS: ReaderStyleId[] = ["claude", "codex", "opencode", "generic"];
 const TOOL_KINDS: ToolKind[] = [
   "shell",
   "read",
@@ -30,7 +21,6 @@ const TOOL_KINDS: ToolKind[] = [
   "todo",
   "other",
 ];
-
 describe("agentStyles", () => {
   it("六份配置齐全，id 与键一致，字段完整", () => {
     expect(Object.keys(AGENT_READER_STYLES).sort()).toEqual(
@@ -61,10 +51,8 @@ describe("agentStyles", () => {
       }
     });
   });
-
   it("关键取值（§6.6 表）", () => {
-    const { claude, codex, gemini, opencode, pi, generic } =
-      AGENT_READER_STYLES;
+    const { claude, codex, opencode, generic } = AGENT_READER_STYLES;
     expect(claude).toMatchObject({
       assistantGlyph: "⏺",
       resultConnector: "⎿",
@@ -78,15 +66,7 @@ describe("agentStyles", () => {
       monoTitles: false,
       merge: { readSearchRuns: true, mcpSameServerRuns: false },
     });
-    expect(gemini.step).toEqual({
-      success: "✓",
-      error: "x",
-      pending: "o",
-      interrupted: "-",
-    });
-    expect(gemini.resultFrame).toBe("box");
     expect(opencode).toMatchObject({ titleFormat: "icon", showStepCost: true });
-    expect(pi.resultFrame).toBe("none");
     // 只有 OpenCode 显示每步费用（D13）
     STYLE_IDS.filter((id) => id !== "opencode").forEach((id) =>
       expect(AGENT_READER_STYLES[id].showStepCost).toBe(false),
@@ -97,7 +77,6 @@ describe("agentStyles", () => {
       expect(verb.startsWith(READER_VERB_I18N_PREFIX)).toBe(true),
     );
   });
-
   it("会话来源映射：五家专属，其余与未知来源用 generic", () => {
     SESSION_APP_IDS.forEach((app) => {
       const style = getAgentReaderStyle(app);

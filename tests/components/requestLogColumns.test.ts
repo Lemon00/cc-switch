@@ -7,7 +7,6 @@ import {
   setRequestLogColumn,
   TOGGLEABLE_REQUEST_LOG_COLUMNS,
 } from "@/components/usage/requestLogColumns";
-
 describe("request log columns", () => {
   it("shows the ten original columns by default and hides the new ones", () => {
     expect(resolveRequestLogColumns(undefined)).toEqual([
@@ -23,7 +22,6 @@ describe("request log columns", () => {
       "firstToken",
     ]);
   });
-
   it("applies overrides in table order, keeps time, ignores unknown ids", () => {
     expect(
       resolveRequestLogColumns({
@@ -51,7 +49,6 @@ describe("request log columns", () => {
       REQUEST_LOG_COLUMNS.length - 1,
     );
   });
-
   it("breaks groups at the first shown column of each group", () => {
     expect([
       ...requestLogGroupBreaks([
@@ -65,7 +62,6 @@ describe("request log columns", () => {
     ]).toEqual(["cost", "output", "firstToken"]);
     expect(requestLogGroupBreaks(["time", "app"]).size).toBe(0);
   });
-
   it("pins time and app when they lead the table, and only time when app is hidden", () => {
     expect(requestLogPinnedStart(["time", "app", "provider", "model"])).toEqual(
       ["time", "app"],
@@ -74,7 +70,6 @@ describe("request log columns", () => {
       "time",
     ]);
   });
-
   it("stores only columns that differ from their default", () => {
     expect(setRequestLogColumn(undefined, "hitRate", true)).toEqual({
       hitRate: true,

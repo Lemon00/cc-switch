@@ -4,11 +4,9 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { UsageDashboard } from "@/components/usage/UsageDashboard";
 import { emitTauriEvent } from "../msw/tauriMocks";
-
 /**
  * 不 mock 子组件，把整页（指标、趋势图、四个页签）真渲染一遍，接口用假数据。
  */
-
 const usageApiMock = vi.hoisted(() => ({
   getUsageSummary: vi.fn(),
   getUsageSummaryByApp: vi.fn(),
@@ -22,43 +20,44 @@ const usageApiMock = vi.hoisted(() => ({
   saveModelsDevSyncConfig: vi.fn(),
   syncSessionUsage: vi.fn(),
   getSessionUsageLastSync: vi.fn().mockResolvedValue(null),
+  getUsageFirstDate: vi.fn().mockResolvedValue(null),
   rebuildCodexUsage: vi.fn(),
 }));
-
 // t 要稳定：真实的 i18next 也只在切语言时换 t，组件里有依赖 t 的 effect
 const i18nMock = vi.hoisted(() => ({
   t: (key: string, options?: unknown) =>
     options && typeof options === "object" && "count" in options
-      ? `${key}:${(options as { count: unknown }).count}`
+      ? `${key}:${
+          (
+            options as {
+              count: unknown;
+            }
+          ).count
+        }`
       : key,
   i18n: { resolvedLanguage: "zh", language: "zh" },
 }));
-
 vi.mock("react-i18next", () => ({
   useTranslation: () => i18nMock,
 }));
-
 vi.mock("@/lib/api/usage", () => ({ usageApi: usageApiMock }));
-
 vi.mock("@/lib/api/proxy", () => ({
   proxyApi: {
     getPricingModelSource: vi.fn().mockResolvedValue("response"),
     setPricingModelSource: vi.fn().mockResolvedValue(undefined),
   },
 }));
-
 const summary = {
   totalRequests: 3120,
   totalCost: "42.100000",
-  totalInputTokens: 1_000_000,
-  totalOutputTokens: 400_000,
-  totalCacheCreationTokens: 200_000,
-  totalCacheReadTokens: 16_600_000,
+  totalInputTokens: 1000000,
+  totalOutputTokens: 400000,
+  totalCacheCreationTokens: 200000,
+  totalCacheReadTokens: 16600000,
   successRate: 99.5,
-  realTotalTokens: 18_200_000,
+  realTotalTokens: 18200000,
   cacheHitRate: 0.7161,
 };
-
 describe("UsageDashboard (smoke)", () => {
   beforeEach(() => {
     usageApiMock.syncSessionUsage.mockReset().mockResolvedValue({
@@ -75,11 +74,11 @@ describe("UsageDashboard (smoke)", () => {
         date: "2026-09-30T00:00:00+08:00",
         requestCount: 290,
         totalCost: "4.1",
-        totalTokens: 1_800_000,
-        totalInputTokens: 100_000,
-        totalOutputTokens: 50_000,
-        totalCacheCreationTokens: 10_000,
-        totalCacheReadTokens: 1_640_000,
+        totalTokens: 1800000,
+        totalInputTokens: 100000,
+        totalOutputTokens: 50000,
+        totalCacheCreationTokens: 10000,
+        totalCacheReadTokens: 1640000,
       },
     ]);
     usageApiMock.getProviderStats.mockResolvedValue([
@@ -88,19 +87,19 @@ describe("UsageDashboard (smoke)", () => {
         appType: "claude",
         providerName: "DeepSeek",
         requestCount: 720,
-        totalTokens: 4_300_000,
+        totalTokens: 4300000,
         totalCost: "6.1",
         successRate: 99.4,
         avgLatencyMs: 9000,
-        speedOutputTokens: 92_000,
-        speedGenerationMs: 1_000_000,
+        speedOutputTokens: 92000,
+        speedGenerationMs: 1000000,
       },
     ]);
     usageApiMock.getModelStats.mockResolvedValue([
       {
         model: "kimi-k2.6",
         requestCount: 980,
-        totalTokens: 5_700_000,
+        totalTokens: 5700000,
         totalCost: "11.2",
         avgCostPerRequest: "0.0114",
         successRate: 100,
@@ -134,12 +133,10 @@ describe("UsageDashboard (smoke)", () => {
       },
     });
   });
-
   afterEach(() => {
     cleanup();
     vi.useRealTimers();
   });
-
   it("scans session logs on open and shows imported usage via the backend event", async () => {
     vi.useFakeTimers();
     const client = new QueryClient({
@@ -165,7 +162,6 @@ describe("UsageDashboard (smoke)", () => {
     expect(screen.getByText("$43.10")).toBeInTheDocument();
     client.clear();
   });
-
   it("scans at the interval and re-runs statistics only once a minute for rolling ranges", async () => {
     vi.useFakeTimers();
     const client = new QueryClient({
@@ -203,7 +199,6 @@ describe("UsageDashboard (smoke)", () => {
     expect(usageApiMock.syncSessionUsage).toHaveBeenCalledTimes(13);
     client.clear();
   });
-
   it("hides the scan interval and never scans while auto scanning is off", async () => {
     vi.useFakeTimers();
     const client = new QueryClient({
@@ -224,7 +219,6 @@ describe("UsageDashboard (smoke)", () => {
     ).not.toBeInTheDocument();
     client.clear();
   });
-
   it("renders metrics, trend, every tab and pricing with real children", async () => {
     const user = userEvent.setup();
     const client = new QueryClient({
@@ -235,14 +229,12 @@ describe("UsageDashboard (smoke)", () => {
         <UsageDashboard />
       </QueryClientProvider>,
     );
-
     // 指标卡
     expect(await screen.findByText("$42.10")).toBeInTheDocument();
     expect(screen.getByText("18.2M")).toBeInTheDocument();
     // 「全部」时由各应用的 token 重新算：16.6M ÷ (1M + 0.2M + 16.6M)
     expect(screen.getByText("93.3%")).toBeInTheDocument();
     expect(screen.getByText("usage.trend.titleMetric")).toBeInTheDocument();
-
     // Tokens 的 4 个组成部分默认收起（整行 inert），展开后占第二行
     const more = screen.getByRole("button", { name: "usage.metrics.more" });
     expect(more).toHaveAttribute("aria-expanded", "false");
@@ -256,7 +248,6 @@ describe("UsageDashboard (smoke)", () => {
     expect(costCell).toHaveAttribute("aria-pressed", "false");
     await user.click(costCell);
     expect(costCell).toHaveAttribute("aria-pressed", "true");
-
     // 供应商：汇总速度 92000 / 1000 s = 92 tok/s
     await user.click(
       screen.getByRole("tab", { name: /^usage\.tabs\.providers/ }),
@@ -267,10 +258,8 @@ describe("UsageDashboard (smoke)", () => {
       .map((element) => element.closest("tr"))
       .find((row) => row !== null) as HTMLTableRowElement;
     expect(within(providerRow).getByText("92")).toBeInTheDocument();
-
     await user.click(screen.getByRole("tab", { name: /^usage\.tabs\.models/ }));
     expect(await screen.findByText("kimi-k2.6")).toBeInTheDocument();
-
     // 定价：用量设置抽屉 → 管理定价
     await user.click(
       screen.getByRole("button", { name: "usage.settings.title" }),

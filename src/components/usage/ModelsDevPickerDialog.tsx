@@ -1,8 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
-import { toast } from "@/lib/toast";
-import { Check, Loader2, Search } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -11,7 +7,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
 import {
@@ -21,28 +16,29 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useUpdateModelPricing } from "@/lib/query/usage";
 import { modelsDevQueryOptions } from "@/lib/modelsDev";
 import {
   flattenModels,
   formatPrice,
   type ModelsDevEntry,
 } from "@/lib/modelsDevPricing";
+import { useUpdateModelPricing } from "@/lib/query/usage";
+import { toast } from "@/lib/toast";
 import { isTextEditableTarget } from "@/utils/domUtils";
-
+import { useQuery } from "@tanstack/react-query";
+import { Check, Loader2, Search } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 export { flattenModels, formatPrice } from "@/lib/modelsDevPricing";
-
 // 全量约 5000 条：默认只展示最新发布的一批，搜索时才做全量匹配
 const DEFAULT_VISIBLE_ROWS = 50;
 const MAX_VISIBLE_ROWS = 200;
-
 interface ModelsDevPickerDialogProps {
   open: boolean;
   onClose: () => void;
   /** 导入成功后调用（此时定价列表已刷新） */
   onImported: () => void;
 }
-
 export function ModelsDevPickerDialog({
   open,
   onClose,
@@ -50,11 +46,9 @@ export function ModelsDevPickerDialog({
 }: ModelsDevPickerDialogProps) {
   const { t } = useTranslation();
   const updatePricing = useUpdateModelPricing();
-
   const [search, setSearch] = useState("");
   const [providerFilter, setProviderFilter] = useState("all");
   const [selected, setSelected] = useState<ModelsDevEntry | null>(null);
-
   // 每次打开时重置选择与过滤条件
   useEffect(() => {
     if (open) {
@@ -63,15 +57,12 @@ export function ModelsDevPickerDialog({
       setSelected(null);
     }
   }, [open]);
-
   const { data, isLoading, error, refetch } = useQuery({
     ...modelsDevQueryOptions,
     enabled: open,
     retry: 1,
   });
-
   const entries = useMemo(() => (data ? flattenModels(data) : []), [data]);
-
   const providers = useMemo(() => {
     const map = new Map<string, string>();
     for (const entry of entries) {
@@ -83,9 +74,7 @@ export function ModelsDevPickerDialog({
       a.name.localeCompare(b.name),
     );
   }, [entries]);
-
   const isFiltering = search.trim() !== "" || providerFilter !== "all";
-
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
     return entries.filter(
@@ -98,23 +87,19 @@ export function ModelsDevPickerDialog({
           entry.providerName.toLowerCase().includes(query)),
     );
   }, [entries, search, providerFilter]);
-
   // 默认只展示最新发布的一批，搜索/筛选时展示全量匹配（设上限防卡顿）
   const visible = useMemo(
     () =>
       filtered.slice(0, isFiltering ? MAX_VISIBLE_ROWS : DEFAULT_VISIBLE_ROWS),
     [filtered, isFiltering],
   );
-
   // 单选：点击未选中的行替换选择，点击已选中的行取消选择。
   // 限制单选是为了避免批量导入时每条都触发一次全量零成本回填扫描（见 update_model_pricing）。
   const toggleEntry = (entry: ModelsDevEntry) => {
     setSelected((prev) => (prev?.key === entry.key ? null : entry));
   };
-
   const handleImport = async () => {
     if (!selected) return;
-
     try {
       await updatePricing.mutateAsync({
         modelId: selected.normalizedId,
@@ -124,7 +109,6 @@ export function ModelsDevPickerDialog({
         cacheReadCost: formatPrice(selected.cacheRead),
         cacheCreationCost: formatPrice(selected.cacheWrite),
       });
-
       toast.success(
         t("usage.modelsDevImported", {
           name: selected.modelName,
@@ -137,7 +121,6 @@ export function ModelsDevPickerDialog({
       toast.error(String(error));
     }
   };
-
   const priceColumns = (entry: ModelsDevEntry) =>
     [
       { label: t("usage.inputCost", "输入成本"), value: entry.input },
@@ -148,7 +131,6 @@ export function ModelsDevPickerDialog({
         value: entry.cacheWrite,
       },
     ] as const;
-
   return (
     <Dialog
       open={open}
@@ -188,9 +170,7 @@ export function ModelsDevPickerDialog({
           ) : error ? (
             <Notice
               tone="danger"
-              title={`${t("usage.modelsDevLoadError", "加载 models.dev 数据失败")}: ${
-                error instanceof Error ? error.message : String(error)
-              }`}
+              title={`${t("usage.modelsDevLoadError", "加载 models.dev 数据失败")}: ${error instanceof Error ? error.message : String(error)}`}
               actions={
                 <Button
                   variant="neutral"

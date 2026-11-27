@@ -2,11 +2,9 @@ import { ProviderIcon } from "@/components/ProviderIcon";
 import { isTileIcon, needsLightBacking } from "@/icons/extracted";
 import { cn } from "@/lib/utils";
 import { isCustomIcon } from "@/utils/customIcon";
-
 // 透明 logo 在 32px 框里的尺寸：和铺满整框的 tile 图标放在一起时视觉分量相当，
 // 再大实心 logo 就顶到边框了
 const GLYPH_SIZE = 22;
-
 interface ProviderIconBoxProps {
   icon?: string;
   name: string;
@@ -16,7 +14,6 @@ interface ProviderIconBoxProps {
   iconClassName?: string;
   fallbackClassName?: string;
 }
-
 /**
  * 供应商图标的 32px 圆角框。透明 logo 缩小居中、框带边框；自带实心底的图标
  * （metadata 里 shape: "tile"）和用户上传的图标铺满整框并裁成框的圆角，否则会变成「框里套一块小方块」。

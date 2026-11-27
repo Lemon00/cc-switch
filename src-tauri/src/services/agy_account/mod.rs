@@ -54,7 +54,7 @@ struct AccountData {
     requires_reauth: bool,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct StoreFile {
     #[serde(default)]
     version: u32,
@@ -153,6 +153,8 @@ pub struct AgyAccountManager {
     /// 账号表；同时充当所有改动（含写钥匙串）的互斥锁
     store: Mutex<StoreFile>,
     pending: Mutex<HashMap<String, PendingLogin>>,
+    /// 读取/解析 `agy_accounts.json` 失败时禁止 persist，避免空表覆盖原文件。
+    load_failed: bool,
 }
 
 impl AgyAccountManager {
@@ -162,15 +164,20 @@ impl AgyAccountManager {
 
     pub fn with_login_store(data_dir: PathBuf, login: Arc<dyn AgyLoginStore>) -> Self {
         let path = data_dir.join(STORE_FILENAME);
-        let store = match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|error| {
-                log::warn!("[AgyAccount] 账号文件解析失败，按空表处理: {error}");
-                StoreFile::default()
-            }),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => StoreFile::default(),
+        let (store, load_failed) = match std::fs::read(&path) {
+            Ok(bytes) => match serde_json::from_slice(&bytes) {
+                Ok(store) => (store, false),
+                Err(error) => {
+                    log::error!("[AgyAccount] 账号文件解析失败，已禁止写入以免覆盖原文件: {error}");
+                    (StoreFile::default(), true)
+                }
+            },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                (StoreFile::default(), false)
+            }
             Err(error) => {
-                log::warn!("[AgyAccount] 账号文件读取失败，按空表处理: {error}");
-                StoreFile::default()
+                log::error!("[AgyAccount] 账号文件读取失败，已禁止写入以免覆盖原文件: {error}");
+                (StoreFile::default(), true)
             }
         };
         Self {
@@ -178,6 +185,7 @@ impl AgyAccountManager {
             login,
             store: Mutex::new(store),
             pending: Mutex::new(HashMap::new()),
+            load_failed,
         }
     }
 
@@ -231,8 +239,10 @@ impl AgyAccountManager {
 
     /// 还没回来时返回 `Ok(None)`；成功时收录账号并返回它。
     pub async fn poll_login(&self, flow_id: &str) -> Result<Option<AgyAccount>, AppError> {
+        // Keep the flow gate until its store commit: remove-all/cancel must
+        // observe either a pending login or the committed account.
+        let mut pending = self.pending.lock().await;
         let outcome = {
-            let mut pending = self.pending.lock().await;
             let Some(entry) = pending.get_mut(flow_id) else {
                 return Err(AppError::localized(
                     "agy.account.login_expired",
@@ -265,8 +275,10 @@ impl AgyAccountManager {
             .and_then(oauth::identity)
             .ok_or_else(|| AppError::Message("Google 返回的身份信息不完整".into()))?;
         let mut store = self.store.lock().await;
-        let account = upsert(&mut store, credential, &claims);
-        self.persist(&store)?;
+        let mut next = store.clone();
+        let account = upsert(&mut next, credential, &claims);
+        self.persist(&next)?;
+        *store = next;
         Ok(Some(account))
     }
 
@@ -289,10 +301,12 @@ impl AgyAccountManager {
         if keychain::supported() {
             match self.read_live(&store).await {
                 Ok(live) => {
-                    let (id, changed) = absorb(&mut store, live, false);
+                    let mut next = store.clone();
+                    let (id, changed) = absorb(&mut next, live, false);
                     current = id;
                     if changed {
-                        self.persist(&store)?;
+                        self.persist(&next)?;
+                        *store = next;
                     }
                 }
                 Err(error) => log::warn!("[AgyAccount] 读取 agy 当前登录失败: {error}"),
@@ -328,9 +342,11 @@ impl AgyAccountManager {
         if let LiveLogin::Unrecognized(raw) = &live {
             self.stash_unrecognized(raw)?;
         }
-        let (current, changed) = absorb(&mut store, live, true);
+        let mut next = store.clone();
+        let (current, changed) = absorb(&mut next, live, true);
         if changed {
-            self.persist(&store)?;
+            self.persist(&next)?;
+            *store = next;
         }
         if current.as_deref() == Some(account_id) {
             return Ok(());
@@ -362,7 +378,8 @@ impl AgyAccountManager {
 
     /// 只删 CC Switch 里的副本。删的是 agy 正登着的号时记下来，免得查看状态时又被收回来。
     pub async fn remove(&self, account_id: &str) -> Result<(), AppError> {
-        let mut store = self.store.lock().await;
+        let mut current = self.store.lock().await;
+        let mut store = current.clone();
         let Some(removed) = store.accounts.remove(account_id) else {
             return Err(account_not_found(account_id));
         };
@@ -372,11 +389,18 @@ impl AgyAccountManager {
         if let Some(email) = removed.email.filter(|email| !email.is_empty()) {
             store.dismissed_emails.insert(account_id.to_string(), email);
         }
-        self.persist(&store)
+        self.persist(&store)?;
+        *current = store;
+        Ok(())
     }
 
     pub async fn remove_all(&self) -> Result<Vec<String>, AppError> {
-        let mut store = self.store.lock().await;
+        let mut pending = self.pending.lock().await;
+        for (_, login) in pending.drain() {
+            login.task.abort();
+        }
+        let mut current = self.store.lock().await;
+        let mut store = current.clone();
         let removed: Vec<String> = store.accounts.keys().cloned().collect();
         for (id, account) in std::mem::take(&mut store.accounts) {
             if !store.dismissed.contains(&id) {
@@ -387,6 +411,7 @@ impl AgyAccountManager {
             }
         }
         self.persist(&store)?;
+        *current = store;
         Ok(removed)
     }
 
@@ -482,28 +507,27 @@ impl AgyAccountManager {
                 .to_string()
         };
         let outcome = oauth::refresh(&refresh_token).await;
-        let mut store = self.store.lock().await;
-        let account = store.accounts.get_mut(account_id).filter(|account| {
-            refresh_token_of(&account.credential) == Some(refresh_token.as_str())
-        });
+        let mut current = self.store.lock().await;
+        let mut store = current.clone();
+        let account = store
+            .accounts
+            .get_mut(account_id)
+            .filter(|account| refresh_token_of(&account.credential) == Some(refresh_token.as_str()))
+            .ok_or(AccountQuotaError::NotFound)?;
         let result = match outcome {
             Ok(tokens) => {
-                if let Some(account) = account {
-                    oauth::apply_refresh(&mut account.credential, &tokens);
-                }
+                oauth::apply_refresh(&mut account.credential, &tokens);
                 Ok(tokens.access_token)
             }
             Err(AgyOAuthError::InvalidGrant) => {
-                if let Some(account) = account {
-                    account.requires_reauth = true;
-                }
+                account.requires_reauth = true;
                 Err(AccountQuotaError::NeedsReauth)
             }
             Err(error) => return Err(AccountQuotaError::Failed(error.to_string())),
         };
-        if let Err(error) = self.persist(&store) {
-            log::warn!("[AgyAccount] 保存账号文件失败: {error}");
-        }
+        self.persist(&store)
+            .map_err(|error| AccountQuotaError::Failed(error.to_string()))?;
+        *current = store;
         result
     }
 
@@ -568,6 +592,13 @@ impl AgyAccountManager {
     }
 
     fn persist(&self, store: &StoreFile) -> Result<(), AppError> {
+        if self.load_failed {
+            return Err(AppError::localized(
+                "agy.account.store_unreadable",
+                "账号文件损坏或不可读，已禁止写入以免覆盖原文件。请修复或删除后再试。",
+                "The account file is damaged or unreadable. Writes are blocked to avoid overwriting it. Repair or remove the file, then try again.",
+            ));
+        }
         let snapshot = StoreFile {
             version: 1,
             accounts: store.accounts.clone(),

@@ -3,7 +3,6 @@ import {
   type ModelsDevModel,
   type ModelsDevResponse,
 } from "./modelsDev";
-
 /**
  * 一个模型的已知参数，供表单在用户从拉取列表里选中模型时补全空着的字段。
  * 各应用把它换成自己的字段格式（Codex `contextWindow`、Hermes `context_length`、
@@ -35,21 +34,17 @@ export interface KnownModelMetadata {
     cacheWrite?: number;
   };
 }
-
 /** 参数来自哪里：同地址预设，还是 models.dev。补全提示里告诉用户。 */
 export type ModelMetadataSource = "preset" | "models-dev";
-
 export interface ResolvedModelMetadata extends KnownModelMetadata {
   /** 实际贡献了字段的来源，按优先级排序。 */
   sources: ModelMetadataSource[];
 }
-
 /** 一个预设的地址和它手工核实过的模型参数。 */
 export interface PresetModelSource {
   baseUrl: string;
   models: ReadonlyMap<string, KnownModelMetadata>;
 }
-
 /**
  * GPT 模型的窗口上限：Codex 官方目录给 GPT-5.5 以后各款的默认窗口。OpenAI API
  * 写的是 1.05M，但很多中转站的 GPT 是从 ChatGPT 订阅分发的，按订阅的窗口卡。
@@ -57,13 +52,11 @@ export interface PresetModelSource {
  * 认不出地址、只能借原厂条目的窗口时按订阅的窗口封顶；同地址预设和 models.dev
  * 按地址认出的那家照用它们自己的值，用户手填的不经过这里。
  */
-export const GPT_CONTEXT_WINDOW_CAP = 272_000;
-
+export const GPT_CONTEXT_WINDOW_CAP = 272000;
 /** 是不是 OpenAI 的 GPT 模型（`gpt-6-astra`、`openai/gpt-5.6-sol`、`openai-gpt-6-1-sol`）。 */
 export function isGptModelId(modelId: string): boolean {
   return /(?:^|[^a-z0-9])gpt-/.test(normalizeModelsDevModelId(modelId));
 }
-
 /** GPT 模型的窗口按 {@link GPT_CONTEXT_WINDOW_CAP} 封顶，本来就小的不动。 */
 export function capGptContextWindow(
   modelId: string,
@@ -73,10 +66,8 @@ export function capGptContextWindow(
     ? Math.min(contextWindow, GPT_CONTEXT_WINDOW_CAP)
     : contextWindow;
 }
-
 const VERSION_SEGMENT = /^v\d+(?:(?:alpha|beta)\d*)?$/;
 const REQUEST_SEGMENTS = new Set(["responses", "messages"]);
-
 /**
  * 同一个接口的新旧地址（归一后的写法）。OpenCode 的 Zen / Go 在 models.dev
  * 里改成了 `/inference/...`（2026-10），预设和用户手里的仍是 `/zen/...`，两者
@@ -86,7 +77,6 @@ const ENDPOINT_ALIASES: Record<string, string> = {
   "opencode.ai/zen": "opencode.ai/inference/openai",
   "opencode.ai/zen/go": "opencode.ai/inference/go/openai",
 };
-
 /**
  * 把地址归一成「域名 + 路径」，去掉末尾的版本号（`v1`、`v4`、`v1beta`）和请求
  * 路径（`chat/completions`、`responses`、`messages`）：这些写不写都是同一个接口。
@@ -119,10 +109,9 @@ function endpointKey(url: string): string | null {
       break;
     }
   }
-  const key = [parsed.hostname.toLowerCase(), ...segments].join("/");
+  const key = [parsed.host.toLowerCase(), ...segments].join("/");
   return ENDPOINT_ALIASES[key] ?? key;
 }
-
 /** 挑出与地址是同一个接口的候选，保持原有顺序。 */
 function matchEndpoint<T>(
   baseUrl: string,
@@ -133,7 +122,6 @@ function matchEndpoint<T>(
   if (!target) return [];
   return candidates.filter((candidate) => endpointOf(candidate) === target);
 }
-
 function findModelInMap<T>(
   models: ReadonlyMap<string, T>,
   modelId: string,
@@ -154,35 +142,38 @@ function findModelInMap<T>(
   }
   return normalizedMatch;
 }
-
 interface IndexedProvider {
   endpoint: string | null;
   models: Map<string, ModelsDevModel>;
 }
-
 interface ModelsDevIndex {
   providers: IndexedProvider[];
   byId: Map<string, IndexedProvider>;
   /** 规范化 ID → 各家同名条目，给原厂兜底用。 */
-  byNormalizedId: Map<string, { providerId: string; model: ModelsDevModel }[]>;
+  byNormalizedId: Map<
+    string,
+    {
+      providerId: string;
+      model: ModelsDevModel;
+    }[]
+  >;
   /** 被 `canonical_model_id` 指向过的供应商，即原厂。 */
   vendors: Set<string>;
 }
-
 const indexCache = new WeakMap<ModelsDevResponse, ModelsDevIndex>();
-
 function indexModelsDev(data: ModelsDevResponse): ModelsDevIndex {
   const cached = indexCache.get(data);
   if (cached) return cached;
-
   const providers: IndexedProvider[] = [];
   const byId = new Map<string, IndexedProvider>();
   const byNormalizedId = new Map<
     string,
-    { providerId: string; model: ModelsDevModel }[]
+    {
+      providerId: string;
+      model: ModelsDevModel;
+    }[]
   >();
   const vendors = new Set<string>();
-
   for (const [providerId, provider] of Object.entries(data)) {
     if (!provider || typeof provider !== "object") continue;
     const models = new Map<string, ModelsDevModel>();
@@ -208,12 +199,10 @@ function indexModelsDev(data: ModelsDevResponse): ModelsDevIndex {
     providers.push(indexed);
     byId.set(providerId, indexed);
   }
-
   const index = { providers, byId, byNormalizedId, vendors };
   indexCache.set(data, index);
   return index;
 }
-
 /** 正整数（接受数字字符串，表单里的窗口常存成字符串）；其余返回 undefined。 */
 export function positiveInteger(value: unknown): number | undefined {
   const parsed =
@@ -222,7 +211,6 @@ export function positiveInteger(value: unknown): number | undefined {
     ? Math.trunc(parsed)
     : undefined;
 }
-
 /** 去空、小写、去重后的字符串列表；空列表返回 undefined。 */
 export function stringList(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
@@ -232,7 +220,6 @@ export function stringList(value: unknown): string[] | undefined {
     .filter(Boolean);
   return list.length > 0 ? [...new Set(list)] : undefined;
 }
-
 function metadataFromModelsDev(
   model: ModelsDevModel,
   withCost: boolean,
@@ -269,7 +256,6 @@ function metadataFromModelsDev(
       : undefined,
   };
 }
-
 /** 按地址认出 models.dev 里的那家供应商，再查它名下的这个模型。 */
 function findByProvider(
   index: ModelsDevIndex,
@@ -286,7 +272,6 @@ function findByProvider(
   }
   return undefined;
 }
-
 /**
  * 原厂兜底：同名条目指向的原厂条目；指向都落空（没写，或原厂名下没有这一条）
  * 时，才用原厂自己名下的同名条目。指向不止一家原厂时说不清是哪个模型，放弃。
@@ -325,7 +310,6 @@ function findByVendor(
   const found = pointed.size > 0 ? pointed : owned;
   return found.size === 1 ? found.values().next().value : undefined;
 }
-
 function mergeMissing(
   primary: KnownModelMetadata,
   fallback: KnownModelMetadata,
@@ -341,11 +325,9 @@ function mergeMissing(
   }
   return merged;
 }
-
 function fieldCount(metadata: KnownModelMetadata): number {
   return Object.values(metadata).filter((value) => value !== undefined).length;
 }
-
 /**
  * 查一个模型的已知参数。逐字段按优先级取值：
  * 1. 同地址预设里手工核实过的那一行（同一个模型各家部署的窗口差很多，
@@ -367,7 +349,6 @@ export function resolveModelMetadata(
 ): ResolvedModelMetadata | null {
   const id = modelId.trim();
   if (!id) return null;
-
   let metadata: KnownModelMetadata = {};
   const sources: ModelMetadataSource[] = [];
   const add = (source: ModelMetadataSource, found: KnownModelMetadata) => {
@@ -377,7 +358,6 @@ export function resolveModelMetadata(
       sources.push(source);
     }
   };
-
   for (const preset of matchEndpoint(
     options.baseUrl,
     options.presets ?? [],
@@ -389,7 +369,6 @@ export function resolveModelMetadata(
       break;
     }
   }
-
   if (options.modelsDev) {
     const index = indexModelsDev(options.modelsDev);
     const providerModel = findByProvider(index, options.baseUrl, id);
@@ -405,7 +384,6 @@ export function resolveModelMetadata(
       add("models-dev", vendor);
     }
   }
-
   if (sources.length === 0) return null;
   return { ...metadata, sources };
 }

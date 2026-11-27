@@ -4,8 +4,9 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::config::{atomic_write, get_claude_mcp_path, is_wsl_path};
+use crate::config::{atomic_write_private, get_claude_mcp_path, is_wsl_path};
 use crate::error::AppError;
+use crate::mcp::validation::validate_server_spec;
 
 /// 需要在 Windows 上用 cmd /c 包装的命令
 /// 这些命令在 Windows 上实际是 .cmd 批处理文件，需要通过 cmd /c 来执行
@@ -83,6 +84,15 @@ fn read_json_value(path: &Path) -> Result<Value, AppError> {
     }
     let content = fs::read_to_string(path).map_err(|e| AppError::io(path, e))?;
     let value: Value = serde_json::from_str(&content).map_err(|e| AppError::json(path, e))?;
+    if !value.is_object()
+        || value
+            .get("mcpServers")
+            .is_some_and(|servers| !servers.is_object())
+    {
+        return Err(AppError::McpValidation(
+            "Claude MCP 根和 mcpServers 必须是对象".into(),
+        ));
+    }
     Ok(value)
 }
 
@@ -92,7 +102,7 @@ fn write_json_value(path: &Path, value: &Value) -> Result<(), AppError> {
     }
     let json =
         serde_json::to_string_pretty(value).map_err(|e| AppError::JsonSerialize { source: e })?;
-    atomic_write(path, json.as_bytes())
+    atomic_write_private(path, json.as_bytes())
 }
 
 pub fn get_mcp_status() -> Result<McpStatus, AppError> {
@@ -180,37 +190,7 @@ pub fn upsert_mcp_server(id: &str, spec: Value) -> Result<bool, AppError> {
             "MCP 服务器定义必须为 JSON 对象".into(),
         ));
     }
-    let t_opt = spec.get("type").and_then(|x| x.as_str());
-    let is_stdio = t_opt.map(|t| t == "stdio").unwrap_or(true); // 兼容缺省（按 stdio 处理）
-    let is_http = t_opt.map(|t| t == "http").unwrap_or(false);
-    let is_sse = t_opt.map(|t| t == "sse").unwrap_or(false);
-    if !(is_stdio || is_http || is_sse) {
-        return Err(AppError::McpValidation(
-            "MCP 服务器 type 必须是 'stdio'、'http' 或 'sse'（或省略表示 stdio）".into(),
-        ));
-    }
-
-    // stdio 类型必须有 command
-    if is_stdio {
-        let cmd = spec.get("command").and_then(|x| x.as_str()).unwrap_or("");
-        if cmd.is_empty() {
-            return Err(AppError::McpValidation(
-                "stdio 类型的 MCP 服务器缺少 command 字段".into(),
-            ));
-        }
-    }
-
-    // http/sse 类型必须有 url
-    if is_http || is_sse {
-        let url = spec.get("url").and_then(|x| x.as_str()).unwrap_or("");
-        if url.is_empty() {
-            return Err(AppError::McpValidation(if is_http {
-                "http 类型的 MCP 服务器缺少 url 字段".into()
-            } else {
-                "sse 类型的 MCP 服务器缺少 url 字段".into()
-            }));
-        }
-    }
+    validate_server_spec(&spec)?;
 
     let path = user_config_path();
     let mut root = if path.exists() {

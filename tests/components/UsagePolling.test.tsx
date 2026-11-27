@@ -19,7 +19,6 @@ import UsageFooter from "@/components/UsageFooter";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { usageApi, type AppId } from "@/lib/api";
 import type { Provider } from "@/types";
-
 vi.mock("@/components/ProviderIcon", () => ({ ProviderIcon: () => null }));
 vi.mock("@/components/quota/useQuotaDisplay", () => ({
   useQuotaDisplay: () => "left",
@@ -27,15 +26,12 @@ vi.mock("@/components/quota/useQuotaDisplay", () => ({
 vi.mock("@/lib/query/failover", () => ({
   useProviderHealth: () => ({ data: undefined }),
 }));
-
 const advance = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
-
 describe.each(["footer", "collapsed card"] as const)(
   "%s usage polling",
   (view) => {
     let client: QueryClient;
     let query: MockInstance<typeof usageApi.query>;
-
     beforeEach(() => {
       vi.useFakeTimers();
       client = new QueryClient({
@@ -49,14 +45,12 @@ describe.each(["footer", "collapsed card"] as const)(
         ],
       });
     });
-
     afterEach(() => {
       cleanup();
       client.clear();
       vi.restoreAllMocks();
       vi.useRealTimers();
     });
-
     async function renderUsage({
       appId = "claude",
       isCurrent = false,
@@ -84,7 +78,6 @@ describe.each(["footer", "collapsed card"] as const)(
           },
         },
       };
-
       render(
         <QueryClientProvider client={client}>
           {view === "footer" ? (
@@ -114,7 +107,6 @@ describe.each(["footer", "collapsed card"] as const)(
         fireEvent.click(screen.getByRole("button", { name: "收起" }));
       }
     }
-
     it.each([
       { appId: "claude" as const, isCurrent: false },
       { appId: "claude" as const, isCurrent: true },
@@ -123,26 +115,23 @@ describe.each(["footer", "collapsed card"] as const)(
       await renderUsage(options);
       expect(query).toHaveBeenCalledTimes(1);
       expect(query).toHaveBeenCalledWith("usage-provider", options.appId);
-
-      await advance(60_000);
+      await advance(60000);
       expect(query).toHaveBeenCalledTimes(2);
-      await advance(60_000);
+      await advance(60000);
       expect(query).toHaveBeenCalledTimes(3);
     });
-
     it.each([0, null])(
       "does not poll with a zero or unset interval (%s)",
       async (interval) => {
         await renderUsage({ interval });
         expect(query).toHaveBeenCalledTimes(1);
-        await advance(180_000);
+        await advance(180000);
         expect(query).toHaveBeenCalledTimes(1);
       },
     );
-
     it("does not query when usage is disabled", async () => {
       await renderUsage({ enabled: false });
-      await advance(180_000);
+      await advance(180000);
       expect(query).not.toHaveBeenCalled();
     });
   },

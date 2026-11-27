@@ -1,5 +1,4 @@
 import type { TFunction } from "i18next";
-
 /**
  * Claude 订阅套餐的显示名：`subscriptionType`（Claude Code 记在凭据里）加 `rateLimitTier`
  * 区分 Max 5x / 20x、Team 高级席位。认不出的套餐照原样写，读不到时为 null。

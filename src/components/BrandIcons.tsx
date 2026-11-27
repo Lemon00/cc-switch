@@ -2,13 +2,11 @@ interface IconProps {
   size?: number;
   className?: string;
 }
-
 // 导入本地 SVG 图标
 import ClaudeSvg from "@/icons/extracted/claude.svg?url";
-import OpenAISvg from "@/icons/extracted/openai.svg?url";
-import GeminiSvg from "@/icons/extracted/gemini.svg?url";
 import OpenClawSvg from "@/icons/extracted/claw.svg?url";
-
+import GeminiSvg from "@/icons/extracted/gemini.svg?url";
+import OpenAISvg from "@/icons/extracted/openai.svg?url";
 export function ClaudeIcon({ size = 16, className = "" }: IconProps) {
   return (
     <img
@@ -21,7 +19,6 @@ export function ClaudeIcon({ size = 16, className = "" }: IconProps) {
     />
   );
 }
-
 export function CodexIcon({ size = 16, className = "" }: IconProps) {
   return (
     <img
@@ -34,7 +31,6 @@ export function CodexIcon({ size = 16, className = "" }: IconProps) {
     />
   );
 }
-
 export function GeminiIcon({ size = 16, className = "" }: IconProps) {
   return (
     <img
@@ -47,7 +43,6 @@ export function GeminiIcon({ size = 16, className = "" }: IconProps) {
     />
   );
 }
-
 export function OpenClawIcon({ size = 16, className = "" }: IconProps) {
   return (
     <img
@@ -60,7 +55,6 @@ export function OpenClawIcon({ size = 16, className = "" }: IconProps) {
     />
   );
 }
-
 // Claude Desktop-style Skills scroll, based on the reference image.
 export function SkillsIcon({ size = 16, className = "" }: IconProps) {
   return (
@@ -84,7 +78,6 @@ export function SkillsIcon({ size = 16, className = "" }: IconProps) {
     </svg>
   );
 }
-
 // MCP icon uses inline SVG to support currentColor for hover effects
 export function McpIcon({ size = 16, className = "" }: IconProps) {
   return (

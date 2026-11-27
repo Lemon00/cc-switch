@@ -2,10 +2,9 @@ import {
   error as writeErrorLog,
   info as writeInfoLog,
 } from "@tauri-apps/plugin-log";
-
-const MAX_LOG_MESSAGE_LENGTH = 12_000;
-const MAX_RAW_LOG_INPUT_LENGTH = 16_000;
-const MAX_SERIALIZED_STRING_LENGTH = 2_000;
+const MAX_LOG_MESSAGE_LENGTH = 12000;
+const MAX_RAW_LOG_INPUT_LENGTH = 16000;
+const MAX_SERIALIZED_STRING_LENGTH = 2000;
 const MAX_SERIALIZED_ENTRIES = 32;
 const MAX_SERIALIZED_TOTAL_VALUES = 64;
 const MAX_SERIALIZATION_DEPTH = 4;
@@ -35,7 +34,6 @@ function truncateForProcessing(input: string, limit: number): string {
   }
   return `${input.slice(0, limit)}\n[input truncated]`;
 }
-
 export function redactFrontendLogText(input: string): string {
   return input
     .replace(QUERY_VALUE_PATTERN, "$1=[REDACTED]")
@@ -47,7 +45,6 @@ export function redactFrontendLogText(input: string): string {
     .replace(QUOTED_NAMED_SECRET_PATTERN, "$1$2[REDACTED]$2")
     .replace(NAMED_SECRET_PATTERN, "$1[REDACTED]");
 }
-
 function looksLikeSecretValue(value: string): boolean {
   const trimmed = value.trim();
   if (SECRET_VALUE_WITHIN_STRING_PATTERN.test(trimmed)) {
@@ -56,7 +53,6 @@ function looksLikeSecretValue(value: string): boolean {
   if (/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/i.test(trimmed)) {
     return true;
   }
-
   // Unknown opaque credentials: keep this only in the structured serializer,
   // where a false positive costs diagnostics but cannot alter application data.
   return (
@@ -66,7 +62,6 @@ function looksLikeSecretValue(value: string): boolean {
     /\d/.test(trimmed)
   );
 }
-
 // 结构化对象里，命中这些属性名即认定其整个值(标量/数组/对象)为敏感并整体隐藏。
 // 存单数形式，查表前去掉尾部 s，让复数(tokens/apiKeys/credentials)自动覆盖，
 // 不必逐个枚举——正则文本层只能匹配 `"name":"value"` 标量，抓不到数组/嵌套。
@@ -94,7 +89,6 @@ const SENSITIVE_KEY_NAMES = new Set([
   "credential",
   "cookie",
 ]);
-
 function isSensitiveKey(key: string): boolean {
   const normalized = key
     .toLowerCase()
@@ -102,18 +96,18 @@ function isSensitiveKey(key: string): boolean {
     .replace(/s$/, "");
   return SENSITIVE_KEY_NAMES.has(normalized);
 }
-
 function normalizeForSerialization(
   value: unknown,
   depth: number,
   ancestors: WeakSet<object>,
-  budget: { remaining: number },
+  budget: {
+    remaining: number;
+  },
 ): unknown {
   if (budget.remaining <= 0) {
     return "[Serialization budget exhausted]";
   }
   budget.remaining -= 1;
-
   if (typeof value === "string") {
     // 值一级脱敏：对“看起来像密钥”的不透明串整体隐藏。命名字段(apiKey/token/...)
     // 由上层 isSensitiveKey 按属性名整体隐藏；文本里的裸密钥再由 redactFrontendLogText 兜底。
@@ -147,7 +141,6 @@ function normalizeForSerialization(
   if (depth >= MAX_SERIALIZATION_DEPTH) {
     return "[Object: max depth reached]";
   }
-
   ancestors.add(value);
   try {
     if (Array.isArray(value)) {
@@ -165,7 +158,6 @@ function normalizeForSerialization(
       }
       return items;
     }
-
     const output: Record<string, unknown> = {};
     const keys = Object.keys(value);
     for (const key of keys.slice(0, MAX_SERIALIZED_ENTRIES)) {
@@ -203,7 +195,6 @@ function normalizeForSerialization(
     ancestors.delete(value);
   }
 }
-
 function serializeStructured(value: unknown): string | null {
   try {
     const serialized = JSON.stringify(
@@ -216,7 +207,6 @@ function serializeStructured(value: unknown): string | null {
     return null;
   }
 }
-
 // 结构化数据可能以“字符串形态的 JSON”混进来(Promise.reject(JSON.stringify(...))、
 // throw new Error(JSON.stringify(...)))。不还原结构就只剩文本正则，够不着数组/嵌套字段。
 // 命中 JSON 结构则 parse 后走属性级脱敏；非 JSON 返回 null 交调用方按普通文本处理。
@@ -242,7 +232,6 @@ function redactStructuredString(text: string): string | null {
   }
   return serializeStructured(parsed) ?? "[Unserializable structured error]";
 }
-
 // 把 Error 渲染成“脱敏 message + 原生调用栈”，与浏览器引擎的 stack 格式无关：
 //  - V8/Chromium(Windows WebView2)：stack 首行内嵌 message → 全局字面量替换成脱敏版；
 //  - WebKit/JSC(macOS/Linux WKWebView)、SpiderMonkey：stack 是纯栈帧、不含 message → 补脱敏头。
@@ -261,7 +250,6 @@ function renderRedactedError(error: Error, structuredMessage: string): string {
   // WebKit/Firefox：stack 不含 message —— 纯栈帧前补一个脱敏 message 头。
   return `${head}\n${stack}`;
 }
-
 function describeError(error: unknown): string {
   if (error instanceof Error) {
     // throw new Error(JSON.stringify(payload)) 很常见：凭据会藏进 message，而 V8 的
@@ -295,7 +283,6 @@ function describeError(error: unknown): string {
   }
   return truncateForProcessing(structured, MAX_RAW_LOG_INPUT_LENGTH);
 }
-
 export function reportFrontendError(
   context: string,
   error: unknown,
@@ -319,12 +306,10 @@ export function reportFrontendError(
     redacted.length > MAX_LOG_MESSAGE_LENGTH
       ? `${redacted.slice(0, MAX_LOG_MESSAGE_LENGTH)}\n[truncated]`
       : redacted;
-
   // Web 开发/测试环境没有 Tauri invoke，日志上报失败不应再触发
   // console.error 或未处理 Promise，否则会形成错误循环。
   void writeErrorLog(message, { file: "frontend" }).catch(() => undefined);
 }
-
 /** 用户动作（确认框里的选择等）写一行 INFO，和后端的切换日志对得上。 */
 export function logFrontendInfo(message: string): void {
   const redacted = redactFrontendLogText(
@@ -332,7 +317,6 @@ export function logFrontendInfo(message: string): void {
   );
   void writeInfoLog(redacted, { file: "frontend" }).catch(() => undefined);
 }
-
 export function installGlobalErrorHandlers(
   target: Window = window,
 ): () => void {
@@ -345,10 +329,8 @@ export function installGlobalErrorHandlers(
   const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
     reportFrontendError("unhandledrejection", event.reason);
   };
-
   target.addEventListener("error", handleError);
   target.addEventListener("unhandledrejection", handleUnhandledRejection);
-
   return () => {
     target.removeEventListener("error", handleError);
     target.removeEventListener("unhandledrejection", handleUnhandledRejection);

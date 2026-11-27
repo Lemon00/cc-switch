@@ -52,14 +52,14 @@ impl TomlPatch {
             if targets.contains(key_path) {
                 continue;
             }
-            let (parent, key) = split(key_path);
+            let (parent, key) = split(key_path)?;
             if let Some(table) = table_at_mut(path, root, parent)? {
                 table.remove(key);
             }
         }
 
         for (key_path, item) in &self.set {
-            let (parent, key) = split(key_path);
+            let (parent, key) = split(key_path)?;
             let table = ensure_table_mut(path, root, parent)?;
             match table.get_mut(key) {
                 Some(slot) => {
@@ -74,7 +74,7 @@ impl TomlPatch {
         }
 
         for (key_path, item) in &self.seed {
-            let (parent, key) = split(key_path);
+            let (parent, key) = split(key_path)?;
             let table = ensure_table_mut(path, root, parent)?;
             if !table.contains_key(key) {
                 table.insert(key, item.clone());
@@ -85,7 +85,7 @@ impl TomlPatch {
             if targets.contains(key_path) {
                 continue;
             }
-            let (parent, key) = split(key_path);
+            let (parent, key) = split(key_path)?;
             let Some(table) = table_at_mut(path, root, parent)? else {
                 continue;
             };
@@ -173,10 +173,10 @@ fn keep_layout(old: &Item, new: &mut Item) {
     }
 }
 
-fn split(key_path: &KeyPath) -> (&[String], &String) {
-    key_path
-        .split_last()
-        .expect("patch paths must name a key, not the document root")
+fn split(key_path: &KeyPath) -> Result<(&[String], &String), LiveWriteError> {
+    key_path.split_last().ok_or_else(|| {
+        LiveWriteError::Invalid("patch paths must name a key, not the document root".into())
+    })
 }
 
 /// 路径上的这一段应该是表，却不是。

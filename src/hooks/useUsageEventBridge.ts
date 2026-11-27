@@ -1,7 +1,7 @@
+import { invalidateQueriesAfterChange } from "@/lib/query/invalidation";
+import { localUsageQueryFilters } from "@/lib/query/usage";
 import { focusManager, useQueryClient } from "@tanstack/react-query";
-import { usageKeys } from "@/lib/query/usage";
 import { useTauriEvent } from "./useTauriEvent";
-
 /**
  * 监听后端 `usage-log-recorded` 事件，收到后立刻 invalidate 所有
  * UsageDashboard 相关查询。用量页不再定时轮询，统计全靠它刷新。
@@ -13,12 +13,11 @@ import { useTauriEvent } from "./useTauriEvent";
  */
 export function useUsageEventBridge() {
   const queryClient = useQueryClient();
-
   useTauriEvent("usage-log-recorded", () => {
     // Mark inactive-window data stale without repeatedly querying SQLite. The
     // normal focus refetch catches up when the user returns to the window.
-    void queryClient.invalidateQueries({
-      queryKey: usageKeys.all,
+    return invalidateQueriesAfterChange(queryClient, {
+      ...localUsageQueryFilters,
       refetchType: focusManager.isFocused() ? "active" : "none",
     });
   });

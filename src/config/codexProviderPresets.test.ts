@@ -3,7 +3,6 @@ import {
   codexProviderPresets,
   generateThirdPartyConfig,
 } from "./codexProviderPresets";
-
 describe("codexProviderPresets managed OAuth snapshots", () => {
   // 托管 OAuth 卡无静态 key：requires_openai_auth = true 会被后端 keyless
   // 安全闸拒绝切换（provider.codex.config.official_auth_fallback）。后端
@@ -19,18 +18,15 @@ describe("codexProviderPresets managed OAuth snapshots", () => {
       );
     }
   });
-
   it("key-based third-party template keeps the fallback flag by default", () => {
     expect(
       generateThirdPartyConfig("acme", "https://api.acme.dev/v1", "m1"),
     ).toContain("requires_openai_auth = true");
   });
-
   it("exposes GitHub Copilot as a keyless Codex provider", () => {
     const preset = codexProviderPresets.find(
       (item) => item.providerType === "github_copilot",
     );
-
     expect(preset).toMatchObject({
       name: "GitHub Copilot",
       requiresOAuth: true,

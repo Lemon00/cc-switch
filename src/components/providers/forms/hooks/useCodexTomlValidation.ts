@@ -1,6 +1,5 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import TOML from "smol-toml";
-
 /**
  * Codex config.toml 格式校验 Hook
  * 使用 smol-toml 进行实时 TOML 语法校验（带 debounce）
@@ -8,7 +7,6 @@ import TOML from "smol-toml";
 export function useCodexTomlValidation() {
   const [configError, setConfigError] = useState("");
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
-
   /**
    * 校验 TOML 格式
    * @param tomlText - 待校验的 TOML 文本
@@ -20,7 +18,6 @@ export function useCodexTomlValidation() {
       setConfigError("");
       return true;
     }
-
     try {
       TOML.parse(tomlText);
       setConfigError("");
@@ -32,7 +29,6 @@ export function useCodexTomlValidation() {
       return false;
     }
   }, []);
-
   /**
    * 带 debounce 的校验函数（500ms 延迟）
    * @param tomlText - 待校验的 TOML 文本
@@ -43,7 +39,6 @@ export function useCodexTomlValidation() {
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
-
       // 设置新的定时器
       debounceTimerRef.current = setTimeout(() => {
         validateToml(tomlText);
@@ -51,14 +46,12 @@ export function useCodexTomlValidation() {
     },
     [validateToml],
   );
-
   /**
    * 清空错误信息
    */
   const clearError = useCallback(() => {
     setConfigError("");
   }, []);
-
   // 清理定时器
   useEffect(() => {
     return () => {
@@ -67,7 +60,6 @@ export function useCodexTomlValidation() {
       }
     };
   }, []);
-
   return {
     configError,
     validateToml,

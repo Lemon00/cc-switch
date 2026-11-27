@@ -4,7 +4,7 @@
 
 use super::{lock_conn, Database, SCHEMA_VERSION};
 use crate::error::AppError;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -13,7 +13,51 @@ struct LegacySkillMigrationRow {
     app_type: String,
 }
 
+/// Roll back on every early return, including a failed RELEASE and panic unwind.
+/// A nested savepoint must leave its caller's transaction intact.
+struct SavepointGuard<'a> {
+    conn: &'a Connection,
+    name: &'a str,
+    active: bool,
+}
+
+impl Drop for SavepointGuard<'_> {
+    fn drop(&mut self) {
+        if self.active && !self.conn.is_autocommit() {
+            if let Err(error) = self
+                .conn
+                .execute_batch(&format!("ROLLBACK TO {0}; RELEASE {0};", self.name))
+            {
+                log::error!("Rollback of savepoint {} failed: {error}", self.name);
+            }
+        }
+    }
+}
+
 impl Database {
+    /// Complete schema setup is one unit: compatibility repairs, migrations and
+    /// seed writes all roll back if any later step fails.
+    pub(crate) fn initialize_schema_on_conn(conn: &Connection) -> Result<(), AppError> {
+        Self::in_savepoint(conn, "initialize_schema", || {
+            Self::create_tables_on_conn(conn)?;
+            Self::apply_schema_migrations_on_conn(conn)?;
+            Self::ensure_model_pricing_seeded_on_conn(conn)
+        })
+    }
+
+    fn validate_schema_version(conn: &Connection) -> Result<i32, AppError> {
+        let version = Self::get_user_version(conn)?;
+        if version > SCHEMA_VERSION {
+            return Err(AppError::Database(format!(
+                "数据库版本过新（{version}），当前应用仅支持 {SCHEMA_VERSION}，请升级应用后再尝试。"
+            )));
+        }
+        if version < 0 {
+            return Err(AppError::Database(format!("非法数据库版本: {version}")));
+        }
+        Ok(version)
+    }
+
     /// 创建所有数据库表
     pub fn create_tables(&self) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
@@ -23,6 +67,7 @@ impl Database {
     /// 在指定连接上创建表（供迁移和测试使用）
     pub fn create_tables_on_conn(conn: &Connection) -> Result<(), AppError> {
         Self::in_savepoint(conn, "create_tables", || {
+            Self::validate_schema_version(conn)?;
             Self::create_tables_on_conn_unbatched(conn)
         })
     }
@@ -37,19 +82,19 @@ impl Database {
         name: &str,
         f: impl FnOnce() -> Result<T, AppError>,
     ) -> Result<T, AppError> {
+        Self::validate_identifier(name, "savepoint")?;
         conn.execute_batch(&format!("SAVEPOINT {name};"))
             .map_err(|e| AppError::Database(format!("开启 savepoint {name} 失败: {e}")))?;
-        match f() {
-            Ok(value) => {
-                conn.execute_batch(&format!("RELEASE {name};"))
-                    .map_err(|e| AppError::Database(format!("提交 savepoint {name} 失败: {e}")))?;
-                Ok(value)
-            }
-            Err(err) => {
-                let _ = conn.execute_batch(&format!("ROLLBACK TO {name}; RELEASE {name};"));
-                Err(err)
-            }
-        }
+        let mut guard = SavepointGuard {
+            conn,
+            name,
+            active: true,
+        };
+        let value = f()?;
+        conn.execute_batch(&format!("RELEASE {name};"))
+            .map_err(|e| AppError::Database(format!("提交 savepoint {name} 失败: {e}")))?;
+        guard.active = false;
+        Ok(value)
     }
 
     fn create_tables_on_conn_unbatched(conn: &Connection) -> Result<(), AppError> {
@@ -86,6 +131,17 @@ impl Database {
                 added_at INTEGER,
                 FOREIGN KEY (provider_id, app_type) REFERENCES providers(id, app_type) ON DELETE CASCADE
             )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        // Startup creates tables before running versioned migrations. Older
+        // databases may contain duplicates, so repair them before the index.
+        if Self::get_user_version(conn)? < 25 {
+            Self::deduplicate_provider_endpoints(conn)?;
+        }
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_endpoints_unique
+                ON provider_endpoints(provider_id, app_type, url)",
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -203,24 +259,6 @@ impl Database {
                 [],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
-            conn.execute(
-                "INSERT OR IGNORE INTO proxy_config (app_type, max_retries,
-                streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
-                circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
-                circuit_error_rate_threshold, circuit_min_requests)
-                VALUES ('gemini', 5, 60, 120, 600, 4, 2, 60, 0.6, 10)",
-                [],
-            )
-            .map_err(|e| AppError::Database(e.to_string()))?;
-            conn.execute(
-                "INSERT OR IGNORE INTO proxy_config (app_type, max_retries,
-                streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
-                circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
-                circuit_error_rate_threshold, circuit_min_requests)
-                VALUES ('grokbuild', 3, 60, 120, 600, 4, 2, 60, 0.6, 10)",
-                [],
-            )
-            .map_err(|e| AppError::Database(e.to_string()))?;
         }
 
         // 9. Provider Health 表
@@ -241,6 +279,7 @@ impl Database {
             pricing_model TEXT,
             input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
             cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_creation_1h_tokens INTEGER NOT NULL DEFAULT 0,
             input_token_semantics INTEGER NOT NULL DEFAULT 0,
             input_cost_usd TEXT NOT NULL DEFAULT '0', output_cost_usd TEXT NOT NULL DEFAULT '0',
             cache_read_cost_usd TEXT NOT NULL DEFAULT '0', cache_creation_cost_usd TEXT NOT NULL DEFAULT '0',
@@ -398,55 +437,32 @@ impl Database {
 
         // 修复跑过未发布开发版的库：current 标记曾是全局 key，现按应用分组
         // （随 v12 定稿为 current_profile_id_<scope>，不单独 bump 版本）
-        if conn
-            .execute(
-                "INSERT OR REPLACE INTO settings (key, value)
+        conn.execute(
+            "INSERT INTO settings (key, value)
                  SELECT 'current_profile_id_claude', value FROM settings
-                 WHERE key = 'current_profile_id'",
-                [],
-            )
-            .is_ok()
-        {
-            let _ = conn.execute("DELETE FROM settings WHERE key = 'current_profile_id'", []);
+                 WHERE key = 'current_profile_id'
+                 ON CONFLICT(key) DO NOTHING",
+            [],
+        )?;
+        conn.execute("DELETE FROM settings WHERE key = 'current_profile_id'", [])?;
+
+        // Ignore only columns that already exist; real DDL errors must abort
+        // setup instead of exposing a partially repaired schema to the DAOs.
+        for (column, definition) in [
+            ("live_takeover_active", "INTEGER NOT NULL DEFAULT 0"),
+            ("proxy_enabled", "INTEGER NOT NULL DEFAULT 0"),
+            ("listen_address", "TEXT NOT NULL DEFAULT '127.0.0.1'"),
+            ("listen_port", "INTEGER NOT NULL DEFAULT 15721"),
+            ("enable_logging", "INTEGER NOT NULL DEFAULT 1"),
+            (
+                "streaming_first_byte_timeout",
+                "INTEGER NOT NULL DEFAULT 60",
+            ),
+            ("streaming_idle_timeout", "INTEGER NOT NULL DEFAULT 120"),
+            ("non_streaming_timeout", "INTEGER NOT NULL DEFAULT 600"),
+        ] {
+            Self::add_column_if_missing(conn, "proxy_config", column, definition)?;
         }
-
-        // 尝试添加 live_takeover_active 列到 proxy_config 表
-        let _ = conn.execute(
-            "ALTER TABLE proxy_config ADD COLUMN live_takeover_active INTEGER NOT NULL DEFAULT 0",
-            [],
-        );
-
-        // 尝试添加基础配置列到 proxy_config 表（兼容 v3.9.0-2 升级）
-        let _ = conn.execute(
-            "ALTER TABLE proxy_config ADD COLUMN proxy_enabled INTEGER NOT NULL DEFAULT 0",
-            [],
-        );
-        let _ = conn.execute(
-            "ALTER TABLE proxy_config ADD COLUMN listen_address TEXT NOT NULL DEFAULT '127.0.0.1'",
-            [],
-        );
-        let _ = conn.execute(
-            "ALTER TABLE proxy_config ADD COLUMN listen_port INTEGER NOT NULL DEFAULT 15721",
-            [],
-        );
-        let _ = conn.execute(
-            "ALTER TABLE proxy_config ADD COLUMN enable_logging INTEGER NOT NULL DEFAULT 1",
-            [],
-        );
-
-        // 尝试添加超时配置列到 proxy_config 表
-        let _ = conn.execute(
-            "ALTER TABLE proxy_config ADD COLUMN streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60",
-            [],
-        );
-        let _ = conn.execute(
-            "ALTER TABLE proxy_config ADD COLUMN streaming_idle_timeout INTEGER NOT NULL DEFAULT 120",
-            [],
-        );
-        let _ = conn.execute(
-            "ALTER TABLE proxy_config ADD COLUMN non_streaming_timeout INTEGER NOT NULL DEFAULT 600",
-            [],
-        );
 
         // 兼容：若旧版 proxy_config 仍为单例结构（无 app_type），则在启动时直接转换为三行结构
         // 说明：user_version=2 时不会再触发 v1->v2 迁移，但新代码查询依赖 app_type 列。
@@ -465,15 +481,15 @@ impl Database {
         )?;
 
         // 删除旧的 failover_queue 表（如果存在）
-        let _ = conn.execute("DROP INDEX IF EXISTS idx_failover_queue_order", []);
-        let _ = conn.execute("DROP TABLE IF EXISTS failover_queue", []);
+        conn.execute("DROP INDEX IF EXISTS idx_failover_queue_order", [])?;
+        conn.execute("DROP TABLE IF EXISTS failover_queue", [])?;
 
         // 为故障转移队列创建索引（基于 providers 表）
-        let _ = conn.execute(
+        conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_providers_failover
              ON providers(app_type, in_failover_queue, sort_index)",
             [],
-        );
+        )?;
 
         Ok(())
     }
@@ -486,20 +502,8 @@ impl Database {
 
     /// 在指定连接上应用 Schema 迁移
     pub fn apply_schema_migrations_on_conn(conn: &Connection) -> Result<(), AppError> {
-        conn.execute("SAVEPOINT schema_migration;", [])
-            .map_err(|e| AppError::Database(format!("开启迁移 savepoint 失败: {e}")))?;
-
-        let mut version = Self::get_user_version(conn)?;
-
-        if version > SCHEMA_VERSION {
-            conn.execute("ROLLBACK TO schema_migration;", []).ok();
-            conn.execute("RELEASE schema_migration;", []).ok();
-            return Err(AppError::Database(format!(
-                "数据库版本过新（{version}），当前应用仅支持 {SCHEMA_VERSION}，请升级应用后再尝试。"
-            )));
-        }
-
-        let result = (|| {
+        Self::in_savepoint(conn, "schema_migration", || {
+            let mut version = Self::validate_schema_version(conn)?;
             while version < SCHEMA_VERSION {
                 match version {
                     0 => {
@@ -679,6 +683,29 @@ impl Database {
                         }
                         Self::set_user_version(conn, 24)?;
                     }
+                    24 => {
+                        if Self::table_exists(conn, "provider_endpoints")? {
+                            Self::deduplicate_provider_endpoints(conn)?;
+                            conn.execute(
+                                "CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_endpoints_unique
+                                    ON provider_endpoints(provider_id, app_type, url)",
+                                [],
+                            )
+                            .map_err(|e| AppError::Database(e.to_string()))?;
+                        }
+                        Self::set_user_version(conn, 25)?;
+                    }
+                    25 => {
+                        if Self::table_exists(conn, "proxy_request_logs")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "proxy_request_logs",
+                                "cache_creation_1h_tokens",
+                                "INTEGER NOT NULL DEFAULT 0",
+                            )?;
+                        }
+                        Self::set_user_version(conn, 26)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -688,20 +715,17 @@ impl Database {
                 version = Self::get_user_version(conn)?;
             }
             Ok(())
-        })();
+        })
+    }
 
-        match result {
-            Ok(_) => {
-                conn.execute("RELEASE schema_migration;", [])
-                    .map_err(|e| AppError::Database(format!("提交迁移 savepoint 失败: {e}")))?;
-                Ok(())
-            }
-            Err(e) => {
-                conn.execute("ROLLBACK TO schema_migration;", []).ok();
-                conn.execute("RELEASE schema_migration;", []).ok();
-                Err(e)
-            }
-        }
+    fn deduplicate_provider_endpoints(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "DELETE FROM provider_endpoints WHERE id NOT IN (
+                SELECT MIN(id) FROM provider_endpoints GROUP BY provider_id, app_type, url
+            )",
+            [],
+        )?;
+        Ok(())
     }
 
     /// v0 -> v1 迁移：补齐所有缺失列
@@ -929,34 +953,41 @@ impl Database {
                         row.get::<_, i32>(1)?,
                         row.get::<_, i32>(2)?,
                         row.get::<_, i32>(3)?,
-                        row.get::<_, i32>(4).unwrap_or(30),
-                        row.get::<_, i32>(5).unwrap_or(60),
-                        row.get::<_, i32>(6).unwrap_or(300),
+                        row.get::<_, i32>(4)?,
+                        row.get::<_, i32>(5)?,
+                        row.get::<_, i32>(6)?,
                     ))
                 },
             )
-            .unwrap_or_else(|_| ("127.0.0.1".to_string(), 5000, 3, 1, 30, 60, 300));
+            .optional()?
+            .unwrap_or_else(|| ("127.0.0.1".to_string(), 5000, 3, 1, 30, 60, 300));
 
-        let old_cb = conn.query_row(
+        let old_cb = if Self::table_exists(conn, "circuit_breaker_config")? {
+            conn.query_row(
             "SELECT failure_threshold, success_threshold, timeout_seconds, error_rate_threshold, min_requests
              FROM circuit_breaker_config WHERE id = 1", [],
             |row| Ok((row.get::<_, i32>(0)?, row.get::<_, i32>(1)?, row.get::<_, i64>(2)?,
                       row.get::<_, f64>(3)?, row.get::<_, i32>(4)?))
-        ).unwrap_or((5, 2, 60, 0.5, 10));
+            ).optional()?.unwrap_or((5, 2, 60, 0.5, 10))
+        } else {
+            (5, 2, 60, 0.5, 10)
+        };
 
-        let get_bool = |key: &str| -> bool {
-            conn.query_row("SELECT value FROM settings WHERE key = ?", [key], |r| {
-                r.get::<_, String>(0)
-            })
-            .map(|v| v == "true" || v == "1")
-            .unwrap_or(false)
+        let get_bool = |key: &str| -> Result<bool, AppError> {
+            Ok(conn
+                .query_row("SELECT value FROM settings WHERE key = ?", [key], |r| {
+                    r.get::<_, String>(0)
+                })
+                .optional()?
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(false))
         };
 
         let apps = [
             (
                 "claude",
-                get_bool("proxy_takeover_claude"),
-                get_bool("auto_failover_enabled_claude"),
+                get_bool("proxy_takeover_claude")?,
+                get_bool("auto_failover_enabled_claude")?,
                 6,
                 45,
                 90,
@@ -968,8 +999,8 @@ impl Database {
             ),
             (
                 "codex",
-                get_bool("proxy_takeover_codex"),
-                get_bool("auto_failover_enabled_codex"),
+                get_bool("proxy_takeover_codex")?,
+                get_bool("auto_failover_enabled_codex")?,
                 3,
                 old_config.4,
                 old_config.5,
@@ -981,8 +1012,8 @@ impl Database {
             ),
             (
                 "gemini",
-                get_bool("proxy_takeover_gemini"),
-                get_bool("auto_failover_enabled_gemini"),
+                get_bool("proxy_takeover_gemini")?,
+                get_bool("auto_failover_enabled_gemini")?,
                 5,
                 old_config.4,
                 old_config.5,
@@ -1182,14 +1213,14 @@ impl Database {
         // 标记：需要在启动后从文件系统扫描并重建 Skills 数据
         // 说明：v3 结构将 Skills 的 SSOT 迁移到 ~/.cc-switch/skills/，
         // 旧表只存“安装记录”，无法直接无损迁移到新结构，因此改为启动后扫描 app 目录导入。
-        let _ = conn.execute(
+        conn.execute(
             "INSERT OR REPLACE INTO settings (key, value) VALUES ('skills_ssot_migration_pending', 'true')",
             [],
-        );
-        let _ = conn.execute(
+        )?;
+        conn.execute(
             "INSERT OR REPLACE INTO settings (key, value) VALUES ('skills_ssot_migration_snapshot', ?1)",
             [snapshot_json],
-        );
+        )?;
 
         // 2. 删除旧表
         conn.execute("DROP TABLE IF EXISTS skills", [])
@@ -1653,11 +1684,8 @@ impl Database {
             .map_err(|e| AppError::Database(e.to_string()))?;
         conn.execute("ALTER TABLE proxy_config_v14 RENAME TO proxy_config", [])
             .map_err(|e| AppError::Database(e.to_string()))?;
-        conn.execute(
-            "INSERT OR IGNORE INTO proxy_config (app_type) VALUES ('grokbuild')",
-            [],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        // Existing rows were copied above. Do not create defaults for retired
+        // clients when this migration also runs during fresh database setup.
 
         Ok(())
     }
@@ -1688,7 +1716,7 @@ impl Database {
     /// schema migration already owns the Database connection mutex.
     fn migrate_v15_to_v16(conn: &Connection) -> Result<(), AppError> {
         let codex_dir = crate::codex_config::get_codex_config_dir();
-        crate::services::session_usage_codex::reset_codex_usage_on_conn(conn, &codex_dir)
+        crate::database::codex_usage_reset::reset_codex_usage_on_conn(conn, &codex_dir)
     }
 
     /// v16 -> v17: preserve session request identities after detail rollup.
@@ -2170,6 +2198,17 @@ impl Database {
             ("gpt-4o", "GPT-4o", "2.50", "10", "1.25", "0"),
             ("gpt-4o-mini", "GPT-4o Mini", "0.15", "0.60", "0.075", "0"),
             // Gemini 4 系列
+            // 来源：https://ai.google.dev/gemini-api/docs/pricing#gemini-4-neon
+            // 标准档（Global）：输入 3.00 / 输出 15.00（含思考）/ 缓存读 0.15（仅隐式缓存，写入记 0），
+            // 与 models.dev google/gemini-4-neon 一致。
+            (
+                "gemini-4-neon",
+                "Gemini 4 Neon",
+                "3.00",
+                "15.00",
+                "0.15",
+                "0",
+            ),
             // 来源：https://ai.google.dev/gemini-api/docs/pricing#gemini-4-argon
             // 录的是标准档介绍价（2026-10-15 抓取）：输入 2.00 / 输出 10.00 / 上下文缓存读 0.10
             // （缓存仅支持隐式，不支持显式写入，cache_creation 记 0，与其他 Gemini 条目口径一致）。
@@ -3967,6 +4006,24 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn migrate_v25_preserves_logs_and_defaults_cache_ttl_to_zero() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE proxy_request_logs (request_id TEXT PRIMARY KEY);
+            INSERT INTO proxy_request_logs VALUES ('old'); PRAGMA user_version = 25;",
+        )?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        let ttl: i64 = conn.query_row(
+            "SELECT cache_creation_1h_tokens FROM proxy_request_logs WHERE request_id = 'old'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(ttl, 0);
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        Ok(())
+    }
+
     use super::*;
 
     #[test]
@@ -4053,36 +4110,6 @@ mod tests {
     }
 
     #[test]
-    fn migrate_v13_to_v14_adds_grokbuild_proxy_row_and_preserves_values() -> Result<(), AppError> {
-        let conn = Connection::open_in_memory()?;
-        Database::create_tables_on_conn(&conn)?;
-        conn.execute("DELETE FROM proxy_config WHERE app_type = 'grokbuild'", [])?;
-        conn.execute(
-            "UPDATE proxy_config SET enabled = 1, max_retries = 9 WHERE app_type = 'codex'",
-            [],
-        )?;
-        Database::set_user_version(&conn, 13)?;
-
-        Database::apply_schema_migrations_on_conn(&conn)?;
-
-        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
-        let grok_rows: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM proxy_config WHERE app_type = 'grokbuild'",
-            [],
-            |row| row.get(0),
-        )?;
-        assert_eq!(grok_rows, 1);
-        let codex_values: (i64, i64) = conn.query_row(
-            "SELECT enabled, max_retries FROM proxy_config WHERE app_type = 'codex'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-        assert_eq!(codex_values, (1, 9));
-
-        Ok(())
-    }
-
-    #[test]
     fn dsh_migration_preserves_existing_flags_and_persists_mcp_and_skill_flags(
     ) -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
@@ -4106,50 +4133,11 @@ mod tests {
         db.save_mcp_server(&server)?;
         db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::Dsh, false)?;
         let saved = db.get_all_mcp_servers()?;
-        assert!(!saved["m"].apps.dsh && saved["m"].apps.kimi);
+        assert!(!saved["m"].apps.dsh);
         let skill = serde_json::from_value(serde_json::json!({"id":"s", "name":"s", "directory":"s", "apps":{"dsh":true,"claude":true}, "installedAt":0})).unwrap();
         db.save_skill(&skill)?;
         assert!(db.get_installed_skill("s")?.unwrap().apps.dsh);
         assert!(db.get_all_installed_skills()?["s"].apps.claude);
-        Ok(())
-    }
-
-    #[test]
-    fn kimi_migration_preserves_existing_flags_and_defaults_to_disabled() -> Result<(), AppError> {
-        let conn = Connection::open_in_memory()?;
-        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_codex BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_claude BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
-        Database::set_user_version(&conn, 21)?;
-        Database::apply_schema_migrations_on_conn(&conn)?;
-        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
-        for (table, flag) in [
-            ("mcp_servers", "enabled_codex"),
-            ("skills", "enabled_claude"),
-        ] {
-            let flags = conn.query_row(
-                &format!("SELECT {flag}, enabled_kimi FROM {table}"),
-                [],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
-            )?;
-            assert_eq!(flags, (1, 0));
-        }
-        Database::apply_schema_migrations_on_conn(&conn)?;
-        Ok(())
-    }
-
-    #[test]
-    fn kimi_clean_database_persists_mcp_and_skill_flags_independently() -> Result<(), AppError> {
-        let db = Database::memory()?;
-        let server = serde_json::from_value(serde_json::json!({"id":"m", "name":"m", "server":{"command":"echo"}, "apps":{"kimi":true,"codex":true}})).unwrap();
-        db.save_mcp_server(&server)?;
-        db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::Kimi, false)?;
-        let saved = db.get_all_mcp_servers()?;
-        assert!(!saved["m"].apps.kimi);
-        assert!(saved["m"].apps.codex);
-        let skill = serde_json::from_value(serde_json::json!({"id":"s", "name":"s", "description":"", "directory":"s", "apps":{"kimi":true,"claude":true}, "installedAt":0})).unwrap();
-        db.save_skill(&skill)?;
-        let saved = db.get_installed_skill("s")?.unwrap();
-        assert!(saved.apps.kimi && saved.apps.claude);
-        assert!(db.get_all_installed_skills()?["s"].apps.kimi);
         Ok(())
     }
 
@@ -4191,80 +4179,7 @@ mod tests {
         db.update_skill_apps("s", &apps)?;
         let read = db.get_all_installed_skills()?;
         assert!(!read["s"].apps.agy);
-        assert!(read["s"].apps.gemini);
-        Ok(())
-    }
-
-    #[test]
-    fn migrate_v19_to_v20_adds_pi_mcp_flag_and_keeps_existing_flags() -> Result<(), AppError> {
-        let conn = Connection::open_in_memory()?;
-        conn.execute_batch(
-            "CREATE TABLE mcp_servers (
-                id TEXT PRIMARY KEY,
-                enabled_codex BOOLEAN NOT NULL DEFAULT 0,
-                enabled_mcode BOOLEAN NOT NULL DEFAULT 0
-            );
-            INSERT INTO mcp_servers (id, enabled_codex, enabled_mcode) VALUES ('mcp-1', 1, 1);",
-        )?;
-        Database::set_user_version(&conn, 19)?;
-
-        Database::apply_schema_migrations_on_conn(&conn)?;
-
-        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
-        let values: (i64, i64, i64) = conn.query_row(
-            "SELECT enabled_codex, enabled_mcode, enabled_pi FROM mcp_servers WHERE id = 'mcp-1'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )?;
-        assert_eq!(values, (1, 1, 0));
-        Ok(())
-    }
-
-    #[test]
-    fn migrate_v14_to_v15_adds_grokbuild_skill_and_mcp_flags() -> Result<(), AppError> {
-        let conn = Connection::open_in_memory()?;
-        conn.execute_batch(
-            "CREATE TABLE mcp_servers (
-                id TEXT PRIMARY KEY,
-                enabled_codex BOOLEAN NOT NULL DEFAULT 0
-            );
-            CREATE TABLE skills (
-                id TEXT PRIMARY KEY,
-                enabled_codex BOOLEAN NOT NULL DEFAULT 0
-            );",
-        )?;
-        conn.execute(
-            "INSERT INTO mcp_servers (id, enabled_codex) VALUES ('mcp-1', 1)",
-            [],
-        )?;
-        conn.execute(
-            "INSERT INTO skills (id, enabled_codex) VALUES ('skill-1', 1)",
-            [],
-        )?;
-        Database::set_user_version(&conn, 14)?;
-
-        Database::apply_schema_migrations_on_conn(&conn)?;
-
-        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
-        assert!(Database::has_column(
-            &conn,
-            "mcp_servers",
-            "enabled_grokbuild"
-        )?);
-        assert!(Database::has_column(&conn, "skills", "enabled_grokbuild")?);
-        let mcp_values: (i64, i64) = conn.query_row(
-            "SELECT enabled_codex, enabled_grokbuild FROM mcp_servers WHERE id = 'mcp-1'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-        let skill_values: (i64, i64) = conn.query_row(
-            "SELECT enabled_codex, enabled_grokbuild FROM skills WHERE id = 'skill-1'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-        assert_eq!(mcp_values, (1, 0));
-        assert_eq!(skill_values, (1, 0));
-
+        assert!(!read["s"].apps.agy);
         Ok(())
     }
 

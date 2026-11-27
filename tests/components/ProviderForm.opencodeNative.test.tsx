@@ -6,10 +6,8 @@ import { ProviderForm } from "@/components/providers/forms/ProviderForm";
 import { createTestQueryClient } from "../utils/testQueryClient";
 import { server } from "../msw/server";
 import { setLiveProviderIds, setSettings } from "../msw/state";
-
 const toastError = vi.hoisted(() => vi.fn());
 vi.mock("sonner", () => ({ toast: { error: toastError, success: vi.fn() } }));
-
 vi.mock("@/components/JsonEditor", () => ({
   default: ({
     value,
@@ -25,7 +23,6 @@ vi.mock("@/components/JsonEditor", () => ({
     />
   ),
 }));
-
 function renderNativeForm(
   config: Record<string, unknown>,
   native = true,
@@ -53,7 +50,6 @@ function renderNativeForm(
   );
   return { ...view, client, onSubmit };
 }
-
 describe("native OpenCode provider form", () => {
   it.each([true, false])(
     "saves a legacy Unicode V1 ID unchanged (live: %s)",
@@ -85,7 +81,6 @@ describe("native OpenCode provider form", () => {
       );
     },
   );
-
   it("still rejects an invalid replacement for a legacy V1 ID", async () => {
     const { client, onSubmit } = renderNativeForm(
       {
@@ -110,7 +105,6 @@ describe("native OpenCode provider form", () => {
     );
     expect(onSubmit).not.toHaveBeenCalled();
   });
-
   beforeEach(() => {
     toastError.mockReset();
     setSettings({ commonConfigConfirmed: true });
@@ -137,7 +131,6 @@ describe("native OpenCode provider form", () => {
       expect(submitted.meta.opencodeConfigFormat).toBe("v2");
     },
   );
-
   it("edits native JSON without applying the V1 structured editor", async () => {
     const config = {
       package: "aisdk:@ai-sdk/anthropic",
@@ -165,7 +158,6 @@ describe("native OpenCode provider form", () => {
     );
     expect(onSubmit.mock.calls[0][0].meta.opencodeConfigFormat).toBe("v2");
   });
-
   it("continues to expose the structured editor for a V1 provider", () => {
     const { container } = renderNativeForm(
       {
@@ -180,7 +172,6 @@ describe("native OpenCode provider form", () => {
       screen.queryByText("opencode.nativeConfigHint"),
     ).not.toBeInTheDocument();
   });
-
   it("keeps an existing native provider ID even when it contains underscores", async () => {
     const { client, onSubmit } = renderNativeForm({}, true, "custom_provider");
     expect(
@@ -207,7 +198,6 @@ describe("native OpenCode provider form", () => {
     );
     expect(toastError).not.toHaveBeenCalled();
   });
-
   it.each([{}, { package: "aisdk:@ai-sdk/anthropic", models: {} }])(
     "requires a package and models for a renamed native ID: %j",
     async (config) => {
@@ -230,7 +220,6 @@ describe("native OpenCode provider form", () => {
       expect(onSubmit).not.toHaveBeenCalled();
     },
   );
-
   it("does not exempt a row that only looks native", async () => {
     // Without stored V2 metadata this may be an old copy missing its definition.
     const { client, onSubmit } = renderNativeForm(
@@ -248,7 +237,6 @@ describe("native OpenCode provider form", () => {
     );
     expect(onSubmit).not.toHaveBeenCalled();
   });
-
   it.each([
     ["custom", true],
     ["other", false],

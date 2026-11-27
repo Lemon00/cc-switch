@@ -4,7 +4,7 @@
 //! 不看任务栏 / Dock 占掉的部分。窗口底部若曾被拖到任务栏下面，每次启动都会
 //! 恢复到同一位置，底部按钮（例如更新弹窗的按钮）一直被挡住。
 
-use tauri::{PhysicalPosition, PhysicalSize, Runtime, WebviewWindow};
+use tauri::{LogicalSize, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewWindow};
 
 /// 物理像素下的矩形。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,10 +18,14 @@ struct Rect {
 /// 把 `window` 收进 `work`：比工作区大就缩小，再把位置夹到工作区内。
 /// 已经完整位于工作区内时返回 `None`。
 fn fit_into(window: Rect, work: Rect) -> Option<Rect> {
+    if work.width == 0 || work.height == 0 {
+        return None;
+    }
     let width = window.width.min(work.width);
     let height = window.height.min(work.height);
-    let max_x = work.x.saturating_add((work.width - width) as i32);
-    let max_y = work.y.saturating_add((work.height - height) as i32);
+    let max_x = (i64::from(work.x) + i64::from(work.width - width)).min(i64::from(i32::MAX)) as i32;
+    let max_y =
+        (i64::from(work.y) + i64::from(work.height - height)).min(i64::from(i32::MAX)) as i32;
     let fitted = Rect {
         x: window.x.clamp(work.x, max_x),
         y: window.y.clamp(work.y, max_y),
@@ -29,6 +33,10 @@ fn fit_into(window: Rect, work: Rect) -> Option<Rect> {
         height,
     };
     (fitted != window).then_some(fitted)
+}
+
+fn minimum_that_fits(configured: f64, work: u32, decoration: u32, scale: f64) -> f64 {
+    configured.min(work.saturating_sub(decoration).max(1) as f64 / scale)
 }
 
 /// 在主窗口首次显示前调用（window-state 插件已在窗口创建时恢复了位置）。
@@ -66,6 +74,41 @@ pub fn fit_to_work_area<R: Runtime>(window: &WebviewWindow<R>) {
         width: work.size.width,
         height: work.size.height,
     };
+    if work.width == 0 || work.height == 0 {
+        return;
+    }
+
+    // The configured 900×600 minimum otherwise prevents set_size from fitting small/HiDPI screens.
+    if let Some(config) = window
+        .app_handle()
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|config| config.label == window.label())
+    {
+        let scale = window
+            .scale_factor()
+            .ok()
+            .filter(|scale| scale.is_finite() && *scale > 0.0)
+            .unwrap_or(1.0);
+        if let Err(error) = window.set_min_size(Some(LogicalSize::new(
+            minimum_that_fits(
+                config.min_width.unwrap_or(0.0),
+                work.width,
+                size.width.saturating_sub(inner.width),
+                scale,
+            ),
+            minimum_that_fits(
+                config.min_height.unwrap_or(0.0),
+                work.height,
+                size.height.saturating_sub(inner.height),
+                scale,
+            ),
+        ))) {
+            log::warn!("调整主窗口最小尺寸失败: {error}");
+        }
+    }
 
     let Some(fitted) = fit_into(current, work) else {
         return;
@@ -84,6 +127,22 @@ pub fn fit_to_work_area<R: Runtime>(window: &WebviewWindow<R>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn minimum_size_respects_available_content_area_and_scale() {
+        assert_eq!(minimum_that_fits(900.0, 1280, 0, 2.0), 640.0);
+        assert_eq!(minimum_that_fits(600.0, 720, 40, 1.5), 680.0 / 1.5);
+        assert_eq!(minimum_that_fits(900.0, 1920, 0, 1.0), 900.0);
+    }
+
+    #[test]
+    fn invalid_work_area_and_large_coordinate_ranges_do_not_panic() {
+        assert_eq!(fit_into(rect(0, 0, 100, 100), rect(0, 0, 0, 0)), None);
+        assert_eq!(
+            fit_into(rect(0, 0, 100, 100), rect(i32::MIN, 0, u32::MAX, 1000)),
+            None
+        );
+    }
 
     const fn rect(x: i32, y: i32, width: u32, height: u32) -> Rect {
         Rect {

@@ -4,11 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import type { Provider } from "@/types";
 import { createTestQueryClient } from "../utils/testQueryClient";
-
 const claudeQuotaProps = vi.hoisted(() => vi.fn());
 const getClaudeDefaultPlan = vi.hoisted(() => vi.fn());
 const claudeLineProps = vi.hoisted(() => vi.fn());
-
 vi.mock("@/lib/api/subscription", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("@/lib/api/subscription")>();
@@ -16,7 +14,6 @@ vi.mock("@/lib/api/subscription", async (importOriginal) => {
     subscriptionApi: { ...actual.subscriptionApi, getClaudeDefaultPlan },
   };
 });
-
 vi.mock("@/components/providers/ProviderCardActions", () => ({
   ProviderCardActions: () => null,
 }));
@@ -43,7 +40,6 @@ vi.mock("@/lib/query/failover", () => ({
 vi.mock("@/lib/query/queries", () => ({
   useUsageQuery: () => ({ data: undefined }),
 }));
-
 const boundCard = (meta: Provider["meta"] = {}): Provider => ({
   id: "claude-work",
   name: "Claude Work",
@@ -58,7 +54,6 @@ const boundCard = (meta: Provider["meta"] = {}): Provider => ({
     ...meta,
   },
 });
-
 const officialUsage = (enabled: boolean): Provider["meta"] => ({
   usage_script: {
     enabled,
@@ -67,7 +62,6 @@ const officialUsage = (enabled: boolean): Provider["meta"] => ({
     templateType: "official_subscription",
   },
 });
-
 function renderCard(provider: Provider, isCurrent = false) {
   return render(
     <QueryClientProvider client={createTestQueryClient()}>
@@ -84,7 +78,6 @@ function renderCard(provider: Provider, isCurrent = false) {
     </QueryClientProvider>,
   );
 }
-
 describe("ProviderCard with a Claude official account", () => {
   it("shows the bound account's quota by default, even when not current", () => {
     claudeQuotaProps.mockClear();
@@ -96,7 +89,6 @@ describe("ProviderCard with a Claude official account", () => {
       expect.objectContaining({ accountId: "work:org", isCurrent: false }),
     );
   });
-
   it("hides the quota when the user turned usage off", () => {
     renderCard(
       boundCard({
@@ -111,7 +103,6 @@ describe("ProviderCard with a Claude official account", () => {
     );
     expect(screen.queryByText("claude-account-quota")).not.toBeInTheDocument();
   });
-
   it("shows the default login's plan on a card without an account", async () => {
     getClaudeDefaultPlan.mockReset().mockResolvedValue({
       subscriptionType: "max",
@@ -130,7 +121,6 @@ describe("ProviderCard with a Claude official account", () => {
       screen.getByText("https://www.anthropic.com/claude-code"),
     ).toBeInTheDocument();
   });
-
   it("doesn't read the default login's plan when usage is off or an account is bound", () => {
     getClaudeDefaultPlan.mockReset();
     renderCard(boundCard());
@@ -144,7 +134,6 @@ describe("ProviderCard with a Claude official account", () => {
     });
     expect(getClaudeDefaultPlan).not.toHaveBeenCalled();
   });
-
   it("only shows the bound account's plan when usage is on", () => {
     claudeLineProps.mockClear();
     renderCard(boundCard());

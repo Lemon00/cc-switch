@@ -123,23 +123,28 @@ pub async fn fetch_models(
             "[ModelFetch] Trying endpoint: {}",
             crate::url_for_log_with_secrets(url, &known_secrets)
         );
-        let request = crate::proxy::http_client::get_for_url(url)
+        let client = crate::proxy::http_client::no_redirect_for_url(url)
+            .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+        let request = client
             .get(url)
             .headers(headers.clone())
             .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS));
         let response = match request.send().await {
             Ok(r) => r,
             Err(e) => {
-                return Err(format!("Request failed: {e}"));
+                return Err(format!("Request failed: {}", e.without_url()));
             }
         };
 
         let status = response.status();
 
         if status.is_success() {
-            let resp: ModelsResponse = response
-                .json()
-                .await
+            const MAX_MODEL_FETCH_BYTES: usize = 16 * 1024 * 1024;
+            let body =
+                crate::proxy::http_client::read_body_with_limit(response, MAX_MODEL_FETCH_BYTES)
+                    .await
+                    .map_err(|e| format!("Failed to read response: {e}"))?;
+            let resp: ModelsResponse = serde_json::from_slice(&body)
                 .map_err(|e| format!("Failed to parse response: {e}"))?;
 
             let mut models: Vec<FetchedModel> = if let Some(data) = resp.data {
@@ -162,7 +167,10 @@ pub async fn fetch_models(
 
         if status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED {
             let body = redact_model_fetch_error_body(
-                response.text().await.unwrap_or_default(),
+                crate::proxy::http_client::read_body_with_limit(response, 64 * 1024)
+                    .await
+                    .map(|b| String::from_utf8_lossy(&b).into_owned())
+                    .unwrap_or_default(),
                 &known_secrets,
             );
             last_err = Some(format!("HTTP {status}: {body}"));
@@ -170,7 +178,10 @@ pub async fn fetch_models(
         }
 
         let body = redact_model_fetch_error_body(
-            response.text().await.unwrap_or_default(),
+            crate::proxy::http_client::read_body_with_limit(response, 64 * 1024)
+                .await
+                .map(|b| String::from_utf8_lossy(&b).into_owned())
+                .unwrap_or_default(),
             &known_secrets,
         );
         return Err(format!("HTTP {status}: {body}"));
@@ -373,23 +384,23 @@ fn ends_with_version_segment(url: &str) -> bool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn model_fetch_headers_follow_pi_api_format() {
-        let anthropic =
-            build_model_fetch_headers("anthropic-key", Some("anthropic-messages"), None, None)
-                .unwrap();
-        assert_eq!(anthropic["x-api-key"], "anthropic-key");
-        assert!(!anthropic.contains_key(AUTHORIZATION));
-
-        let google =
-            build_model_fetch_headers("google-key", Some("google-generative-ai"), None, None)
-                .unwrap();
-        assert_eq!(google["x-goog-api-key"], "google-key");
-        assert!(!google.contains_key(AUTHORIZATION));
-
-        let openai =
-            build_model_fetch_headers("openai-key", Some("openai-responses"), None, None).unwrap();
-        assert_eq!(openai[AUTHORIZATION], "Bearer openai-key");
+    #[tokio::test]
+    async fn network_failures_do_not_expose_url_credentials() {
+        let error = fetch_models(
+            "https://example.invalid",
+            "test-api-key",
+            false,
+            Some("unsupported://user:url-password@example.invalid/models?token=query-secret"),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.starts_with("Request failed:"));
+        assert!(!error.contains("url-password"));
+        assert!(!error.contains("query-secret"));
+        assert!(!error.contains("example.invalid"));
     }
 
     #[test]

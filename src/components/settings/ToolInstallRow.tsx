@@ -1,6 +1,5 @@
-import { useTranslation } from "react-i18next";
 import type { ToolInstallation } from "@/lib/api/settings";
-
+import { useTranslation } from "react-i18next";
 /**
  * 单处工具安装的信息行：来源徽章 + 路径 + 版本（或「无法运行」）+「默认」标记。
  * 冲突诊断列表与升级确认对话框共用，确保两处的视觉与「默认」判定始终一致。

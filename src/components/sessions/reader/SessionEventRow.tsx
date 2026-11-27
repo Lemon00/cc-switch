@@ -1,9 +1,8 @@
-import { memo, useState, type ReactNode } from "react";
-import { ChevronRight, ExternalLink } from "lucide-react";
-
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import type { EventBlock, SessionMessage } from "@/types";
+import { ChevronRight, ExternalLink } from "lucide-react";
+import { memo, useState, type ReactNode } from "react";
 import { highlightText } from "../utils";
 import { useReaderContext } from "./context";
 import { useReaderT } from "./i18n";
@@ -12,25 +11,21 @@ import { openSessionLink, SessionPlainText } from "./SessionMarkdown";
 import { BlockText } from "./SessionStepDetails";
 import type { Translate } from "./toolSummary";
 import { messageText } from "./turns";
-
 /** PR 编号：文案里的 `#128` 或链接里的 `/pull/128` */
 const prNumber = (block: EventBlock) =>
   /#(\d+)/.exec(block.text ?? "")?.[1] ??
   /\/pull\/(\d+)/.exec(block.url ?? "")?.[1];
-
 /** Codex 子代理事件 `agt_7Kq2: Found …` → 名称 + 正文 */
 const splitSubAgent = (text: string) => {
   const match = /^([^:\s]{1,40}):\s*([\s\S]*)$/.exec(text);
   return match ? { name: match[1], rest: match[2] } : { name: text, rest: "" };
 };
-
 interface EventDisplay {
   label: string;
   /** 可展开的补充正文（压缩摘要、Hook 报错、子代理消息…） */
   detail?: string;
   tone: "muted" | "danger";
 }
-
 export const describeEvent = (
   block: EventBlock,
   rt: Translate,
@@ -89,7 +84,6 @@ export const describeEvent = (
       return { label: text, detail: extra || undefined, tone: "muted" };
   }
 };
-
 const LinkButton = ({
   url,
   children,
@@ -115,14 +109,12 @@ const LinkButton = ({
     </button>
   );
 };
-
 export interface SessionEventRowProps {
   block: EventBlock;
   body?: string;
   /** divider：轮间居中细字；inline：执行过程里的一行 */
   variant?: "divider" | "inline";
 }
-
 /**
  * 事件行：中断 / 压缩 / 模型切换 / PR 链接 / Hook 错误 / 斜杠命令 / 子代理（§6.4 Event）。
  * Hook 错误与 Gemini error 用 danger 色；有补充正文的可点开。
@@ -162,7 +154,6 @@ export const SessionEventRow = memo(function SessionEventRow({
     ) : (
       <span className="truncate">{label}</span>
     );
-
   const detail = open && display.detail && (
     <div
       className={cn(
@@ -189,7 +180,6 @@ export const SessionEventRow = memo(function SessionEventRow({
       )}
     </div>
   );
-
   if (variant === "inline") {
     return (
       <div className="min-w-0 px-1.5 py-1">
@@ -206,7 +196,6 @@ export const SessionEventRow = memo(function SessionEventRow({
       </div>
     );
   }
-
   return (
     <div className="min-w-0 py-2">
       <div
@@ -224,9 +213,7 @@ export const SessionEventRow = memo(function SessionEventRow({
     </div>
   );
 });
-
 // ─── 注入的上下文（决策 D10：默认隐藏，菜单开关显示） ────────────────────
-
 /** 注入内容的标签：AGENTS.md / environment_context / system-reminder / developer… */
 export const injectedLabel = (message: SessionMessage) => {
   const text = messageText(message).trim();
@@ -238,7 +225,6 @@ export const injectedLabel = (message: SessionMessage) => {
   const first = text.split("\n")[0] ?? "";
   return first.length > 32 ? `${first.slice(0, 32)}…` : first;
 };
-
 export const SessionInjectedRow = memo(function SessionInjectedRow({
   message,
 }: {

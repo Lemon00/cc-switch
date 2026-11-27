@@ -8,26 +8,23 @@ import {
   useDiscoverableSkills,
   useRefreshDiscoverableSkills,
   useRemoveSkillRepo,
+  invalidateSkillsDiscoverCache,
 } from "@/hooks/useSkills";
 import type {
   DiscoverableSkill,
   SkillDiscoveryResult,
   SkillRepo,
 } from "@/lib/api/skills";
-
 const apiMocks = vi.hoisted(() => ({
   addRepo: vi.fn(),
   removeRepo: vi.fn(),
   discoverRepo: vi.fn(),
   discoverAvailable: vi.fn(),
 }));
-
 vi.mock("@/lib/api/skills", () => ({
   skillsApi: apiMocks,
 }));
-
 const DISCOVERABLE = ["skills", "discoverable"];
-
 function skill(owner: string, repo: string, name: string): DiscoverableSkill {
   return {
     key: `${owner}/${repo}:${name}`,
@@ -39,14 +36,12 @@ function skill(owner: string, repo: string, name: string): DiscoverableSkill {
     repoBranch: "main",
   };
 }
-
 const repoA: SkillRepo = {
   owner: "a",
   name: "one",
   branch: "main",
   enabled: true,
 };
-
 function setup() {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -59,7 +54,6 @@ function setup() {
   );
   return { queryClient, wrapper };
 }
-
 describe("replaceRepoDiscovery", () => {
   it("replaces only the target repo's skills and failures, sorted by name", () => {
     const existing: SkillDiscoveryResult = {
@@ -73,7 +67,6 @@ describe("replaceRepoDiscovery", () => {
       skills: [skill("a", "one", "Alpha")],
       failures: [],
     };
-
     expect(replaceRepoDiscovery(existing, repoA, next)).toEqual({
       skills: [skill("a", "one", "Alpha"), skill("b", "two", "zeta")],
       failures: [{ owner: "b", name: "three", branch: "main", error: "y" }],
@@ -82,21 +75,18 @@ describe("replaceRepoDiscovery", () => {
       skill("b", "two", "zeta"),
     ]);
   });
-
   it("leaves an empty cache alone", () => {
     expect(
       replaceRepoDiscovery(undefined, repoA, { skills: [], failures: [] }),
     ).toBeUndefined();
   });
 });
-
 describe("repo mutations patch discovery instead of refetching every repo", () => {
   beforeEach(() => {
     Object.values(apiMocks).forEach((mock) => mock.mockReset());
     apiMocks.addRepo.mockResolvedValue(true);
     apiMocks.removeRepo.mockResolvedValue(true);
   });
-
   it("adding a repo discovers just that repo", async () => {
     const { queryClient, wrapper } = setup();
     queryClient.setQueryData<SkillDiscoveryResult>(DISCOVERABLE, {
@@ -105,13 +95,11 @@ describe("repo mutations patch discovery instead of refetching every repo", () =
     });
     const fresh = { skills: [skill("a", "one", "alpha")], failures: [] };
     apiMocks.discoverRepo.mockResolvedValue(fresh);
-
     const { result } = renderHook(() => useAddSkillRepo(), { wrapper });
     let returned: SkillDiscoveryResult | null = null;
     await act(async () => {
       returned = await result.current.mutateAsync(repoA);
     });
-
     expect(returned).toEqual(fresh);
     expect(apiMocks.discoverRepo).toHaveBeenCalledWith("a", "one");
     expect(apiMocks.discoverAvailable).not.toHaveBeenCalled();
@@ -121,19 +109,16 @@ describe("repo mutations patch discovery instead of refetching every repo", () =
         ?.skills.map((s) => s.name),
     ).toEqual(["alpha", "beta"]);
   });
-
   it("disabling a repo drops its skills without any network call", async () => {
     const { queryClient, wrapper } = setup();
     queryClient.setQueryData<SkillDiscoveryResult>(DISCOVERABLE, {
       skills: [skill("a", "one", "alpha"), skill("b", "two", "beta")],
       failures: [],
     });
-
     const { result } = renderHook(() => useAddSkillRepo(), { wrapper });
     await act(async () => {
       await result.current.mutateAsync({ ...repoA, enabled: false });
     });
-
     expect(apiMocks.discoverRepo).not.toHaveBeenCalled();
     expect(apiMocks.discoverAvailable).not.toHaveBeenCalled();
     expect(
@@ -142,19 +127,16 @@ describe("repo mutations patch discovery instead of refetching every repo", () =
         ?.skills.map((s) => s.name),
     ).toEqual(["beta"]);
   });
-
   it("removing a repo drops its skills without any network call", async () => {
     const { queryClient, wrapper } = setup();
     queryClient.setQueryData<SkillDiscoveryResult>(DISCOVERABLE, {
       skills: [skill("a", "one", "alpha"), skill("b", "two", "beta")],
       failures: [],
     });
-
     const { result } = renderHook(() => useRemoveSkillRepo(), { wrapper });
     await act(async () => {
       await result.current.mutateAsync({ owner: "a", name: "one" });
     });
-
     expect(apiMocks.discoverAvailable).not.toHaveBeenCalled();
     expect(
       queryClient
@@ -163,7 +145,6 @@ describe("repo mutations patch discovery instead of refetching every repo", () =
     ).toEqual(["beta"]);
   });
 });
-
 describe("repo mutation races", () => {
   beforeEach(() => {
     // 前面的用例会把发现结果写进本地缓存，它会成为 initialData
@@ -172,7 +153,74 @@ describe("repo mutation races", () => {
     apiMocks.addRepo.mockResolvedValue(true);
     apiMocks.removeRepo.mockResolvedValue(true);
   });
-
+  it("external imports cancel the initial discovery and ignore its late result", async () => {
+    const { queryClient, wrapper } = setup();
+    let resolveOld!: (value: SkillDiscoveryResult) => void;
+    const fresh = { skills: [skill("a", "one", "imported")], failures: [] };
+    apiMocks.discoverAvailable
+      .mockReturnValueOnce(
+        new Promise<SkillDiscoveryResult>((resolve) => {
+          resolveOld = resolve;
+        }),
+      )
+      .mockResolvedValue(fresh);
+    const view = renderHook(() => useDiscoverableSkills(), { wrapper });
+    await vi.waitFor(() =>
+      expect(apiMocks.discoverAvailable).toHaveBeenCalledTimes(1),
+    );
+    act(() => {
+      void invalidateSkillsDiscoverCache(queryClient);
+    });
+    await vi.waitFor(() =>
+      expect(apiMocks.discoverAvailable).toHaveBeenCalledTimes(2),
+    );
+    await vi.waitFor(() =>
+      expect(view.result.current.data).toEqual(fresh.skills),
+    );
+    await act(async () => {
+      resolveOld({ skills: [], failures: [] });
+    });
+    expect(queryClient.getQueryData(DISCOVERABLE)).toEqual(fresh);
+    view.unmount();
+    queryClient.clear();
+  });
+  it("a cancelled initial discovery cannot overwrite the persisted replacement", async () => {
+    const { queryClient, wrapper } = setup();
+    let resolveOld!: (value: SkillDiscoveryResult) => void;
+    const fresh = { skills: [skill("a", "one", "alpha")], failures: [] };
+    apiMocks.discoverAvailable
+      .mockReturnValueOnce(
+        new Promise<SkillDiscoveryResult>((resolve) => {
+          resolveOld = resolve;
+        }),
+      )
+      .mockResolvedValue(fresh);
+    apiMocks.discoverRepo.mockResolvedValue(fresh);
+    const view = renderHook(() => useDiscoverableSkills(), { wrapper });
+    const add = renderHook(() => useAddSkillRepo(), { wrapper });
+    await vi.waitFor(() =>
+      expect(apiMocks.discoverAvailable).toHaveBeenCalledTimes(1),
+    );
+    await act(async () => {
+      await add.result.current.mutateAsync(repoA);
+    });
+    await vi.waitFor(() =>
+      expect(view.result.current.data).toEqual(fresh.skills),
+    );
+    const persisted = localStorage.getItem(
+      "cc-switch-cache:skills.discoverable.v1",
+    );
+    expect(persisted).toBe(JSON.stringify(fresh));
+    await act(async () => {
+      resolveOld({ skills: [], failures: [] });
+    });
+    expect(
+      localStorage.getItem("cc-switch-cache:skills.discoverable.v1"),
+    ).toEqual(persisted);
+    view.unmount();
+    add.unmount();
+    queryClient.clear();
+  });
   it("falls back to a full discovery when there is nothing to patch yet", async () => {
     const { queryClient, wrapper } = setup();
     // 第一次整体发现挂着不回来，第二次正常返回
@@ -191,12 +239,10 @@ describe("repo mutation races", () => {
       expect(apiMocks.discoverAvailable).toHaveBeenCalledTimes(1),
     );
     const { result } = renderHook(() => useAddSkillRepo(), { wrapper });
-
     // 首次整体发现还没回来就添加：它会被取消，必须再整体发现一次
     await act(async () => {
       await result.current.mutateAsync(repoA);
     });
-
     await vi.waitFor(() =>
       expect(
         queryClient.getQueryData<SkillDiscoveryResult>(DISCOVERABLE)?.skills,
@@ -205,21 +251,17 @@ describe("repo mutation races", () => {
     expect(apiMocks.discoverAvailable).toHaveBeenCalledTimes(2);
     queryClient.clear();
   });
-
   it("refreshes the repo list before the repo's archive finishes downloading", async () => {
     const { queryClient, wrapper } = setup();
     apiMocks.discoverRepo.mockReturnValue(new Promise(() => {}));
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
-
     const { result } = renderHook(() => useAddSkillRepo(), { wrapper });
     act(() => {
       void result.current.mutateAsync(repoA);
     });
-
     await vi.waitFor(() => expect(apiMocks.discoverRepo).toHaveBeenCalled());
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["skills", "repos"] });
   });
-
   it("a slow discovery does not restore a repo removed meanwhile", async () => {
     const { queryClient, wrapper } = setup();
     queryClient.setQueryData<SkillDiscoveryResult>(DISCOVERABLE, {
@@ -232,7 +274,6 @@ describe("repo mutation races", () => {
         resolveDiscover = resolve;
       }),
     );
-
     const add = renderHook(() => useAddSkillRepo(), { wrapper });
     const remove = renderHook(() => useRemoveSkillRepo(), { wrapper });
     let adding!: Promise<unknown>;
@@ -247,7 +288,6 @@ describe("repo mutation races", () => {
       resolveDiscover({ skills: [skill("a", "one", "alpha")], failures: [] });
       await adding;
     });
-
     expect(
       queryClient
         .getQueryData<SkillDiscoveryResult>(DISCOVERABLE)
@@ -255,7 +295,6 @@ describe("repo mutation races", () => {
     ).toEqual(["beta"]);
   });
 });
-
 describe("useRefreshDiscoverableSkills", () => {
   it("asks the backend to bypass its per-repo cache", async () => {
     apiMocks.discoverAvailable.mockResolvedValue({ skills: [], failures: [] });
@@ -266,14 +305,12 @@ describe("useRefreshDiscoverableSkills", () => {
     await vi.waitFor(() =>
       expect(discover.result.current.isFetching).toBe(false),
     );
-
     const { result } = renderHook(() => useRefreshDiscoverableSkills(), {
       wrapper,
     });
     await act(async () => {
       await result.current();
     });
-
     expect(apiMocks.discoverAvailable).toHaveBeenLastCalledWith(true);
     queryClient.clear();
   });

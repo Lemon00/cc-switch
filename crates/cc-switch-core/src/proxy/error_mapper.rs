@@ -59,6 +59,10 @@ pub fn map_proxy_error_to_status(error: &ProxyError) -> u16 {
         // 转换错误：422 Unprocessable Entity
         ProxyError::TransformError(_) => 422,
 
+        // 体过大：与 IntoResponse 一致（413 / 502）
+        ProxyError::RequestBodyTooLarge(_) => 413,
+        ProxyError::ResponseBodyTooLarge(_) => 502,
+
         // 其他未知错误：500 Internal Server Error
         _ => 500,
     }
@@ -145,6 +149,14 @@ mod tests {
         assert_eq!(
             map_proxy_error_to_status(&ProxyError::StreamIdleTimeout(30)),
             504
+        );
+        assert_eq!(
+            map_proxy_error_to_status(&ProxyError::RequestBodyTooLarge(1)),
+            413
+        );
+        assert_eq!(
+            map_proxy_error_to_status(&ProxyError::ResponseBodyTooLarge(1)),
+            502
         );
     }
 

@@ -1,5 +1,4 @@
 import type { InstalledSkill, SkillDiscoveryResult } from "@/lib/api/skills";
-
 /**
  * 合并本次导入结果到已安装缓存，按 id 去重。
  *
@@ -12,14 +11,12 @@ export function mergeImportedSkills(
   imported: InstalledSkill[],
 ): InstalledSkill[] {
   if (imported.length === 0) return existing ?? imported;
-
   const merged = new Map(existing?.map((skill) => [skill.id, skill]));
   for (const skill of imported) {
     merged.set(skill.id, skill);
   }
   return Array.from(merged.values());
 }
-
 /**
  * 把发现结果里某个仓库的 Skill 和失败记录换成 next（不传就是删掉），
  * 去重、排序规则和后端 discover_available_report 一致。
@@ -29,11 +26,13 @@ export function mergeImportedSkills(
  */
 export function replaceRepoDiscovery(
   existing: SkillDiscoveryResult | undefined,
-  repo: { owner: string; name: string },
+  repo: {
+    owner: string;
+    name: string;
+  },
   next?: SkillDiscoveryResult,
 ): SkillDiscoveryResult | undefined {
   if (!existing) return undefined;
-
   const otherRepo = (owner?: string, name?: string) =>
     owner !== repo.owner || name !== repo.name;
   const seen = new Set<string>();

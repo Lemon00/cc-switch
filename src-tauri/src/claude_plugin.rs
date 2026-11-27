@@ -1,14 +1,16 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use crate::error::AppError;
 
 const CLAUDE_DIR: &str = ".claude";
 const CLAUDE_CONFIG_FILE: &str = "config.json";
+static CONFIG_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 fn claude_dir() -> Result<PathBuf, AppError> {
     // 优先使用设置中的覆盖目录
-    if let Some(dir) = crate::settings::get_claude_override_dir() {
+    if let Some(dir) = crate::settings::get_override_dir(&crate::app_config::AppType::Claude) {
         return Ok(dir);
     }
     let home = dirs::home_dir().ok_or_else(|| AppError::Config("无法获取用户主目录".into()))?;
@@ -29,11 +31,10 @@ pub fn ensure_claude_dir_exists() -> Result<PathBuf, AppError> {
 
 pub fn read_claude_config() -> Result<Option<String>, AppError> {
     let path = claude_config_path()?;
-    if path.exists() {
-        let content = fs::read_to_string(&path).map_err(|e| AppError::io(&path, e))?;
-        Ok(Some(content))
-    } else {
-        Ok(None)
+    match fs::read_to_string(&path) {
+        Ok(content) => Ok(Some(content)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(AppError::io(&path, error)),
     }
 }
 
@@ -49,73 +50,81 @@ fn is_managed_config(content: &str) -> bool {
 }
 
 pub fn write_claude_config() -> Result<bool, AppError> {
-    // 增量写入：仅设置 primaryApiKey = "any"，保留其它字段
-    let path = claude_config_path()?;
-    ensure_claude_dir_exists()?;
-
-    // 尝试读取并解析为对象
-    let mut obj = match read_claude_config()? {
-        Some(existing) => match serde_json::from_str::<serde_json::Value>(&existing) {
-            Ok(serde_json::Value::Object(map)) => serde_json::Value::Object(map),
-            _ => serde_json::json!({}),
-        },
-        None => serde_json::json!({}),
-    };
-
-    let mut changed = false;
-    if let Some(map) = obj.as_object_mut() {
-        let cur = map
-            .get("primaryApiKey")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        if cur != "any" {
-            map.insert(
-                "primaryApiKey".to_string(),
-                serde_json::Value::String("any".to_string()),
-            );
-            changed = true;
-        }
-    }
-
-    if changed || !path.exists() {
-        let serialized = serde_json::to_string_pretty(&obj)
-            .map_err(|e| AppError::JsonSerialize { source: e })?;
-        fs::write(&path, format!("{serialized}\n")).map_err(|e| AppError::io(&path, e))?;
-        Ok(true)
-    } else {
-        Ok(false)
-    }
+    update_config(&claude_config_path()?, false)
 }
 
 pub fn clear_claude_config() -> Result<bool, AppError> {
-    let path = claude_config_path()?;
-    if !path.exists() {
-        return Ok(false);
+    update_config(&claude_config_path()?, true)
+}
+
+fn update_config(path: &Path, clear: bool) -> Result<bool, AppError> {
+    let _guard = CONFIG_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let mut value = match fs::read_to_string(path) {
+        Ok(content) => serde_json::from_str::<serde_json::Value>(&content)
+            .map_err(|error| AppError::Config(format!("{}: {error}", path.display())))?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if clear {
+                return Ok(false);
+            }
+            serde_json::json!({})
+        }
+        Err(error) => return Err(AppError::io(path, error)),
+    };
+    let object = value.as_object_mut().ok_or_else(|| {
+        AppError::Config(format!("{} must contain a JSON object", path.display()))
+    })?;
+    let managed = object.get("primaryApiKey").and_then(|value| value.as_str()) == Some("any");
+    if clear {
+        if !managed {
+            return Ok(false);
+        }
+        object.remove("primaryApiKey");
+    } else {
+        if managed {
+            return Ok(false);
+        }
+        object.insert(
+            "primaryApiKey".into(),
+            serde_json::Value::String("any".into()),
+        );
     }
-
-    let content = match read_claude_config()? {
-        Some(content) => content,
-        None => return Ok(false),
-    };
-
-    let mut value = match serde_json::from_str::<serde_json::Value>(&content) {
-        Ok(value) => value,
-        Err(_) => return Ok(false),
-    };
-
-    let obj = match value.as_object_mut() {
-        Some(obj) => obj,
-        None => return Ok(false),
-    };
-
-    if obj.remove("primaryApiKey").is_none() {
-        return Ok(false);
-    }
-
-    let serialized =
-        serde_json::to_string_pretty(&value).map_err(|e| AppError::JsonSerialize { source: e })?;
-    fs::write(&path, format!("{serialized}\n")).map_err(|e| AppError::io(&path, e))?;
+    crate::config::write_json_file_private(path, &value)?;
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_configs_are_reported_and_preserved() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        for content in ["{broken", "[]", "null", "\"text\""] {
+            fs::write(&path, content).unwrap();
+            assert!(update_config(&path, false).is_err());
+            assert!(update_config(&path, true).is_err());
+            assert_eq!(fs::read_to_string(&path).unwrap(), content);
+        }
+    }
+
+    #[test]
+    fn only_managed_key_is_cleared_and_unrelated_fields_survive() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let content = r#"{"primaryApiKey":"user-key","other":{"keep":true}}"#;
+        fs::write(&path, content).unwrap();
+        assert!(!update_config(&path, true).unwrap());
+        assert_eq!(fs::read_to_string(&path).unwrap(), content);
+        assert!(update_config(&path, false).unwrap());
+        assert!(!update_config(&path, false).unwrap());
+        assert!(update_config(&path, true).unwrap());
+        let value: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(value, serde_json::json!({"other":{"keep":true}}));
+    }
 }
 
 pub fn claude_config_status() -> Result<(bool, PathBuf), AppError> {

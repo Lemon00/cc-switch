@@ -1,20 +1,19 @@
+import { QuotaBars, QuotaLines } from "@/components/quota/QuotaLines";
+import { failedLines, tierLine } from "@/components/quota/quotaRules";
+import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
+import { PROVIDER_TYPES } from "@/config/constants";
+import { resolveManagedAccountId } from "@/lib/authBinding";
+import { useCopilotQuota } from "@/lib/query/copilot";
+import type { ProviderMeta } from "@/types";
+import { extractErrorMessage } from "@/utils/errorUtils";
 import React from "react";
 import { useTranslation } from "react-i18next";
-import type { ProviderMeta } from "@/types";
-import { useCopilotQuota } from "@/lib/query/copilot";
-import { resolveManagedAccountId } from "@/lib/authBinding";
-import { PROVIDER_TYPES } from "@/config/constants";
-import { QuotaBars, QuotaLines } from "@/components/quota/QuotaLines";
-import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
-import { failedLines, tierLine } from "@/components/quota/quotaRules";
-
 interface CopilotQuotaFooterProps {
   meta?: ProviderMeta;
   inline?: boolean;
   /** 是否为当前激活的供应商 */
   isCurrent?: boolean;
 }
-
 const CopilotQuotaFooter: React.FC<CopilotQuotaFooterProps> = ({
   meta,
   inline = false,
@@ -26,15 +25,28 @@ const CopilotQuotaFooter: React.FC<CopilotQuotaFooterProps> = ({
     meta,
     PROVIDER_TYPES.GITHUB_COPILOT,
   );
-
   const {
     data: quota,
+    isError,
+    error,
     isFetching: loading,
     refetch,
   } = useCopilotQuota(accountId, { enabled: true, autoQuery: isCurrent });
-
-  if (!quota) return null;
-
+  if (!quota) {
+    // IPC reject 且无缓存时仍渲染失败态，避免 footer 消失无法重试
+    if (!isError) return null;
+    return inline ? (
+      <QuotaLines
+        lines={failedLines(
+          t,
+          extractErrorMessage(error) || t("subscription.queryFailed"),
+        )}
+        queriedAt={null}
+        loading={loading}
+        onRefresh={refetch}
+      />
+    ) : null;
+  }
   if (!quota.success) {
     return inline ? (
       <QuotaLines
@@ -45,7 +57,6 @@ const CopilotQuotaFooter: React.FC<CopilotQuotaFooterProps> = ({
       />
     ) : null;
   }
-
   if (quota.tiers.length === 0) return null;
   const label = t("subscription.copilotPremium", { defaultValue: "Premium" });
   const rows = quota.tiers.map((tier) => ({
@@ -55,7 +66,6 @@ const CopilotQuotaFooter: React.FC<CopilotQuotaFooterProps> = ({
       detail: quota.plan || undefined,
     },
   }));
-
   if (inline) {
     return (
       <QuotaLines
@@ -66,7 +76,6 @@ const CopilotQuotaFooter: React.FC<CopilotQuotaFooterProps> = ({
       />
     );
   }
-
   return (
     <QuotaBars
       className="mt-3"
@@ -78,5 +87,4 @@ const CopilotQuotaFooter: React.FC<CopilotQuotaFooterProps> = ({
     />
   );
 };
-
 export default CopilotQuotaFooter;

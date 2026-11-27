@@ -1,7 +1,7 @@
-import type { AppId } from "@/lib/api";
-import type { Provider } from "@/types";
 import { isOAuthProviderType } from "@/config/constants";
+import type { AppId } from "@/lib/api";
 import { resolveManagedAccountId } from "@/lib/authBinding";
+import type { Provider } from "@/types";
 import {
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
@@ -10,24 +10,19 @@ import {
   isCodexAnthropicWireApi,
   isCodexChatWireApi,
 } from "@/utils/providerConfigUtils";
-
 export const CODEX_OFFICIAL_PROVIDER_ID = "codex-official";
 export const GROKBUILD_OFFICIAL_PROVIDER_ID = "grokbuild-official";
 export const KIMI_OFFICIAL_PROVIDER_ID = "managed:kimi-code";
-
 export type CodexOfficialIdentity =
   | "native_login"
   | "managed_account"
   | "api_key";
-
 const nonEmptyString = (value: unknown): boolean =>
   typeof value === "string" && value.trim().length > 0;
-
 function hasExplicitCodexThirdPartyUpstream(
   settings: Record<string, unknown>,
 ): boolean {
   const config = typeof settings.config === "string" ? settings.config : "";
-
   return (
     nonEmptyString(settings.baseUrl) ||
     nonEmptyString(settings.baseURL) ||
@@ -37,18 +32,15 @@ function hasExplicitCodexThirdPartyUpstream(
     hasExplicitNonOpenAiCodexModelProvider(config)
   );
 }
-
 function hasStoredCodexApiKey(settings: Record<string, unknown>): boolean {
   const auth = settings.auth as Record<string, unknown> | undefined;
   return nonEmptyString(auth?.OPENAI_API_KEY);
 }
-
 export function resolveCodexOfficialIdentity(
   appId: AppId,
   provider: Pick<Provider, "id" | "category" | "meta" | "settingsConfig">,
 ): CodexOfficialIdentity | null {
   if (appId !== "codex") return null;
-
   const managedAccountId = resolveManagedAccountId(
     provider.meta,
     "codex_oauth",
@@ -57,7 +49,6 @@ export function resolveCodexOfficialIdentity(
   if (hasFixedOfficialId && provider.category === "official") {
     return managedAccountId ? "managed_account" : "native_login";
   }
-
   const settings = provider.settingsConfig as Record<string, unknown>;
   const auth = settings?.auth;
   const config = settings?.config;
@@ -69,11 +60,9 @@ export function resolveCodexOfficialIdentity(
   ) {
     return null;
   }
-
   if (hasExplicitCodexThirdPartyUpstream(settings)) {
     return null;
   }
-
   if (managedAccountId) {
     return "managed_account";
   }
@@ -84,7 +73,6 @@ export function resolveCodexOfficialIdentity(
     ? "native_login"
     : null;
 }
-
 /**
  * 官方账号卡（对应后端 `codex_direct::is_official`）：Codex 早期绑定托管账号的官方卡
  * 没有 category，按身份认。
@@ -93,18 +81,11 @@ export function isOfficialAccount(
   appId: AppId,
   provider: Pick<Provider, "id" | "category" | "meta" | "settingsConfig">,
 ): boolean {
-  if (appId === "kimi") {
-    const config = provider.settingsConfig.provider as
-      | { type?: string; oauth?: { key?: unknown } }
-      | undefined;
-    return config?.type === "kimi" && nonEmptyString(config?.oauth?.key);
-  }
   return (
     provider.category === "official" ||
     resolveCodexOfficialIdentity(appId, provider) !== null
   );
 }
-
 /**
  * 能进故障转移队列（对应后端 `provider_router::provider_supports_failover`）：
  * Codex 官方账号卡靠客户端自己的登录走路由，不能和别家轮换。
@@ -115,7 +96,6 @@ export function supportsFailover(
 ): boolean {
   return !supportsOfficialProxyTakeover(appId, provider);
 }
-
 /**
  * 能否做「检测连通」（对 base_url 的可达性探测）。
  *
@@ -129,14 +109,13 @@ export function supportsConnectivityCheck(
   appId: AppId,
   provider: Pick<Provider, "category">,
 ): boolean {
-  if (appId === "mcode" || appId === "dsh" || appId === "kimi") return false;
+  if (appId === "dsh") return false;
   return (
     provider.category !== "official" &&
     provider.category !== "omo" &&
     provider.category !== "omo-slim"
   );
 }
-
 /** Keep the UI capability rule aligned with the Rust takeover policy. */
 export function supportsOfficialProxyTakeover(
   appId: AppId,
@@ -152,7 +131,6 @@ export function supportsOfficialProxyTakeover(
   }
   return true;
 }
-
 /**
  * 供应商在指定应用下是否必须开启路由接管才能正常工作（badge 与切换警告共用的权威谓词）。
  *
@@ -171,34 +149,25 @@ export function providerNeedsRouting(
   provider: Provider,
 ): boolean {
   if (isOfficialAccount(appId, provider)) return false;
-
   const isManagedOAuth = isOAuthProviderType(provider.meta?.providerType);
-
-  // Desktop 普通供应商由表单模式决定；托管 OAuth 的 token 只能由代理注入。
-  if (appId === "claude-desktop") {
-    return isManagedOAuth || provider.meta?.claudeDesktopMode === "proxy";
-  }
-
-  if (appId !== "claude" && appId !== "codex" && appId !== "grokbuild") {
+  if (appId !== "claude" && appId !== "codex") {
     return false;
   }
-
   // 托管 OAuth：凭据由代理注入，与 apiFormat 无关，必须接管。
   if (isManagedOAuth) return true;
-
   if (appId === "claude") {
     const fmt = provider.meta?.apiFormat;
     // Claude 原生是 Anthropic 格式，任何非 anthropic 格式都需要代理转换。
     return provider.meta?.isFullUrl === true || (!!fmt && fmt !== "anthropic");
   }
-
-  if (appId === "codex" || appId === "grokbuild") {
+  if (appId === "codex") {
     const fmt = provider.meta?.apiFormat;
     // Codex 原生是 Responses，仅 Chat / Anthropic 需要转换（Responses 直连）。
     if (
       provider.meta?.isFullUrl === true ||
       fmt === "openai_chat" ||
-      fmt === "anthropic"
+      fmt === "anthropic" ||
+      fmt === "gemini_native"
     )
       return true;
     const config = (provider.settingsConfig as Record<string, unknown>)?.config;
@@ -208,6 +177,5 @@ export function providerNeedsRouting(
         isCodexAnthropicWireApi(extractCodexWireApi(config)))
     );
   }
-
   return false;
 }

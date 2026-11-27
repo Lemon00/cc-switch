@@ -1,20 +1,16 @@
-import { memo, useCallback, type ReactNode } from "react";
-import { useTranslation } from "react-i18next";
-
 import { copyText } from "@/lib/clipboard";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
+import { memo, useCallback, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { highlightText } from "../utils";
-
 /** 行内 `code` 与代码块共用的边框与底色，保证两处观感一致 */
 export const SESSION_CODE_SURFACE = "border border-border bg-subtle";
-
 /** 行内代码样式（Markdown 正文与纯文本提问共用） */
 export const SESSION_INLINE_CODE_CLASS = cn(
   SESSION_CODE_SURFACE,
   "rounded-[4px] px-1 py-px font-mono text-[0.92em] text-fg-1",
 );
-
 export interface SessionCodeBlockProps {
   /** 代码原文（不含围栏） */
   code: string;
@@ -26,7 +22,6 @@ export interface SessionCodeBlockProps {
   onCopy?: (code: string) => void;
   className?: string;
 }
-
 /**
  * 会话阅读页的代码块：顶栏显示语言标签与复制按钮，正文横向滚动。
  * Markdown 渲染、纯文本提问里的围栏代码、步骤详情都用它。
@@ -40,7 +35,6 @@ export const SessionCodeBlock = memo(function SessionCodeBlock({
 }: SessionCodeBlockProps) {
   const { t } = useTranslation();
   const label = language?.trim() || "text";
-
   const handleCopy = useCallback(async () => {
     if (onCopy) {
       onCopy(code);
@@ -55,10 +49,8 @@ export const SessionCodeBlock = memo(function SessionCodeBlock({
       toast.error(t("common.error", { defaultValue: "复制失败" }));
     }
   }, [code, onCopy, t]);
-
   let body: ReactNode = code;
   if (searchQuery) body = highlightText(code, searchQuery);
-
   return (
     <div
       className={cn(

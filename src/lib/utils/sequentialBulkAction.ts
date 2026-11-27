@@ -2,12 +2,10 @@ export interface SequentialBulkActionFailure<T> {
   item: T;
   error: unknown;
 }
-
 export interface SequentialBulkActionResult<T> {
   succeeded: T[];
   failed: Array<SequentialBulkActionFailure<T>>;
 }
-
 /**
  * Runs local configuration writes in order. Several app adapters update an
  * entire config file, so parallel writes can overwrite one another.
@@ -18,7 +16,6 @@ export async function runSequentialBulkAction<T>(
 ): Promise<SequentialBulkActionResult<T>> {
   const succeeded: T[] = [];
   const failed: Array<SequentialBulkActionFailure<T>> = [];
-
   for (const item of items) {
     try {
       await action(item);
@@ -27,6 +24,5 @@ export async function runSequentialBulkAction<T>(
       failed.push({ item, error });
     }
   }
-
   return { succeeded, failed };
 }

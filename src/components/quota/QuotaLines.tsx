@@ -1,13 +1,14 @@
-import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
-import { Check, Clock, RefreshCw, X } from "lucide-react";
-import { useTranslation } from "react-i18next";
-import { cn } from "@/lib/utils";
 import { HoverTip } from "@/components/ui/hover-tip";
+import { cn } from "@/lib/utils";
+import { Check, Clock, RefreshCw, X } from "lucide-react";
+import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+import { QuotaBreakdownChevron, QuotaBreakdownRow } from "./QuotaBreakdown";
 import {
   barPercent,
   cardRows,
-  FAILED_LINE_KEY,
   countdownStr,
+  FAILED_LINE_KEY,
   formatRelativeTime,
   lineHint,
   resetText,
@@ -15,8 +16,6 @@ import {
   type QuotaLine,
   type QuotaTone,
 } from "./quotaRules";
-import { QuotaBreakdownChevron, QuotaBreakdownRow } from "./QuotaBreakdown";
-
 /** 沿用 v3 的绿 / 橙 / 红：全灰时几档额度看不出差别（用户反馈） */
 export const TONE_TEXT: Record<QuotaTone, string> = {
   normal: "text-green-600 dark:text-green-400",
@@ -25,7 +24,6 @@ export const TONE_TEXT: Record<QuotaTone, string> = {
   danger: "text-red-500 dark:text-red-400",
   plain: "",
 };
-
 export const TONE_FILL: Record<QuotaTone, string> = {
   normal: "bg-chart-1",
   muted: "bg-chart-1",
@@ -33,7 +31,6 @@ export const TONE_FILL: Record<QuotaTone, string> = {
   danger: "bg-danger",
   plain: "bg-chart-1",
 };
-
 /**
  * 只给数值上色（「5 小时剩余 88%」里的「88%」），档名和「剩余」跟外层的灰字；
  * 句子里没有单独的数值（用完、过期、没查到）时整句上色。className 不传时不上色
@@ -59,18 +56,16 @@ export function TonedText({
     </>
   );
 }
-
 /** 每 30 秒刷新一次「x 分钟前」和重置倒计时 */
 export function useNow(active: boolean) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     if (!active) return;
-    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    const timer = setInterval(() => setNow(Date.now()), 30000);
     return () => clearInterval(timer);
   }, [active]);
   return now;
 }
-
 /** 一行里最早到点的那次重置（合并行几档各有各的，写最近的那个）；都没有或都过了为 null */
 function rowCountdown(row: QuotaLine[], now: number) {
   let earliest: string | null = null;
@@ -82,7 +77,6 @@ function rowCountdown(row: QuotaLine[], now: number) {
   }
   return countdownStr(earliest, now);
 }
-
 /**
  * 额度行后面的「⏱ 2h30m」（卡片、授权中心）：定宽、内容靠左，几行的时钟上下对齐；
  * 这一行没有重置时间时留空占位，免得各行右边缘错开
@@ -114,14 +108,14 @@ export function ResetSlot({
     </span>
   );
 }
-
 /** 点一下重查后图标至少转这么久：请求常常不到一秒，太短了看不出来查过 */
 export const MIN_REFRESH_SPIN_MS = 600;
 /** 查完后 ✓ / ✗ 停留多久 */
 export const REFRESH_RESULT_MS = 1000;
-
 type RefreshPhase =
-  | { kind: "idle" }
+  | {
+      kind: "idle";
+    }
   | {
       kind: "spinning";
       since: number;
@@ -130,18 +124,24 @@ type RefreshPhase =
       /** 这次请求本身失败了 */
       rejected: boolean;
     }
-  | { kind: "succeeded" }
-  | { kind: "failed" };
-
+  | {
+      kind: "succeeded";
+    }
+  | {
+      kind: "failed";
+    };
 /** react-query refetch() 的结果：请求失败时 isError 为真（即使界面还留着上次成功的值） */
 function isRejectedResult(result: unknown): boolean {
   return (
     typeof result === "object" &&
     result !== null &&
-    (result as { isError?: unknown }).isError === true
+    (
+      result as {
+        isError?: unknown;
+      }
+    ).isError === true
   );
 }
-
 /**
  * 点击触发的重查：从点下去开始转，直到查完且满 MIN_REFRESH_SPIN_MS，再按结果换成 ✓ 或 ✗
  * 停一会儿。✗ 不能省：本来就没查到、再点又失败时，红字前后一模一样，没有它就像没点过。
@@ -169,7 +169,6 @@ function useClickRefreshFeedback(loading: boolean, failed: boolean) {
     );
     return () => clearTimeout(timer);
   }, [phase, loading, failed]);
-
   const start = (result: unknown) => {
     const since = Date.now();
     const thenable =
@@ -187,10 +186,8 @@ function useClickRefreshFeedback(loading: boolean, failed: boolean) {
       () => settle(true),
     );
   };
-
   return { phase: phase.kind, start };
 }
-
 interface QuotaLinesProps {
   lines: QuotaLine[];
   max?: number;
@@ -201,7 +198,6 @@ interface QuotaLinesProps {
   /** 卡片上放不下的各档：整列做成一个下拉（Antigravity 四档，见 tierBreakdown） */
   breakdown?: QuotaBreakdown;
 }
-
 /**
  * 卡片右侧的额度列（v7）：最多两行、右对齐、平时灰色；档数多时第一行写窗口最短的那档，
  * 其余并成一行、每段各自上色（cardRows）。点一下重查，悬停说明每档、更新时间和重置时间。
@@ -230,7 +226,6 @@ export function QuotaLines({
   const ResultIcon = refresh.phase === "failed" ? X : Check;
   const rows = cardRows(lines, max);
   if (rows.length === 0) return null;
-
   const title = [
     ...lines.map((line) => lineHint(t, line, now)),
     queriedAt
@@ -240,12 +235,10 @@ export function QuotaLines({
   ]
     .filter(Boolean)
     .join("\n");
-
   // 有一档带重置时间，每行后面就都留出倒计时那一格（v7 原来只放进悬停说明，看不到）
   const showReset = rows.some((row) => rowCountdown(row, now));
   const resetSlot = (row: QuotaLine[]) =>
     showReset ? <ResetSlot countdown={rowCountdown(row, now)} /> : null;
-
   const rowNodes = rows.map((row) => (
     <span
       key={row.map((line) => line.key).join("+")}
@@ -268,7 +261,6 @@ export function QuotaLines({
       {resetSlot(row)}
     </span>
   ));
-
   const className = cn(
     "flex shrink-0 flex-col items-end text-caption leading-[18px] tabular-nums whitespace-nowrap",
     // 文字仍是 136 宽，倒计时那格（52 + 间距）另加；整列下拉的 ⌄ 那格（14）也另加
@@ -276,7 +268,6 @@ export function QuotaLines({
     breakdown && (showReset ? "w-[208px]" : "w-[150px]"),
     loading && !spinning && "opacity-60",
   );
-
   if (!onRefresh) {
     return (
       <span className={className} title={title}>
@@ -284,7 +275,6 @@ export function QuotaLines({
       </span>
     );
   }
-
   // 用 aria-disabled 不用 disabled：禁用的按钮在 Chromium 里可能收不到 mouseleave，
   // 转圈时把鼠标移走，quiet 就解不开了
   const busy = loading || spinning;
@@ -335,7 +325,6 @@ export function QuotaLines({
         strokeWidth={1.75}
       />
     );
-
   if (breakdown) {
     return (
       <DropdownQuotaColumn
@@ -349,7 +338,6 @@ export function QuotaLines({
       />
     );
   }
-
   if (split) {
     return (
       <SplitQuotaColumn
@@ -363,7 +351,6 @@ export function QuotaLines({
       />
     );
   }
-
   // ↻ 放在第一行左边：列是右对齐的，它出现 / 消失只占左侧空白，文字不挪位置
   const [firstRow, ...restRows] = rowNodes;
   return (
@@ -384,7 +371,6 @@ export function QuotaLines({
     </button>
   );
 }
-
 interface RefreshProps {
   "aria-busy": boolean;
   "aria-disabled": boolean;
@@ -393,7 +379,6 @@ interface RefreshProps {
   onMouseLeave: () => void;
   onBlur: () => void;
 }
-
 /**
  * 整列一个下拉：点文字打开各档明细，⌄ 跟在第一行文字后面（其余行留同宽的空位，数字仍竖着对齐）。
  * 下拉里不能再套按钮，↻ 单独做成下拉左边的小按钮（不占宽度），悬停整列时露出来。
@@ -468,7 +453,6 @@ function DropdownQuotaColumn({
     </div>
   );
 }
-
 /**
  * 有一段能点开明细时（「每周 64% · 重置 3 次 ⌄」）：那一段单独做成下拉，其余照旧点了重查。
  * 按钮里不能再套按钮，所以整列拆成几块：第一块刷新是真按钮（键盘、读屏都认它），
@@ -499,7 +483,6 @@ function SplitQuotaColumn({
     .map((line) => line.text)
     .join(", ");
   let mainPlaced = false;
-
   return (
     <div className={className}>
       {rows.map((row, rowIndex) => {
@@ -507,7 +490,10 @@ function SplitQuotaColumn({
         // 这一行只有下拉段：⌄ 占倒计时格的图标位，余下的宽度留空
         const chevronInSlot = showReset && !merged && Boolean(row[0].breakdown);
         // 连续的普通段并成一块刷新区，带明细的段单独成块
-        const parts: { breakdown: boolean; lines: QuotaLine[] }[] = [];
+        const parts: {
+          breakdown: boolean;
+          lines: QuotaLine[];
+        }[] = [];
         for (const line of row) {
           const last = parts[parts.length - 1];
           if (!line.breakdown && last && !last.breakdown) last.lines.push(line);
@@ -528,7 +514,6 @@ function SplitQuotaColumn({
           segment += 1;
           return node;
         };
-
         return (
           <span
             key={row.map((line) => line.key).join("+")}
@@ -604,10 +589,13 @@ function SplitQuotaColumn({
     </div>
   );
 }
-
 interface QuotaBarsProps {
   /** 每档的名字和那一行（名字单独一列） */
-  rows: { label: string; line: QuotaLine; note?: string }[];
+  rows: {
+    label: string;
+    line: QuotaLine;
+    note?: string;
+  }[];
   title?: ReactNode;
   queriedAt?: number | null;
   loading?: boolean;
@@ -615,9 +603,7 @@ interface QuotaBarsProps {
   footer?: ReactNode;
   className?: string;
 }
-
 const BAR_ROW_CLASS = "flex h-[18px] items-center gap-2 text-caption";
-
 /** 展开的额度条（授权中心、多套餐展开）：条长跟着数值（剩余或已用，见 barPercent） */
 export function QuotaBars({
   rows,
@@ -632,7 +618,6 @@ export function QuotaBars({
   const now = useNow(
     Boolean(queriedAt) || rows.some(({ line }) => line.resetsAt),
   );
-
   return (
     <div
       className={cn(

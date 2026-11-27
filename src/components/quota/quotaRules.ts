@@ -1,6 +1,5 @@
-import type { TFunction } from "i18next";
 import type { QuotaTier, ResetCredits } from "@/types/subscription";
-
+import type { TFunction } from "i18next";
 /**
  * 额度的文字和颜色（v7 QuotaSpec）：按档的百分比默认写「剩余」，设置里可改成「已用」（见 QuotaDisplay）；
  * 余额、Credits、重置次数始终写剩下的。颜色一律按剩余算，只给数值上色（见 emphasis）：平时绿色；
@@ -9,10 +8,8 @@ import type { QuotaTier, ResetCredits } from "@/types/subscription";
  */
 /** 按档的百分比写剩余还是已用（设置 `quotaDisplay`，#8024） */
 export type QuotaDisplay = "left" | "used";
-
 /** plain：数值不表示额度好坏（「已用 $3.20」），不上色 */
 export type QuotaTone = "normal" | "warning" | "danger" | "muted" | "plain";
-
 export interface QuotaLine {
   key: string;
   text: string;
@@ -40,7 +37,6 @@ export interface QuotaLine {
   /** 一行写不下的明细，点开额度行时逐条列出（重置次数按到期日分组） */
   breakdown?: QuotaBreakdown;
 }
-
 export interface QuotaBreakdown {
   title: string;
   /** 点开按钮的无障碍名字 */
@@ -49,7 +45,6 @@ export interface QuotaBreakdown {
   /** 分隔线下面另列的几条（卡片上点开重置次数时，附带 Credits 余额） */
   footer?: QuotaBreakdownItem[];
 }
-
 export interface QuotaBreakdownItem {
   key: string;
   /** 「10月12日」/「不会过期」 */
@@ -60,15 +55,12 @@ export interface QuotaBreakdownItem {
   value: string;
   tone: QuotaTone;
 }
-
 export const WARN_BELOW_PERCENT = 20;
-
 export function toneForLeft(left: number): QuotaTone {
   if (left <= 0) return "danger";
   if (left < WARN_BELOW_PERCENT) return "warning";
   return "normal";
 }
-
 /** 中文里档名以字母数字结尾（「每周 Opus」）时，和后面的「剩余」隔一个空格 */
 function labelParams(label: string) {
   return {
@@ -76,7 +68,6 @@ function labelParams(label: string) {
     labelSp: /[A-Za-z0-9]$/.test(label) ? `${label} ` : label,
   };
 }
-
 /** 计算倒计时的纯时间字符串，如 "2h30m"、"3d12h" */
 export function countdownStr(
   resetsAt: string | null | undefined,
@@ -91,7 +82,6 @@ export function countdownStr(
   if (hours > 0) return `${hours}h${minutes}m`;
   return `${minutes}m`;
 }
-
 /** 档位窗口的长短：卡片第一行写最短的那档；不认识的档排最后 */
 const TIER_WINDOW_ORDER: Record<string, number> = {
   five_hour: 0,
@@ -112,7 +102,6 @@ const TIER_WINDOW_ORDER: Record<string, number> = {
   premium: 3,
 };
 const UNKNOWN_WINDOW = 9;
-
 /**
  * 一档额度 → 额度行。`short` 给了才能并进卡片的合并行（英日用短档名，放得下 136px 那一列）；
  * `display` 为 used 时数值和额度条都按已用写，颜色、挑哪几档仍按剩余
@@ -121,9 +110,22 @@ export function tierLine(
   t: TFunction,
   tier: Pick<QuotaTier, "name" | "utilization" | "resetsAt">,
   label: string,
-  { short, display = "left" }: { short?: string; display?: QuotaDisplay } = {},
+  {
+    short,
+    display = "left",
+  }: {
+    short?: string;
+    display?: QuotaDisplay;
+  } = {},
 ): QuotaLine {
-  const left = Math.max(0, Math.round(100 - (tier.utilization ?? 0)));
+  if (
+    typeof tier.utilization !== "number" ||
+    !Number.isFinite(tier.utilization) ||
+    tier.utilization < 0
+  ) {
+    return { ...failedLines(t)[0], key: tier.name, label, bar: 0 };
+  }
+  const left = Math.max(0, Math.round(100 - tier.utilization));
   const used = display === "used";
   const shown = used ? 100 - left : left;
   const params = labelParams(label);
@@ -153,13 +155,11 @@ export function tierLine(
     window: TIER_WINDOW_ORDER[tier.name] ?? UNKNOWN_WINDOW,
   };
 }
-
 /** 额度条的长度（0–100）：按档的行跟着显示方式，其余按剩余；没有比例的（余额无总额）画满 */
 export function barPercent(line: Pick<QuotaLine, "bar" | "left">): number {
   const value = line.bar ?? line.left;
   return Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 100;
 }
-
 /** 「2h30m后重置」；没有重置时间或已经过了时为 null */
 export function resetText(
   t: TFunction,
@@ -169,7 +169,6 @@ export function resetText(
   const countdown = countdownStr(line.resetsAt, now);
   return countdown ? t("subscription.resetsIn", { time: countdown }) : null;
 }
-
 /** 一行额度的悬停说明：补充说明 + 「档名 · x 后重置」；两样都没有时就是这行本身 */
 export function lineHint(t: TFunction, line: QuotaLine, now = Date.now()) {
   const reset = resetText(t, line, now);
@@ -179,13 +178,10 @@ export function lineHint(t: TFunction, line: QuotaLine, now = Date.now()) {
       .join(" · ") || line.text
   );
 }
-
 /** 最早那次重置三天内就过期时加深提醒 */
 export const RESET_EXPIRING_SOON_MS = 3 * 24 * 60 * 60 * 1000;
-
 /** 排在所有档位之后：卡片合并时跟在每周那档后面（「每周 64% · 重置 1 次」） */
 const RESET_CREDITS_WINDOW = UNKNOWN_WINDOW + 1;
-
 function shortDate(iso: string, locale: string): string {
   const date = new Date(iso);
   const sameYear = date.getFullYear() === new Date().getFullYear();
@@ -200,7 +196,6 @@ function shortDate(iso: string, locale: string): string {
     return date.toLocaleDateString();
   }
 }
-
 /**
  * ChatGPT 订阅存下的限额重置 → 额度行；一次都没有时不显示（null）。
  * 查询之后才过期的也在这里去掉（额度会缓存一阵）。
@@ -212,7 +207,11 @@ export function resetCreditsLine(
     now = Date.now(),
     locale,
     footer,
-  }: { now?: number; locale: string; footer?: QuotaBreakdownItem[] },
+  }: {
+    now?: number;
+    locale: string;
+    footer?: QuotaBreakdownItem[];
+  },
 ): QuotaLine | null {
   const expiries = (credits?.expiresAt ?? []).filter((at) => {
     if (!at) return true;
@@ -221,7 +220,6 @@ export function resetCreditsLine(
   });
   const count = expiries.length;
   if (count === 0) return null;
-
   // 后端已按到期先后排好，不过期的在最后
   const first = expiries[0];
   const firstMs = first ? Date.parse(first) : NaN;
@@ -229,7 +227,6 @@ export function resetCreditsLine(
     first && Number.isFinite(firstMs) ? shortDate(first, locale) : null;
   const expiringSoon =
     Number.isFinite(firstMs) && firstMs - now < RESET_EXPIRING_SOON_MS;
-
   return {
     key: "reset_credits",
     left: Infinity,
@@ -257,17 +254,14 @@ export function resetCreditsLine(
         : undefined,
   };
 }
-
 /**
  * Codex Credits 按 API 价计量：官方价目表每百万 token 的 Credits 数 = API 美元价 × 25
  * （GPT-6 Astra 输入 250 Credits ↔ $10，Sol、Luna 同比），即 1 Credit = $0.04。
  * 接口不给这个比例，OpenAI 改价时只改这里
  */
 export const CODEX_USD_PER_CREDIT = 0.04;
-
 /** 排在重置次数之后 */
 const CREDITS_WINDOW = RESET_CREDITS_WINDOW + 1;
-
 /**
  * ChatGPT 订阅买的 Codex Credits 余额 → 额度行；没有时不显示（null）。
  * 展开时额度条位置写 Credits 数、数值写约合美元（钱在最后）；卡片上只用美元（short / text）
@@ -275,7 +269,11 @@ const CREDITS_WINDOW = RESET_CREDITS_WINDOW + 1;
 export function creditsLine(
   t: TFunction,
   balance: number | null | undefined,
-  { locale }: { locale: string },
+  {
+    locale,
+  }: {
+    locale: string;
+  },
 ): QuotaLine | null {
   if (typeof balance !== "number" || !Number.isFinite(balance) || balance <= 0)
     return null;
@@ -303,7 +301,6 @@ export function creditsLine(
     window: CREDITS_WINDOW,
   };
 }
-
 /** Credits 余额写成下拉里的一条（「Credits  62,500  约 $2500」），钱在最后 */
 export function creditsBreakdownItem(
   t: TFunction,
@@ -317,15 +314,26 @@ export function creditsBreakdownItem(
     tone: line.tone,
   };
 }
-
 /** 同一天到期的并成一条（「10月12日 · 8d3h后 · 2 次」），不过期的排最后 */
 function resetCreditGroups(
   t: TFunction,
   expiries: (string | null)[],
-  { now, locale }: { now: number; locale: string },
+  {
+    now,
+    locale,
+  }: {
+    now: number;
+    locale: string;
+  },
 ): QuotaBreakdownItem[] {
   // 解析不出的到期时间和后端一样当作不过期
-  const groups = new Map<string, { at: string | null; count: number }>();
+  const groups = new Map<
+    string,
+    {
+      at: string | null;
+      count: number;
+    }
+  >();
   for (const at of expiries) {
     const known = at && Number.isFinite(Date.parse(at)) ? at : null;
     const key = known ? shortDate(known, locale) : "no_expiry";
@@ -349,7 +357,6 @@ function resetCreditGroups(
     };
   });
 }
-
 /**
  * 余额一律灰色，只有用完才变红：不做「快用完」的加深。几张卡片的余额深浅不一，
  * 读起来像出了什么错，而不是「快用完了」（10-04 Jason 定）。left 照旧按总额算，
@@ -386,7 +393,6 @@ export function balanceLine(
     detail,
   };
 }
-
 export function expiredLine(
   t: TFunction,
   detail?: string,
@@ -400,10 +406,8 @@ export function expiredLine(
     detail,
   };
 }
-
 /** 查询失败那一行的 key：额度列靠它判断这次重查有没有成功 */
 export const FAILED_LINE_KEY = "failed";
-
 /** 查询失败：第一行红字，第二行灰字写原因 */
 export function failedLines(t: TFunction, reason?: string | null): QuotaLine[] {
   const lines: QuotaLine[] = [
@@ -418,7 +422,6 @@ export function failedLines(t: TFunction, reason?: string | null): QuotaLine[] {
   if (text) lines.push({ key: "reason", left: -2, tone: "muted", text });
   return lines;
 }
-
 /** 卡片上最多留几行：留剩余最少的，再按原顺序排回去 */
 export function pickLines(lines: QuotaLine[], max = 2): QuotaLine[] {
   if (lines.length <= max) return lines;
@@ -429,10 +432,8 @@ export function pickLines(lines: QuotaLine[], max = 2): QuotaLine[] {
     .sort((a, b) => a.index - b.index)
     .map(({ line }) => line);
 }
-
 /** 合并行最多几段，再多就放不下了 */
 const MERGED_MAX = 2;
-
 /**
  * 卡片上的各行，每行一段或几段。放得下就一档一行；放不下时，按档的额度第一行固定写窗口
  * 最短的那档（位置不随用量跳），其余并成一行（多于两段留剩余最少的）；其他额度行
@@ -455,7 +456,6 @@ export function cardRows(lines: QuotaLine[], max = 2): QuotaLine[][] {
   const rest = lines.filter((line) => !heads.includes(line));
   return [...heads.map((line) => [line]), pickLines(rest, MERGED_MAX)];
 }
-
 /** 相对时间（「3 分钟前」） */
 export function formatRelativeTime(
   timestamp: number,

@@ -1,20 +1,25 @@
-import { useState, useCallback, useEffect } from "react";
-import { useTranslation } from "react-i18next";
-import { Layers } from "lucide-react";
-import { toast } from "@/lib/toast";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { UniversalProviderCard } from "./UniversalProviderCard";
-import { UniversalProviderFormModal } from "./UniversalProviderFormModal";
 import { universalProvidersApi } from "@/lib/api";
+import { toast } from "@/lib/toast";
 import type { UniversalProvider, UniversalProvidersMap } from "@/types";
 import { deepClone } from "@/utils/deepClone";
-
+import { extractErrorMessage } from "@/utils/errorUtils";
+import { Layers } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { UniversalProviderCard } from "./UniversalProviderCard";
+import { UniversalProviderFormModal } from "./UniversalProviderFormModal";
 export function UniversalProviderPanel() {
   const { t } = useTranslation();
-
   // 状态
   const [providers, setProviders] = useState<UniversalProvidersMap>({});
   const [loading, setLoading] = useState(true);
+  const loadVersion = useRef(0);
+  const mounted = useRef(false);
+  const confirming = useRef(false);
+  const [pendingAction, setPendingAction] = useState<"delete" | "sync" | null>(
+    null,
+  );
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingProvider, setEditingProvider] =
     useState<UniversalProvider | null>(null);
@@ -28,14 +33,17 @@ export function UniversalProviderPanel() {
     id: string;
     name: string;
   }>({ open: false, id: "", name: "" });
-
   // 加载数据
   const loadProviders = useCallback(async () => {
+    if (!mounted.current) return;
+    const version = ++loadVersion.current;
+    const isCurrent = () => mounted.current && version === loadVersion.current;
     try {
       setLoading(true);
       const data = await universalProvidersApi.getAll();
-      setProviders(data);
+      if (isCurrent()) setProviders(data);
     } catch (error) {
+      if (!isCurrent()) return;
       console.error("Failed to load universal providers:", error);
       toast.error(
         t("universalProvider.loadError", {
@@ -43,25 +51,26 @@ export function UniversalProviderPanel() {
         }),
       );
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }, [t]);
-
   useEffect(() => {
-    loadProviders();
+    mounted.current = true;
+    void loadProviders();
+    return () => {
+      mounted.current = false;
+      ++loadVersion.current;
+    };
   }, [loadProviders]);
-
   // 添加/编辑供应商
   const handleSave = useCallback(
     async (provider: UniversalProvider) => {
       try {
         await universalProvidersApi.upsert(provider);
-
         // 新建模式下自动同步到各应用
         if (!editingProvider) {
           await universalProvidersApi.sync(provider.id);
         }
-
         toast.success(
           editingProvider
             ? t("universalProvider.updated", {
@@ -71,20 +80,22 @@ export function UniversalProviderPanel() {
                 defaultValue: "统一供应商已添加并同步",
               }),
         );
-        loadProviders();
-        setEditingProvider(null);
       } catch (error) {
         console.error("Failed to save universal provider:", error);
         toast.error(
-          t("universalProvider.saveError", {
-            defaultValue: "保存统一供应商失败",
-          }),
+          extractErrorMessage(error) ||
+            t("universalProvider.saveError", {
+              defaultValue: "保存统一供应商失败",
+            }),
         );
+        return false;
+      } finally {
+        // Saving the parent can succeed even when child synchronization fails.
+        await loadProviders();
       }
     },
     [editingProvider, loadProviders, t],
   );
-
   // 保存并同步供应商
   const handleSaveAndSync = useCallback(
     async (provider: UniversalProvider) => {
@@ -96,63 +107,81 @@ export function UniversalProviderPanel() {
             defaultValue: "已保存并同步到所有应用",
           }),
         );
-        loadProviders();
-        setEditingProvider(null);
       } catch (error) {
         console.error("Failed to save and sync universal provider:", error);
         toast.error(
-          t("universalProvider.saveAndSyncError", {
-            defaultValue: "保存并同步失败",
-          }),
+          extractErrorMessage(error) ||
+            t("universalProvider.saveAndSyncError", {
+              defaultValue: "保存并同步失败",
+            }),
         );
+        return false;
+      } finally {
+        await loadProviders();
       }
     },
     [loadProviders, t],
   );
-
   // 删除供应商
   const handleDelete = useCallback(async () => {
-    if (!deleteConfirm.id) return;
-
+    if (!deleteConfirm.id || confirming.current) return;
+    const id = deleteConfirm.id;
+    confirming.current = true;
+    setPendingAction("delete");
     try {
-      await universalProvidersApi.delete(deleteConfirm.id);
+      await universalProvidersApi.delete(id);
       toast.success(
         t("universalProvider.deleted", { defaultValue: "统一供应商已删除" }),
       );
-      loadProviders();
     } catch (error) {
       console.error("Failed to delete universal provider:", error);
       toast.error(
-        t("universalProvider.deleteError", {
-          defaultValue: "删除统一供应商失败",
-        }),
+        extractErrorMessage(error) ||
+          t("universalProvider.deleteError", {
+            defaultValue: "删除统一供应商失败",
+          }),
       );
     } finally {
-      setDeleteConfirm({ open: false, id: "", name: "" });
+      await loadProviders();
+      confirming.current = false;
+      if (mounted.current) {
+        setPendingAction(null);
+        setDeleteConfirm((current) =>
+          current.id === id ? { open: false, id: "", name: "" } : current,
+        );
+      }
     }
   }, [deleteConfirm.id, loadProviders, t]);
-
   // 同步供应商
   const handleSync = useCallback(async () => {
-    if (!syncConfirm.id) return;
-
+    if (!syncConfirm.id || confirming.current) return;
+    const id = syncConfirm.id;
+    confirming.current = true;
+    setPendingAction("sync");
     try {
-      await universalProvidersApi.sync(syncConfirm.id);
+      await universalProvidersApi.sync(id);
       toast.success(
         t("universalProvider.synced", { defaultValue: "已同步到所有应用" }),
       );
     } catch (error) {
       console.error("Failed to sync universal provider:", error);
       toast.error(
-        t("universalProvider.syncError", {
-          defaultValue: "同步统一供应商失败",
-        }),
+        extractErrorMessage(error) ||
+          t("universalProvider.syncError", {
+            defaultValue: "同步统一供应商失败",
+          }),
       );
     } finally {
-      setSyncConfirm({ open: false, id: "", name: "" });
+      await loadProviders();
+      confirming.current = false;
+      if (mounted.current) {
+        setPendingAction(null);
+        setSyncConfirm((current) =>
+          current.id === id ? { open: false, id: "", name: "" } : current,
+        );
+      }
     }
-  }, [syncConfirm.id, t]);
-
+  }, [syncConfirm.id, loadProviders, t]);
   // 打开同步确认
   const handleSyncClick = useCallback(
     (id: string) => {
@@ -165,7 +194,6 @@ export function UniversalProviderPanel() {
     },
     [providers],
   );
-
   // 复制供应商
   const handleDuplicate = useCallback(
     async (provider: UniversalProvider) => {
@@ -183,25 +211,25 @@ export function UniversalProviderPanel() {
             defaultValue: "统一供应商已复制并同步",
           }),
         );
-        loadProviders();
       } catch (error) {
         console.error("Failed to duplicate universal provider:", error);
         toast.error(
-          t("universalProvider.duplicateError", {
-            defaultValue: "复制统一供应商失败",
-          }),
+          extractErrorMessage(error) ||
+            t("universalProvider.duplicateError", {
+              defaultValue: "复制统一供应商失败",
+            }),
         );
+      } finally {
+        await loadProviders();
       }
     },
     [loadProviders, t],
   );
-
   // 打开编辑
   const handleEdit = useCallback((provider: UniversalProvider) => {
     setEditingProvider(provider);
     setIsFormOpen(true);
   }, []);
-
   // 打开删除确认
   const handleDeleteClick = useCallback(
     (id: string) => {
@@ -214,9 +242,7 @@ export function UniversalProviderPanel() {
     },
     [providers],
   );
-
   const providerList = Object.values(providers);
-
   return (
     <div className="space-y-4">
       {/* 头部 */}
@@ -287,6 +313,7 @@ export function UniversalProviderPanel() {
       {/* 删除确认对话框 */}
       <ConfirmDialog
         isOpen={deleteConfirm.open}
+        pending={pendingAction === "delete"}
         title={t("universalProvider.deleteConfirmTitle", {
           defaultValue: "删除统一供应商",
         })}
@@ -302,6 +329,7 @@ export function UniversalProviderPanel() {
       {/* 同步确认对话框 */}
       <ConfirmDialog
         isOpen={syncConfirm.open}
+        pending={pendingAction === "sync"}
         title={t("universalProvider.syncConfirmTitle", {
           defaultValue: "同步统一供应商",
         })}

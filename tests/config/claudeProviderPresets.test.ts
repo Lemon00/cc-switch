@@ -3,16 +3,13 @@ import { providerPresets } from "@/config/claudeProviderPresets";
 import { GPT_CONTEXT_WINDOW_CAP } from "@/lib/modelMetadata";
 import type { Provider } from "@/types";
 import { providerNeedsRouting } from "@/utils/providerCapabilities";
-
 describe("Kimi For Coding Provider Preset", () => {
   const kimiForCoding = providerPresets.find(
     (p) => p.name === "Kimi For Coding",
   );
-
   it("should include Kimi For Coding preset", () => {
     expect(kimiForCoding).toBeDefined();
   });
-
   // CLAUDE_CODE_MAX_CONTEXT_TOKENS is ignored for claude-* model ids, so the
   // preset must route the endpoint's own alias for the context envs to bite
   it("should route the kimi-for-coding model id on every tier", () => {
@@ -24,7 +21,6 @@ describe("Kimi For Coding Provider Preset", () => {
       ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-for-coding",
     });
   });
-
   // 预设直接钉值，不再暴露表单输入框；要调整的用户直接改 JSON 编辑框
   it("should pin the 256K context envs without exposing form fields", () => {
     const env = (kimiForCoding!.settingsConfig as any).env;
@@ -33,14 +29,11 @@ describe("Kimi For Coding Provider Preset", () => {
     expect(kimiForCoding!.templateValues).toBeUndefined();
   });
 });
-
 describe("Codex Provider Preset", () => {
   const codex = providerPresets.find((p) => p.name === "Codex");
-
   it("should include the Codex preset", () => {
     expect(codex).toBeDefined();
   });
-
   // 预设直接钉 Codex 订阅目录的 272K 窗口（与 GPT_CONTEXT_WINDOW_CAP 一致），不暴露表单输入框
   it("should pin the Codex-catalog 272K window without exposing form fields", () => {
     const env = (codex!.settingsConfig as any).env;
@@ -53,21 +46,18 @@ describe("Codex Provider Preset", () => {
     expect(codex!.templateValues).toBeUndefined();
   });
 });
-
 describe("OpenCode Go Provider Preset", () => {
   const openCodeGo = providerPresets.find((p) => p.name === "OpenCode Go");
-
   it("should use the Go Anthropic compatibility endpoint with x-api-key auth", () => {
     expect(openCodeGo).toBeDefined();
-
     const env = (openCodeGo!.settingsConfig as any).env;
     expect(env).toMatchObject({
       ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
       ANTHROPIC_API_KEY: "",
-      ANTHROPIC_MODEL: "deepseek-v4.1-flash[1M]",
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4.1-flash[1M]",
-      ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4.1-flash[1M]",
-      ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4.1-flash[1M]",
+      ANTHROPIC_MODEL: "deepseek-v4.1-flash[1m]",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4.1-flash[1m]",
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4.1-flash[1m]",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4.1-flash[1m]",
     });
     // /messages 只认 x-api-key，Bearer 被网关静默忽略——勿换回 AUTH_TOKEN
     expect(env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
@@ -75,7 +65,6 @@ describe("OpenCode Go Provider Preset", () => {
     expect(openCodeGo!.apiFormat).toBeUndefined();
     expect(openCodeGo!.apiKeyField).toBe("ANTHROPIC_API_KEY");
   });
-
   it("should not require local routing in Claude Code", () => {
     const provider: Provider = {
       id: "opencode-go",
@@ -87,18 +76,14 @@ describe("OpenCode Go Provider Preset", () => {
         apiKeyField: openCodeGo!.apiKeyField,
       },
     };
-
     expect(providerNeedsRouting("claude", provider)).toBe(false);
   });
 });
-
 describe("OpenCode Zen Provider Preset", () => {
   const openCodeZen = providerPresets.find((p) => p.name === "OpenCode Zen");
-
   it("should connect Claude models to Zen /messages directly with x-api-key auth", () => {
     expect(openCodeZen).toBeDefined();
     expect(openCodeZen!.family).toBe("opencode");
-
     const env = (openCodeZen!.settingsConfig as any).env;
     expect(env.ANTHROPIC_BASE_URL).toBe("https://opencode.ai/zen");
     // 和 Go 同一套网关：/messages 只认 x-api-key
@@ -116,16 +101,13 @@ describe("OpenCode Zen Provider Preset", () => {
     }
   });
 });
-
 describe("AWS Bedrock Provider Presets", () => {
   const bedrockAksk = providerPresets.find(
     (p) => p.name === "AWS Bedrock (AKSK)",
   );
-
   it("should include AWS Bedrock (AKSK) preset", () => {
     expect(bedrockAksk).toBeDefined();
   });
-
   it("AKSK preset should have required AWS env variables", () => {
     const env = (bedrockAksk!.settingsConfig as any).env;
     expect(env).toHaveProperty("AWS_ACCESS_KEY_ID");
@@ -133,7 +115,6 @@ describe("AWS Bedrock Provider Presets", () => {
     expect(env).toHaveProperty("AWS_REGION");
     expect(env).toHaveProperty("CLAUDE_CODE_USE_BEDROCK", "1");
   });
-
   it("AKSK preset should have template values for AWS credentials", () => {
     expect(bedrockAksk!.templateValues).toBeDefined();
     expect(bedrockAksk!.templateValues!.AWS_ACCESS_KEY_ID).toBeDefined();
@@ -143,30 +124,24 @@ describe("AWS Bedrock Provider Presets", () => {
       "us-west-2",
     );
   });
-
   it("AKSK preset should have correct base URL template", () => {
     const env = (bedrockAksk!.settingsConfig as any).env;
     expect(env.ANTHROPIC_BASE_URL).toContain("bedrock-runtime");
     expect(env.ANTHROPIC_BASE_URL).toContain("${AWS_REGION}");
   });
-
   it("AKSK preset should have cloud_provider category", () => {
     expect(bedrockAksk!.category).toBe("cloud_provider");
   });
-
   it("AKSK preset should have Bedrock model as default", () => {
     const env = (bedrockAksk!.settingsConfig as any).env;
     expect(env.ANTHROPIC_MODEL).toContain("anthropic.claude");
   });
-
   const bedrockApiKey = providerPresets.find(
     (p) => p.name === "AWS Bedrock (API Key)",
   );
-
   it("should include AWS Bedrock (API Key) preset", () => {
     expect(bedrockApiKey).toBeDefined();
   });
-
   // Claude Code 只从 AWS_BEARER_TOKEN_BEDROCK 读 Bedrock API Key，顶层 apiKey 不生效
   it("API Key preset should carry the key in AWS_BEARER_TOKEN_BEDROCK", () => {
     const config = bedrockApiKey!.settingsConfig as any;
@@ -175,13 +150,11 @@ describe("AWS Bedrock Provider Presets", () => {
     expect(config.env).toHaveProperty("AWS_REGION");
     expect(config.env).toHaveProperty("CLAUDE_CODE_USE_BEDROCK", "1");
   });
-
   it("API Key preset should NOT have AKSK env variables", () => {
     const env = (bedrockApiKey!.settingsConfig as any).env;
     expect(env).not.toHaveProperty("AWS_ACCESS_KEY_ID");
     expect(env).not.toHaveProperty("AWS_SECRET_ACCESS_KEY");
   });
-
   it("API Key preset should have template values for region only", () => {
     expect(bedrockApiKey!.templateValues).toBeDefined();
     expect(bedrockApiKey!.templateValues!.AWS_REGION).toBeDefined();
@@ -189,15 +162,12 @@ describe("AWS Bedrock Provider Presets", () => {
       "us-west-2",
     );
   });
-
   it("API Key preset should have cloud_provider category", () => {
     expect(bedrockApiKey!.category).toBe("cloud_provider");
   });
 });
-
 describe("Microsoft Foundry Provider Preset", () => {
   const foundry = providerPresets.find((p) => p.name === "Microsoft Foundry");
-
   it("lets the user fill the Azure resource name into the base URL", () => {
     const env = (foundry!.settingsConfig as any).env;
     expect(foundry!.templateValues!.AZURE_RESOURCE_NAME).toBeDefined();
@@ -205,7 +175,6 @@ describe("Microsoft Foundry Provider Preset", () => {
       "https://${AZURE_RESOURCE_NAME}.services.ai.azure.com/anthropic",
     );
   });
-
   // 官方文档的 API Key 走 x-api-key
   it("sends the key as x-api-key", () => {
     const env = (foundry!.settingsConfig as any).env;

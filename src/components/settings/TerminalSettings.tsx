@@ -1,4 +1,3 @@
-import { useTranslation } from "react-i18next";
 import {
   Select,
   SelectContent,
@@ -6,8 +5,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { isMac, isWindows, isLinux } from "@/lib/platform";
-
+import { isLinux, isMac, isWindows } from "@/lib/platform";
+import { useTranslation } from "react-i18next";
 // Terminal options per platform
 const MACOS_TERMINALS = [
   { value: "terminal", labelKey: "settings.terminal.options.macos.terminal" },
@@ -20,7 +19,6 @@ const MACOS_TERMINALS = [
   { value: "kaku", labelKey: "settings.terminal.options.macos.kaku" },
   { value: "warp", labelKey: "settings.terminal.options.macos.warp" },
 ] as const;
-
 const WINDOWS_TERMINALS = [
   { value: "cmd", labelKey: "settings.terminal.options.windows.cmd" },
   {
@@ -29,7 +27,6 @@ const WINDOWS_TERMINALS = [
   },
   { value: "wt", labelKey: "settings.terminal.options.windows.wt" },
 ] as const;
-
 const LINUX_TERMINALS = [
   {
     value: "gnome-terminal",
@@ -44,7 +41,6 @@ const LINUX_TERMINALS = [
   { value: "kitty", labelKey: "settings.terminal.options.linux.kitty" },
   { value: "ghostty", labelKey: "settings.terminal.options.linux.ghostty" },
 ] as const;
-
 // Get terminals for the current platform
 function getTerminalOptions() {
   if (isMac()) {
@@ -59,7 +55,6 @@ function getTerminalOptions() {
   // Fallback to macOS options
   return MACOS_TERMINALS;
 }
-
 // Get default terminal for the current platform
 function getDefaultTerminal(): string {
   if (isMac()) {
@@ -73,22 +68,21 @@ function getDefaultTerminal(): string {
   }
   return "terminal";
 }
-
 export interface TerminalSettingsProps {
   value?: string;
   onChange: (value: string) => void;
 }
-
 /** 首选终端的下拉框（设置 → 通用 → 窗口与终端那一行的控件）。 */
 export function TerminalSelect({
   value,
   onChange,
   className,
-}: TerminalSettingsProps & { className?: string }) {
+}: TerminalSettingsProps & {
+  className?: string;
+}) {
   const { t } = useTranslation();
   const terminals = getTerminalOptions();
   const currentValue = value || getDefaultTerminal();
-
   return (
     <Select value={currentValue} onValueChange={onChange}>
       <SelectTrigger

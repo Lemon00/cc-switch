@@ -1,18 +1,9 @@
-import React, { useEffect, useState, useMemo, useRef } from "react";
-import { useTranslation } from "react-i18next";
-import { BookmarkPlus, Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { HoverTip } from "@/components/ui/hover-tip";
-import { ConfirmDialog } from "./ConfirmDialog";
-import { CustomIconNameDialog } from "./CustomIconNameDialog";
-import { ProviderIcon } from "./ProviderIcon";
-import { ProviderIconBox } from "./ProviderIconBox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { iconList } from "@/icons/extracted";
-import { searchIcons, getIconMetadata } from "@/icons/extracted/metadata";
-import { cn } from "@/lib/utils";
-import { toast } from "@/lib/toast";
+import { getIconMetadata, searchIcons } from "@/icons/extracted/metadata";
 import type { CustomIconEntry } from "@/lib/api/customIcons";
 import {
   useAddCustomIconMutation,
@@ -20,14 +11,22 @@ import {
   useDeleteCustomIconMutation,
   useRenameCustomIconMutation,
 } from "@/lib/query/customIcons";
-import { extractErrorMessage } from "@/utils/errorUtils";
+import { toast } from "@/lib/toast";
+import { cn } from "@/lib/utils";
 import {
   CUSTOM_ICON_ACCEPT,
   CustomIconError,
   isCustomIcon,
   normalizeIconFile,
 } from "@/utils/customIcon";
-
+import { extractErrorMessage } from "@/utils/errorUtils";
+import { BookmarkPlus, Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { CustomIconNameDialog } from "./CustomIconNameDialog";
+import { ProviderIcon } from "./ProviderIcon";
+import { ProviderIconBox } from "./ProviderIconBox";
 interface IconPickerProps {
   value?: string; // 当前选中的图标
   onValueChange: (icon: string) => void; // 选择回调
@@ -35,15 +34,25 @@ interface IconPickerProps {
   /** 把当前图标存进「我的图标」时默认填的名字，一般是供应商名称 */
   defaultName?: string;
 }
-
 /** 起名对话框的三种用途：刚上传的图片、把当前图标存进库、给库里的图标改名 */
 type NameDialogState =
-  | { mode: "upload"; data: string; initialName: string }
-  | { mode: "saveCurrent"; data: string; initialName: string }
-  | { mode: "rename"; data: string; initialName: string; id: string };
-
+  | {
+      mode: "upload";
+      data: string;
+      initialName: string;
+    }
+  | {
+      mode: "saveCurrent";
+      data: string;
+      initialName: string;
+    }
+  | {
+      mode: "rename";
+      data: string;
+      initialName: string;
+      id: string;
+    };
 const GRID_CLASS = "grid grid-cols-6 sm:grid-cols-8 lg:grid-cols-10 gap-2";
-
 const tileClass = (selected: boolean) =>
   cn(
     "flex w-full flex-col items-center gap-1 p-3 rounded-lg",
@@ -51,12 +60,10 @@ const tileClass = (selected: boolean) =>
     "hover:bg-subtle hover:border-primary/50",
     selected ? "border-primary bg-primary/10" : "border-transparent",
   );
-
 /** 文件名去掉扩展名，当作上传图片的默认名称 */
 function nameFromFile(file: File): string {
   return file.name.replace(/\.[^.]+$/, "").trim();
 }
-
 export const IconPicker: React.FC<IconPickerProps> = ({
   value,
   onValueChange,
@@ -71,12 +78,10 @@ export const IconPicker: React.FC<IconPickerProps> = ({
   // 每次选择（上传、清除、点图标）都加一：处理中的上传完成时序号已经变了，
   // 说明用户后来又做了别的选择，旧结果作废，不能再弹出起名框
   const selectionSeqRef = useRef(0);
-
   const { data: library = [] } = useCustomIconsQuery();
   const addIcon = useAddCustomIconMutation();
   const renameIcon = useRenameCustomIconMutation();
   const deleteIcon = useDeleteCustomIconMutation();
-
   // 关掉选择器也让处理中的上传作废：重新打开是一个新实例、新序号，管不到旧上传
   useEffect(
     () => () => {
@@ -84,13 +89,11 @@ export const IconPicker: React.FC<IconPickerProps> = ({
     },
     [],
   );
-
   const select = (icon: string) => {
     selectionSeqRef.current += 1;
     setUploading(false);
     onValueChange(icon);
   };
-
   // 图片先缩好，再弹出起名框；起好名存进「我的图标」才选中。
   // 选中只改表单里的值，点保存才写进供应商
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -118,7 +121,6 @@ export const IconPicker: React.FC<IconPickerProps> = ({
       if (seq === selectionSeqRef.current) setUploading(false);
     }
   };
-
   const handleNameConfirm = async (name: string) => {
     if (!nameDialog) return;
     try {
@@ -139,7 +141,6 @@ export const IconPicker: React.FC<IconPickerProps> = ({
       toast.error(extractErrorMessage(error));
     }
   };
-
   const handleDeleteConfirm = async () => {
     if (!deleting) return;
     try {
@@ -149,15 +150,12 @@ export const IconPicker: React.FC<IconPickerProps> = ({
       toast.error(extractErrorMessage(error));
     }
   };
-
   const query = searchQuery.trim().toLowerCase();
-
   // 过滤图标列表
   const filteredIcons = useMemo(() => {
     if (!query) return iconList;
     return searchIcons(query);
   }, [query]);
-
   const filteredLibrary = useMemo(
     () =>
       query
@@ -165,14 +163,12 @@ export const IconPicker: React.FC<IconPickerProps> = ({
         : library,
     [library, query],
   );
-
   // 当前用的是自定义图片、但不在库里：深链接带来的，或者从库里删掉了。
   // 单独显示出来，可以存进库
   const currentUnsaved =
     isCustomIcon(value) && !library.some((icon) => icon.data === value)
       ? value
       : undefined;
-
   const nameDialogText = (() => {
     switch (nameDialog?.mode) {
       case "rename":
@@ -193,7 +189,6 @@ export const IconPicker: React.FC<IconPickerProps> = ({
         };
     }
   })();
-
   const tileAction = (
     label: string,
     icon: React.ReactNode,
@@ -210,7 +205,6 @@ export const IconPicker: React.FC<IconPickerProps> = ({
       </button>
     </HoverTip>
   );
-
   return (
     <div className="space-y-6">
       <div>
@@ -358,7 +352,6 @@ export const IconPicker: React.FC<IconPickerProps> = ({
           {filteredIcons.map((iconName) => {
             const meta = getIconMetadata(iconName);
             const isSelected = value === iconName;
-
             return (
               <button
                 key={iconName}

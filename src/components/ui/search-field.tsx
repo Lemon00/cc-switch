@@ -1,9 +1,8 @@
-import * as React from "react";
-import { Search, X } from "lucide-react";
-import { Input } from "@/components/ui/input";
 import { HoverTip } from "@/components/ui/hover-tip";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-
+import { Search, X } from "lucide-react";
+import * as React from "react";
 export interface SearchFieldProps
   extends Omit<
     React.InputHTMLAttributes<HTMLInputElement>,
@@ -16,7 +15,6 @@ export interface SearchFieldProps
   /** 外层容器（定宽、外边距）；输入框本身的样式跟 Input 走 */
   containerClassName?: string;
 }
-
 /**
  * 搜索框（docs/design-system.html「输入」）：高 32、圆角 6、左侧 14px 放大镜，
  * 有字时右侧出现清除按钮；Esc 先清空，空了才交给外层（关抽屉 / 对话框）。

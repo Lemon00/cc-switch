@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import ccswitchLogo from "@/assets/icons/logo.svg";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { WhatsNewDialog } from "@/components/WhatsNewDialog";
+import { useUpdate } from "@/contexts/UpdateContext";
+import { settingsApi } from "@/lib/api";
+import { toast } from "@/lib/toast";
+import { WHATS_NEW_ENTRIES, entriesUpTo } from "@/lib/whatsNew";
+import { extractErrorMessage } from "@/utils/errorUtils";
+import { getVersion } from "@tauri-apps/api/app";
 import {
   Download,
   ExternalLink,
@@ -11,28 +20,15 @@ import {
   Star,
   X,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "@/lib/toast";
-import { getVersion } from "@tauri-apps/api/app";
-import { settingsApi } from "@/lib/api";
-import { useUpdate } from "@/contexts/UpdateContext";
-import { Badge } from "@/components/ui/badge";
-import { WhatsNewDialog } from "@/components/WhatsNewDialog";
-import { WHATS_NEW_ENTRIES, entriesUpTo } from "@/lib/whatsNew";
-import ccswitchLogo from "@/assets/icons/logo.svg";
-import { extractErrorMessage } from "@/utils/errorUtils";
-
 interface AboutSectionProps {
   isPortable: boolean;
 }
-
 // 应用自身版本（getVersion，本地毫秒级、无网络）也缓存一份，纯为重挂时免去 loading 闪烁。
 let appVersionCache: string | null = null;
-
 // 邀 Star 条关掉后记在本机（纯界面偏好，不进库、不随云同步）
 const STAR_PROMPT_DISMISSED_KEY = "ccswitch:about:starPromptDismissed";
-
 function readStarPromptDismissed(): boolean {
   try {
     return localStorage.getItem(STAR_PROMPT_DISMISSED_KEY) === "1";
@@ -40,7 +36,6 @@ function readStarPromptDismissed(): boolean {
     return false;
   }
 }
-
 /**
  * 设置 → 关于：版本、便携模式、检查更新 / 安装并重启、项目链接。
  * 命令行应用的安装与升级在侧栏「应用」页。
@@ -62,10 +57,8 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     () => (version ? entriesUpTo(WHATS_NEW_ENTRIES, version) : []),
     [version],
   );
-
   const { hasUpdate, updateInfo, checkUpdate, resetDismiss, isChecking } =
     useUpdate();
-
   useEffect(() => {
     let active = true;
     const loadAppVersion = async () => {
@@ -86,13 +79,11 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         }
       }
     };
-
     void loadAppVersion();
     return () => {
       active = false;
     };
   }, []);
-
   const handleOpenReleaseNotes = useCallback(async () => {
     try {
       const targetVersion = updateInfo?.availableVersion ?? version ?? "";
@@ -101,14 +92,12 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         : targetVersion
           ? `v${targetVersion}`
           : "";
-
       if (!displayVersion) {
         await settingsApi.openExternal(
           "https://github.com/Lemon00/cc-switch/releases",
         );
         return;
       }
-
       await settingsApi.openExternal(
         `https://github.com/Lemon00/cc-switch/releases/tag/${displayVersion}`,
       );
@@ -117,11 +106,9 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       toast.error(t("settings.openReleaseNotesFailed"));
     }
   }, [t, updateInfo?.availableVersion, version]);
-
   const handleOpenGithub = useCallback(() => {
     void settingsApi.openExternal("https://github.com/Lemon00/cc-switch");
   }, []);
-
   const handleDismissStarPrompt = useCallback(() => {
     setStarPromptDismissed(true);
     try {
@@ -130,7 +117,6 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       // 存不下就只在本次会话里隐藏
     }
   }, []);
-
   const handleCheckUpdate = useCallback(async () => {
     if (hasUpdate) {
       if (isPortable) {
@@ -143,7 +129,6 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         }
         return;
       }
-
       setIsDownloading(true);
       try {
         resetDismiss();
@@ -170,7 +155,6 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       }
       return;
     }
-
     try {
       const available = await checkUpdate();
       if (!available) {
@@ -191,9 +175,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     t,
     updateInfo?.availableVersion,
   ]);
-
   const displayVersion = version ?? t("common.unknown");
-
   return (
     <div className="divide-y divide-border overflow-hidden rounded-panel border border-border bg-surface">
       <div className="flex flex-wrap items-center gap-4 px-5 py-4">
@@ -287,7 +269,9 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
           type="button"
           variant="neutral"
           size="compact"
-          onClick={() => settingsApi.openExternal("https://ccswitch.io")}
+          onClick={() =>
+            settingsApi.openExternal("https://github.com/Lemon00/cc-switch")
+          }
         >
           <Globe className="h-3.5 w-3.5" />
           {t("settings.officialWebsite")}
@@ -314,8 +298,8 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         )}
       </div>
 
-      {/* 下载与更新都走 ccswitch.io，用户不再经过仓库页，邀 Star 单独占一行；按钮即 GitHub 入口。
-          关掉后链接行补回 GitHub 按钮 */}
+      {/* 下载、更新和项目主页都指向独立仓库；邀 Star 单独占一行。
+                      关掉后链接行补回 GitHub 按钮 */}
       {!starPromptDismissed && (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-3 bg-action-soft py-3.5 ps-5 pe-3">
           <div className="flex min-w-0 flex-1 items-center gap-3">

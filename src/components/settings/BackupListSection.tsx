@@ -1,7 +1,8 @@
-import { useState } from "react";
-import { useTranslation } from "react-i18next";
-import { toast } from "@/lib/toast";
-import { Pencil, RotateCcw, Check, X, Download, Trash2 } from "lucide-react";
+import {
+  BackupStorageSection,
+  formatBytes,
+} from "@/components/settings/BackupStorageSection";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -10,6 +11,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { HoverTip } from "@/components/ui/hover-tip";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -17,17 +21,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Button } from "@/components/ui/button";
-import { HoverTip } from "@/components/ui/hover-tip";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { useBackupManager } from "@/hooks/useBackupManager";
-import {
-  BackupStorageSection,
-  formatBytes,
-} from "@/components/settings/BackupStorageSection";
+import { toast } from "@/lib/toast";
 import { extractErrorMessage } from "@/utils/errorUtils";
-
+import { Check, Download, Pencil, RotateCcw, Trash2, X } from "lucide-react";
+import { useState } from "react";
+import { useTranslation } from "react-i18next";
 interface BackupListSectionProps {
   backupIntervalHours?: number;
   backupRetainCount?: number;
@@ -36,7 +35,6 @@ interface BackupListSectionProps {
     backupRetainCount?: number;
   }) => void;
 }
-
 function formatBackupDate(isoString: string): string {
   try {
     const date = new Date(isoString);
@@ -45,7 +43,6 @@ function formatBackupDate(isoString: string): string {
     return isoString;
   }
 }
-
 /** Parse display name from backup filename */
 function getDisplayName(filename: string): string {
   // Try to parse db_backup_YYYYMMDD_HHMMSS format
@@ -59,7 +56,6 @@ function getDisplayName(filename: string): string {
   // Otherwise show filename without .db suffix
   return filename.replace(/\.db$/, "");
 }
-
 export function BackupListSection({
   backupIntervalHours,
   backupRetainCount,
@@ -75,6 +71,9 @@ export function BackupListSection({
   const {
     backups,
     isLoading,
+    isError,
+    error,
+    refetch,
     create,
     isCreating,
     restore,
@@ -88,19 +87,22 @@ export function BackupListSection({
   const [deleteFilename, setDeleteFilename] = useState<string | null>(null);
   const [editingFilename, setEditingFilename] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
-
   const handleRestore = async () => {
     if (!confirmFilename) return;
     try {
-      const safetyId = await restore(confirmFilename);
+      const result = await restore(confirmFilename);
       setConfirmFilename(null);
+      if (result.warning) {
+        toast.warning(result.warning, { duration: 10000, closeButton: true });
+        return;
+      }
       toast.success(
         t("settings.backupManager.restoreSuccess", {
           defaultValue: "Restore successful! Safety backup created",
         }),
         {
-          description: safetyId
-            ? `${t("settings.backupManager.safetyBackupId", { defaultValue: "Safety Backup ID" })}: ${safetyId}`
+          description: result.backupId
+            ? `${t("settings.backupManager.safetyBackupId", { defaultValue: "Safety Backup ID" })}: ${result.backupId}`
             : undefined,
           duration: 6000,
           closeButton: true,
@@ -115,17 +117,14 @@ export function BackupListSection({
       toast.error(detail);
     }
   };
-
   const handleStartRename = (filename: string) => {
     setEditingFilename(filename);
     setEditValue(getDisplayName(filename));
   };
-
   const handleCancelRename = () => {
     setEditingFilename(null);
     setEditValue("");
   };
-
   const handleDelete = async () => {
     if (!deleteFilename) return;
     try {
@@ -145,7 +144,6 @@ export function BackupListSection({
       toast.error(detail);
     }
   };
-
   const handleConfirmRename = async () => {
     if (!editingFilename || !editValue.trim()) return;
     try {
@@ -166,10 +164,8 @@ export function BackupListSection({
       toast.error(detail);
     }
   };
-
   const intervalValue = String(backupIntervalHours ?? 24);
   const retainValue = String(backupRetainCount ?? 10);
-
   return (
     <div className="space-y-4">
       {/* Backup policy settings */}
@@ -299,6 +295,13 @@ export function BackupListSection({
 
         {isLoading ? (
           <div className="text-sm text-fg-2 py-2">Loading...</div>
+        ) : isError ? (
+          <div role="alert" className="text-sm text-destructive py-2">
+            {extractErrorMessage(error) || t("common.error")}
+            <Button variant="outline" size="sm" onClick={() => void refetch()}>
+              {t("common.retry", { defaultValue: "重试" })}
+            </Button>
+          </div>
         ) : backups.length === 0 ? (
           <div className="text-sm text-fg-2 py-2">
             {t("settings.backupManager.empty", {

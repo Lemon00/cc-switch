@@ -48,6 +48,16 @@ impl OriginalHeaderCases {
 
         Self { cases }
     }
+
+    /// Rebuild casing hints from a parsed header map (typically lowercase).
+    /// Used for keep-alive request 2+ so we never reuse the first request's map.
+    pub fn from_header_map(headers: &http::HeaderMap) -> Self {
+        let mut cases = Vec::new();
+        for name in headers.keys() {
+            cases.push((name.as_str().to_string(), name.as_str().as_bytes().to_vec()));
+        }
+        Self { cases }
+    }
 }
 
 type HyperClient = Client<
@@ -142,7 +152,13 @@ impl ProxyResponse {
     /// Check if the response is an SSE stream.
     pub fn is_sse(&self) -> bool {
         self.content_type()
-            .map(|ct| ct.contains("text/event-stream"))
+            .map(|ct| {
+                ct.split(';')
+                    .next()
+                    .unwrap_or_default()
+                    .trim()
+                    .eq_ignore_ascii_case("text/event-stream")
+            })
             .unwrap_or(false)
     }
 
@@ -285,10 +301,23 @@ pub async fn send_request(
         proxy_url.map(super::http_client::mask_url),
     );
 
-    if let Some(original_cases) = original_cases
+    // Prefer peeked casing; if missing but an upstream proxy is configured,
+    // synthesize from HeaderMap so we still take the raw+proxy path (never
+    // fall through to hyper-util which ignores proxy_url).
+    let synthesized_cases;
+    let cases_for_raw: Option<&OriginalHeaderCases> = if let Some(cases) = original_cases
         .as_ref()
         .filter(|cases| !cases.cases.is_empty())
     {
+        Some(cases)
+    } else if proxy_url.is_some() {
+        synthesized_cases = OriginalHeaderCases::from_header_map(&headers);
+        Some(&synthesized_cases)
+    } else {
+        None
+    };
+
+    if let Some(original_cases) = cases_for_raw {
         // Primary path: use raw write + hyper handshake for exact header casing
         let result = tokio::time::timeout(
             timeout,
@@ -299,12 +328,16 @@ pub async fn send_request(
 
         match result {
             Ok(resp) => return Ok(resp),
-            Err(e) => {
+            // 请求字节可能已发出：绝不能再用同一 body 走 hyper-util 重发（尤其 POST）。
+            Err(RawSendFailure::AfterWrite(e)) => return Err(e),
+            Err(RawSendFailure::BeforeWrite(e)) => {
                 if proxy_url.is_some() {
                     // Don't bypass configured proxy with direct connect fallback
                     return Err(e);
                 }
-                log::warn!("[HyperClient] Raw write failed, falling back to hyper-util: {e}");
+                log::warn!(
+                    "[HyperClient] Raw connect/TLS failed before write, falling back to hyper-util: {e}"
+                );
                 // Fall through to hyper-util Client
             }
         }
@@ -390,6 +423,13 @@ impl tokio::io::AsyncWrite for ProxyStream {
     }
 }
 
+/// raw-hyper 失败阶段：只有「尚未写出请求」时才允许回退到 hyper-util。
+#[derive(Debug)]
+enum RawSendFailure {
+    BeforeWrite(ProxyError),
+    AfterWrite(ProxyError),
+}
+
 /// Send request via raw TCP/TLS with exact original header casing.
 ///
 /// When `proxy_url` is provided, establishes an HTTP CONNECT tunnel through
@@ -402,13 +442,13 @@ async fn send_raw_request(
     original_cases: &OriginalHeaderCases,
     body: &[u8],
     proxy_url: Option<&str>,
-) -> Result<ProxyResponse, ProxyError> {
+) -> Result<ProxyResponse, RawSendFailure> {
     use tokio::io::AsyncWriteExt;
 
     let scheme = uri.scheme_str().unwrap_or("https");
-    let host = uri
-        .host()
-        .ok_or_else(|| ProxyError::ForwardFailed("URI has no host".into()))?;
+    let host = uri.host().ok_or_else(|| {
+        RawSendFailure::BeforeWrite(ProxyError::ForwardFailed("URI has no host".into()))
+    })?;
     let port = uri
         .port_u16()
         .unwrap_or(if scheme == "https" { 443 } else { 80 });
@@ -419,44 +459,59 @@ async fn send_raw_request(
 
     // Establish TCP connection — either direct or through HTTP CONNECT proxy
     let stream = if let Some(proxy) = proxy_url {
-        connect_via_proxy(proxy, host, port).await?
+        connect_via_proxy(proxy, host, port)
+            .await
+            .map_err(RawSendFailure::BeforeWrite)?
     } else {
-        ProxyStream::Tcp(connect_direct(host, port).await?)
+        ProxyStream::Tcp(
+            connect_direct(host, port)
+                .await
+                .map_err(RawSendFailure::BeforeWrite)?,
+        )
     };
 
     if scheme == "https" {
         let tls_connector = global_tls_connector();
-        let server_name = rustls::pki_types::ServerName::try_from(host.to_string())
-            .map_err(|e| ProxyError::ForwardFailed(format!("Invalid server name: {e}")))?;
+        // `http::Uri::host()` keeps IPv6 literals bracketed (`[::1]`); rustls
+        // ServerName rejects brackets — strip before SNI / IP identity.
+        let server_name = tls_server_name(host).map_err(|e| {
+            RawSendFailure::BeforeWrite(ProxyError::ForwardFailed(format!(
+                "Invalid server name: {e}"
+            )))
+        })?;
         let mut tls_stream = tls_connector
             .connect(server_name, stream)
             .await
-            .map_err(|e| ProxyError::ForwardFailed(format!("TLS handshake failed: {e}")))?;
+            .map_err(|e| {
+                RawSendFailure::BeforeWrite(ProxyError::ForwardFailed(format!(
+                    "TLS handshake failed: {e}"
+                )))
+            })?;
 
-        tls_stream
-            .write_all(&raw)
-            .await
-            .map_err(|e| ProxyError::ForwardFailed(format!("Write failed: {e}")))?;
-        tls_stream
-            .flush()
-            .await
-            .map_err(|e| ProxyError::ForwardFailed(format!("Flush failed: {e}")))?;
+        tls_stream.write_all(&raw).await.map_err(|e| {
+            RawSendFailure::AfterWrite(ProxyError::ForwardFailed(format!("Write failed: {e}")))
+        })?;
+        tls_stream.flush().await.map_err(|e| {
+            RawSendFailure::AfterWrite(ProxyError::ForwardFailed(format!("Flush failed: {e}")))
+        })?;
 
         let filtered = WriteFilter::new(tls_stream);
-        do_hyper_response(filtered, method.clone()).await
+        do_hyper_response(filtered, method.clone())
+            .await
+            .map_err(RawSendFailure::AfterWrite)
     } else {
         let mut stream = stream;
-        stream
-            .write_all(&raw)
-            .await
-            .map_err(|e| ProxyError::ForwardFailed(format!("Write failed: {e}")))?;
-        stream
-            .flush()
-            .await
-            .map_err(|e| ProxyError::ForwardFailed(format!("Flush failed: {e}")))?;
+        stream.write_all(&raw).await.map_err(|e| {
+            RawSendFailure::AfterWrite(ProxyError::ForwardFailed(format!("Write failed: {e}")))
+        })?;
+        stream.flush().await.map_err(|e| {
+            RawSendFailure::AfterWrite(ProxyError::ForwardFailed(format!("Flush failed: {e}")))
+        })?;
 
         let filtered = WriteFilter::new(stream);
-        do_hyper_response(filtered, method.clone()).await
+        do_hyper_response(filtered, method.clone())
+            .await
+            .map_err(RawSendFailure::AfterWrite)
     }
 }
 
@@ -524,15 +579,22 @@ async fn connect_via_proxy(
         None
     };
 
-    // Connect to the proxy
-    let tcp = tokio::net::TcpStream::connect((proxy_host, proxy_port))
-        .await
-        .map_err(|e| ProxyError::ForwardFailed(format!("Proxy TCP connect failed: {e}")))?;
+    // Connect to the proxy. Prefer typed host so IPv6 literals from
+    // `http://[::1]:7890` are not passed bracketed to `TcpStream::connect`.
+    let tcp = match parsed.host() {
+        Some(url::Host::Domain(host)) => tokio::net::TcpStream::connect((host, proxy_port)).await,
+        Some(url::Host::Ipv4(ip)) => tokio::net::TcpStream::connect((ip, proxy_port)).await,
+        Some(url::Host::Ipv6(ip)) => tokio::net::TcpStream::connect((ip, proxy_port)).await,
+        None => {
+            return Err(ProxyError::ForwardFailed("Proxy URL has no host".into()));
+        }
+    }
+    .map_err(|e| ProxyError::ForwardFailed(format!("Proxy TCP connect failed: {e}")))?;
 
     // Wrap with TLS if the proxy URL uses https://
     let mut stream: ProxyStream = if parsed.scheme() == "https" {
         let tls_connector = global_tls_connector();
-        let server_name = rustls::pki_types::ServerName::try_from(proxy_host.to_string())
+        let server_name = tls_server_name(proxy_host)
             .map_err(|e| ProxyError::ForwardFailed(format!("Invalid proxy server name: {e}")))?;
         let tls_stream = tls_connector
             .connect(server_name, tcp)
@@ -543,7 +605,7 @@ async fn connect_via_proxy(
         ProxyStream::Tcp(tcp)
     };
 
-    // Send CONNECT request
+    // Send CONNECT request. IPv6 targets must keep brackets: `CONNECT [::1]:443`.
     let mut connect_req = format!(
         "CONNECT {target_host}:{target_port} HTTP/1.1\r\n\
          Host: {target_host}:{target_port}\r\n"
@@ -570,18 +632,26 @@ async fn connect_via_proxy(
         .await
         .map_err(|e| ProxyError::ForwardFailed(format!("CONNECT read failed: {e}")))?;
 
-    // Expect "HTTP/1.1 200 ..." or "HTTP/1.0 200 ..."
-    if !status_line.contains(" 200 ") {
-        if status_line.contains(" 407 ") {
+    // Accept `HTTP/1.x 200` even when the reason phrase is omitted
+    // (`HTTP/1.1 200\r\n` does not contain the substring `" 200 "`).
+    let connect_status = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|code| code.parse::<u16>().ok());
+    match connect_status {
+        Some(200) => {}
+        Some(407) => {
             return Err(ProxyError::AuthError(format!(
                 "Proxy authentication required (407): {}",
                 status_line.trim()
             )));
         }
-        return Err(ProxyError::ForwardFailed(format!(
-            "Proxy CONNECT rejected: {}",
-            status_line.trim()
-        )));
+        _ => {
+            return Err(ProxyError::ForwardFailed(format!(
+                "Proxy CONNECT rejected: {}",
+                status_line.trim()
+            )));
+        }
     }
 
     // Drain remaining response headers (until empty line)
@@ -605,6 +675,15 @@ async fn connect_via_proxy(
     );
 
     Ok(stream)
+}
+
+/// Strip optional IPv6 brackets so rustls `ServerName` accepts IP identities.
+fn tls_server_name(host: &str) -> Result<rustls::pki_types::ServerName<'static>, String> {
+    let bare = host
+        .strip_prefix('[')
+        .and_then(|inner| inner.strip_suffix(']'))
+        .unwrap_or(host);
+    rustls::pki_types::ServerName::try_from(bare.to_string()).map_err(|e| e.to_string())
 }
 
 /// Lazily-initialized TLS connector for raw connections.
@@ -660,13 +739,15 @@ fn build_raw_request(
     //
     // This replaces the old `for name in headers.keys()` loop which iterated
     // in hash-map order, destroying the original header sequence.
-    let mut emitted: std::collections::HashSet<String> =
-        std::collections::HashSet::with_capacity(original_cases.cases.len());
     // Per-name cursor: how many values we have already emitted for each name.
     let mut value_cursor: std::collections::HashMap<String, usize> =
         std::collections::HashMap::with_capacity(original_cases.cases.len());
 
     for (lower_name, orig_name_bytes) in &original_cases.cases {
+        // Buffered body path: drop TE/CL from the wire and rewrite CL below.
+        if lower_name == "transfer-encoding" || lower_name == "content-length" {
+            continue;
+        }
         if let Ok(header_name) = http::header::HeaderName::from_bytes(lower_name.as_bytes()) {
             let all_values: Vec<_> = headers.get_all(&header_name).iter().collect();
             let cursor = value_cursor.entry(lower_name.clone()).or_insert(0);
@@ -676,31 +757,35 @@ fn build_raw_request(
                 raw.extend_from_slice(value.as_bytes());
                 raw.extend_from_slice(b"\r\n");
                 *cursor += 1;
-                emitted.insert(lower_name.clone());
             }
         }
     }
 
-    // Append proxy-added headers (not present in the original request).
+    // Append remaining / proxy-added header values. Headers already partially
+    // emitted via original_cases must still emit any extra values the proxy
+    // appended (e.g. a second Cookie / Set-Cookie).
     for name in headers.keys() {
         let lower = name.as_str().to_ascii_lowercase();
-        if !emitted.contains(&lower) {
-            for value in headers.get_all(name) {
-                raw.extend_from_slice(name.as_str().as_bytes());
-                raw.extend_from_slice(b": ");
-                raw.extend_from_slice(value.as_bytes());
-                raw.extend_from_slice(b"\r\n");
-            }
-            emitted.insert(lower);
+        // Buffered body: never emit Transfer-Encoding — we write a complete
+        // entity with Content-Length, not chunked framing.
+        if lower == "transfer-encoding" || lower == "content-length" {
+            continue;
+        }
+        let start = *value_cursor.get(&lower).unwrap_or(&0);
+        let all_values: Vec<_> = headers.get_all(name).iter().collect();
+        for value in all_values.into_iter().skip(start) {
+            raw.extend_from_slice(name.as_str().as_bytes());
+            raw.extend_from_slice(b": ");
+            raw.extend_from_slice(value.as_bytes());
+            raw.extend_from_slice(b"\r\n");
         }
     }
 
-    // Add Content-Length if not already present
-    if !headers.contains_key(http::header::CONTENT_LENGTH) {
-        raw.extend_from_slice(b"Content-Length: ");
-        raw.extend_from_slice(body.len().to_string().as_bytes());
-        raw.extend_from_slice(b"\r\n");
-    }
+    // Always set an accurate Content-Length for the buffered body. This also
+    // resolves TE+CL conflicts by preferring CL and omitting TE above.
+    raw.extend_from_slice(b"Content-Length: ");
+    raw.extend_from_slice(body.len().to_string().as_bytes());
+    raw.extend_from_slice(b"\r\n");
 
     // End of headers + body
     raw.extend_from_slice(b"\r\n");
@@ -713,7 +798,7 @@ fn build_raw_request(
 /// already written the request.
 ///
 /// `WriteFilter` discards any writes from hyper (it would try to send its own
-/// request encoding), while passing reads through transparently.
+/// request encoding), then lets hyper read the already-arrived response.
 async fn do_hyper_response<S>(
     stream: WriteFilter<S>,
     method: http::Method,
@@ -729,12 +814,19 @@ where
         .await
         .map_err(|e| ProxyError::ForwardFailed(format!("Handshake failed: {e}")))?;
 
-    // Spawn the connection driver (reads responses from the stream)
-    tokio::spawn(async move {
+    // The raw connection has no pool owner. Cancellation before the headers or
+    // while streaming must also stop its driver and close the upstream socket.
+    struct ConnectionDriver(tokio::task::JoinHandle<()>);
+    impl Drop for ConnectionDriver {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+    let driver = ConnectionDriver(tokio::spawn(async move {
         if let Err(e) = conn.await {
             log::debug!("[HyperClient] raw conn driver error: {e}");
         }
-    });
+    }));
 
     // Send a dummy request through hyper — hyper will encode this and try to write it,
     // but WriteFilter discards all writes. Hyper will then read the response from the stream.
@@ -749,21 +841,35 @@ where
         .await
         .map_err(|e| ProxyError::ForwardFailed(format!("Response parse failed: {e}")))?;
 
-    Ok(ProxyResponse::Hyper(resp))
+    let (parts, body) = resp.into_parts();
+    let stream = async_stream::stream! {
+        let _driver = driver;
+        let mut stream = body.into_data_stream();
+        while let Some(chunk) = stream.next().await {
+            yield chunk.map_err(std::io::Error::other);
+        }
+    };
+    Ok(ProxyResponse::streamed(parts.status, parts.headers, stream))
 }
 
-/// A stream wrapper that discards all writes but passes reads through.
+/// A stream wrapper that discards writes and gates reads on the dummy request.
 ///
 /// This lets hyper's connection driver think it sent a request (its encoded bytes
 /// go to /dev/null), while correctly parsing the response that the upstream server
 /// sends in reply to our raw-written request.
 struct WriteFilter<S> {
     inner: S,
+    request_written: bool,
+    read_waker: Option<std::task::Waker>,
 }
 
 impl<S> WriteFilter<S> {
     fn new(inner: S) -> Self {
-        Self { inner }
+        Self {
+            inner,
+            request_written: false,
+            read_waker: None,
+        }
     }
 }
 
@@ -773,8 +879,15 @@ impl<S: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for WriteFilter<S> {
         cx: &mut std::task::Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
-        // Pass reads through to the underlying stream
-        let inner = std::pin::Pin::new(&mut self.get_mut().inner);
+        let this = self.get_mut();
+        // The upstream may respond before hyper has registered its dummy request.
+        // Reading then makes hyper reject the response as unsolicited. Its first
+        // write happens after registration, so only allow reads after that point.
+        if !this.request_written {
+            this.read_waker = Some(cx.waker().clone());
+            return std::task::Poll::Pending;
+        }
+        let inner = std::pin::Pin::new(&mut this.inner);
         inner.poll_read(cx, buf)
     }
 }
@@ -785,7 +898,14 @@ impl<S: Unpin> tokio::io::AsyncWrite for WriteFilter<S> {
         _cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
-        // Discard all writes — pretend they succeeded
+        let this = self.get_mut();
+        if !buf.is_empty() {
+            this.request_written = true;
+            if let Some(waker) = this.read_waker.take() {
+                waker.wake();
+            }
+        }
+        // Discard all writes — pretend they succeeded.
         std::task::Poll::Ready(Ok(buf.len()))
     }
 
@@ -825,6 +945,84 @@ mod tests {
         assert!(buffered_with_content_type(Some("application/problem+json")).is_json());
         assert!(!buffered_with_content_type(Some("text/event-stream")).is_json());
         assert!(!buffered_with_content_type(None).is_json());
+    }
+
+    #[test]
+    fn sse_content_type_is_case_insensitive_and_requires_an_exact_media_type() {
+        for content_type in ["text/event-stream", "Text/Event-Stream; charset=utf-8"] {
+            assert!(buffered_with_content_type(Some(content_type)).is_sse());
+        }
+        for content_type in [
+            "application/x-text/event-stream",
+            "text/event-stream-invalid",
+            "application/json",
+        ] {
+            assert!(!buffered_with_content_type(Some(content_type)).is_sse());
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_raw_request_before_headers_closes_its_driver() {
+        use tokio::io::AsyncReadExt;
+        let (client, mut upstream) = tokio::io::duplex(1024);
+        let mut request = Box::pin(do_hyper_response(
+            WriteFilter::new(client),
+            http::Method::POST,
+        ));
+        assert!(matches!(
+            futures::poll!(&mut request),
+            std::task::Poll::Pending
+        ));
+        drop(request);
+        let mut byte = [0];
+        let read =
+            tokio::time::timeout(std::time::Duration::from_secs(1), upstream.read(&mut byte))
+                .await
+                .expect("raw driver must close after cancellation")
+                .unwrap();
+        assert_eq!(read, 0);
+    }
+
+    #[tokio::test]
+    async fn dropping_an_unpolled_raw_response_closes_its_driver() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let (client, mut upstream) = tokio::io::duplex(1024);
+        upstream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n")
+            .await
+            .unwrap();
+        let response = do_hyper_response(WriteFilter::new(client), http::Method::POST)
+            .await
+            .unwrap();
+        drop(response);
+        let mut byte = [0];
+        let read =
+            tokio::time::timeout(std::time::Duration::from_secs(1), upstream.read(&mut byte))
+                .await
+                .expect("raw driver must close when its response is dropped")
+                .unwrap();
+        assert_eq!(read, 0);
+    }
+
+    #[tokio::test]
+    async fn raw_response_arriving_before_dummy_request_is_preserved() {
+        use tokio::io::AsyncWriteExt;
+        let (client, mut upstream) = tokio::io::duplex(1024);
+        upstream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+            .await
+            .unwrap();
+        let body = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            do_hyper_response(WriteFilter::new(client), http::Method::POST)
+                .await
+                .unwrap()
+                .bytes_with_limit(16)
+                .await
+                .unwrap()
+        })
+        .await
+        .expect("prebuffered response must not stall");
+        assert_eq!(body, Bytes::from_static(b"ok"));
     }
 
     #[tokio::test]

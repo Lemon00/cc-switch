@@ -435,7 +435,8 @@ mod tests {
             let dir = tempfile::tempdir().expect("temp home");
             let original = std::env::var_os("CC_SWITCH_TEST_HOME");
             std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
-            crate::settings::reload_settings().expect("reload settings");
+            crate::settings::update_settings(Default::default())
+                .expect("initialize settings for isolated test home");
             take_scheduled();
             Self {
                 _dir: dir,
@@ -488,6 +489,14 @@ mod tests {
         provider("official", "official", json!({ "env": {} }))
     }
 
+    fn test_database() -> Database {
+        let db = Database::memory().unwrap();
+        for provider in [custom(), official()] {
+            db.save_provider(&AppType::Claude, &provider).unwrap();
+        }
+        db
+    }
+
     /// 第三方卡正在用时的 live，带一个用户自己的键。
     fn custom_live() -> Value {
         json!({
@@ -506,7 +515,7 @@ mod tests {
     #[serial]
     fn switching_to_official_blanks_routing_keys_then_removes_them() {
         let _home = TestHome::new();
-        let db = Database::memory().unwrap();
+        let db = test_database();
         write_live(&custom_live());
 
         switch_to(&db, Some(&custom()), &official()).expect("switch");
@@ -542,7 +551,7 @@ mod tests {
     #[serial]
     fn a_later_write_takes_over_the_earlier_sweep() {
         let _home = TestHome::new();
-        let db = Database::memory().unwrap();
+        let db = test_database();
         write_live(&custom_live());
 
         switch_to(&db, Some(&custom()), &official()).expect("to official");
@@ -562,7 +571,7 @@ mod tests {
     #[serial]
     fn sweep_keeps_values_written_after_the_tombstone() {
         let _home = TestHome::new();
-        let db = Database::memory().unwrap();
+        let db = test_database();
         write_live(&custom_live());
 
         switch_to(&db, Some(&custom()), &official()).expect("switch");
@@ -586,7 +595,7 @@ mod tests {
     #[serial]
     fn detach_deletes_without_tombstones() {
         let _home = TestHome::new();
-        let db = Database::memory().unwrap();
+        let db = test_database();
         write_live(&custom_live());
 
         let patch = direct_patch(
@@ -604,7 +613,7 @@ mod tests {
     #[serial]
     fn switches_that_blank_nothing_record_and_schedule_nothing() {
         let _home = TestHome::new();
-        let db = Database::memory().unwrap();
+        let db = test_database();
         write_live(&json!({ "env": {} }));
 
         // 官方 → 第三方：没有要删的连接字段，没有墓碑，也不记、不排删除（退出时不用等）
@@ -633,7 +642,7 @@ mod tests {
     #[serial]
     fn switching_records_tombstones_and_the_sweep_clears_the_record() {
         let _home = TestHome::new();
-        let db = Database::memory().unwrap();
+        let db = test_database();
         write_live(&custom_live());
 
         switch_to(&db, Some(&custom()), &official()).expect("switch");
@@ -649,7 +658,7 @@ mod tests {
     #[serial]
     fn startup_finishes_tombstones_left_by_the_last_run() {
         let _home = TestHome::new();
-        let db = Database::memory().unwrap();
+        let db = test_database();
         write_live(&custom_live());
         switch_to(&db, Some(&custom()), &official()).expect("switch");
         // 上次运行在删除之前就退出了：安排下的删除没了，只剩文件里的空值和记录
@@ -666,7 +675,7 @@ mod tests {
     #[serial]
     fn exit_finishes_tombstones_without_waiting_once_they_were_visible() {
         let _home = TestHome::new();
-        let db = Database::memory().unwrap();
+        let db = test_database();
         write_live(&custom_live());
         switch_to(&db, Some(&custom()), &official()).expect("switch");
         take_scheduled();
@@ -687,7 +696,7 @@ mod tests {
     #[serial]
     fn an_unswept_record_is_carried_into_the_next_write() {
         let _home = TestHome::new();
-        let db = Database::memory().unwrap();
+        let db = test_database();
         let mut gateway = custom();
         gateway.settings_config["env"]["CLAUDE_CODE_DISABLE_THINKING"] = json!("1");
         let mut live = custom_live();
@@ -710,6 +719,7 @@ mod tests {
                 "ANTHROPIC_AUTH_TOKEN": "sk-other"
             }}),
         );
+        db.save_provider(&AppType::Claude, &other).unwrap();
         switch_to(&db, Some(&official()), &other).expect("to other");
         let carried = marker().unwrap();
         assert!(carried

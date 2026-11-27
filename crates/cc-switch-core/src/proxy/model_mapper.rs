@@ -2,7 +2,6 @@
 //!
 //! 在请求转发前，根据 Provider 配置替换请求中的模型名称
 
-use crate::claude_desktop_config::ONE_M_CONTEXT_MARKER;
 use crate::provider::Provider;
 use serde_json::Value;
 
@@ -106,7 +105,7 @@ impl ModelMapping {
             // 也要认成同一个子代理模型，送回行里配置的原值。
             if strip_one_m_suffix_for_upstream(original_model)
                 == strip_one_m_suffix_for_upstream(
-                    &crate::live::project::claude::client_model_for_subagent(m),
+                    &crate::model_names::client_model_for_subagent(m),
                 )
             {
                 return m.clone();
@@ -154,19 +153,7 @@ pub fn apply_model_mapping(
     (body, original_model, None)
 }
 
-/// Claude Code 通过 `[1M]` 后缀声明 100 万上下文能力；上游 API
-/// 通常不接受这个本地能力标记，转发前需要剥离。
-pub fn strip_one_m_suffix_for_upstream(model: &str) -> &str {
-    let trimmed = model.trim_end();
-    let marker = ONE_M_CONTEXT_MARKER.as_bytes();
-    let bytes = trimmed.as_bytes();
-    if bytes.len() >= marker.len()
-        && bytes[bytes.len() - marker.len()..].eq_ignore_ascii_case(marker)
-    {
-        return trimmed[..trimmed.len() - marker.len()].trim_end();
-    }
-    model
-}
+pub use crate::model_names::strip_one_m_suffix_for_upstream;
 
 /// Codex 故障转移换家时的模型名。
 ///

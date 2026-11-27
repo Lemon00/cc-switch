@@ -9,11 +9,12 @@
 //! Claude Code 这类外部进程不参与这把锁，「重读比对」和 rename 之间仍有一个极小的
 //! 窗口，外部写入恰好落在里面时仍会被覆盖。
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::{Condvar, Mutex, OnceLock};
+use std::thread;
 
 use sha2::{Digest, Sha256};
 
@@ -161,15 +162,35 @@ pub fn stage(planned: &Planned) -> Result<Option<StagedWrite>, AppError> {
 /// 绝对路径为键，每个文件只备份一次；备份在 `<device>/backups/live-first-write/`，
 /// 旁边的 `.source` 记着原路径。写入前文件不存在时只记 `.source`，以后也不再备份
 /// （那时的内容是 CC Switch 自己写的）。
+fn normalized_source_path(path: &Path) -> PathBuf {
+    match fs::canonicalize(path) {
+        Ok(canonical) => canonical,
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                std::env::current_dir()
+                    .map(|cwd| cwd.join(path))
+                    .unwrap_or_else(|_| path.to_path_buf())
+            }
+        }
+        Err(_) => path.to_path_buf(),
+    }
+}
+
 pub fn ensure_first_write_backup(
     store: &DeviceStore,
     path: &Path,
     current: Option<&[u8]>,
 ) -> Result<(), AppError> {
     let dir = store.first_write_backup_dir();
-    let key = digest(Some(path.to_string_lossy().as_bytes())).expect("digest");
-    let name = path
+    fs::create_dir_all(&dir).map_err(|source| AppError::io(&dir, source))?;
+    let source = normalized_source_path(path);
+    let source_bytes = source.to_string_lossy().into_owned().into_bytes();
+    let key = digest(Some(&source_bytes)).expect("digest");
+    let name = source
         .file_name()
+        .or(path.file_name())
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "file".to_string());
     let backup = dir.join(format!("{}-{name}", &key[..12]));
@@ -178,9 +199,11 @@ pub fn ensure_first_write_backup(
         return Ok(());
     }
     if let Some(bytes) = current {
-        atomic_write_private(&backup, bytes)?;
+        if !backup.exists() {
+            stage_write(&backup, bytes, Some(0o600), true)?.commit()?;
+        }
     }
-    atomic_write_private(&marker, path.to_string_lossy().as_bytes())
+    atomic_write_private(&marker, &source_bytes)
 }
 
 /// 一个应用的写锁：CC Switch 里改这个应用客户端文件的所有写入方（切换、编辑器、
@@ -196,18 +219,35 @@ impl AppWriteGuard {
     }
 }
 
-fn lock_table() -> &'static (Mutex<HashSet<String>>, Condvar) {
-    static LOCKS: OnceLock<(Mutex<HashSet<String>>, Condvar)> = OnceLock::new();
-    LOCKS.get_or_init(|| (Mutex::new(HashSet::new()), Condvar::new()))
+fn lock_table() -> &'static (Mutex<HashMap<String, thread::ThreadId>>, Condvar) {
+    static LOCKS: OnceLock<(Mutex<HashMap<String, thread::ThreadId>>, Condvar)> = OnceLock::new();
+    LOCKS.get_or_init(|| (Mutex::new(HashMap::new()), Condvar::new()))
+}
+
+fn assert_not_reentrant(app: &str, holder: thread::ThreadId) {
+    debug_assert!(
+        holder != thread::current().id(),
+        "reentrant lock_app for {app}"
+    );
+    #[cfg(debug_assertions)]
+    if holder == thread::current().id() {
+        panic!("reentrant lock_app for {app}");
+    }
 }
 
 pub fn lock_app(app: &str) -> AppWriteGuard {
     let (held, released) = lock_table();
     let mut held = held.lock().unwrap_or_else(|e| e.into_inner());
-    while held.contains(app) {
-        held = released.wait(held).unwrap_or_else(|e| e.into_inner());
+    if let Some(&holder) = held.get(app) {
+        assert_not_reentrant(app, holder);
     }
-    held.insert(app.to_string());
+    while held.contains_key(app) {
+        held = released.wait(held).unwrap_or_else(|e| e.into_inner());
+        if let Some(&holder) = held.get(app) {
+            assert_not_reentrant(app, holder);
+        }
+    }
+    held.insert(app.to_string(), thread::current().id());
     AppWriteGuard {
         app: app.to_string(),
     }

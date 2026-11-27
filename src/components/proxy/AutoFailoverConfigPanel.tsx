@@ -1,26 +1,43 @@
-import { useState, useEffect } from "react";
-import { useTranslation } from "react-i18next";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Save, Loader2, Info } from "lucide-react";
-import { toast } from "@/lib/toast";
+import { useAutoFailoverEnabled } from "@/lib/query/failover";
 import { useAppProxyConfig, useUpdateAppProxyConfig } from "@/lib/query/proxy";
-
+import { toast } from "@/lib/toast";
+import { Info, Loader2, Save } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 export interface AutoFailoverConfigPanelProps {
   appType: string;
   disabled?: boolean;
+  aggregation?: boolean;
 }
-
 export function AutoFailoverConfigPanel({
   appType,
   disabled = false,
+  aggregation = false,
+}: AutoFailoverConfigPanelProps) {
+  return (
+    <AutoFailoverConfigForm
+      key={appType}
+      appType={appType}
+      disabled={disabled}
+      aggregation={aggregation}
+    />
+  );
+}
+function AutoFailoverConfigForm({
+  appType,
+  disabled = false,
+  aggregation = false,
 }: AutoFailoverConfigPanelProps) {
   const { t } = useTranslation();
   const { data: config, isLoading, error } = useAppProxyConfig(appType);
+  // 主 Tab 开关走独立 query（含乐观值）；保存超时/熔断参数时跟它对齐，不信可能过期的 appConfig
+  const { data: liveAutoFailoverEnabled } = useAutoFailoverEnabled(appType);
   const updateConfig = useUpdateAppProxyConfig();
-
+  const [dirty, setDirty] = useState(false);
   // 使用字符串状态以支持完全清空数字输入框
   const [formData, setFormData] = useState({
     autoFailoverEnabled: false,
@@ -34,9 +51,8 @@ export function AutoFailoverConfigPanel({
     circuitErrorRateThreshold: "50", // 存储百分比值
     circuitMinRequests: "10",
   });
-
   useEffect(() => {
-    if (config) {
+    if (config && !dirty) {
       setFormData({
         autoFailoverEnabled: config.autoFailoverEnabled,
         maxRetries: String(config.maxRetries),
@@ -52,8 +68,7 @@ export function AutoFailoverConfigPanel({
         circuitMinRequests: String(config.circuitMinRequests),
       });
     }
-  }, [config]);
-
+  }, [config, dirty]);
   const handleSave = async () => {
     if (!config) return;
     // 解析数字，返回 NaN 表示无效输入
@@ -63,7 +78,6 @@ export function AutoFailoverConfigPanel({
       if (!/^-?\d+$/.test(trimmed)) return NaN;
       return parseInt(trimmed);
     };
-
     // 定义各字段的有效范围
     const ranges = {
       maxRetries: { min: 0, max: 10 },
@@ -76,7 +90,6 @@ export function AutoFailoverConfigPanel({
       circuitErrorRateThreshold: { min: 0, max: 100 },
       circuitMinRequests: { min: 5, max: 100 },
     };
-
     // 解析原始值
     const raw = {
       maxRetries: parseNum(formData.maxRetries),
@@ -89,19 +102,20 @@ export function AutoFailoverConfigPanel({
       circuitErrorRateThreshold: parseNum(formData.circuitErrorRateThreshold),
       circuitMinRequests: parseNum(formData.circuitMinRequests),
     };
-
     // 校验是否超出范围（NaN 也视为无效）
     const errors: string[] = [];
     const checkRange = (
       value: number,
-      range: { min: number; max: number },
+      range: {
+        min: number;
+        max: number;
+      },
       label: string,
     ) => {
       if (isNaN(value) || value < range.min || value > range.max) {
         errors.push(`${label}: ${range.min}-${range.max}`);
       }
     };
-
     checkRange(
       raw.maxRetries,
       ranges.maxRetries,
@@ -147,7 +161,6 @@ export function AutoFailoverConfigPanel({
       ranges.circuitMinRequests,
       t("proxy.autoFailover.minRequests", "最小请求数"),
     );
-
     if (errors.length > 0) {
       toast.error(
         t("proxy.autoFailover.validationFailed", {
@@ -157,12 +170,14 @@ export function AutoFailoverConfigPanel({
       );
       return;
     }
-
     try {
+      // 不写 formData.autoFailoverEnabled：开关在主 Tab 单独改。后端也会忽略本字段，
+      // 这里仍传 live 值，避免本地缓存与 DB 观感不一致。
       await updateConfig.mutateAsync({
         appType,
         enabled: config.enabled,
-        autoFailoverEnabled: formData.autoFailoverEnabled,
+        autoFailoverEnabled:
+          liveAutoFailoverEnabled ?? config.autoFailoverEnabled,
         maxRetries: raw.maxRetries,
         streamingFirstByteTimeout: raw.streamingFirstByteTimeout,
         streamingIdleTimeout: raw.streamingIdleTimeout,
@@ -173,6 +188,7 @@ export function AutoFailoverConfigPanel({
         circuitErrorRateThreshold: raw.circuitErrorRateThreshold / 100,
         circuitMinRequests: raw.circuitMinRequests,
       });
+      setDirty(false);
       toast.success(
         t("proxy.autoFailover.configSaved", "自动故障转移配置已保存"),
         { closeButton: true },
@@ -183,8 +199,8 @@ export function AutoFailoverConfigPanel({
       );
     }
   };
-
   const handleReset = () => {
+    setDirty(false);
     if (config) {
       setFormData({
         autoFailoverEnabled: config.autoFailoverEnabled,
@@ -202,7 +218,6 @@ export function AutoFailoverConfigPanel({
       });
     }
   };
-
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-4">
@@ -210,12 +225,10 @@ export function AutoFailoverConfigPanel({
       </div>
     );
   }
-
-  const isDisabled = disabled || updateConfig.isPending;
-
+  const isDisabled = disabled || updateConfig.isPending || !config;
   return (
     <div className="border-0 rounded-none shadow-none bg-transparent">
-      <div className="space-y-4">
+      <div className="space-y-4" onChange={() => setDirty(true)}>
         {error && (
           <Alert variant="destructive">
             <AlertDescription>{String(error)}</AlertDescription>
@@ -225,10 +238,12 @@ export function AutoFailoverConfigPanel({
         <Alert className="border-border-strong bg-subtle">
           <Info className="h-4 w-4" />
           <AlertDescription className="text-sm">
-            {t(
-              "proxy.autoFailover.info",
-              "当故障转移队列中配置了多个供应商时，系统会在请求失败时按优先级顺序依次尝试。当某个供应商连续失败达到阈值时，熔断器会打开并在一段时间内跳过该供应商。",
-            )}
+            {aggregation
+              ? t("mode.stackSettings.routingDescription")
+              : t(
+                  "proxy.autoFailover.info",
+                  "当故障转移队列中配置了多个供应商时，系统会在请求失败时按优先级顺序依次尝试。当某个供应商连续失败达到阈值时，熔断器会打开并在一段时间内跳过该供应商。",
+                )}
           </AlertDescription>
         </Alert>
 

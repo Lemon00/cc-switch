@@ -4,14 +4,12 @@
  * 统一供应商是跨应用共享的配置，修改后会自动同步到 Claude、Codex、Gemini 三个应用。
  * 适用于 NewAPI 等支持多种协议的 API 网关。
  */
-
 import type {
   UniversalProvider,
   UniversalProviderApps,
   UniversalProviderModels,
 } from "@/types";
 import { deepClone } from "@/utils/deepClone";
-
 /**
  * 统一供应商预设接口
  */
@@ -35,7 +33,6 @@ export interface UniversalProviderPreset {
   /** 是否为自定义模板（允许用户完全自定义） */
   isCustomTemplate?: boolean;
 }
-
 /**
  * NewAPI 默认模型配置
  */
@@ -54,7 +51,6 @@ const NEWAPI_DEFAULT_MODELS: UniversalProviderModels = {
     model: "gemini-3.6-flash",
   },
 };
-
 /**
  * 统一供应商预设列表
  */
@@ -89,7 +85,6 @@ export const universalProviderPresets: UniversalProviderPreset[] = [
     isCustomTemplate: true,
   },
 ];
-
 /**
  * 根据预设创建统一供应商
  */
@@ -114,14 +109,12 @@ export function createUniversalProviderFromPreset(
     createdAt: Date.now(),
   };
 }
-
 /**
  * 获取预设的显示名称（用于 UI）
  */
 export function getPresetDisplayName(preset: UniversalProviderPreset): string {
   return preset.name;
 }
-
 /**
  * 根据类型查找预设
  */

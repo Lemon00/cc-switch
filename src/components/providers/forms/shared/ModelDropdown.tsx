@@ -1,6 +1,3 @@
-import { useState } from "react";
-import { useTranslation } from "react-i18next";
-import { ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Command,
@@ -16,7 +13,9 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import type { FetchedModel } from "@/lib/api/model-fetch";
-
+import { ChevronDown } from "lucide-react";
+import { useState } from "react";
+import { useTranslation } from "react-i18next";
 export function ModelDropdown({
   models,
   onSelect,
@@ -26,7 +25,6 @@ export function ModelDropdown({
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-
   // Group models by vendor; missing ownedBy falls back to "Other"
   const grouped: Record<string, FetchedModel[]> = {};
   for (const model of models) {
@@ -35,7 +33,6 @@ export function ModelDropdown({
     grouped[vendor].push(model);
   }
   const vendors = Object.keys(grouped).sort();
-
   return (
     <Popover modal open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>

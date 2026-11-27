@@ -1,23 +1,18 @@
-import { memo, type ReactNode } from "react";
-
-import { cn } from "@/lib/utils";
-import type { StatusTone, StepMeta } from "./toolSummary";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
-import { formatDuration, formatTokens } from "./toolSummary";
+import { cn } from "@/lib/utils";
+import { memo, type ReactNode } from "react";
 import { useReaderT } from "./i18n";
-
+import type { StatusTone, StepMeta } from "./toolSummary";
+import { formatDuration, formatTokens } from "./toolSummary";
 /**
  * 阅读页各行共用的样式片段：统一行高 32、glyph 列宽 16、状态色语义（§6.6「统一的部分」）。
  */
-
 /** 可展开的一行：步骤、思考、折叠摘要 */
 export const ROW_BUTTON =
   "group/row flex h-8 w-full min-w-0 items-center gap-2 rounded-control px-1.5 text-left text-caption transition-colors hover:bg-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
-
 /** 不可展开的一行（redacted 思考等） */
 export const ROW_STATIC =
   "flex h-8 w-full min-w-0 items-center gap-2 px-1.5 text-caption";
-
 export const TONE_CLASS: Record<StatusTone, string> = {
   success: "text-success-text",
   danger: "text-danger-text",
@@ -25,7 +20,6 @@ export const TONE_CLASS: Record<StatusTone, string> = {
   muted: "text-fg-3",
   neutral: "text-fg-2",
 };
-
 /** 行首符号列：固定宽度保证各行标题对齐；符号只是装饰，读屏靠文字 */
 export const GlyphCell = ({
   glyph,
@@ -44,13 +38,11 @@ export const GlyphCell = ({
     {glyph}
   </span>
 );
-
 const Dot = () => (
   <span aria-hidden className="text-fg-3">
     ·
   </span>
 );
-
 /** 步骤元信息：exit N · 12s · 88 行 / +3 −1 · 28.5k tok · $0.012（tabular-nums） */
 export const StepMetaText = memo(function StepMetaText({
   meta,
@@ -112,7 +104,6 @@ export const StepMetaText = memo(function StepMetaText({
     </span>
   );
 });
-
 /** 去掉 Codex reasoning 摘要里的 `**粗体**` 标记 */
 export const stripBold = (text: string) =>
   text.replace(/\*\*(.+?)\*\*/g, "$1").trim();

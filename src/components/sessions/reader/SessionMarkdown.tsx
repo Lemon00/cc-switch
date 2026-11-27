@@ -1,3 +1,5 @@
+import { toast } from "@/lib/toast";
+import { cn } from "@/lib/utils";
 import { markdownLanguage } from "@codemirror/lang-markdown";
 import { invoke } from "@tauri-apps/api/core";
 import { ArrowUpRight } from "lucide-react";
@@ -12,25 +14,18 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-
-import { toast } from "@/lib/toast";
-import { cn } from "@/lib/utils";
 import { highlightText } from "../utils";
 import { fileUrlToPath, PathChip, shortenPath } from "./PathChip";
 import {
   SESSION_INLINE_CODE_CLASS,
   SessionCodeBlock,
 } from "./SessionCodeBlock";
-
 // 底本：farion1231/cc-switch#6332 的 src/components/sessions/SessionMarkdown.tsx。
 // 迁入阅读页后改为 v7 token、链接走 open_external、本地路径渲染为 PathChip，
 // 并加了超长内容的纯文本退化。
-
 type MarkdownNode = ReturnType<typeof markdownLanguage.parser.parse>["topNode"];
-
 /** 超过该长度不做 Markdown 解析，退化为「纯文本 + 围栏代码」（§7.1 单块 ≤ 64KB） */
 export const MARKDOWN_PARSE_LIMIT = 65536;
-
 export interface SessionMarkdownProps {
   content: string;
   searchQuery?: string;
@@ -48,7 +43,6 @@ export interface SessionMarkdownProps {
   renderLocalImage?: (path: string, alt: string) => ReactNode;
   className?: string;
 }
-
 const MARKER_NODES = new Set([
   "CodeMark",
   "EmphasisMark",
@@ -61,7 +55,6 @@ const MARKER_NODES = new Set([
   "SuperscriptMark",
   "TaskMarker",
 ]);
-
 // 无法解析的链接/图片按 CommonMark 原样输出：这些节点渲染成字面文本，
 // 其余行内标记（如粗体分界）照常隐藏。
 const LINK_SYNTAX_NODES: ReadonlySet<string> = new Set([
@@ -74,7 +67,6 @@ const LITERAL_LINK_SKIPPED_NODES: ReadonlySet<string> = new Set(
   [...MARKER_NODES].filter((name) => name !== "LinkMark"),
 );
 const NO_NODES: ReadonlySet<string> = new Set();
-
 interface TraversalOptions {
   skippedNodes?: ReadonlySet<string>;
   // 按源码原样输出的节点。
@@ -83,26 +75,22 @@ interface TraversalOptions {
   from?: number;
   to?: number;
 }
-
 const LITERAL_LINK_OPTIONS: TraversalOptions = {
   skippedNodes: LITERAL_LINK_SKIPPED_NODES,
   literalNodes: LINK_SYNTAX_NODES,
 };
-
 // 折叠预览、可见匹配检测与渲染会在同一次渲染流程中连续解析同一段内容，
 // 缓存最近一次解析结果即可覆盖这种访问模式。
 let lastParse: {
   content: string;
   tree: ReturnType<typeof markdownLanguage.parser.parse>;
 } | null = null;
-
 const parseMarkdown = (content: string) => {
   if (lastParse?.content !== content) {
     lastParse = { content, tree: markdownLanguage.parser.parse(content) };
   }
   return lastParse.tree;
 };
-
 // `[docs](<https://example.com/page>)` 是合法 Markdown，但 lezer 的 URL 节点
 // 文本带着尖括号，需要先剥掉再做协议校验。
 const stripAngleBrackets = (value: string) => {
@@ -111,7 +99,6 @@ const stripAngleBrackets = (value: string) => {
     ? trimmed.slice(1, -1).trim()
     : trimmed;
 };
-
 const safeExternalUrl = (value: string) => {
   const url = stripAngleBrackets(value);
   if (/^(https?:|mailto:)/i.test(url)) return url;
@@ -119,13 +106,11 @@ const safeExternalUrl = (value: string) => {
   if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(url)) return `mailto:${url}`;
   return null;
 };
-
 const safeRemoteImageUrl = (value: string) => {
   const candidate = stripAngleBrackets(value);
   const normalized = /^www\./i.test(candidate)
     ? `https://${candidate}`
     : candidate;
-
   try {
     const url = new URL(normalized);
     return url.protocol === "http:" || url.protocol === "https:"
@@ -135,7 +120,6 @@ const safeRemoteImageUrl = (value: string) => {
     return null;
   }
 };
-
 // 本地路径：`file://` URL，或绝对路径（POSIX、`~/`、Windows 盘符）。
 // 相对路径无法可靠解析，仍按字面输出。
 const localPathTarget = (value: string) => {
@@ -147,32 +131,38 @@ const localPathTarget = (value: string) => {
   if (/^(\/(?!\/)|~\/|[A-Za-z]:[\\/])/.test(target)) return target;
   return null;
 };
-
 type LinkTarget =
-  | { kind: "external"; url: string }
-  | { kind: "path"; path: string };
-
+  | {
+      kind: "external";
+      url: string;
+    }
+  | {
+      kind: "path";
+      path: string;
+    };
 const resolveLinkTargetValue = (value: string): LinkTarget | null => {
   const url = safeExternalUrl(value);
   if (url) return { kind: "external", url };
   const path = localPathTarget(value);
   return path ? { kind: "path", path } : null;
 };
-
 type ImageTarget =
-  | { kind: "remote"; src: string }
-  | { kind: "path"; path: string };
-
+  | {
+      kind: "remote";
+      src: string;
+    }
+  | {
+      kind: "path";
+      path: string;
+    };
 const resolveImageTargetValue = (value: string): ImageTarget | null => {
   const src = safeRemoteImageUrl(value);
   if (src) return { kind: "remote", src };
   const path = localPathTarget(value);
   return path ? { kind: "path", path } : null;
 };
-
 const renderText = (text: string, searchQuery?: string) =>
   searchQuery ? highlightText(text, searchQuery) : text;
-
 const childNodes = (node: MarkdownNode) => {
   const children: MarkdownNode[] = [];
   for (let child = node.firstChild; child; child = child.nextSibling) {
@@ -180,56 +170,45 @@ const childNodes = (node: MarkdownNode) => {
   }
   return children;
 };
-
 const childNodesWithin = (node: MarkdownNode, from: number, to: number) =>
   childNodes(node).filter((child) => child.from >= from && child.to <= to);
-
 // 引用定义：label → 原始目标（已确认能解析为链接或图片）。
 type LinkReferences = ReadonlyMap<string, string>;
 const EMPTY_LINK_REFERENCES: LinkReferences = new Map();
-
 interface RenderContext {
   searchQuery?: string;
   linkReferences: LinkReferences;
   projectDir?: string;
 }
-
 const EMPTY_CONTEXT: RenderContext = { linkReferences: EMPTY_LINK_REFERENCES };
-
 const normalizeReferenceLabel = (value: string) => {
   const label =
     value.startsWith("[") && value.endsWith("]") ? value.slice(1, -1) : value;
   return label.trim().replace(/\s+/g, " ").toLowerCase();
 };
-
 // 链接可见文本的区间：前两个 LinkMark 之间。URL、title 以及它们之间的
 // 空白都在区间之外，不能混进 label。
 const getLinkLabelRange = (node: MarkdownNode) => {
   const marks = childNodes(node).filter((child) => child.name === "LinkMark");
   return marks.length >= 2 ? { from: marks[0].to, to: marks[1].from } : null;
 };
-
 const getLinkLabelSource = (node: MarkdownNode, source: string) => {
   const range = getLinkLabelRange(node);
   return range ? source.slice(range.from, range.to) : "";
 };
-
 const getReferenceLabel = (node: MarkdownNode, source: string) => {
   const labelNode = node.getChild("LinkLabel");
   const explicitLabel = labelNode
     ? normalizeReferenceLabel(source.slice(labelNode.from, labelNode.to))
     : "";
-
   // Collapsed and shortcut references use their source label, not the rendered
   // text. Formatting markers are part of the CommonMark reference key.
   return (
     explicitLabel || normalizeReferenceLabel(getLinkLabelSource(node, source))
   );
 };
-
 const collectLinkReferences = (root: MarkdownNode, source: string) => {
   const references = new Map<string, string>();
-
   const visit = (node: MarkdownNode) => {
     if (node.name === "LinkReference") {
       const labelNode = node.getChild("LinkLabel");
@@ -247,14 +226,11 @@ const collectLinkReferences = (root: MarkdownNode, source: string) => {
         }
       }
     }
-
     childNodes(node).forEach(visit);
   };
-
   visit(root);
   return references;
 };
-
 const getTargetSource = (
   node: MarkdownNode,
   source: string,
@@ -265,7 +241,6 @@ const getTargetSource = (
     ? source.slice(urlNode.from, urlNode.to)
     : linkReferences.get(getReferenceLabel(node, source));
 };
-
 const resolveLinkTarget = (
   node: MarkdownNode,
   source: string,
@@ -274,7 +249,6 @@ const resolveLinkTarget = (
   const target = getTargetSource(node, source, linkReferences);
   return target ? resolveLinkTargetValue(target) : null;
 };
-
 const resolveImageTarget = (
   node: MarkdownNode,
   source: string,
@@ -283,14 +257,12 @@ const resolveImageTarget = (
   const target = getTargetSource(node, source, linkReferences);
   return target ? resolveImageTargetValue(target) : null;
 };
-
 interface UnclosedFence {
   fence: string;
   // 围栏起始行的容器前缀。闭合行保留引用标记与等宽缩进；无前缀的
   // 顶层围栏会先结束容器、再开启一个只含省略号的新代码块。
   prefix: string;
 }
-
 const findUnclosedFence = (
   node: MarkdownNode,
   source: string,
@@ -307,15 +279,12 @@ const findUnclosedFence = (
       return { fence: source.slice(marks[0].from, marks[0].to), prefix };
     }
   }
-
   for (const child of childNodes(node)) {
     const fence = findUnclosedFence(child, source);
     if (fence) return fence;
   }
-
   return null;
 };
-
 /** 折叠预览：截到 maxLength，若截断处在未闭合的围栏内则补上闭合围栏 */
 export const createCollapsedMarkdownPreview = (
   content: string,
@@ -324,12 +293,10 @@ export const createCollapsedMarkdownPreview = (
   const preview = content.slice(0, maxLength);
   const tree = parseMarkdown(preview);
   const unclosed = findUnclosedFence(tree.topNode, preview);
-
   return unclosed
     ? `${preview}\n${unclosed.prefix}${unclosed.fence}\n\n…`
     : `${preview}…`;
 };
-
 // 与 renderNode 一样不产生可见文本的节点（TableDelimiter、链接引用定义、
 // 代码块语言标记）。CodeInfo 仅作为 data-language 属性输出。
 const HIDDEN_TEXT_NODES = new Set([
@@ -337,13 +304,11 @@ const HIDDEN_TEXT_NODES = new Set([
   "LinkReference",
   "TableDelimiter",
 ]);
-
 const decodeEntityText = (raw: string) => {
   const element = document.createElement("textarea");
   element.innerHTML = raw;
   return element.value;
 };
-
 // 行内代码渲染前的规范化：换行折成空格，成对的首尾空格去掉。
 const getInlineCodeText = (node: MarkdownNode, source: string) => {
   const marks = childNodes(node).filter((child) => child.name === "CodeMark");
@@ -354,12 +319,10 @@ const getInlineCodeText = (node: MarkdownNode, source: string) => {
       ? source.slice(firstMark.to, lastMark.from)
       : source.slice(node.from, node.to)
   ).replace(/\n/g, " ");
-
   return code.startsWith(" ") && code.endsWith(" ") && code.trim()
     ? code.slice(1, -1)
     : code;
 };
-
 // 收集渲染后真正可见的文本。对渲染时会做变换的节点（实体、转义、行内
 // 代码、路径缩短）必须 push 变换后的结果而不是源码切片，否则命中判定会和
 // 高亮结果脱节：判定说“可高亮”、渲染时却匹配不上，两头落空。
@@ -384,14 +347,11 @@ const collectVisibleTextPieces = (
     }
     return;
   }
-
   let cursor = from;
-
   for (const child of childNodesWithin(node, from, to)) {
     if (child.from > cursor) {
       pieces.push(source.slice(cursor, child.from));
     }
-
     if (literalNodes.has(child.name)) {
       pieces.push(source.slice(child.from, child.to));
     } else if (
@@ -441,20 +401,23 @@ const collectVisibleTextPieces = (
     }
     cursor = child.to;
   }
-
   if (cursor < to) {
     pieces.push(source.slice(cursor, to));
   }
 };
-
 // ---------------------------------------------------------------------------
 // 超长内容的退化：只识别围栏代码，其余按纯文本显示
 // ---------------------------------------------------------------------------
-
 export type PlainTextBlock =
-  | { type: "text"; text: string }
-  | { type: "code"; language: string; code: string };
-
+  | {
+      type: "text";
+      text: string;
+    }
+  | {
+      type: "code";
+      language: string;
+      code: string;
+    };
 /** 把内容切成纯文本段与围栏代码段；未闭合的围栏一直延续到末尾 */
 export const splitFencedCode = (content: string): PlainTextBlock[] => {
   const blocks: PlainTextBlock[] = [];
@@ -463,13 +426,11 @@ export const splitFencedCode = (content: string): PlainTextBlock[] => {
   let code: string[] | null = null;
   let language = "";
   let fence = "";
-
   const pushText = () => {
     const value = text.join("\n").replace(/^\n+|\n+$/g, "");
     if (value.trim()) blocks.push({ type: "text", text: value });
     text = [];
   };
-
   for (const line of lines) {
     if (code === null) {
       const open = /^ {0,3}(`{3,}|~{3,})\s*([^\s`]*)/.exec(line);
@@ -483,7 +444,6 @@ export const splitFencedCode = (content: string): PlainTextBlock[] => {
       }
       continue;
     }
-
     const trimmed = line.trim();
     if (
       trimmed.length >= fence.length &&
@@ -495,20 +455,17 @@ export const splitFencedCode = (content: string): PlainTextBlock[] => {
     }
     code.push(line);
   }
-
   if (code !== null) {
     blocks.push({ type: "code", language, code: code.join("\n") });
   }
   pushText();
   return blocks;
 };
-
 export interface SessionPlainTextProps {
   content: string;
   searchQuery?: string;
   className?: string;
 }
-
 /**
  * 纯文本 + 围栏代码：用户提问（决策 D7）与超长 Markdown 的退化都用它，
  * 不解析任何行内语法。
@@ -519,7 +476,6 @@ export const SessionPlainText = memo(function SessionPlainText({
   className,
 }: SessionPlainTextProps) {
   const blocks = useMemo(() => splitFencedCode(content), [content]);
-
   return (
     <div
       className={cn(
@@ -547,7 +503,6 @@ export const SessionPlainText = memo(function SessionPlainText({
     </div>
   );
 });
-
 // 判断搜索词是否会出现在某个连续渲染文本片段中。highlightText 只能高亮
 // 单个文本片段内的匹配；藏在链接 URL 里或跨越行内节点边界（如跨越粗体
 // 分界）的匹配渲染后不可见，需要调用方另行展示原文片段。
@@ -558,7 +513,6 @@ export const hasHighlightableMarkdownMatch = (
 ) => {
   if (!query) return false;
   const normalized = query.toLowerCase();
-
   if (content.length > MARKDOWN_PARSE_LIMIT) {
     return splitFencedCode(content).some((block) =>
       (block.type === "code" ? block.code : block.text)
@@ -566,7 +520,6 @@ export const hasHighlightableMarkdownMatch = (
         .includes(normalized),
     );
   }
-
   const pieces: string[] = [];
   const root = parseMarkdown(content).topNode;
   collectVisibleTextPieces(root, content, pieces, {
@@ -575,23 +528,19 @@ export const hasHighlightableMarkdownMatch = (
   });
   return pieces.some((piece) => piece.toLowerCase().includes(normalized));
 };
-
 // ---------------------------------------------------------------------------
 // 交互：链接打开、路径显示、远程图片加载。经 Context 下发，回调变化不触发重新渲染整棵树。
 // ---------------------------------------------------------------------------
-
 /** 默认的外链打开：后端 `open_external` 只放行 http/https/mailto */
 export const openSessionLink = async (url: string) => {
   await invoke("open_external", { url });
 };
-
 interface MarkdownActions {
   openLink: (url: string) => void;
   revealPath?: (path: string) => void;
   autoLoadRemoteImages: boolean;
   renderLocalImage?: (path: string, alt: string) => ReactNode;
 }
-
 const defaultOpenLink = (url: string) => {
   openSessionLink(url).catch((error: unknown) => {
     toast.error(
@@ -599,20 +548,16 @@ const defaultOpenLink = (url: string) => {
     );
   });
 };
-
 const MarkdownActionsContext = createContext<MarkdownActions>({
   openLink: defaultOpenLink,
   autoLoadRemoteImages: false,
 });
-
 const LINK_CLASS =
   "rounded-[2px] text-action-text underline-offset-[3px] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
-
 interface ExternalLinkProps {
   url: string;
   children: ReactNode;
 }
-
 /**
  * 外链：保留 href 供辅助技术识别为链接，但拦截默认导航，统一交给
  * `open_external`（系统浏览器）打开。
@@ -620,12 +565,10 @@ interface ExternalLinkProps {
 const ExternalLink = ({ url, children }: ExternalLinkProps) => {
   const { openLink } = useContext(MarkdownActionsContext);
   const isWeb = /^https?:/i.test(url);
-
   const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
     event.preventDefault();
     openLink(url);
   };
-
   return (
     <a
       href={url}
@@ -645,7 +588,6 @@ const ExternalLink = ({ url, children }: ExternalLinkProps) => {
     </a>
   );
 };
-
 const MarkdownPathChip = (props: {
   path: string;
   projectDir?: string;
@@ -655,7 +597,6 @@ const MarkdownPathChip = (props: {
   const { revealPath } = useContext(MarkdownActionsContext);
   return <PathChip {...props} onReveal={revealPath} />;
 };
-
 /** 本地图片：调用方提供渲染器（阅读页用 SessionImage）时显示图片，否则退回路径 chip */
 const MarkdownLocalImage = (props: {
   path: string;
@@ -673,32 +614,27 @@ const MarkdownLocalImage = (props: {
     />
   );
 };
-
 interface RemoteImageProps {
   src: string;
   alt: string;
   searchQuery?: string;
 }
-
 const RemoteImage = ({ src, alt, searchQuery }: RemoteImageProps) => {
   const { t } = useTranslation();
   const { autoLoadRemoteImages } = useContext(MarkdownActionsContext);
   const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
-
   const label =
     alt ||
     t("sessionManager.remoteImage", {
       defaultValue: "远程图片",
     });
-
   // 加载失败退化为链接
   if (failedSrc === src) {
     return (
       <ExternalLink url={src}>{renderText(label, searchQuery)}</ExternalLink>
     );
   }
-
   if (autoLoadRemoteImages || loadedSrc === src) {
     return (
       <img
@@ -713,7 +649,6 @@ const RemoteImage = ({ src, alt, searchQuery }: RemoteImageProps) => {
       />
     );
   }
-
   const loadLabel = t("sessionManager.reader.image.loadRemote", {
     defaultValue: "加载远程图片",
   });
@@ -732,11 +667,9 @@ const RemoteImage = ({ src, alt, searchQuery }: RemoteImageProps) => {
     </button>
   );
 };
-
 // ---------------------------------------------------------------------------
 // 渲染
 // ---------------------------------------------------------------------------
-
 const renderChildren = (
   node: MarkdownNode,
   source: string,
@@ -751,7 +684,6 @@ const renderChildren = (
   const { searchQuery } = ctx;
   const result: ReactNode[] = [];
   let cursor = from;
-
   childNodesWithin(node, from, to).forEach((child, index) => {
     if (child.from > cursor) {
       result.push(
@@ -760,7 +692,6 @@ const renderChildren = (
         </Fragment>,
       );
     }
-
     if (literalNodes.has(child.name)) {
       result.push(
         <Fragment key={`literal-${child.from}`}>
@@ -776,7 +707,6 @@ const renderChildren = (
     }
     cursor = child.to;
   });
-
   if (cursor < to) {
     result.push(
       <Fragment key={`text-${cursor}`}>
@@ -784,10 +714,8 @@ const renderChildren = (
       </Fragment>,
     );
   }
-
   return result;
 };
-
 const renderCode = (node: MarkdownNode, source: string, ctx: RenderContext) => {
   const codeNodes = childNodes(node).filter(
     (child) => child.name === "CodeText",
@@ -799,7 +727,6 @@ const renderCode = (node: MarkdownNode, source: string, ctx: RenderContext) => {
   const language = languageNode
     ? source.slice(languageNode.from, languageNode.to).trim()
     : undefined;
-
   return (
     <SessionCodeBlock
       code={code}
@@ -808,7 +735,6 @@ const renderCode = (node: MarkdownNode, source: string, ctx: RenderContext) => {
     />
   );
 };
-
 const renderInlineCode = (
   node: MarkdownNode,
   source: string,
@@ -818,18 +744,15 @@ const renderInlineCode = (
     {renderText(getInlineCodeText(node, source), ctx.searchQuery)}
   </code>
 );
-
 const renderLink = (node: MarkdownNode, source: string, ctx: RenderContext) => {
   const target = resolveLinkTarget(node, source, ctx.linkReferences);
   const range = getLinkLabelRange(node);
-
   // 解析不出目标（引用未定义、相对路径、非白名单协议）时按 CommonMark
   // 原样输出，方括号和目标一起保留；lezer 对任何 `[...]` 都会产出 Link 节点，
   // 不这样处理的话 `[0]`、`[Tool: shell]` 这类普通文本会丢掉方括号。
   if (!target || !range) {
     return <>{renderChildren(node, source, ctx, LITERAL_LINK_OPTIONS)}</>;
   }
-
   if (target.kind === "path") {
     return (
       <MarkdownPathChip
@@ -844,26 +767,21 @@ const renderLink = (node: MarkdownNode, source: string, ctx: RenderContext) => {
       />
     );
   }
-
   const label =
     node.name === "Autolink"
       ? renderText(source.slice(range.from, range.to), ctx.searchQuery)
       : renderChildren(node, source, ctx, range);
-
   return <ExternalLink url={target.url}>{label}</ExternalLink>;
 };
-
 const renderImage = (
   node: MarkdownNode,
   source: string,
   ctx: RenderContext,
 ) => {
   const target = resolveImageTarget(node, source, ctx.linkReferences);
-
   if (!target) {
     return <>{renderChildren(node, source, ctx, LITERAL_LINK_OPTIONS)}</>;
   }
-
   if (target.kind === "path") {
     return (
       <MarkdownLocalImage
@@ -874,7 +792,6 @@ const renderImage = (
       />
     );
   }
-
   return (
     <RemoteImage
       src={target.src}
@@ -883,7 +800,6 @@ const renderImage = (
     />
   );
 };
-
 const renderTable = (
   node: MarkdownNode,
   source: string,
@@ -891,7 +807,6 @@ const renderTable = (
 ) => {
   const header = node.getChild("TableHeader");
   const rows = childNodes(node).filter((child) => child.name === "TableRow");
-
   return (
     <div className="my-2 max-w-full overflow-x-auto">
       <table className="w-full border-collapse text-left text-caption">
@@ -907,7 +822,6 @@ const renderTable = (
     </div>
   );
 };
-
 const renderTableRow = (
   node: MarkdownNode,
   source: string,
@@ -921,14 +835,12 @@ const renderTableRow = (
       ))}
   </tr>
 );
-
 // 标题层级映射到阅读页字号：h1 → title、h2 → section、h3 及以下 → body
 const HEADING_CLASS: Record<number, string> = {
   1: "mt-4 text-title",
   2: "mt-3 text-section",
   3: "mt-3 text-body font-semibold",
 };
-
 const renderNode = (
   node: MarkdownNode,
   source: string,
@@ -936,7 +848,6 @@ const renderNode = (
 ): ReactNode => {
   const { searchQuery } = ctx;
   const children = () => renderChildren(node, source, ctx);
-
   if (/^(ATX|Setext)Heading[1-6]$/.test(node.name)) {
     const level = Number(node.name.at(-1));
     const className = cn(
@@ -950,7 +861,6 @@ const renderNode = (
     if (level === 5) return <h5 className={className}>{children()}</h5>;
     return <h6 className={className}>{children()}</h6>;
   }
-
   switch (node.name) {
     case "Document":
       return <>{children()}</>;
@@ -1069,12 +979,10 @@ const renderNode = (
       return <>{children()}</>;
   }
 };
-
 const VARIANT_CLASS = {
   body: "text-body text-fg-1",
   note: "text-caption text-fg-2",
 } as const;
-
 /** 完整 Markdown 渲染（超过 MARKDOWN_PARSE_LIMIT 时退化为 SessionPlainText） */
 const MarkdownTree = memo(function MarkdownTree({
   content,
@@ -1097,7 +1005,6 @@ const MarkdownTree = memo(function MarkdownTree({
   );
   return <>{rendered}</>;
 });
-
 export const SessionMarkdown = memo(function SessionMarkdown({
   content,
   searchQuery,
@@ -1118,7 +1025,6 @@ export const SessionMarkdown = memo(function SessionMarkdown({
     }),
     [autoLoadRemoteImages, onOpenLink, onRevealPath, renderLocalImage],
   );
-
   if (content.length > MARKDOWN_PARSE_LIMIT) {
     return (
       <SessionPlainText
@@ -1128,7 +1034,6 @@ export const SessionMarkdown = memo(function SessionMarkdown({
       />
     );
   }
-
   return (
     <MarkdownActionsContext.Provider value={actions}>
       <div

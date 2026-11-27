@@ -1,3 +1,4 @@
+import { isMac } from "@/lib/platform";
 import {
   useCallback,
   useEffect,
@@ -6,17 +7,12 @@ import {
   useState,
   type RefObject,
 } from "react";
-import { isMac } from "@/lib/platform";
-
 /** 窗口窄于这个宽度时侧栏自动收成图标轨（用户手动选过就按手动的来）。 */
 export const SIDEBAR_AUTO_COLLAPSE_WIDTH = 960;
-
 const STORAGE_KEY = "cc-switch-sidebar-collapsed";
-
 export const SIDEBAR_EXPANDED_WIDTH = 200;
 /** 收起时的图标轨宽度：macOS 的红绿灯（新版更大）要约 74px，Mac 上放宽到 84 */
 export const sidebarRailWidth = () => (isMac() ? 84 : 72);
-
 const TOGGLE_DURATION_MS = 200;
 const TOGGLE_EASING = "cubic-bezier(0.2, 0, 0, 1)";
 let running: {
@@ -24,7 +20,6 @@ let running: {
   cover: HTMLElement;
   edge: () => number;
 } | null = null;
-
 /**
  * 侧栏开合不过渡 width：宽度动画每帧都要在主线程重排，WKWebView 主线程渲染还限在 60fps 左右，ProMotion 屏上看着发顿。
  * 改成侧栏和内容区一步排到最终宽度（只排一次），再用一块盖板的 transform 动画画出「侧栏边缘在动」——
@@ -37,7 +32,6 @@ function animateToggle(nav: HTMLElement, fromWidth: number, toWidth: number) {
   const main = document.getElementById("content-area");
   if (!main || typeof main.animate !== "function") return;
   if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
-
   // 上一次还没滑完就再切：从当前看到的边缘位置接着滑，不跳
   const startEdge = running ? running.edge() : fromWidth;
   if (running) {
@@ -50,7 +44,6 @@ function animateToggle(nav: HTMLElement, fromWidth: number, toWidth: number) {
   nav.style.removeProperty("z-index");
   main.style.removeProperty("z-index");
   if (startEdge === toWidth) return;
-
   const expanding = toWidth > startEdge;
   const left = Math.min(startEdge, toWidth);
   const width = Math.abs(toWidth - startEdge);
@@ -72,7 +65,6 @@ function animateToggle(nav: HTMLElement, fromWidth: number, toWidth: number) {
   // 盖板要滑进去的那一侧压在它上面；收起时 main 不抬高，靠它的 isolate
   // 把内容区里带 z-index 的元素（sticky 表头、FullScreenPanel）一起压在盖板下
   (expanding ? main : nav).style.zIndex = "2";
-
   const animation = cover.animate(
     [
       { transform: "none" },
@@ -99,10 +91,8 @@ function animateToggle(nav: HTMLElement, fromWidth: number, toWidth: number) {
   animation.onfinish = cleanup;
   animation.oncancel = cleanup;
 }
-
 export const sidebarWidth = (collapsed: boolean) =>
   collapsed ? sidebarRailWidth() : SIDEBAR_EXPANDED_WIDTH;
-
 function readManualPreference(): boolean | null {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -113,14 +103,12 @@ function readManualPreference(): boolean | null {
   }
   return null;
 }
-
 function isNarrowWindow(): boolean {
   return (
     typeof window !== "undefined" &&
     window.innerWidth < SIDEBAR_AUTO_COLLAPSE_WIDTH
   );
 }
-
 /**
  * 侧栏展开 / 收起：默认跟随窗口宽度（< 960 收起），⌘\ 或按钮手动切换后记住手动的选择。
  * 只在 Sidebar 里用：状态放在 App 的话，每次切换都会把整页重渲染一遍，动画第一帧就掉帧。
@@ -128,17 +116,14 @@ function isNarrowWindow(): boolean {
 export function useSidebarCollapsed(navRef: RefObject<HTMLElement | null>) {
   const [manual, setManual] = useState<boolean | null>(readManualPreference);
   const [narrow, setNarrow] = useState(isNarrowWindow);
-
   useEffect(() => {
     const onResize = () => setNarrow(isNarrowWindow());
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
-
   const collapsed = manual ?? narrow;
   // 只有手动切换才滑；拖窗口自动收起时直接到位
   const animateFrom = useRef<number | null>(null);
-
   useLayoutEffect(() => {
     const from = animateFrom.current;
     animateFrom.current = null;
@@ -146,7 +131,6 @@ export function useSidebarCollapsed(navRef: RefObject<HTMLElement | null>) {
       animateToggle(navRef.current, from, sidebarWidth(collapsed));
     }
   }, [collapsed, navRef]);
-
   const toggle = useCallback(() => {
     const next = !collapsed;
     animateFrom.current = sidebarWidth(collapsed);
@@ -157,7 +141,6 @@ export function useSidebarCollapsed(navRef: RefObject<HTMLElement | null>) {
       // 记不住也不影响这次切换
     }
   }, [collapsed]);
-
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key === "\\") {
@@ -168,6 +151,5 @@ export function useSidebarCollapsed(navRef: RefObject<HTMLElement | null>) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [toggle]);
-
   return { collapsed, toggle };
 }

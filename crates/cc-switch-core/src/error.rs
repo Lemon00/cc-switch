@@ -49,6 +49,8 @@ pub enum AppError {
     Message(String),
     #[error("HTTP {status}: {body}")]
     HttpStatus { status: u16, body: String },
+    #[error("{0}")]
+    RetryableSync(#[source] Box<AppError>),
     #[error("{zh} ({en})")]
     Localized {
         key: &'static str,

@@ -5,7 +5,6 @@ import UsageFooter from "@/components/UsageFooter";
 import { usageKeys } from "@/lib/query/usage";
 import type { Provider, UsageResult } from "@/types";
 import { createTestQueryClient } from "../utils/testQueryClient";
-
 function renderFooter(result: UsageResult) {
   const provider: Provider = {
     id: "zhipu",
@@ -35,7 +34,6 @@ function renderFooter(result: UsageResult) {
     </QueryClientProvider>,
   );
 }
-
 describe("UsageFooter token plan", () => {
   // 智谱按量账户没有 Coding Plan 时，后端回落成账户余额（#8465）
   it("shows a balance when the token plan query falls back to the account balance", () => {
@@ -43,12 +41,10 @@ describe("UsageFooter token plan", () => {
       success: true,
       data: [{ planName: "Zhipu GLM", remaining: 14.68, unit: "CNY" }],
     });
-
     expect(screen.getByText("Zhipu GLM")).toBeInTheDocument();
     expect(screen.getByText("quota.balance")).toBeInTheDocument();
     expect(screen.queryByText("quota.failed")).not.toBeInTheDocument();
   });
-
   it("keeps rendering percentage tiers for plan accounts", () => {
     renderFooter({
       success: true,
@@ -62,7 +58,6 @@ describe("UsageFooter token plan", () => {
         },
       ],
     });
-
     expect(screen.queryByText("quota.balance")).not.toBeInTheDocument();
     expect(screen.queryByText("Zhipu GLM")).not.toBeInTheDocument();
   });

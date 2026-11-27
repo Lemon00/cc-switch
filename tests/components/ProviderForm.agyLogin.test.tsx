@@ -3,13 +3,11 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import { ProviderForm } from "@/components/providers/forms/ProviderForm";
 import { createTestQueryClient } from "../utils/testQueryClient";
-
 vi.mock("@/components/JsonEditor", () => ({
   default: ({ value }: { value: string }) => (
     <textarea readOnly value={value} />
   ),
 }));
-
 vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("@/components/providers/forms/hooks")>();
@@ -25,10 +23,9 @@ vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
     useXaiOauth: () => signedOut,
   };
 });
-
 function renderLogin(
   env: Record<string, string> = {},
-  appId: "agy" | "gemini" = "agy",
+  appId: "agy" = "agy",
   category: "official" | "custom" = "custom",
 ) {
   const onSubmit = vi.fn();
@@ -53,7 +50,6 @@ function renderLogin(
   );
   return onSubmit;
 }
-
 describe("Antigravity login and API authentication", () => {
   it("saves an imported login after changing its model without a missing-key warning", async () => {
     // 导入的登录卡一律是 official（agy_config 导入时设定）
@@ -71,7 +67,6 @@ describe("Antigravity login and API authentication", () => {
     expect(settings.env.GEMINI_API_KEY).toBeUndefined();
     expect(settings.env.GOOGLE_GEMINI_BASE_URL).toBeUndefined();
   });
-
   it("saves a Google API key without requiring a custom endpoint", async () => {
     const onSubmit = renderLogin({ GEMINI_API_KEY: "fixture-key" });
     fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
@@ -80,7 +75,6 @@ describe("Antigravity login and API authentication", () => {
       screen.queryByRole("button", { name: "仍要保存" }),
     ).not.toBeInTheDocument();
   });
-
   it("warns when a non-official card has no API key", async () => {
     // 不填 Key 的登录模式就是官方卡，非官方卡必须带 Key
     const onSubmit = renderLogin();
@@ -90,20 +84,10 @@ describe("Antigravity login and API authentication", () => {
     ).toBeInTheDocument();
     expect(onSubmit).not.toHaveBeenCalled();
   });
-
   it("still warns when a custom endpoint has no API key", async () => {
     const onSubmit = renderLogin({
       GOOGLE_GEMINI_BASE_URL: "https://relay.example",
     });
-    fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
-    expect(
-      await screen.findByRole("button", { name: "仍要保存" }),
-    ).toBeInTheDocument();
-    expect(onSubmit).not.toHaveBeenCalled();
-  });
-
-  it("preserves Gemini CLI custom-provider validation", async () => {
-    const onSubmit = renderLogin({}, "gemini");
     fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
     expect(
       await screen.findByRole("button", { name: "仍要保存" }),

@@ -1,19 +1,17 @@
-import React, { useRef, useEffect, useMemo } from "react";
-import { EditorView, basicSetup } from "codemirror";
-import { json } from "@codemirror/lang-json";
-import { javascript } from "@codemirror/lang-javascript";
-import { oneDark } from "@codemirror/theme-one-dark";
-import { Annotation, EditorSelection, EditorState } from "@codemirror/state";
-import { placeholder } from "@codemirror/view";
-import { linter, Diagnostic } from "@codemirror/lint";
-import { useTranslation } from "react-i18next";
-import { Wand2 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { formatJSON } from "@/utils/formatters";
-
+import { javascript } from "@codemirror/lang-javascript";
+import { json } from "@codemirror/lang-json";
+import { Diagnostic, linter } from "@codemirror/lint";
+import { Annotation, EditorSelection, EditorState } from "@codemirror/state";
+import { oneDark } from "@codemirror/theme-one-dark";
+import { placeholder } from "@codemirror/view";
+import { EditorView, basicSetup } from "codemirror";
+import { Wand2 } from "lucide-react";
+import React, { useEffect, useMemo, useRef } from "react";
+import { useTranslation } from "react-i18next";
 /** 标记把 value 属性推进编辑器的事务，避免回吐为 onChange。 */
 const ExternalSync = Annotation.define<boolean>();
-
 interface JsonEditorProps {
   id?: string;
   ariaLabel?: string;
@@ -28,12 +26,10 @@ interface JsonEditorProps {
   showMinimap?: boolean; // 添加此属性以防未来使用
   readOnly?: boolean;
 }
-
 function minimalTextChange(current: string, next: string) {
   let from = 0;
   const sharedLength = Math.min(current.length, next.length);
   while (from < sharedLength && current[from] === next[from]) from += 1;
-
   let currentTo = current.length;
   let nextTo = next.length;
   while (
@@ -44,21 +40,18 @@ function minimalTextChange(current: string, next: string) {
     currentTo -= 1;
     nextTo -= 1;
   }
-
   return {
     from,
     to: currentTo,
     insert: next.slice(from, nextTo),
   };
 }
-
 function uniqueContextIndex(value: string, context: string): number | null {
   if (!context) return null;
   const index = value.indexOf(context);
   if (index < 0 || value.indexOf(context, index + 1) >= 0) return null;
   return index;
 }
-
 function mapPositionByContext(
   current: string,
   next: string,
@@ -66,7 +59,6 @@ function mapPositionByContext(
 ): number | null {
   if (position <= 0) return 0;
   if (position >= current.length) return next.length;
-
   const maxContextLength = 96;
   const rightLimit = Math.min(maxContextLength, current.length - position);
   for (let length = rightLimit; length > 0; length -= 1) {
@@ -74,17 +66,14 @@ function mapPositionByContext(
     const index = uniqueContextIndex(next, context);
     if (index !== null) return index;
   }
-
   const leftLimit = Math.min(maxContextLength, position);
   for (let length = leftLimit; length > 0; length -= 1) {
     const context = current.slice(position - length, position);
     const index = uniqueContextIndex(next, context);
     if (index !== null) return index + length;
   }
-
   return null;
 }
-
 const JsonEditor: React.FC<JsonEditorProps> = ({
   id,
   ariaLabel,
@@ -106,17 +95,14 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
   const hasExplicitHeight = height !== undefined;
   const heightValue =
     typeof height === "number" ? `${height}px` : (height ?? undefined);
-
   // JSON linter 函数
   const jsonLinter = useMemo(
     () =>
       linter((view) => {
         const diagnostics: Diagnostic[] = [];
         if (!showValidation || language !== "json") return diagnostics;
-
         const doc = view.state.doc.toString();
         if (!doc.trim()) return diagnostics;
-
         try {
           const parsed = JSON.parse(doc);
           // 检查是否是JSON对象
@@ -141,18 +127,14 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
             message,
           });
         }
-
         return diagnostics;
       }),
     [showValidation, language, t],
   );
-
   useEffect(() => {
     if (!editorRef.current) return;
-
     // 创建编辑器扩展
     const minHeightPx = hasExplicitHeight ? undefined : Math.max(1, rows) * 18;
-
     // 使用 baseTheme 定义基础样式，优先级低于 oneDark，但可以正确响应主题
     const baseTheme = EditorView.baseTheme({
       ".cm-editor": {
@@ -185,7 +167,6 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
         background: "hsl(var(--primary) / 0.08)",
       },
     });
-
     // 使用 theme 定义尺寸和字体样式
     const sizingTheme = EditorView.theme({
       "&": hasExplicitHeight
@@ -198,7 +179,6 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
         fontSize: "14px",
       },
     });
-
     const extensions = [
       basicSetup,
       language === "javascript" ? javascript() : json(),
@@ -223,7 +203,6 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
         }
       }),
     ];
-
     // 如果启用深色模式，添加深色主题
     if (darkMode) {
       extensions.push(oneDark);
@@ -262,21 +241,17 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
         }),
       );
     }
-
     // 创建初始状态
     const state = EditorState.create({
       doc: value,
       extensions,
     });
-
     // 创建编辑器视图
     const view = new EditorView({
       state,
       parent: editorRef.current,
     });
-
     viewRef.current = view;
-
     // 清理函数
     return () => {
       view.destroy();
@@ -292,7 +267,6 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
     readOnly,
     rows,
   ]);
-
   // 当 value 从外部改变时更新编辑器内容
   useEffect(() => {
     if (viewRef.current) {
@@ -329,14 +303,11 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
       viewRef.current.dispatch(transaction);
     }
   }, [value]);
-
   // 格式化处理函数
   const handleFormat = () => {
     if (!viewRef.current) return;
-
     const currentValue = viewRef.current.state.doc.toString();
     if (!currentValue.trim()) return;
-
     try {
       const formatted = formatJSON(currentValue);
       onChangeRef.current(formatted);
@@ -354,9 +325,7 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
       );
     }
   };
-
   const isFullHeight = height === "100%";
-
   return (
     <div
       style={{ width: "100%", height: isFullHeight ? "100%" : "auto" }}
@@ -390,5 +359,4 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
     </div>
   );
 };
-
 export default JsonEditor;

@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { WindowControlsContext } from "@/components/shell/AppPageHeader";
 import { DRAG_REGION_ENABLED } from "@/lib/platform";
-
 // 模拟 Linux 默认禁用拖动区域，避免依赖测试运行机器的平台。
 vi.mock("@/lib/platform", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/platform")>()),
@@ -11,7 +10,6 @@ vi.mock("@/lib/platform", async (importOriginal) => ({
   DRAG_REGION_ATTR: {},
   DRAG_REGION_STYLE: {},
 }));
-
 const Panels = ({ innerOpen }: { innerOpen: boolean }) => (
   <>
     <FullScreenPanel isOpen title="Outer" onClose={() => undefined}>
@@ -22,7 +20,6 @@ const Panels = ({ innerOpen }: { innerOpen: boolean }) => (
     </FullScreenPanel>
   </>
 );
-
 describe("FullScreenPanel motion", () => {
   it("is opaque from the first render, including after reopening", async () => {
     const panel = (isOpen: boolean) => (
@@ -33,7 +30,6 @@ describe("FullScreenPanel motion", () => {
     const view = render(panel(true));
     const surface = () => screen.getByText("editor content").closest(".bg-app");
     expect(surface()).toHaveStyle({ opacity: "1" });
-
     view.rerender(panel(false));
     // If AnimatePresence retains the closing page, it must remain opaque.
     const closing = screen.queryByText("editor content")?.closest(".bg-app");
@@ -41,11 +37,9 @@ describe("FullScreenPanel motion", () => {
     await waitFor(() =>
       expect(screen.queryByText("editor content")).toBeNull(),
     );
-
     view.rerender(panel(true));
     expect(surface()).toHaveStyle({ opacity: "1" });
   });
-
   it("keeps the explicit horizontal navigation transition", () => {
     render(
       <FullScreenPanel
@@ -64,26 +58,20 @@ describe("FullScreenPanel motion", () => {
     expect(surface).not.toHaveStyle({ opacity: "0" });
   });
 });
-
 describe("FullScreenPanel body scroll locking", () => {
   afterEach(() => {
     document.body.style.overflow = "";
   });
-
   it("keeps the body locked when a nested panel closes", () => {
     document.body.style.overflow = "clip";
     const view = render(<Panels innerOpen />);
-
     expect(document.body.style.overflow).toBe("hidden");
-
     view.rerender(<Panels innerOpen={false} />);
     expect(document.body.style.overflow).toBe("hidden");
-
     view.unmount();
     expect(document.body.style.overflow).toBe("clip");
   });
 });
-
 describe("FullScreenPanel Escape", () => {
   const Stacked = ({
     innerOpen,
@@ -107,7 +95,6 @@ describe("FullScreenPanel Escape", () => {
       </FullScreenPanel>
     </>
   );
-
   it("closes only the topmost of two stacked panels", async () => {
     const onOuterClose = vi.fn();
     const onInnerClose = vi.fn();
@@ -126,16 +113,13 @@ describe("FullScreenPanel Escape", () => {
         onInnerClose={onInnerClose}
       />,
     );
-
     fireEvent.keyDown(document.body, { key: "Escape" });
     expect(onInnerClose).toHaveBeenCalledTimes(1);
     expect(onOuterClose).not.toHaveBeenCalled();
-
     // 输入框里的 ESC 留给输入框，哪层都不关
     fireEvent.keyDown(screen.getByLabelText("price"), { key: "Escape" });
     expect(onInnerClose).toHaveBeenCalledTimes(1);
     expect(onOuterClose).not.toHaveBeenCalled();
-
     // 子页关掉后，下一次 ESC 才轮到下面那层
     view.rerender(
       <Stacked
@@ -150,7 +134,6 @@ describe("FullScreenPanel Escape", () => {
     expect(onInnerClose).toHaveBeenCalledTimes(1);
   });
 });
-
 describe("FullScreenPanel header", () => {
   it("enables dragging with app window controls and updates through the portal", () => {
     const onBack = vi.fn();
@@ -185,7 +168,6 @@ describe("FullScreenPanel header", () => {
     expect(onBack).toHaveBeenCalledOnce();
     expect(onMinimize).toHaveBeenCalledOnce();
   });
-
   it("lets a long title shrink and truncate instead of pushing the window controls away", () => {
     const title = "Edit " + "a-very-long-user-provided-name-".repeat(8);
     render(
@@ -198,7 +180,6 @@ describe("FullScreenPanel header", () => {
     expect(heading.parentElement).toHaveClass("flex-1");
     expect(heading.parentElement).not.toHaveClass("shrink-0");
   });
-
   it("keeps the whole title area as a window drag region", () => {
     render(
       <FullScreenPanel isOpen title="Edit MCP" onClose={() => undefined}>

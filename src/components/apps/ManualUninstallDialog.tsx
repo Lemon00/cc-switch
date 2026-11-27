@@ -1,6 +1,3 @@
-import { useState } from "react";
-import { useTranslation } from "react-i18next";
-import { Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -20,19 +17,21 @@ import {
 import { copyText } from "@/lib/clipboard";
 import { isLinux, isMac, isWindows } from "@/lib/platform";
 import { toast } from "@/lib/toast";
-import {
-  TOOL_NAMES,
-  toolDisplayName,
-  type ToolName,
-  type ToolVersion,
-} from "./useToolManagement";
+import { Copy } from "lucide-react";
+import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   UNINSTALL_METHODS,
   uninstallCommandsFor,
   type UninstallEnvironment,
   type UninstallMethod,
 } from "./toolUninstallCommands";
-
+import {
+  TOOL_NAMES,
+  toolDisplayName,
+  type ToolName,
+  type ToolVersion,
+} from "./useToolManagement";
 export function ManualUninstallDialog({
   open,
   onOpenChange,
@@ -84,7 +83,6 @@ export function ManualUninstallDialog({
   );
   // A refreshed detection can remove the selected method (e.g. WSL -> Windows).
   const selectedMethod = methods.includes(method) ? method : "npm";
-
   const copyCommand = async (command: string) => {
     try {
       await copyText(command);
@@ -95,7 +93,6 @@ export function ManualUninstallDialog({
       toast.error(t("settings.uninstallCommandCopyFailed"));
     }
   };
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
@@ -188,16 +185,8 @@ export function ManualUninstallDialog({
                       {t("common.copy")}
                     </Button>
                   </div>
-                  {tool === "openclaw" && (
-                    <p className="text-caption text-fg-2">
-                      {t("settings.manualUninstallOpenClawHint")}
-                    </p>
-                  )}
-                  {tool === "openclaw" && selectedMethod === "bun" && (
-                    <p className="text-caption text-fg-2">
-                      {t("settings.manualUninstallBunLauncherHint")}
-                    </p>
-                  )}
+                  {null}
+                  {null}
                   <pre className="overflow-x-auto rounded-control border border-border bg-subtle px-3 py-2.5 font-mono text-caption">
                     <code>{command}</code>
                   </pre>

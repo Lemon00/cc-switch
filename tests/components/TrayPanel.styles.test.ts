@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-
 const stylesheet = document.createElement("style");
 stylesheet.textContent = readFileSync(
   resolve(__dirname, "../../src/tray-panel/tray-panel.css"),
@@ -12,7 +11,6 @@ const originalClassName = root.className;
 const originalGlass = root.dataset.glass;
 const originalLayout = root.dataset.layout;
 let canvas: HTMLDivElement;
-
 beforeAll(() => document.head.append(stylesheet));
 afterAll(() => stylesheet.remove());
 afterEach(() => {
@@ -23,7 +21,6 @@ afterEach(() => {
   if (originalLayout === undefined) delete root.dataset.layout;
   else root.dataset.layout = originalLayout;
 });
-
 function cardFor(platform: "windows" | "macos" | "linux", dark: boolean) {
   root.classList.toggle("dark", dark);
   root.dataset.glass = platform === "macos" ? "native" : "frosted";
@@ -36,7 +33,6 @@ function cardFor(platform: "windows" | "macos" | "linux", dark: boolean) {
   document.body.append(canvas);
   return getComputedStyle(card);
 }
-
 describe("TrayPanel backgrounds stay scoped to each platform", () => {
   it.each([false, true])("keeps Windows cards opaque (dark=%s)", (dark) => {
     const style = cardFor("windows", dark);
@@ -45,7 +41,6 @@ describe("TrayPanel backgrounds stay scoped to each platform", () => {
     );
     expect(getComputedStyle(root).backgroundColor).toBe("rgba(0, 0, 0, 0)");
   });
-
   it.each([false, true])(
     "keeps the Linux canvas and cards opaque (dark=%s)",
     (dark) => {
@@ -58,7 +53,6 @@ describe("TrayPanel backgrounds stay scoped to each platform", () => {
       );
     },
   );
-
   it.each([false, true])(
     "preserves the macOS overlay on native glass (dark=%s)",
     (dark) => {

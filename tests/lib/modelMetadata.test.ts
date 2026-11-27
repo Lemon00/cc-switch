@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-
 import {
   GPT_CONTEXT_WINDOW_CAP,
   resolveModelMetadata,
@@ -7,7 +6,6 @@ import {
   type PresetModelSource,
 } from "@/lib/modelMetadata";
 import type { ModelsDevResponse } from "@/lib/modelsDev";
-
 const modelsDev: ModelsDevResponse = {
   zhipuai: {
     id: "zhipuai",
@@ -167,12 +165,30 @@ const modelsDev: ModelsDevResponse = {
     },
   },
 };
-
+it("keeps metadata isolated between services on different ports", () => {
+  const presets: PresetModelSource[] = [
+    {
+      baseUrl: "http://localhost:8000/v1",
+      models: new Map([["local-model", { contextWindow: 12000 }]]),
+    },
+  ];
+  expect(
+    resolveModelMetadata("local-model", {
+      baseUrl: "http://localhost:9000/v1",
+      presets,
+    }),
+  ).toBeNull();
+  expect(
+    resolveModelMetadata("local-model", {
+      baseUrl: "http://localhost:8000/v1",
+      presets,
+    })?.contextWindow,
+  ).toBe(12000);
+});
 const preset = (
   baseUrl: string,
   models: Record<string, KnownModelMetadata>,
 ): PresetModelSource => ({ baseUrl, models: new Map(Object.entries(models)) });
-
 describe("resolveModelMetadata", () => {
   it("uses the provider recognized by its API address", () => {
     expect(
@@ -186,7 +202,6 @@ describe("resolveModelMetadata", () => {
       reasoningEfforts: ["low", "high", "max"],
     });
   });
-
   it("prefers the provider whose path matches the address best", () => {
     expect(
       resolveModelMetadata("glm-5", {
@@ -201,7 +216,6 @@ describe("resolveModelMetadata", () => {
       })?.contextWindow,
     ).toBe(200000);
   });
-
   it("matches ids case-insensitively and across namespaces", () => {
     expect(
       resolveModelMetadata("Z-AI/GLM-5", {
@@ -216,7 +230,6 @@ describe("resolveModelMetadata", () => {
       })?.contextWindow,
     ).toBe(204800);
   });
-
   it("falls back to the vendor entry without carrying its price", () => {
     const metadata = resolveModelMetadata("glm-5", {
       baseUrl: "https://relay.example.com/v1",
@@ -231,7 +244,6 @@ describe("resolveModelMetadata", () => {
     });
     expect(metadata?.cost).toBeUndefined();
   });
-
   it("keeps the price when the provider itself is recognized", () => {
     expect(
       resolveModelMetadata("glm-5", {
@@ -243,7 +255,6 @@ describe("resolveModelMetadata", () => {
       reasoningEfforts: ["high"],
     });
   });
-
   it("ignores a vendor hosting another vendor's model", () => {
     expect(
       resolveModelMetadata("MiniMax-M9", {
@@ -252,7 +263,6 @@ describe("resolveModelMetadata", () => {
       })?.contextWindow,
     ).toBe(204800);
   });
-
   it("does not borrow an entry that points at another vendor", () => {
     expect(
       resolveModelMetadata("DeepSeek-v9-flash-1017", {
@@ -261,7 +271,6 @@ describe("resolveModelMetadata", () => {
       }),
     ).toBeNull();
   });
-
   it("still uses the vendor's own entry when its pointer is dangling", () => {
     expect(
       resolveModelMetadata("laguna-9", {
@@ -270,7 +279,6 @@ describe("resolveModelMetadata", () => {
       })?.contextWindow,
     ).toBe(262144);
   });
-
   it("gives up when the same name points at different vendors", () => {
     expect(
       resolveModelMetadata("kimi-k9", {
@@ -279,7 +287,6 @@ describe("resolveModelMetadata", () => {
       }),
     ).toBeNull();
   });
-
   it("lets the matching preset row win field by field", () => {
     const presets = [
       preset("https://api.z.ai/api/coding/paas/v4", {
@@ -301,7 +308,6 @@ describe("resolveModelMetadata", () => {
       sources: ["preset", "models-dev"],
     });
   });
-
   it("does not take another plan's preset on the same host", () => {
     expect(
       resolveModelMetadata("glm-5", {
@@ -315,7 +321,6 @@ describe("resolveModelMetadata", () => {
       }),
     ).toMatchObject({ contextWindow: 200000, sources: ["models-dev"] });
   });
-
   it("accepts the same endpoint written with or without a version suffix", () => {
     expect(
       resolveModelMetadata("glm-5.3", {
@@ -324,7 +329,6 @@ describe("resolveModelMetadata", () => {
       })?.contextWindow,
     ).toBe(1000000);
   });
-
   it("matches the old OpenCode address to the entry models.dev moved to /inference", () => {
     const moved: ModelsDevResponse = {
       "opencode-go": {
@@ -367,7 +371,6 @@ describe("resolveModelMetadata", () => {
       })?.contextWindow,
     ).toBe(200000);
   });
-
   it("does not treat a parent path as the plans nested under it", () => {
     expect(
       resolveModelMetadata("glm-5.3", {
@@ -381,7 +384,6 @@ describe("resolveModelMetadata", () => {
       }),
     ).toBeNull();
   });
-
   it("ignores a pasted request path after the base address", () => {
     expect(
       resolveModelMetadata("glm-5", {
@@ -390,7 +392,6 @@ describe("resolveModelMetadata", () => {
       })?.contextWindow,
     ).toBe(202752);
   });
-
   it("fills fields the provider entry leaves out from the vendor entry", () => {
     const metadata = resolveModelMetadata("glm-5", {
       baseUrl: "https://api.z.ai/api/paas/v4",
@@ -404,7 +405,6 @@ describe("resolveModelMetadata", () => {
     });
     expect(metadata?.cost).toBeUndefined();
   });
-
   it("uses presets alone when models.dev is unavailable", () => {
     expect(
       resolveModelMetadata("glm-5", {
@@ -420,7 +420,6 @@ describe("resolveModelMetadata", () => {
       resolveModelMetadata("glm-5", { baseUrl: "https://api.z.ai/v1" }),
     ).toBeNull();
   });
-
   it("caps GPT windows only when they are borrowed from the vendor entry", () => {
     const openai: ModelsDevResponse = {
       openai: {
@@ -457,7 +456,6 @@ describe("resolveModelMetadata", () => {
     };
     const resolve = (id: string, baseUrl: string) =>
       resolveModelMetadata(id, { baseUrl, modelsDev: openai })?.contextWindow;
-
     // 认不出地址、借原厂条目的中转封顶，带命名空间的写法也一样。
     expect(resolve("gpt-6-astra", "https://relay.example.com/v1")).toBe(
       GPT_CONTEXT_WINDOW_CAP,

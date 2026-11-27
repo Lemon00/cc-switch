@@ -8,9 +8,10 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::io::Write;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{Mutex, RwLock};
 
 use super::copilot_auth::GitHubDeviceCodeResponse;
@@ -26,6 +27,10 @@ const POLLING_SAFETY_MARGIN_SECS: u64 = 3;
 const MAX_DEVICE_CODE_LIFETIME_SECS: u64 = 24 * 60 * 60;
 const MAX_POLL_INTERVAL_SECS: u64 = 60;
 const MAX_OAUTH_RESPONSE_BYTES: usize = 64 * 1024;
+
+/// OAuth token/user 端点的单请求超时。共享 HTTP client 默认 600s 超时是给
+/// 大模型流式响应用的，对认证请求过长；网络卡住时应尽快失败而非长时间阻塞。
+const OAUTH_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, thiserror::Error)]
 pub enum XaiOAuthError {
@@ -196,6 +201,9 @@ pub struct XaiOAuthManager {
     discovered_endpoints: Arc<RwLock<Option<OAuthEndpoints>>>,
     mutation_lock: Arc<Mutex<()>>,
     storage_path: PathBuf,
+    /// 读取/解析账号文件失败时禁止 persist，避免空表覆盖原文件。
+    load_failed: AtomicBool,
+    login_epoch: AtomicU64,
 }
 
 impl XaiOAuthManager {
@@ -209,18 +217,24 @@ impl XaiOAuthManager {
             discovered_endpoints: Arc::new(RwLock::new(None)),
             mutation_lock: Arc::new(Mutex::new(())),
             storage_path: data_dir.join("xai_oauth_auth.json"),
+            load_failed: AtomicBool::new(false),
+            login_epoch: AtomicU64::new(0),
         };
 
         if let Err(error) = manager.load_from_disk_sync() {
-            log::warn!("[XaiOAuth] 加载存储失败: {error}");
+            log::error!("[XaiOAuth] 加载存储失败，已禁止写入以免覆盖原文件: {error}");
+            manager.load_failed.store(true, Ordering::Release);
         }
         manager
     }
 
     pub async fn start_device_flow(&self) -> Result<GitHubDeviceCodeResponse, XaiOAuthError> {
+        let epoch = self.login_epoch.load(Ordering::Acquire);
         let endpoints = self.discover_endpoints().await?;
-        let response = crate::proxy::http_client::get()
+        let response = crate::proxy::http_client::no_redirect()
+            .map_err(|e| XaiOAuthError::NetworkError(e))?
             .post(&endpoints.device_authorization_endpoint)
+            .timeout(OAUTH_HTTP_TIMEOUT)
             .header("User-Agent", XAI_USER_AGENT)
             .form(&[("client_id", XAI_CLIENT_ID), ("scope", XAI_SCOPE)])
             .send()
@@ -242,6 +256,10 @@ impl XaiOAuthManager {
         let now_ms = chrono::Utc::now().timestamp_millis();
 
         {
+            let _mutation = self.mutation_lock.lock().await;
+            if self.login_epoch.load(Ordering::Acquire) != epoch {
+                return Err(XaiOAuthError::ExpiredToken);
+            }
             let mut pending = self.pending_device_codes.write().await;
             pending.retain(|_, entry| entry.expires_at_ms > now_ms);
             pending.insert(
@@ -276,25 +294,26 @@ impl XaiOAuthManager {
     ) -> Result<Option<XaiOAuthAccount>, XaiOAuthError> {
         let now_ms = chrono::Utc::now().timestamp_millis();
         let entry = {
-            let pending = self.pending_device_codes.read().await;
-            pending.get(device_code).cloned()
-        }
-        .ok_or_else(|| {
-            XaiOAuthError::TokenFetchFailed("Device Code 不存在，请重新启动登录".to_string())
-        })?;
+            let mut pending = self.pending_device_codes.write().await;
+            let entry = pending.get_mut(device_code).ok_or_else(|| {
+                XaiOAuthError::TokenFetchFailed("Device Code 不存在，请重新启动登录".to_string())
+            })?;
+            if entry.expires_at_ms <= now_ms {
+                pending.remove(device_code);
+                return Err(XaiOAuthError::ExpiredToken);
+            }
+            if entry.next_poll_at_ms > now_ms {
+                return Err(XaiOAuthError::AuthorizationPending);
+            }
+            entry.next_poll_at_ms =
+                now_ms.saturating_add((entry.interval_secs as i64).saturating_mul(1_000));
+            entry.clone()
+        };
 
-        if entry.expires_at_ms <= now_ms {
-            self.pending_device_codes.write().await.remove(device_code);
-            return Err(XaiOAuthError::ExpiredToken);
-        }
-        if entry.next_poll_at_ms > now_ms {
-            return Err(XaiOAuthError::AuthorizationPending);
-        }
-        self.schedule_next_poll(device_code, entry.interval_secs)
-            .await;
-
-        let response = crate::proxy::http_client::get()
+        let response = crate::proxy::http_client::no_redirect()
+            .map_err(|e| XaiOAuthError::NetworkError(e))?
             .post(&entry.token_endpoint)
+            .timeout(OAUTH_HTTP_TIMEOUT)
             .header("User-Agent", XAI_USER_AGENT)
             .form(&[
                 ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
@@ -362,6 +381,17 @@ impl XaiOAuthManager {
         Ok(Some(account))
     }
 
+    pub async fn cancel_device_flow(&self, device_code: &str) -> bool {
+        // Same gate as account commits: once cancellation succeeds, an HTTP
+        // response that was already in flight cannot restore the account.
+        let _mutation_guard = self.mutation_lock.lock().await;
+        self.pending_device_codes
+            .write()
+            .await
+            .remove(device_code)
+            .is_some()
+    }
+
     pub async fn get_valid_token_for_account(
         &self,
         account_id: &str,
@@ -390,7 +420,8 @@ impl XaiOAuthManager {
         let tokens = match self.refresh_with_token(&account.refresh_token).await {
             Ok(tokens) => tokens,
             Err(XaiOAuthError::RefreshTokenInvalid) => {
-                self.mark_reauth_required(account_id).await?;
+                self.mark_reauth_required_for_token(account_id, Some(&account.refresh_token))
+                    .await?;
                 return Err(XaiOAuthError::ReauthRequired(account_id.to_string()));
             }
             Err(error) => return Err(error),
@@ -472,16 +503,19 @@ impl XaiOAuthManager {
         if self.storage_path.exists() {
             fs::remove_file(&self.storage_path)?;
         }
+        self.login_epoch.fetch_add(1, Ordering::AcqRel);
         *self.accounts.write().await = HashMap::new();
         *self.default_account_id.write().await = None;
         self.access_tokens.write().await.clear();
         self.refresh_locks.write().await.clear();
         self.pending_device_codes.write().await.clear();
+        // 用户主动清空后允许重新写入（损坏文件已被删除）。
+        self.load_failed.store(false, Ordering::Release);
         Ok(())
     }
 
-    #[cfg(test)]
-    pub(crate) async fn seed_test_account_with_token_endpoint(
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn seed_test_account_with_token_endpoint(
         &self,
         account_id: &str,
         refresh_token: &str,
@@ -506,8 +540,10 @@ impl XaiOAuthManager {
         if let Some(endpoints) = self.discovered_endpoints.read().await.clone() {
             return Ok(endpoints);
         }
-        let response = crate::proxy::http_client::get()
+        let response = crate::proxy::http_client::no_redirect()
+            .map_err(|e| XaiOAuthError::NetworkError(e))?
             .get(XAI_DISCOVERY_URL)
+            .timeout(OAUTH_HTTP_TIMEOUT)
             .header("User-Agent", XAI_USER_AGENT)
             .send()
             .await?;
@@ -539,8 +575,10 @@ impl XaiOAuthManager {
         refresh_token: &str,
     ) -> Result<OAuthTokenResponse, XaiOAuthError> {
         let endpoints = self.discover_endpoints().await?;
-        let response = crate::proxy::http_client::get_for_url(&endpoints.token_endpoint)
+        let response = crate::proxy::http_client::no_redirect_for_url(&endpoints.token_endpoint)
+            .map_err(|e| XaiOAuthError::NetworkError(e))?
             .post(&endpoints.token_endpoint)
+            .timeout(OAUTH_HTTP_TIMEOUT)
             .header("User-Agent", XAI_USER_AGENT)
             .form(&[
                 ("grant_type", "refresh_token"),
@@ -589,7 +627,8 @@ impl XaiOAuthManager {
                 .pending_device_codes
                 .read()
                 .await
-                .contains_key(device_code);
+                .get(device_code)
+                .is_some_and(|entry| entry.expires_at_ms > chrono::Utc::now().timestamp_millis());
             if !login_is_pending {
                 return Err(XaiOAuthError::TokenFetchFailed(
                     "登录已取消，请重新启动登录".to_string(),
@@ -678,12 +717,26 @@ impl XaiOAuthManager {
         Ok(access_token)
     }
 
+    #[cfg(test)]
     async fn mark_reauth_required(&self, account_id: &str) -> Result<(), XaiOAuthError> {
+        self.mark_reauth_required_for_token(account_id, None).await
+    }
+
+    async fn mark_reauth_required_for_token(
+        &self,
+        account_id: &str,
+        expected_refresh_token: Option<&str>,
+    ) -> Result<(), XaiOAuthError> {
         let _mutation_guard = self.mutation_lock.lock().await;
         let mut accounts = self.accounts.read().await.clone();
         let account = accounts
             .get_mut(account_id)
             .ok_or_else(|| XaiOAuthError::AccountNotFound(account_id.to_string()))?;
+        if expected_refresh_token.is_some_and(|token| token != account.refresh_token) {
+            return Err(XaiOAuthError::TokenFetchFailed(
+                "账号认证状态已变化，请重试请求".to_string(),
+            ));
+        }
         account.requires_reauth = true;
         let stored_default = self.default_account_id.read().await.clone();
         let default_account_id = match stored_default {
@@ -701,6 +754,12 @@ impl XaiOAuthManager {
         accounts: HashMap<String, XaiAccountData>,
         default_account_id: Option<String>,
     ) -> Result<(), XaiOAuthError> {
+        if self.load_failed.load(Ordering::Acquire) {
+            return Err(XaiOAuthError::IoError(
+                "账号文件损坏或不可读，已禁止写入以免覆盖原文件。请修复文件后重启应用，或在应用内清空账号后重试。"
+                    .to_string(),
+            ));
+        }
         let store = XaiOAuthStore {
             version: 1,
             accounts: accounts.clone(),
@@ -732,16 +791,6 @@ impl XaiOAuthManager {
             return None;
         }
         self.cached_token(account_id).await
-    }
-
-    async fn schedule_next_poll(&self, device_code: &str, interval_secs: u64) {
-        if let Some(entry) = self.pending_device_codes.write().await.get_mut(device_code) {
-            entry.next_poll_at_ms = chrono::Utc::now().timestamp_millis().saturating_add(
-                i64::try_from(interval_secs)
-                    .unwrap_or(i64::MAX)
-                    .saturating_mul(1_000),
-            );
-        }
     }
 
     async fn increase_poll_interval(&self, device_code: &str) {
@@ -833,64 +882,14 @@ impl XaiOAuthManager {
     }
 
     fn write_store_atomic(&self, content: &str) -> Result<(), XaiOAuthError> {
-        let parent = self
-            .storage_path
-            .parent()
-            .ok_or_else(|| XaiOAuthError::IoError("无效的存储路径".to_string()))?;
-        fs::create_dir_all(parent)?;
-        let file_name = self
-            .storage_path
-            .file_name()
-            .ok_or_else(|| XaiOAuthError::IoError("无效的存储文件名".to_string()))?
-            .to_string_lossy();
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let temporary_path = parent.join(format!("{file_name}.tmp.{nonce}"));
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-            let result = (|| -> Result<(), std::io::Error> {
-                let mut file = fs::OpenOptions::new()
-                    .create_new(true)
-                    .write(true)
-                    .mode(0o600)
-                    .open(&temporary_path)?;
-                file.write_all(content.as_bytes())?;
-                file.flush()?;
-                fs::rename(&temporary_path, &self.storage_path)?;
-                fs::set_permissions(&self.storage_path, fs::Permissions::from_mode(0o600))?;
-                Ok(())
-            })();
-            if result.is_err() {
-                let _ = fs::remove_file(&temporary_path);
-            }
-            result?;
+        if self.load_failed.load(Ordering::Acquire) {
+            return Err(XaiOAuthError::IoError(
+                "账号文件损坏或不可读，已禁止写入以免覆盖原文件。请修复文件后重启应用，或在应用内清空账号后重试。"
+                    .to_string(),
+            ));
         }
-
-        #[cfg(windows)]
-        {
-            let result = (|| -> Result<(), std::io::Error> {
-                let mut file = fs::OpenOptions::new()
-                    .create_new(true)
-                    .write(true)
-                    .open(&temporary_path)?;
-                file.write_all(content.as_bytes())?;
-                file.flush()?;
-                if self.storage_path.exists() {
-                    fs::remove_file(&self.storage_path)?;
-                }
-                fs::rename(&temporary_path, &self.storage_path)?;
-                Ok(())
-            })();
-            if result.is_err() {
-                let _ = fs::remove_file(&temporary_path);
-            }
-            result?;
-        }
-        Ok(())
+        crate::config::atomic_write_private(&self.storage_path, content.as_bytes())
+            .map_err(|error| XaiOAuthError::IoError(error.to_string()))
     }
 }
 
@@ -986,20 +985,9 @@ fn validate_xai_endpoint(value: &str) -> Result<(), XaiOAuthError> {
 async fn read_json_response(
     response: reqwest::Response,
 ) -> Result<serde_json::Value, XaiOAuthError> {
-    if response
-        .content_length()
-        .is_some_and(|length| length > MAX_OAUTH_RESPONSE_BYTES as u64)
-    {
-        return Err(XaiOAuthError::ParseError(
-            "OAuth 响应超过大小限制".to_string(),
-        ));
-    }
-    let bytes = response.bytes().await?;
-    if bytes.len() > MAX_OAUTH_RESPONSE_BYTES {
-        return Err(XaiOAuthError::ParseError(
-            "OAuth 响应超过大小限制".to_string(),
-        ));
-    }
+    let bytes = crate::proxy::http_client::read_body_with_limit(response, MAX_OAUTH_RESPONSE_BYTES)
+        .await
+        .map_err(|e| XaiOAuthError::ParseError(e))?;
     serde_json::from_slice(&bytes)
         .map_err(|_| XaiOAuthError::ParseError("OAuth 响应不是有效 JSON".to_string()))
 }
@@ -1030,6 +1018,61 @@ fn format_oauth_error(status: reqwest::StatusCode, value: &serde_json::Value) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn stale_refresh_rejection_does_not_invalidate_new_login() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = XaiOAuthManager::new(dir.path().into());
+        manager
+            .add_account_internal(
+                "user".into(),
+                None,
+                "new-refresh".into(),
+                None,
+                Some(CachedAccessToken {
+                    token: "new-access".into(),
+                    expires_at_ms: i64::MAX,
+                }),
+            )
+            .await
+            .unwrap();
+        assert!(manager
+            .mark_reauth_required_for_token("user", Some("old-refresh"))
+            .await
+            .is_err());
+        assert!(!manager.accounts.read().await["user"].requires_reauth);
+        assert_eq!(
+            manager.get_valid_token_for_account("user").await.unwrap(),
+            "new-access"
+        );
+        assert!(manager.get_status().await.authenticated);
+    }
+
+    #[tokio::test]
+    async fn individual_cancel_and_expiry_block_device_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = XaiOAuthManager::new(dir.path().into());
+        for cancel in [true, false] {
+            manager.pending_device_codes.write().await.insert(
+                "flow".into(),
+                PendingDeviceCode {
+                    token_endpoint: "https://auth.x.ai/token".into(),
+                    expires_at_ms: if cancel { i64::MAX } else { 0 },
+                    interval_secs: 5,
+                    next_poll_at_ms: 0,
+                },
+            );
+            if cancel {
+                assert!(manager.cancel_device_flow("flow").await);
+            }
+            assert!(manager
+                .add_account_internal("user".into(), None, "refresh".into(), Some("flow"), None)
+                .await
+                .is_err());
+            assert!(manager.accounts.read().await.is_empty());
+            assert!(!manager.storage_path.exists());
+        }
+    }
 
     fn unsigned_jwt(payload: &serde_json::Value) -> String {
         let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"none"}"#);
@@ -1234,6 +1277,33 @@ mod tests {
             .await;
         assert!(matches!(result, Err(XaiOAuthError::IoError(_))));
         assert!(manager.list_accounts().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn corrupt_store_load_fails_closed_and_preserves_file() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let store_path = data_dir.path().join("xai_oauth_auth.json");
+        let original = r#"{"version":1,"accounts":{"keep-me":{"account_id":"keep-me","login":null,"refresh_token":"secret","authenticated_at":1,"requires_reauth":false}},"default_account_id":"keep-me"}"#;
+        fs::write(&store_path, original).unwrap();
+        // Truncate into invalid JSON after a successful write of good data.
+        fs::write(&store_path, b"{\"version\":1,not-json").unwrap();
+
+        let manager = XaiOAuthManager::new(data_dir.path().to_path_buf());
+        assert!(manager.list_accounts().await.is_empty());
+        let result = manager
+            .add_account_internal(
+                "new-account".to_string(),
+                None,
+                "refresh-new".to_string(),
+                None,
+                None,
+            )
+            .await;
+        assert!(matches!(result, Err(XaiOAuthError::IoError(_))));
+        assert_eq!(
+            fs::read_to_string(&store_path).unwrap(),
+            "{\"version\":1,not-json"
+        );
     }
 
     #[tokio::test]

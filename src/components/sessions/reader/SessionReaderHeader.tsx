@@ -1,24 +1,3 @@
-import { memo, type ReactNode, type RefObject } from "react";
-import { useTranslation } from "react-i18next";
-import {
-  ArrowDown,
-  ArrowLeft,
-  ArrowUp,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  Copy,
-  Folder,
-  MoreHorizontal,
-  Play,
-  Search,
-  SlidersHorizontal,
-  SquareTerminal,
-  X,
-  PanelRight,
-  Download,
-} from "lucide-react";
-
 import { AppGlyph } from "@/components/shell/AppGlyph";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
 import { Button } from "@/components/ui/button";
@@ -31,12 +10,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { HoverTip } from "@/components/ui/hover-tip";
-import { SegmentedControl } from "@/components/ui/segmented-control";
 import { fieldClass } from "@/components/ui/input";
-import { useSessionUsageSummary } from "@/lib/query/usage";
-import { DRAG_REGION_ATTR } from "@/lib/platform";
-import { cn } from "@/lib/utils";
-import type { SessionMeta, TurnIndex } from "@/types";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
   fmtInt,
   formatTokensCompact,
@@ -44,6 +19,31 @@ import {
   getResolvedLang,
   parseFiniteNumber,
 } from "@/components/usage/format";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
+import { DRAG_REGION_ATTR } from "@/lib/platform";
+import { useSessionUsageSummary } from "@/lib/query/usage";
+import { cn } from "@/lib/utils";
+import type { SessionMeta, TurnIndex } from "@/types";
+import {
+  ArrowDown,
+  ArrowLeft,
+  ArrowUp,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+  Download,
+  Folder,
+  MoreHorizontal,
+  PanelRight,
+  Play,
+  Search,
+  SlidersHorizontal,
+  SquareTerminal,
+  X,
+} from "lucide-react";
+import { memo, type ReactNode, type RefObject } from "react";
+import { useTranslation } from "react-i18next";
 import { sessionMenuItemClass } from "../SessionItem";
 import {
   buildCdResumeCommand,
@@ -56,13 +56,9 @@ import { useReaderT } from "./i18n";
 import { PathChip } from "./PathChip";
 import { formatDuration } from "./toolSummary";
 import type { ReaderFilter } from "./turns";
-import { useMoneyFormat } from "@/hooks/useMoneyFormat";
-
 export const readerIconButton =
   "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-40";
-
 // ─── 页头：返回、标题、上一个 / 下一个、恢复、⋯ ───────────────────────────
-
 export interface SessionReaderHeaderProps {
   session: SessionMeta;
   title: string;
@@ -84,7 +80,6 @@ export interface SessionReaderHeaderProps {
   onReload: () => void;
   onDelete: () => void;
 }
-
 export const SessionReaderHeader = memo(function SessionReaderHeader({
   session,
   title,
@@ -112,14 +107,12 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
   const isCodex = session.providerId === "codex";
   const command = session.resumeCommand;
   const deletable = canDeleteSession(session);
-
   const launchLabel = launchTerminal
     ? t("sessionManager.resumeIn", {
         defaultValue: "在 {{terminal}} 中恢复",
         terminal: launchTerminal,
       })
     : null;
-
   const copyResume = () =>
     command &&
     onCopy(
@@ -133,7 +126,6 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
               "已复制恢复命令。这个平台暂不支持一键恢复，请在项目目录下粘贴到终端运行",
           }),
     );
-
   let resume: ReactNode;
   if (command && launchLabel) {
     resume = (
@@ -259,7 +251,6 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
       </Button>
     );
   }
-
   const moreMenu = (
     <DropdownMenu>
       <HoverTip content={t("common.more", { defaultValue: "更多" })}>
@@ -350,14 +341,19 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
         >
           {t("sessionManager.deleteEllipsis", { defaultValue: "删除…" })}
         </DropdownMenuItem>
-        {!deletable && ["mcode", "dsh"].includes(session.providerId) && (
+        {!deletable && ["mcode", "dsh", "agy"].includes(session.providerId) && (
           <p className="px-2.5 pb-1.5 text-caption text-fg-2">
             {t(
               session.providerId === "dsh"
                 ? "dsh.deleteSessionHint"
-                : "sessionManager.mcodeDeleteHint",
+                : session.providerId === "agy"
+                  ? "sessionManager.agyDeleteHint"
+                  : "sessionManager.mcodeDeleteHint",
               {
-                defaultValue: "请在 MiniMax Code 中删除",
+                defaultValue:
+                  session.providerId === "agy"
+                    ? "请在 Antigravity 中删除"
+                    : "请在 MiniMax Code 中删除",
               },
             )}
           </p>
@@ -365,7 +361,6 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
       </DropdownMenuContent>
     </DropdownMenu>
   );
-
   return (
     <AppPageHeader
       variant="app"
@@ -448,9 +443,7 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
     />
   );
 });
-
 // ─── 信息栏 + 阅读工具 ────────────────────────────────────────────────────
-
 /** 「10月2日 15:25 → 17:33」+ 时长 */
 const formatRange = (created?: number, last?: number) => {
   if (!created && !last) return { range: "", duration: null };
@@ -460,20 +453,16 @@ const formatRange = (created?: number, last?: number) => {
   const sameDay =
     new Date(created).toDateString() === new Date(last).toDateString();
   return {
-    range: `${formatShortDateTime(created)} → ${
-      sameDay ? formatClock(last) : formatShortDateTime(last)
-    }`,
+    range: `${formatShortDateTime(created)} → ${sameDay ? formatClock(last) : formatShortDateTime(last)}`,
     duration: last > created ? formatDuration(last - created) : null,
   };
 };
-
 export interface FindState {
   open: boolean;
   query: string;
   current: number;
   total: number;
 }
-
 export interface SessionReaderToolbarProps {
   session: SessionMeta;
   failed: boolean;
@@ -481,7 +470,10 @@ export interface SessionReaderToolbarProps {
   turnIndex: TurnIndex[];
   messageCount: number;
   model?: string;
-  progress: { loaded: number; total: number | null } | null;
+  progress: {
+    loaded: number;
+    total: number | null;
+  } | null;
   noResumeReason: string | null;
   filter: ReaderFilter;
   onFilterChange: (filter: ReaderFilter) => void;
@@ -501,7 +493,6 @@ export interface SessionReaderToolbarProps {
   /** 导出为 Markdown 文件（和查找、显示选项放在同一行） */
   onExportMarkdown: () => void;
 }
-
 /**
  * 这个会话的总 Token 和 API 价花费，口径同用量统计（会话日志导入的用量）。
  * 没导入过（扫描关着、超过 30 天被汇总、应用没有用量来源）时不显示。
@@ -515,7 +506,6 @@ function SessionUsageSummary({ session }: { session: SessionMeta }) {
     session.sessionId,
   );
   if (!data || data.totalRequests === 0) return null;
-
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
   const cost = parseFiniteNumber(data.totalCost);
   const tokens = (value: number) => formatTokensCompact(value, locale);
@@ -539,7 +529,6 @@ function SessionUsageSummary({ session }: { session: SessionMeta }) {
     </span>
   );
 }
-
 export const SessionReaderToolbar = memo(function SessionReaderToolbar({
   session,
   failed,
@@ -572,7 +561,6 @@ export const SessionReaderToolbar = memo(function SessionReaderToolbar({
     session.lastActiveAt,
   );
   const toolCount = turnIndex.reduce((sum, item) => sum + item.stepCount, 0);
-
   return (
     <div className="flex shrink-0 flex-col gap-1.5 border-b border-border py-2 pe-4 ps-6">
       <div className="flex min-h-8 flex-wrap items-center gap-x-4 gap-y-2">

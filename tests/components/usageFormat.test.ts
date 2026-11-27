@@ -25,134 +25,123 @@ import {
   sumSpeedTotals,
   USD_DISPLAY,
 } from "@/components/usage/format";
-
 describe("usage format helpers", () => {
   it("formats Traditional Chinese token units with Traditional characters", () => {
-    expect(formatTokensShort(12_345, "zh-TW")).toBe("1.2 萬");
-    expect(formatTokensShort(123_456_789, "zh-Hant", 2)).toBe("1.23 億");
+    expect(formatTokensShort(12345, "zh-TW")).toBe("1.2 萬");
+    expect(formatTokensShort(123456789, "zh-Hant", 2)).toBe("1.23 億");
   });
-
   it("resolves Traditional Chinese locale aliases", () => {
     expect(getLocaleFromLanguage("zh_TW")).toBe("zh-TW");
     expect(getLocaleFromLanguage("zh-HK")).toBe("zh-TW");
   });
-
   it("resolves Turkish to a Turkish date locale", () => {
     expect(getLocaleFromLanguage("tr")).toBe("tr-TR");
     expect(getLocaleFromLanguage("tr-TR")).toBe("tr-TR");
   });
-
   it("calculates speed from generation time after the first token", () => {
     expect(
       getOutputTokensPerSecond({
         outputTokens: 120,
-        latencyMs: 10_000,
-        firstTokenMs: 4_000,
+        latencyMs: 10000,
+        firstTokenMs: 4000,
       }),
     ).toBe(20);
   });
-
   it("ignores durationMs: speed is always output / (latency - first token)", () => {
     expect(
       getOutputTokensPerSecond({
         outputTokens: 120,
-        latencyMs: 10_000,
-        firstTokenMs: 4_000,
-        durationMs: 3_000,
+        latencyMs: 10000,
+        firstTokenMs: 4000,
+        durationMs: 3000,
       } as Parameters<typeof getOutputTokensPerSecond>[0]),
     ).toBe(20);
   });
-
   it("does not compute speed without first-token timing (session logs, non-streaming)", () => {
     expect(
-      getOutputTokensPerSecond({ outputTokens: 1_200, latencyMs: 10_000 }),
+      getOutputTokensPerSecond({ outputTokens: 1200, latencyMs: 10000 }),
     ).toBeNull();
     expect(
       getOutputTokensPerSecond({
-        outputTokens: 1_200,
+        outputTokens: 1200,
         latencyMs: undefined,
-        firstTokenMs: 1_000,
+        firstTokenMs: 1000,
       }),
     ).toBeNull();
   });
-
   it("skips requests with fewer than 100 output tokens", () => {
     expect(SPEED_MIN_OUTPUT_TOKENS).toBe(100);
     expect(
       getOutputTokensPerSecond({
         outputTokens: 99,
-        latencyMs: 1_000,
+        latencyMs: 1000,
         firstTokenMs: 900,
       }),
     ).toBeNull();
     expect(
       getOutputTokensPerSecond({
         outputTokens: 100,
-        latencyMs: 2_000,
-        firstTokenMs: 1_000,
+        latencyMs: 2000,
+        firstTokenMs: 1000,
       }),
     ).toBe(100);
   });
-
   it("does not show speed when the generation time is not positive", () => {
     expect(
       formatOutputTokensPerSecond({
         outputTokens: 0,
-        latencyMs: 10_000,
-        firstTokenMs: 1_000,
+        latencyMs: 10000,
+        firstTokenMs: 1000,
       }),
     ).toBeNull();
     expect(
       formatOutputTokensPerSecond({
         outputTokens: 120,
-        latencyMs: 4_000,
-        firstTokenMs: 4_000,
+        latencyMs: 4000,
+        firstTokenMs: 4000,
       }),
     ).toBeNull();
     expect(
       formatOutputTokensPerSecond({
         outputTokens: 120,
-        latencyMs: 3_000,
-        firstTokenMs: 4_000,
+        latencyMs: 3000,
+        firstTokenMs: 4000,
       }),
     ).toBeNull();
   });
-
   it("hides speed when the generation window is a transport burst", () => {
     // 2842 tps 实例：输出在首字后 19ms 内全部到达，算出来的是传输突发
     expect(
       getOutputTokensPerSecond({
         outputTokens: 154,
-        latencyMs: 3_444,
-        firstTokenMs: 3_425,
+        latencyMs: 3444,
+        firstTokenMs: 3425,
       }),
     ).toBeNull();
     expect(
       getOutputTokensPerSecond({
         outputTokens: 150,
-        latencyMs: 1_100,
-        firstTokenMs: 1_000,
+        latencyMs: 1100,
+        firstTokenMs: 1000,
       }),
     ).toBe(1500);
   });
-
   it("formats speed with integer or single-decimal precision", () => {
     expect(
       formatOutputTokensPerSecond({
         outputTokens: 121,
-        latencyMs: 11_000,
-        firstTokenMs: 1_000,
+        latencyMs: 11000,
+        firstTokenMs: 1000,
       }),
     ).toBe("12");
     expect(formatTokensPerSecond(0.25)).toBe("0.3");
     expect(formatTokensPerSecond(null)).toBeNull();
   });
-
   it("estimates speed for session-log requests from the whole duration", () => {
     expect(SPEED_ESTIMATE_MIN_OUTPUT_TOKENS).toBe(200);
     const session = {
-      outputTokens: 1_800,
-      latencyMs: 20_000,
+      outputTokens: 1800,
+      latencyMs: 20000,
       dataSource: "session_log",
     };
     // 1800 token / 20 s，等首字的时间也算在内
@@ -167,11 +156,11 @@ describe("usage format helpers", () => {
       getEstimatedTokensPerSecond({
         ...session,
         dataSource: "kimi_session",
-        firstTokenMs: 4_000,
+        firstTokenMs: 4000,
       }),
     ).toBe(90);
     // 推出了首字的会话日志：仍按整段耗时估，不当成精确速度
-    const withFirstToken = { ...session, firstTokenMs: 4_000 };
+    const withFirstToken = { ...session, firstTokenMs: 4000 };
     expect(getEstimatedTokensPerSecond(withFirstToken)).toBe(90);
     expect(getOutputTokensPerSecond(withFirstToken)).toBeNull();
     expect(sumSpeedTotals([withFirstToken])).toEqual({
@@ -179,19 +168,17 @@ describe("usage format helpers", () => {
       generationMs: 0,
     });
   });
-
   it("formats first-token time in seconds", () => {
-    expect(formatFirstTokenSeconds(2_640)).toBe("2.6s");
+    expect(formatFirstTokenSeconds(2640)).toBe("2.6s");
     expect(formatFirstTokenSeconds(0)).toBe("0.0s");
     expect(formatFirstTokenSeconds(null)).toBeNull();
     expect(formatFirstTokenSeconds(undefined)).toBeNull();
     expect(formatFirstTokenSeconds(-1)).toBeNull();
   });
-
   it("does not estimate speed for routed, short, or untimed requests", () => {
     const session = {
-      outputTokens: 1_800,
-      latencyMs: 20_000,
+      outputTokens: 1800,
+      latencyMs: 20000,
       dataSource: "session_log",
     };
     // 路由服务的请求：非流式没有首字，也不估
@@ -214,20 +201,19 @@ describe("usage format helpers", () => {
       getEstimatedTokensPerSecond({ ...session, latencyMs: 999 }),
     ).toBeNull();
   });
-
   it("aggregates speed as total output over total generation time, not a mean of rates", () => {
     const logs = [
       // 1000 token / 10 s = 100 tok/s
-      { outputTokens: 1_000, latencyMs: 11_000, firstTokenMs: 1_000 },
+      { outputTokens: 1000, latencyMs: 11000, firstTokenMs: 1000 },
       // 200 token / 0.5 s = 400 tok/s（逐条平均会被它拉高）
-      { outputTokens: 200, latencyMs: 1_500, firstTokenMs: 1_000 },
+      { outputTokens: 200, latencyMs: 1500, firstTokenMs: 1000 },
       // 不计：输出不到 100
-      { outputTokens: 50, latencyMs: 1_100, firstTokenMs: 1_000 },
+      { outputTokens: 50, latencyMs: 1100, firstTokenMs: 1000 },
       // 不计：没有首字
-      { outputTokens: 5_000, latencyMs: 9_000 },
+      { outputTokens: 5000, latencyMs: 9000 },
     ];
     const totals = sumSpeedTotals(logs);
-    expect(totals).toEqual({ outputTokens: 1_200, generationMs: 10_500 });
+    expect(totals).toEqual({ outputTokens: 1200, generationMs: 10500 });
     const tps = getAggregateTokensPerSecond(
       totals.outputTokens,
       totals.generationMs,
@@ -235,20 +221,18 @@ describe("usage format helpers", () => {
     expect(tps).toBeCloseTo(114.29, 2);
     expect(getAggregateTokensPerSecond(0, 0)).toBeNull();
     expect(getAggregateTokensPerSecond(500, 0)).toBeNull();
-    expect(getAggregateTokensPerSecond(undefined, 1_000)).toBeNull();
+    expect(getAggregateTokensPerSecond(undefined, 1000)).toBeNull();
   });
-
   it("formats compact token counts with K/M/B and three significant digits", () => {
-    expect(formatTokensCompact(9_999, "en-US")).toBe("9,999");
-    expect(formatTokensCompact(48_210, "en-US")).toBe("48.2K");
-    expect(formatTokensCompact(189_400, "en-US")).toBe("189K");
-    expect(formatTokensCompact(999_960, "en-US")).toBe("1M");
-    expect(formatTokensCompact(18_200_000, "en-US")).toBe("18.2M");
-    expect(formatTokensCompact(2_340_000_000, "en-US")).toBe("2.34B");
+    expect(formatTokensCompact(9999, "en-US")).toBe("9,999");
+    expect(formatTokensCompact(48210, "en-US")).toBe("48.2K");
+    expect(formatTokensCompact(189400, "en-US")).toBe("189K");
+    expect(formatTokensCompact(999960, "en-US")).toBe("1M");
+    expect(formatTokensCompact(18200000, "en-US")).toBe("18.2M");
+    expect(formatTokensCompact(2340000000, "en-US")).toBe("2.34B");
     expect(formatTokensCompact("x")).toBe("--");
   });
 });
-
 describe("usage money formatting", () => {
   it("keeps the USD output the old fmtUsd produced", () => {
     expect(formatMoney(1.23456, 2, USD_DISPLAY)).toBe("$1.23");
@@ -256,19 +240,16 @@ describe("usage money formatting", () => {
     expect(formatMoney(null, 4, USD_DISPLAY)).toBe("--");
     expect(formatMoney("x", 4, USD_DISPLAY, "")).toBe("");
   });
-
   it("trims compact amounts by magnitude", () => {
     expect(
       [0.0081, 0.0123, 1.25].map((usd) => formatMoneyCompact(usd, USD_DISPLAY)),
     ).toEqual(["$0.0081", "$0.012", "$1.25"]);
   });
-
   it("formats axis ticks without fixing decimals", () => {
     expect(formatMoneyTick(0.5, USD_DISPLAY)).toBe("$0.5");
     expect(formatMoneyTick(undefined, USD_DISPLAY)).toBe("$0");
   });
 });
-
 describe("display currency", () => {
   it("falls back to USD and the preset rate for unusable settings", () => {
     expect(resolveMoneyDisplay(undefined)).toEqual(USD_DISPLAY);
@@ -291,7 +272,6 @@ describe("display currency", () => {
       resolveMoneyDisplay({ currency: "CNY", exchangeRates: { CNY: 7.25 } }),
     ).toEqual({ currency: "CNY", rate: 7.25 });
   });
-
   it("prefers the fetched rate in automatic mode and keeps manual values as fallback", () => {
     const both = {
       currency: "CNY",
@@ -300,7 +280,6 @@ describe("display currency", () => {
       exchangeRates: { CNY: 7.1 },
     };
     expect(resolveMoneyDisplay(both)).toEqual({ currency: "CNY", rate: 6.9 });
-
     // 还没取到自动汇率时先用手填值，再退预置值
     expect(
       resolveMoneyDisplay({ ...both, autoExchangeRates: undefined }),
@@ -308,7 +287,6 @@ describe("display currency", () => {
     expect(
       resolveMoneyDisplay({ currency: "CNY", rateSource: "auto" }),
     ).toEqual({ currency: "CNY", rate: 6.8 });
-
     // 手动模式不看自动取到的值
     expect(resolveMoneyDisplay({ ...both, rateSource: "manual" })).toEqual({
       currency: "CNY",
@@ -326,7 +304,6 @@ describe("display currency", () => {
       "auto",
     );
   });
-
   it("names the provider that actually served the automatic rate", () => {
     // open.er-api.com 的免费条款要求署名 ExchangeRate-API（旧缓存没有 source 也按主源）
     expect(resolveRateProvider("open.er-api.com")).toEqual({
@@ -343,7 +320,6 @@ describe("display currency", () => {
       url: "https://www.floatrates.com/",
     });
   });
-
   it("keeps fetched automatic rates out of the manual default unless picked", () => {
     // 没设置过来源：自动取到的值不参与显示，用手填值或预置值
     const fetched = {
@@ -351,23 +327,26 @@ describe("display currency", () => {
       autoExchangeRates: { CNY: 6.9 },
     };
     expect(resolveRateSource(fetched)).toBe("manual");
-    expect(resolveMoneyDisplay(fetched)).toEqual({ currency: "CNY", rate: 6.8 });
-    expect(resolveMoneyDisplay({ ...fetched, exchangeRates: { CNY: 7.1 } })).toEqual(
-      { currency: "CNY", rate: 7.1 },
-    );
-    // 用户主动选了自动才用取到的值
+    expect(resolveMoneyDisplay(fetched)).toEqual({
+      currency: "CNY",
+      rate: 6.8,
+    });
     expect(
-      resolveMoneyDisplay({ ...fetched, rateSource: "auto" }),
-    ).toEqual({ currency: "CNY", rate: 6.9 });
+      resolveMoneyDisplay({ ...fetched, exchangeRates: { CNY: 7.1 } }),
+    ).toEqual({ currency: "CNY", rate: 7.1 });
+    // 用户主动选了自动才用取到的值
+    expect(resolveMoneyDisplay({ ...fetched, rateSource: "auto" })).toEqual({
+      currency: "CNY",
+      rate: 6.9,
+    });
   });
-
   it("refreshes automatic rates only when the cache is missing or stale", () => {
-    const now = 1_700_000_000_000;
+    const now = 1700000000000;
     const day = 24 * 60 * 60 * 1000;
     expect(shouldRefreshRates({ rateSource: "auto" }, now)).toBe(true);
     expect(
       shouldRefreshRates(
-        { rateSource: "auto", rateFetchedAt: now - 60_000 },
+        { rateSource: "auto", rateFetchedAt: now - 60000 },
         now,
       ),
     ).toBe(false);
@@ -382,7 +361,6 @@ describe("display currency", () => {
       ),
     ).toBe(false);
   });
-
   it("writes converted amounts with the plain currency symbol", () => {
     const cny = { currency: "CNY" as const, rate: 7 };
     expect(formatMoney(1.5, 2, cny)).toBe("¥10.50");
@@ -393,7 +371,6 @@ describe("display currency", () => {
     // 刻度值画图前已换算，只加符号
     expect(formatMoneyTick(50, cny)).toBe("¥50");
   });
-
   it("writes each currency with its own symbol and groups thousands", () => {
     expect(formatMoney(30470.55, 2, USD_DISPLAY)).toBe("$30,470.55");
     expect(formatMoney(-1234, 0, USD_DISPLAY)).toBe("$-1,234");
@@ -406,7 +383,6 @@ describe("display currency", () => {
       "¥20,000",
     );
   });
-
   it("keeps converted amounts to two decimals at most", () => {
     const twd = { currency: "TWD" as const, rate: 32 };
     // 悬停用的 6 位、日志用的 4 位，换算后都只留两位
@@ -420,7 +396,6 @@ describe("display currency", () => {
     expect(formatMoney(0.0001, 4, USD_DISPLAY)).toBe("$0.0001");
     expect(formatMoney(64.912461, 6, USD_DISPLAY)).toBe("$64.912461");
   });
-
   it("shows yen with two fewer decimals", () => {
     const jpy = { currency: "JPY" as const, rate: 158 };
     expect(formatMoney(0.0012, 4, jpy)).toBe("¥0.19");
@@ -428,7 +403,6 @@ describe("display currency", () => {
     expect(formatMoney(1.5, 1, jpy)).toBe("¥237");
     expect(formatMoneyShort(0.5, jpy)).toBe("¥79");
   });
-
   it("drops the decimals in narrow spots once the amount reaches 100", () => {
     const cny = { currency: "CNY" as const, rate: 6.8 };
     expect(formatMoneyShort(41.2, USD_DISPLAY)).toBe("$41.20");
@@ -438,14 +412,12 @@ describe("display currency", () => {
     expect(formatMoneyShort(undefined, cny)).toBe("--");
   });
 });
-
 describe("sidebar Today items", () => {
   it("shows only the cost until something is picked, and nothing for an empty list", () => {
     expect(resolveSidebarToday(undefined)).toEqual(["cost"]);
     expect(resolveSidebarToday({})).toEqual(["cost"]);
     expect(resolveSidebarToday({ sidebarTodayItems: [] })).toEqual([]);
   });
-
   it("keeps menu order, drops unknown items and stops at two", () => {
     expect(
       resolveSidebarToday({ sidebarTodayItems: ["hitRate", "cost"] }),
@@ -459,7 +431,6 @@ describe("sidebar Today items", () => {
       }),
     ).toEqual(["cost", "tokens"]);
   });
-
   it("writes the hit rate like the usage page", () => {
     expect(formatHitRatePercent(0.986)).toBe("98.6%");
     expect(formatHitRatePercent(0.9996)).toBe("100%");

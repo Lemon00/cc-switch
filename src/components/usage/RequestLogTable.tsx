@@ -1,3 +1,17 @@
+import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
+import { HelpTip } from "@/components/ui/help-tip";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
+import type { AppId } from "@/lib/api";
+import { useRequestLogs } from "@/lib/query/usage";
+import { cn } from "@/lib/utils";
+import {
+  CACHE_INCLUSIVE_APP_TYPES,
+  getFreshInputTokens,
+  isUnpricedUsage,
+  type LogFilters,
+  type RequestLog,
+  type UsageRangeSelection,
+} from "@/types/usage";
 import {
   cloneElement,
   useEffect,
@@ -8,20 +22,6 @@ import {
   type ReactElement,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { useRequestLogs } from "@/lib/query/usage";
-import { TablePagination } from "./TablePagination";
-import { HelpTip } from "@/components/ui/help-tip";
-import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
-import type { AppId } from "@/lib/api";
-import {
-  CACHE_INCLUSIVE_APP_TYPES,
-  getFreshInputTokens,
-  isUnpricedUsage,
-  type LogFilters,
-  type RequestLog,
-  type UsageRangeSelection,
-} from "@/types/usage";
-import { cn } from "@/lib/utils";
 import {
   fmtInt,
   formatEstimatedTokensPerSecond,
@@ -32,14 +32,7 @@ import {
   isSessionLogRequest,
   parseFiniteNumber,
 } from "./format";
-import {
-  stickyCol,
-  usageTable,
-  useElementWidth,
-  useScrolledFromStart,
-} from "./usageTable";
 import { getUsageProviderLabel, usageProviderTitle } from "./providerLabel";
-import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import {
   REQUEST_LOG_COLUMN_LABEL_KEYS,
   requestLogGroupBreaks,
@@ -47,7 +40,13 @@ import {
   resolveRequestLogColumns,
   type RequestLogColumnId,
 } from "./requestLogColumns";
-
+import { TablePagination } from "./TablePagination";
+import {
+  stickyCol,
+  usageTable,
+  useElementWidth,
+  useScrolledFromStart,
+} from "./usageTable";
 interface RequestLogTableProps {
   range: UsageRangeSelection;
   /** 旧接口保留；时间范围由页面顶部的筛选统一控制 */
@@ -67,14 +66,11 @@ interface RequestLogTableProps {
   pageSizeOptions?: readonly number[];
   onPageSizeChange?: (size: number) => void;
 }
-
 const pad2 = (value: number) => String(value).padStart(2, "0");
-
 const isSameLocalDay = (a: Date, b: Date) =>
   a.getFullYear() === b.getFullYear() &&
   a.getMonth() === b.getMonth() &&
   a.getDate() === b.getDate();
-
 /**
  * 表格里的时间：今天（本地时区）只显示时刻「14:32:05」，
  * 别的日子显示「09-30 14:21」。完整时间放在悬停提示和详情抽屉里。
@@ -87,74 +83,52 @@ export function formatLogTime(createdAt: number, now = new Date()): string {
   }
   return `${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${clock}`;
 }
-
 /** 「2026-09-30 14:21:05」：悬停时看完整的本地时间。 */
 export function formatLogFullTime(createdAt: number): string {
   const date = new Date(createdAt * 1000);
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(
-    date.getDate(),
-  )} ${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(
-    date.getSeconds(),
-  )}`;
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
 }
-
 export function isKnownAppId(appType: string): appType is AppId {
   return appType in APP_DISPLAY_NAME;
 }
-
 export function appDisplayName(appType: string): string {
   return isKnownAppId(appType) ? APP_DISPLAY_NAME[appType] : appType;
 }
-
 /**
  * 请求日志「应用」列用的短名：图标已经区分了品牌（Claude Code / Desktop 靠角标），
  * 列里只留最短能认出的名字，把宽度让给供应商列。全名在悬停提示里。
  */
 const APP_SHORT_NAME: Record<AppId, string> = {
   claude: "Claude",
-  "claude-desktop": "Desktop",
   codex: "Codex",
-  gemini: "Gemini",
-  grokbuild: "Grok",
   opencode: "OpenCode",
-  openclaw: "OpenClaw",
-  hermes: "Hermes",
-  pi: "Pi",
-  mcode: "MiniMax",
-  kimi: "Kimi",
   dsh: "DSH",
   agy: "Antigravity",
-  omp: "omp",
 };
-
 export function appShortName(appType: string): string {
   return isKnownAppId(appType) ? APP_SHORT_NAME[appType] : appType;
 }
-
 const isSuccessStatus = (code: number) => code >= 200 && code < 300;
-
 const DEFAULT_COLUMNS = resolveRequestLogColumns(undefined);
-
 /**
  * 单条请求的缓存命中率，口径与用量页「缓存命中率」相同：
  * 缓存命中 ÷（新增输入 + 缓存写入 + 缓存命中）。没有可缓存的输入时返回 null。
  */
-export function getRequestCacheHitRate(
-  log: RequestLog,
-): { rate: number; cacheable: number } | null {
+export function getRequestCacheHitRate(log: RequestLog): {
+  rate: number;
+  cacheable: number;
+} | null {
   const cacheable =
     getFreshInputTokens(log) + log.cacheCreationTokens + log.cacheReadTokens;
   if (cacheable <= 0) return null;
   return { rate: log.cacheReadTokens / cacheable, cacheable };
 }
-
 /** 「87.3%」；只有真的全命中才写「100%」，99.96% 不进成 100 */
 export function formatHitPercent(rate: number): string {
   const percent = Math.max(0, Math.min(100, rate * 100));
   if (percent >= 100) return "100%";
   return `${(Math.floor(percent * 10) / 10).toFixed(1)}%`;
 }
-
 function StatusBadge({
   code,
   title,
@@ -176,7 +150,6 @@ function StatusBadge({
     </span>
   );
 }
-
 export function RequestLogTable({
   range,
   appType: dashboardAppType,
@@ -193,7 +166,6 @@ export function RequestLogTable({
   const { t, i18n } = useTranslation();
   const { money, usdHint } = useMoneyFormat();
   const [page, setPage] = useState(0);
-
   const effectiveFilters: LogFilters = {
     appType:
       dashboardAppType && dashboardAppType !== "all"
@@ -203,7 +175,6 @@ export function RequestLogTable({
     model,
     statusCode,
   };
-
   const {
     data: result,
     isLoading,
@@ -217,26 +188,25 @@ export function RequestLogTable({
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },
   });
-
   // 固定列：左边有没有内容滚进固定列底下、第一列多宽（第二个贴左的列要让出这段）
   const [scrollRef, scrolled] = useScrolledFromStart<HTMLDivElement>();
   const [firstHeadRef, firstWidth] = useElementWidth<HTMLTableCellElement>();
-
   const logs = result?.data ?? [];
   const total = result?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-
   // 停在后面的页时总数变少了（「今天」跨日、重建 Codex 用量）：收回到最后一页。
   // 只剩一页时翻页条不画，不收回就只剩一张空表、也翻不回去
   const pageOutOfRange = !!result && !isPlaceholderData && page >= totalPages;
   useEffect(() => {
     if (pageOutOfRange) setPage(totalPages - 1);
   }, [pageOutOfRange, totalPages]);
-
   // 刷新带来新请求时：旧行从原位置滑到新位置，新行淡入并留一段渐隐的底色，
   // 看着的那行往哪走了一眼就能跟上。只在第一页、筛选没变时做；减少动态效果时只留底色
   const tbodyRef = useRef<HTMLTableSectionElement>(null);
-  const shownRef = useRef<{ view: string; ids: string[] } | null>(null);
+  const shownRef = useRef<{
+    view: string;
+    ids: string[];
+  } | null>(null);
   // 翻页、换每页条数、换筛选都算换了一屏：多出来的行不是「新来的」，不播进场动画
   const view = JSON.stringify([
     page,
@@ -314,7 +284,6 @@ export function RequestLogTable({
       }
     });
   }, [result, isPlaceholderData, view, page]);
-
   useEffect(() => {
     setPage(0);
   }, [
@@ -326,19 +295,22 @@ export function RequestLogTable({
     range.customStartDate,
     range.preset,
   ]);
-
   const language = i18n.resolvedLanguage || i18n.language || "en";
   const locale = getLocaleFromLanguage(language);
   // 「今天」按本地时区判断；每次渲染（含自动刷新）取一次当前时间
   const now = new Date();
-
   if (isLoading) {
     return <div className={usageTable.skeleton} />;
   }
-
   // 带说明的列在表头挂「?」，其余只写列名
   const headerHelp: Partial<
-    Record<RequestLogColumnId, { title: string; body: string }>
+    Record<
+      RequestLogColumnId,
+      {
+        title: string;
+        body: string;
+      }
+    >
   > = {
     hitRate: {
       title: t("usage.metrics.hitRateHelpTitle"),
@@ -365,7 +337,6 @@ export function RequestLogTable({
   };
   // 打开了「状态码」列就不在时间旁边再挂一个错误码
   const showStatusInTime = !columns.includes("statusCode");
-
   const renderRow = (log: RequestLog) => {
     const unpriced = isUnpricedUsage(log);
     const freshInput = getFreshInputTokens(log);
@@ -413,10 +384,12 @@ export function RequestLogTable({
     const cacheWriteUnknown = CACHE_INCLUSIVE_APP_TYPES.has(log.appType);
     const hitRate = getRequestCacheHitRate(log);
     const success = isSuccessStatus(log.statusCode);
-
     const cells: Record<
       RequestLogColumnId,
-      ReactElement<{ className?: string; style?: CSSProperties }>
+      ReactElement<{
+        className?: string;
+        style?: CSSProperties;
+      }>
     > = {
       // 时间、应用两列收紧到内容宽度（w-px），多出来的宽度留给后面的数值列
       time: (
@@ -608,7 +581,6 @@ export function RequestLogTable({
         </td>
       ),
     };
-
     return (
       <tr
         key={log.requestId}
@@ -631,15 +603,16 @@ export function RequestLogTable({
       </tr>
     );
   };
-
   const groupBreaks = requestLogGroupBreaks(columns);
-
   // 横向滚动时：开头的时间 / 应用列贴左
   const pinnedStart = requestLogPinnedStart(columns);
   const pinFor = (
     id: RequestLogColumnId,
     part: "head" | "body",
-  ): { className?: string; style?: CSSProperties } => {
+  ): {
+    className?: string;
+    style?: CSSProperties;
+  } => {
     const index = pinnedStart.indexOf(id);
     if (index >= 0) {
       return {
@@ -655,7 +628,6 @@ export function RequestLogTable({
     }
     return {};
   };
-
   return (
     <div className="flex flex-col">
       <div ref={scrollRef} className={usageTable.scroller}>

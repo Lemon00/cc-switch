@@ -6,7 +6,6 @@ import { describe, expect, it } from "vitest";
 import { useSwitchProviderMutation } from "@/lib/query/mutations";
 import { server } from "../msw/server";
 import { createTestQueryClient } from "../utils/testQueryClient";
-
 // Exercise the actual invoke -> mutation -> caller path: the result must not be
 // swallowed by onSuccess/cache invalidation before notification selection.
 describe("provider switch result transport", () => {
@@ -37,7 +36,6 @@ describe("provider switch result transport", () => {
       client.clear();
     },
   );
-
   // 切到绑号的官方卡时后端可能把默认登录收成新账号，授权中心的 Claude 列表要重读
   it.each([
     ["claude", true],

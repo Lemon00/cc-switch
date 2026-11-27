@@ -1,20 +1,18 @@
-import { useState } from "react";
-import { RotateCw } from "lucide-react";
-import { useTranslation } from "react-i18next";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
-import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
   useAcknowledgeCodexStaleClients,
   useRestartCodexAppServerDaemon,
 } from "@/lib/query/proxy";
 import type { CodexStaleClients } from "@/types/proxy";
-
+import { RotateCw } from "lucide-react";
+import { useState } from "react";
+import { useTranslation } from "react-i18next";
 interface CodexStaleClientsNoticeProps {
   staleClients: CodexStaleClients;
   onDismiss?: () => void;
 }
-
 /**
  * Codex 客户端可能缓存着旧账号或模型列表（模型目录只在启动时读，切换账号或直连、路由、聚合
  * 模式后都会变）。命令行连的守护进程确认后一键重启；桌面版、编辑器插件只提示用户彻底退出再
@@ -33,7 +31,6 @@ export function CodexStaleClientsNotice({
     if (staleClients.unverified) acknowledge.mutate();
     onDismiss?.();
   };
-
   return (
     <>
       <Notice

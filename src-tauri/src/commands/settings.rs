@@ -1,6 +1,6 @@
 #![allow(non_snake_case)]
 
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_updater::UpdaterExt;
 
 /// 应用更新下载进度（通过 `update-download-progress` 事件发给前端）。
@@ -10,39 +10,27 @@ struct UpdateDownloadProgress {
     total: Option<u64>,
 }
 
+fn app_updater_builder<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+) -> Result<tauri_plugin_updater::UpdaterBuilder, String> {
+    let status = app
+        .try_state::<crate::init_status::UpdaterStatus>()
+        .ok_or_else(|| "应用更新插件尚未初始化".to_string())?;
+    status.inner().0.as_ref().map_err(Clone::clone)?;
+    Ok(app
+        .updater_builder()
+        .timeout(std::time::Duration::from_secs(30)))
+}
+
 fn merge_settings_for_save(
     mut incoming: crate::settings::AppSettings,
     existing: &crate::settings::AppSettings,
 ) -> crate::settings::AppSettings {
-    match (&mut incoming.webdav_sync, &existing.webdav_sync) {
-        // incoming 没有 webdav → 保留现有
-        (None, _) => {
-            incoming.webdav_sync = existing.webdav_sync.clone();
-        }
-        // incoming 有 webdav 但密码为空，且现有有密码 → 填回现有密码
-        // （get_settings_for_frontend 总是清空密码，所以通过 save_settings
-        //   传入的空密码意味着"保持现有"而非"用户主动清空"）
-        (Some(incoming_sync), Some(existing_sync))
-            if incoming_sync.password.is_empty() && !existing_sync.password.is_empty() =>
-        {
-            incoming_sync.password = existing_sync.password.clone();
-        }
-        _ => {}
-    }
-    match (&mut incoming.s3_sync, &existing.s3_sync) {
-        // incoming 没有 s3 → 保留现有
-        (None, _) => {
-            incoming.s3_sync = existing.s3_sync.clone();
-        }
-        // incoming 有 s3 但密钥为空，且现有有密钥 → 填回现有密钥
-        (Some(incoming_sync), Some(existing_sync))
-            if incoming_sync.secret_access_key.is_empty()
-                && !existing_sync.secret_access_key.is_empty() =>
-        {
-            incoming_sync.secret_access_key = existing_sync.secret_access_key.clone();
-        }
-        _ => {}
-    }
+    // Cloud configuration has dedicated commands with credential scoping and
+    // the global sync lock. Generic form saves must not replay stale cloud data.
+    incoming.webdav_sync = existing.webdav_sync.clone();
+    incoming.s3_sync = existing.s3_sync.clone();
+    incoming.webdav_backup = existing.webdav_backup.clone();
     // local_migrations 是纯后端状态（迁移完成标记），前端没有合法的修改场景，
     // 无条件取现有值。若按 incoming 透传：后端清掉 marker（如关闭统一会话
     // 开关）后、前端 query 缓存刷新前的一次全量保存会把旧 marker 重放回来，
@@ -51,6 +39,7 @@ fn merge_settings_for_save(
     // 客户端地址只经 set_proxy_client_host 保存（它还要重写客户端）；全量保存带的是前端
     // 缓存里的旧值，透传会把刚保存的地址冲掉。
     incoming.proxy_client_host = existing.proxy_client_host.clone();
+    incoming.proxy_lan_token = existing.proxy_lan_token.clone();
     // 轻量模式状态只由进入 / 退出轻量模式时写，前端缓存里的值总是旧的。
     incoming.lightweight_mode = existing.lightweight_mode;
     incoming
@@ -61,94 +50,108 @@ pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
     Ok(crate::settings::get_settings_for_frontend())
 }
 
+#[derive(Default)]
+struct CodexSettingsEffects {
+    stack: bool,
+    preserve_login: bool,
+    unify_history: bool,
+}
+
+impl CodexSettingsEffects {
+    fn between(
+        previous: &crate::settings::AppSettings,
+        next: &crate::settings::AppSettings,
+    ) -> Self {
+        Self {
+            stack: next.codex_stack_classic_tools != previous.codex_stack_classic_tools
+                || next.codex_stack_subagent_model != previous.codex_stack_subagent_model
+                || next.codex_stack_subagent_reasoning_effort
+                    != previous.codex_stack_subagent_reasoning_effort
+                || next.codex_stack_auto_review_model != previous.codex_stack_auto_review_model,
+            preserve_login: next.preserve_codex_official_auth_on_switch
+                != previous.preserve_codex_official_auth_on_switch,
+            unify_history: next.unify_codex_session_history != previous.unify_codex_session_history,
+        }
+    }
+
+    async fn apply(&self, state: &crate::store::AppState) -> Result<(), String> {
+        let mut failures = Vec::new();
+        if self.stack {
+            if let Err(error) = crate::mode::controller::resync_codex_stack_catalog(state).await {
+                failures.push(format!("Codex Stack: {error}"));
+            }
+        }
+        if self.preserve_login {
+            if let Err(error) =
+                crate::services::provider::reapply_current_codex_third_party_live(state)
+            {
+                failures.push(format!("Codex official login: {error}"));
+            }
+        }
+        if self.unify_history {
+            if let Err(error) =
+                crate::services::provider::reapply_current_codex_official_live(state)
+            {
+                failures.push(format!("Codex unified history: {error}"));
+            }
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn save_settings(
     app: tauri::AppHandle,
     state: tauri::State<'_, crate::store::AppState>,
-    settings: crate::settings::AppSettings,
+    settings: serde_json::Value,
 ) -> Result<bool, String> {
-    let existing = crate::settings::get_settings();
-    let merged = merge_settings_for_save(settings, &existing);
-    let unify_codex_changed =
-        merged.unify_codex_session_history != existing.unify_codex_session_history;
+    static SAVE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _save_guard = SAVE_LOCK.lock().await;
+    let (existing, merged) = crate::settings::update_settings_with(|existing| {
+        let patch = settings.as_object().ok_or_else(|| {
+            crate::error::AppError::InvalidInput("Settings must be an object".into())
+        })?;
+        let mut value = serde_json::to_value(existing)
+            .map_err(|source| crate::error::AppError::JsonSerialize { source })?;
+        value.as_object_mut().unwrap().extend(patch.clone());
+        let incoming = serde_json::from_value(value)
+            .map_err(|error| crate::error::AppError::Config(error.to_string()))?;
+        Ok(merge_settings_for_save(incoming, existing))
+    })
+    .map_err(|error| error.to_string())?;
+    let effects = CodexSettingsEffects::between(&existing, &merged);
     let unify_codex_enabled = merged.unify_codex_session_history;
-    // 经典子 agent 开关、聚合子 agent 模型/强度和聚合自动审批模型都只影响 Stack 模式下
-    // 写给 Codex 的内容。
-    let stack_settings_changed = merged.codex_stack_classic_tools
-        != existing.codex_stack_classic_tools
-        || merged.codex_stack_subagent_model != existing.codex_stack_subagent_model
-        || merged.codex_stack_subagent_reasoning_effort
-            != existing.codex_stack_subagent_reasoning_effort
-        || merged.codex_stack_auto_review_model != existing.codex_stack_auto_review_model;
     let tray_style_changed = merged.native_tray_menu != existing.native_tray_menu;
-    let preserve_login_changed = merged.preserve_codex_official_auth_on_switch
-        != existing.preserve_codex_official_auth_on_switch;
-    crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
 
-    // 原生托盘菜单 / 托盘面板当场切换，不用重启。
+    if let Err(error) = effects.apply(state.inner()).await {
+        let mut failures = vec![format!(
+            "设置未生效 (Settings could not be applied): {error}"
+        )];
+        if let Err(rollback_error) = crate::settings::rollback_settings_changes(&existing, &merged)
+        {
+            failures.push(format!(
+                "设置回滚失败 (Settings rollback failed): {rollback_error}"
+            ));
+        }
+        if let Err(recovery_error) = effects.apply(state.inner()).await {
+            failures.push(format!(
+                "客户端配置恢复失败 (Live configuration recovery failed): {recovery_error}"
+            ));
+        }
+        if tray_style_changed {
+            crate::tray::apply_tray_style(&app);
+        }
+        return Err(failures.join("; "));
+    }
+
     if tray_style_changed {
         crate::tray::apply_tray_style(&app);
     }
-
-    // 立即重写，失败时回滚设置，免得界面显示已改好、客户端还是旧的。
-    if stack_settings_changed {
-        if let Err(err) = crate::mode::controller::resync_codex_stack_catalog(state.inner()).await {
-            log::warn!("Codex 聚合设置变更后重写客户端配置失败，回滚设置: {err}");
-            let mut rollback = crate::settings::get_settings();
-            rollback.codex_stack_classic_tools = existing.codex_stack_classic_tools;
-            rollback.codex_stack_subagent_model = existing.codex_stack_subagent_model.clone();
-            rollback.codex_stack_subagent_reasoning_effort =
-                existing.codex_stack_subagent_reasoning_effort.clone();
-            rollback.codex_stack_auto_review_model = existing.codex_stack_auto_review_model.clone();
-            if let Err(rollback_err) = crate::settings::update_settings(rollback) {
-                log::error!("回滚 Codex 聚合设置失败: {rollback_err}");
-            }
-            return Err(format!(
-                "聚合设置未生效（Codex 配置重写失败） (The aggregation setting did not take effect: rewriting the Codex config failed): {err}"
-            ));
-        }
-    }
-
-
-
-    // 「非接管切换时保留官方登录」只影响直连切到第三方：当前就是直连第三方时立即重写，
-    // 不必先切回官方卡再切回来；失败回滚。
-    if preserve_login_changed {
-        if let Err(err) =
-            crate::services::provider::reapply_current_codex_third_party_live(state.inner())
-        {
-            log::warn!("「非接管切换时保留官方登录」变更后重写 Codex 配置失败，回滚设置: {err}");
-            let mut rollback = crate::settings::get_settings();
-            rollback.preserve_codex_official_auth_on_switch =
-                existing.preserve_codex_official_auth_on_switch;
-            if let Err(rollback_err) = crate::settings::update_settings(rollback) {
-                log::error!("回滚「非接管切换时保留官方登录」设置失败: {rollback_err}");
-            }
-            return Err(format!(
-                "「非接管切换时保留官方登录」未生效（Codex 配置重写失败） (\"Keep official login for direct switches\" did not take effect: rewriting the Codex config failed): {err}"
-            ));
-        }
-    }
-    // 统一会话开关变更时立即重写当前官方 Codex 供应商的 live 配置，
-    // 不必等下一次切换才生效。
-    if unify_codex_changed {
-        // live 重写失败时回滚设置并把保存整体报失败：若设置保持已切换状态，
-        // live 仍跑旧桶，后续的历史迁移/还原会让会话再次分裂（开启=历史
-        // 迁走而新会话仍写 openai 桶；关闭=会话还原而 live 仍写 custom）。
-        // 报错让前端 saved=false 短路还原；回滚是整次保存的事务语义
-        // （本开关的保存只携带开关相关字段）。
-        if let Err(err) =
-            crate::services::provider::reapply_current_codex_official_live(state.inner())
-        {
-            log::warn!("统一 Codex 会话历史开关变更后重写 live 配置失败，回滚设置: {err}");
-            if let Err(rollback_err) = crate::settings::update_settings(existing) {
-                log::error!("回滚统一会话开关设置失败: {rollback_err}");
-            }
-            return Err(format!(
-                "统一 Codex 会话历史开关未生效（live 配置重写失败）: {err}"
-            ));
-        }
-
+    if effects.unify_history {
         if unify_codex_enabled {
             // 后台执行存量迁移（openai 桶 → custom 桶；仅当用户勾选了迁入既有
             // 会话，函数内部自门控）。大会话目录可能要读数秒，不能阻塞设置保存；
@@ -233,12 +236,14 @@ pub async fn set_codex_session_compression(
 }
 
 /// Codex 会话目录（sessions + archived_sessions）当前占用的字节数。
+#[cfg(feature = "session-monitor")]
 #[tauri::command]
 pub async fn get_codex_sessions_disk_usage() -> Result<u64, String> {
     tauri::async_runtime::spawn_blocking(
         crate::services::codex_session_compression::sessions_disk_usage,
     )
     .await
+    .map_err(|e| e.to_string())?
     .map_err(|e| e.to_string())
 }
 
@@ -270,19 +275,27 @@ pub async fn restore_codex_unified_history() -> Result<CodexUnifyHistoryRestoreR
     })
 }
 
+// 更新安装与目录重启必须互斥，窗口重建不能绕过此锁。
+static RESTART_UPDATE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// 重启应用程序（当 app_config_dir 变更后使用）
 #[tauri::command]
 pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
+    let operation = RESTART_UPDATE_LOCK
+        .try_lock()
+        .map_err(|_| "应用正在更新或重启，请等待当前操作完成".to_string())?;
     crate::save_window_state_before_exit(&app);
 
     // 在后台延迟重启，让函数有时间返回响应
     tauri::async_runtime::spawn(async move {
+        let _operation = operation;
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         // 本命令用于 app_config_dir 变更后的重启：新实例会切到新数据库，拿不到
         // 旧库里的 Live 备份，无法恢复被接管的 Live 配置。因此必须趁旧实例的
         // 事件循环仍存活，在这里同步完成恢复（保留代理状态，新实例启动时自动
         // 重新接管）。
-        crate::cleanup_before_exit(&app).await;
+        crate::run_exit_cleanup_once(&app).await;
+        crate::wait_for_db_quiescent(&app).await;
         // 与自更新共用 restart_process，而不是 app.restart()：macOS 上经
         // LaunchServices 启动，新窗口才能回到前台。
         crate::restart_process(&app);
@@ -297,14 +310,31 @@ pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
 /// 这里把退出清理、安装和重启串在同一个后端流程中，避免依赖旧前端继续执行。
 #[tauri::command]
 pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> {
-    let builder = app.updater_builder();
+    let operation = RESTART_UPDATE_LOCK
+        .try_lock()
+        .map_err(|_| "应用正在更新或重启，请等待当前操作完成".to_string())?;
+    let builder = app_updater_builder(&app)?;
     // Windows 上 updater 以 `msiexec /passive /promptrestart` 安装 MSI。passive 没有模态框、
     // 未指定重启选项时，安装目录里有文件被占用，Windows Installer 会不经确认直接重启系统
     // （#8534）。`/promptrestart` 只对应 REBOOTPROMPT，挡不住这一点，因此显式追加
     // REBOOT=ReallySuppress（即 `/norestart`）。旧版本的 updater 不带这个参数，
     // 由 MSI 模板自身的 REBOOT 属性兜底。
     #[cfg(target_os = "windows")]
-    let builder = builder.installer_arg("REBOOT=ReallySuppress");
+    let builder = builder
+        .installer_arg("REBOOT=ReallySuppress")
+        .on_before_exit({
+            let app = app.clone();
+            move || {
+                // 插件已成功解包，即将启动安装器并退出；此前的失败仍可继续使用应用。
+                crate::save_window_state_before_exit(&app);
+                tauri::async_runtime::block_on(crate::run_exit_cleanup_once(&app));
+                crate::remove_tray_icon_before_exit(&app);
+                crate::destroy_single_instance_lock(&app);
+                tauri::async_runtime::block_on(crate::wait_for_db_quiescent(&app));
+                // 自定义 hook 替换了插件默认 hook，保留 Tauri 自身的资源清理。
+                app.cleanup_before_exit();
+            }
+        });
     let updater = builder
         .build()
         .map_err(|e| format!("初始化更新器失败: {e}"))?;
@@ -339,39 +369,30 @@ pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> 
 
     log::info!("开始安装应用更新: {}", update.version);
 
-    #[cfg(target_os = "windows")]
-    {
-        // Windows updater 会在 install() 内启动安装器并直接退出当前进程
-        // （插件内部 std::process::exit(0)，绕过 TrayIcon::drop、不发
-        // NIM_DELETE，会残留死图标——与托盘"退出"路径相同的问题）。
-        // 因此清理只能放在 install 前执行，且必须显式移除托盘图标。
-        crate::save_window_state_before_exit(&app);
-        crate::cleanup_before_exit(&app).await;
-        crate::remove_tray_icon_before_exit(&app);
-        crate::destroy_single_instance_lock(&app);
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        update.install(bytes).map_err(|e| {
-            format!(
-                "Windows 更新安装失败: {e}。已执行退出前清理，代理或 Live 接管可能已暂停；请重启应用或重新开启代理后再试。"
-            )
-        })?;
-        Ok(true)
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        // macOS/Linux install() 会返回；先安装，避免安装失败时误停代理/撤回接管。
+    // 所有平台的安装都是同步磁盘操作。锁随 worker 移动，IPC 调用方
+    // 取消等待也不能提前放锁，让第二个安装器与仍在运行的第一个交错。
+    tauri::async_runtime::spawn_blocking(move || -> Result<bool, String> {
+        let _operation = operation;
         update
             .install(bytes)
             .map_err(|e| format!("安装更新失败: {e}"))?;
 
-        crate::save_window_state_before_exit(&app);
-        crate::cleanup_before_exit(&app).await;
-
-        log::info!("应用更新安装完成，正在重启应用");
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        crate::restart_process(&app);
-    }
+        #[cfg(not(target_os = "windows"))]
+        {
+            // 只有安装成功才消费一次性退出清理，失败后仍可继续使用应用。
+            crate::save_window_state_before_exit(&app);
+            tauri::async_runtime::block_on(async {
+                crate::run_exit_cleanup_once(&app).await;
+                crate::wait_for_db_quiescent(&app).await;
+            });
+            log::info!("应用更新安装完成，正在重启应用");
+            crate::restart_process(&app);
+        }
+        #[cfg(target_os = "windows")]
+        Ok(true)
+    })
+    .await
+    .map_err(|e| format!("更新安装任务失败: {e}"))?
 }
 
 /// 检查是否有可用的应用更新，返回可用的新版本号（无更新时返回 None）。
@@ -381,8 +402,7 @@ pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> 
 /// 升级无法解决，而不是让其反复尝试。
 #[tauri::command]
 pub async fn check_app_update_available(app: AppHandle) -> Result<Option<String>, String> {
-    let updater = app
-        .updater_builder()
+    let updater = app_updater_builder(&app)?
         .build()
         .map_err(|e| format!("初始化更新器失败: {e}"))?;
     let update = updater
@@ -425,6 +445,39 @@ pub async fn set_auto_launch(enabled: bool) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     use super::merge_settings_for_save;
+
+    #[test]
+    fn unavailable_updater_returns_error_without_accessing_plugin_state() {
+        use tauri::Manager;
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        assert_eq!(
+            super::app_updater_builder(app.handle()).err().as_deref(),
+            Some("应用更新插件尚未初始化")
+        );
+        app.manage(crate::init_status::UpdaterStatus(Err(
+            "invalid updater config".into(),
+        )));
+        assert_eq!(
+            super::app_updater_builder(app.handle()).err().as_deref(),
+            Some("invalid updater config")
+        );
+    }
+
+    #[test]
+    fn combined_settings_patch_plans_all_affected_live_updates() {
+        let existing = crate::settings::AppSettings::default();
+        let mut changed = existing.clone();
+        changed.codex_stack_classic_tools = !existing.codex_stack_classic_tools;
+        changed.preserve_codex_official_auth_on_switch =
+            !existing.preserve_codex_official_auth_on_switch;
+        changed.unify_codex_session_history = !existing.unify_codex_session_history;
+        let effects = super::CodexSettingsEffects::between(&existing, &changed);
+        assert!(effects.stack && effects.preserve_login && effects.unify_history);
+        let unchanged = super::CodexSettingsEffects::between(&changed, &changed);
+        assert!(!unchanged.stack && !unchanged.preserve_login && !unchanged.unify_history);
+    }
     use crate::settings::{
         AppSettings, CodexOfficialHistoryUnifyMigration, CodexProviderTemplateMigration,
         CodexThirdPartyHistoryProviderBucketMigration, LocalMigrations, S3SyncSettings,
@@ -478,7 +531,7 @@ mod tests {
     }
 
     #[test]
-    fn save_settings_should_keep_incoming_webdav_when_present() {
+    fn generic_save_preserves_cloud_configuration_even_when_payload_contains_it() {
         let existing = AppSettings {
             webdav_sync: Some(WebDavSyncSettings {
                 base_url: "https://dav.old.example.com".to_string(),
@@ -503,7 +556,7 @@ mod tests {
 
         assert_eq!(
             merged.webdav_sync.as_ref().map(|v| v.base_url.as_str()),
-            Some("https://dav.new.example.com")
+            Some("https://dav.old.example.com")
         );
     }
 
@@ -798,7 +851,6 @@ pub async fn set_optimizer_config(
         .map_err(|e| e.to_string())?;
     Ok(true)
 }
-
 
 #[tauri::command]
 pub async fn get_copilot_optimizer_config(

@@ -16,7 +16,6 @@ export interface PresetFamilyInfo {
   /** 套餐的显示顺序（设计稿顺序）；不写或没列到的套餐按预设文件里第一次出现的顺序排在后面 */
   planOrder?: readonly PresetPlanKey[];
 }
-
 export const PRESET_FAMILIES = {
   // 讯飞星辰：按量计费和 Coding Plan 的 Key、地址都不通用
   astron: { name: "Astron" },
@@ -55,9 +54,7 @@ export const PRESET_FAMILIES = {
   "xiaomi-mimo": { name: "Xiaomi MiMo" },
   zhipu: { name: "Zhipu GLM" },
 } as const satisfies Record<string, PresetFamilyInfo>;
-
 export type PresetFamilyId = keyof typeof PRESET_FAMILIES;
-
 /**
  * 套餐，显示为 `providerPreset.plan.<key>`。AWS Bedrock 的 AKSK / API Key 是认证方式，
  * 也放在这一维（它只有这一维，界面上照旧叫「版本」）。
@@ -74,14 +71,10 @@ export const PRESET_PLAN_KEYS = [
   "aksk",
   "apiKey",
 ] as const;
-
 export type PresetPlanKey = (typeof PRESET_PLAN_KEYS)[number];
-
 /** 地区，显示为 `providerPreset.region.<key>`；数组顺序就是显示顺序（先国内后海外） */
 export const PRESET_REGION_KEYS = ["cn", "intl"] as const;
-
 export type PresetRegionKey = (typeof PRESET_REGION_KEYS)[number];
-
 /** 各应用预设接口共用的字段 */
 export interface PresetFamilyFields {
   /** 厂商（同一家的多个版本合成一行），见 PRESET_FAMILIES */

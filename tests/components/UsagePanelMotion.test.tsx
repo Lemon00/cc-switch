@@ -3,7 +3,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import UsageScriptModal from "@/components/UsageScriptModal";
 import { PricingEditModal } from "@/components/usage/PricingEditModal";
-
 vi.mock("@/lib/query", () => ({
   useSettingsQuery: () => ({ data: { usageConfirmed: true } }),
 }));
@@ -11,7 +10,6 @@ vi.mock("@/lib/query/usage", () => ({
   useUpdateModelPricing: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 vi.mock("@/components/JsonEditor", () => ({ default: () => <div /> }));
-
 describe("Usage pages render without a transparent opening frame", () => {
   it("opens usage query configuration fully opaque", () => {
     render(
@@ -29,7 +27,6 @@ describe("Usage pages render without a transparent opening frame", () => {
       opacity: "1",
     });
   });
-
   it.each([true, false])("opens pricing fully opaque (isNew=%s)", (isNew) => {
     render(
       <PricingEditModal

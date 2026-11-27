@@ -20,10 +20,9 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc,
 };
 use std::time::Duration;
@@ -69,10 +68,10 @@ const POLLING_SAFETY_MARGIN_SECS: u64 = 3;
 const CODEX_USER_AGENT: &str = "cc-switch-codex-oauth";
 
 // Shared by model discovery and generation: ChatGPT gates models by this
-// client identity. GPT-6.1 Sol enters the ChatGPT-account catalog at 0.159.0.
+// client identity.
 // Bump together when a new model raises its minimal_client_version or catalog gate.
 pub const CODEX_OAUTH_ORIGINATOR: &str = "codex_cli_rs";
-pub const CODEX_OAUTH_CLIENT_VERSION: &str = "0.159.0";
+pub const CODEX_OAUTH_CLIENT_VERSION: &str = "0.169.0";
 
 /// Codex OAuth 错误
 #[derive(Debug, thiserror::Error)]
@@ -396,6 +395,8 @@ pub struct CodexOAuthManager {
     /// 完成。此前由外层 `RwLock<CodexOAuthManager>` 的写锁隐式串行化；去掉外层锁后
     /// 需要它防止并发保存/清除交错，导致已删账号被旧快照复活。
     storage_lock: Arc<Mutex<()>>,
+    /// 读取/解析账号文件失败时禁止 persist，避免空表覆盖原文件。
+    load_failed: AtomicBool,
 }
 
 impl CodexOAuthManager {
@@ -416,10 +417,12 @@ impl CodexOAuthManager {
             next_target_login_generation: AtomicU64::new(0),
             storage_path,
             storage_lock: Arc::new(Mutex::new(())),
+            load_failed: AtomicBool::new(false),
         };
 
         if let Err(e) = manager.load_from_disk_sync() {
-            log::warn!("[CodexOAuth] 加载存储失败: {e}");
+            log::error!("[CodexOAuth] 加载存储失败，已禁止写入以免覆盖原文件: {e}");
+            manager.load_failed.store(true, Ordering::Release);
         }
 
         manager
@@ -441,7 +444,8 @@ impl CodexOAuthManager {
         let (login_epoch, target_account_id, target_generation) =
             self.prepare_login_target(target_account_id).await?;
 
-        let response = crate::proxy::http_client::get()
+        let response = crate::proxy::http_client::no_redirect()
+            .map_err(|e| CodexOAuthError::NetworkError(e))?
             .post(DEVICE_AUTH_USERCODE_URL)
             .timeout(OAUTH_HTTP_TIMEOUT)
             .header("Content-Type", "application/json")
@@ -452,19 +456,18 @@ impl CodexOAuthManager {
 
         if !response.status().is_success() {
             let status = response.status();
-            let text = response.text().await.unwrap_or_default();
             return Err(CodexOAuthError::NetworkError(format!(
-                "Device Code 请求失败: {status} - {text}"
+                "Device Code 请求失败: HTTP {status}"
             )));
         }
 
-        let device: DeviceCodeResponse = response
-            .json()
-            .await
-            .map_err(|e| CodexOAuthError::ParseError(e.to_string()))?;
+        let device: DeviceCodeResponse = read_oauth_json(response).await?;
 
         let interval = parse_interval(device.interval.as_ref());
-        let expires_in = device.expires_in.unwrap_or(DEVICE_CODE_DEFAULT_EXPIRES_IN);
+        let expires_in = device
+            .expires_in
+            .unwrap_or(DEVICE_CODE_DEFAULT_EXPIRES_IN)
+            .clamp(1, 86_400);
         let expires_at_ms = chrono::Utc::now().timestamp_millis() + (expires_in as i64) * 1000;
 
         self.register_pending_device_code(
@@ -477,10 +480,7 @@ impl CodexOAuthManager {
         )
         .await?;
 
-        log::info!(
-            "[CodexOAuth] 获取 Device Code 成功，user_code: {}",
-            device.user_code
-        );
+        log::info!("[CodexOAuth] 获取 Device Code 成功");
 
         Ok(GitHubDeviceCodeResponse {
             device_code: device.device_auth_id,
@@ -601,7 +601,8 @@ impl CodexOAuthManager {
 
         log::debug!("[CodexOAuth] 轮询 Device Code");
 
-        let poll_response = crate::proxy::http_client::get()
+        let poll_response = crate::proxy::http_client::no_redirect()
+            .map_err(|e| CodexOAuthError::NetworkError(e))?
             .post(DEVICE_AUTH_TOKEN_URL)
             .timeout(OAUTH_HTTP_TIMEOUT)
             .header("Content-Type", "application/json")
@@ -625,16 +626,10 @@ impl CodexOAuthManager {
         }
 
         if !status.is_success() {
-            let text = poll_response.text().await.unwrap_or_default();
-            return Err(CodexOAuthError::TokenFetchFailed(format!(
-                "{status} - {text}"
-            )));
+            return Err(CodexOAuthError::TokenFetchFailed(format!("HTTP {status}")));
         }
 
-        let success: DevicePollSuccess = poll_response
-            .json()
-            .await
-            .map_err(|e| CodexOAuthError::ParseError(e.to_string()))?;
+        let success: DevicePollSuccess = read_oauth_json(poll_response).await?;
 
         log::info!("[CodexOAuth] 用户已授权，正在换取 OAuth Token");
 
@@ -715,7 +710,8 @@ impl CodexOAuthManager {
         code_verifier: &str,
         redirect_uri: &str,
     ) -> Result<OAuthTokenResponse, CodexOAuthError> {
-        let response = crate::proxy::http_client::get()
+        let response = crate::proxy::http_client::no_redirect()
+            .map_err(|e| CodexOAuthError::NetworkError(e))?
             .post(OAUTH_TOKEN_URL)
             .timeout(OAUTH_HTTP_TIMEOUT)
             .header("Content-Type", "application/x-www-form-urlencoded")
@@ -732,16 +728,12 @@ impl CodexOAuthManager {
 
         if !response.status().is_success() {
             let status = response.status();
-            let text = response.text().await.unwrap_or_default();
             return Err(CodexOAuthError::TokenFetchFailed(format!(
-                "Token 交换失败: {status} - {text}"
+                "Token 交换失败: HTTP {status}"
             )));
         }
 
-        response
-            .json()
-            .await
-            .map_err(|e| CodexOAuthError::ParseError(e.to_string()))
+        read_oauth_json(response).await
     }
 
     /// 用 refresh_token 刷新 access_token
@@ -749,7 +741,8 @@ impl CodexOAuthManager {
         &self,
         refresh_token: &str,
     ) -> Result<OAuthTokenResponse, CodexOAuthError> {
-        let response = crate::proxy::http_client::get()
+        let response = crate::proxy::http_client::no_redirect()
+            .map_err(|e| CodexOAuthError::NetworkError(e))?
             .post(OAUTH_TOKEN_URL)
             .timeout(OAUTH_HTTP_TIMEOUT)
             .header("Content-Type", "application/x-www-form-urlencoded")
@@ -765,24 +758,21 @@ impl CodexOAuthManager {
 
         let status = response.status();
         if !status.is_success() {
-            let text = response.text().await.unwrap_or_default();
+            let bytes = crate::proxy::http_client::read_body_with_limit(response, 64 * 1024)
+                .await
+                .unwrap_or_default();
+            let text = String::from_utf8_lossy(&bytes);
             let refresh_error_code = extract_refresh_error_code(&text);
             if refresh_rejection_is_permanent(status, refresh_error_code.as_deref()) {
-                log::warn!(
-                    "[CodexOAuth] refresh token rejected: HTTP {status}, code={}",
-                    refresh_error_code.as_deref().unwrap_or("none")
-                );
+                log::warn!("[CodexOAuth] refresh token rejected: HTTP {status}");
                 return Err(CodexOAuthError::RefreshTokenInvalid);
             }
             return Err(CodexOAuthError::TokenFetchFailed(format!(
-                "Refresh 失败: {status} - {text}"
+                "Refresh 失败: HTTP {status}"
             )));
         }
 
-        response
-            .json()
-            .await
-            .map_err(|e| CodexOAuthError::ParseError(e.to_string()))
+        read_oauth_json(response).await
     }
 
     // ==================== Token 获取（含自动刷新） ====================
@@ -1437,6 +1427,18 @@ impl CodexOAuthManager {
         crate::codex_config::clear_codex_live_auth_for_managed_account(account_id)
             .map_err(|error| CodexOAuthError::IoError(error.to_string()))?;
 
+        let _persist = self.storage_lock.lock().await;
+        let mut next_accounts = self.accounts.read().await.clone();
+        next_accounts.remove(account_id);
+        let next_default = self
+            .default_account_id
+            .read()
+            .await
+            .clone()
+            .filter(|id| next_accounts.contains_key(id))
+            .or_else(|| Self::fallback_default_account_id(&next_accounts));
+        self.write_account_snapshot(&next_accounts, next_default.clone())?;
+
         {
             // 在 accounts 写锁内原子清除该账号的 token 缓存（accounts -> access_tokens
             // 顺序），确保不存在「账号已删但缓存仍在」的窗口。
@@ -1453,20 +1455,13 @@ impl CodexOAuthManager {
             .await
             .remove(account_id);
 
-        {
-            let accounts = self.accounts.read().await;
-            let mut default = self.default_account_id.write().await;
-            if default.as_deref() == Some(account_id) {
-                *default = Self::fallback_default_account_id(&accounts);
-            }
-        }
-
-        self.save_to_disk().await?;
+        *self.default_account_id.write().await = next_default;
         Ok(())
     }
 
     pub async fn set_default_account(&self, account_id: &str) -> Result<(), CodexOAuthError> {
         let _lifecycle = self.lifecycle_lock.read().await;
+        let _persist = self.storage_lock.lock().await;
         {
             let accounts = self.accounts.read().await;
             if !accounts.contains_key(account_id) {
@@ -1474,12 +1469,9 @@ impl CodexOAuthManager {
             }
         }
 
-        {
-            let mut default = self.default_account_id.write().await;
-            *default = Some(account_id.to_string());
-        }
-
-        self.save_to_disk().await?;
+        let accounts = self.accounts.read().await.clone();
+        self.write_account_snapshot(&accounts, Some(account_id.to_string()))?;
+        *self.default_account_id.write().await = Some(account_id.to_string());
         Ok(())
     }
 
@@ -1551,6 +1543,8 @@ impl CodexOAuthManager {
         if self.storage_path.exists() {
             std::fs::remove_file(&self.storage_path)?;
         }
+        // 用户主动清空后允许重新写入（损坏文件已被删除）。
+        self.load_failed.store(false, Ordering::Release);
 
         Ok(())
     }
@@ -1990,58 +1984,14 @@ impl CodexOAuthManager {
     }
 
     fn write_store_atomic(&self, content: &str) -> Result<(), CodexOAuthError> {
-        if let Some(parent) = self.storage_path.parent() {
-            fs::create_dir_all(parent)?;
+        if self.load_failed.load(Ordering::Acquire) {
+            return Err(CodexOAuthError::IoError(
+                "账号文件损坏或不可读，已禁止写入以免覆盖原文件。请修复文件后重启应用，或在应用内清空账号后重试。"
+                    .to_string(),
+            ));
         }
-
-        let parent = self
-            .storage_path
-            .parent()
-            .ok_or_else(|| CodexOAuthError::IoError("无效的存储路径".to_string()))?;
-        let file_name = self
-            .storage_path
-            .file_name()
-            .ok_or_else(|| CodexOAuthError::IoError("无效的存储文件名".to_string()))?
-            .to_string_lossy()
-            .to_string();
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let tmp_path = parent.join(format!("{file_name}.tmp.{ts}"));
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-
-            let mut file = fs::OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .mode(0o600)
-                .open(&tmp_path)?;
-            file.write_all(content.as_bytes())?;
-            file.flush()?;
-
-            fs::rename(&tmp_path, &self.storage_path)?;
-            fs::set_permissions(&self.storage_path, fs::Permissions::from_mode(0o600))?;
-        }
-
-        #[cfg(windows)]
-        {
-            let mut file = fs::OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(&tmp_path)?;
-            file.write_all(content.as_bytes())?;
-            file.flush()?;
-
-            if self.storage_path.exists() {
-                let _ = fs::remove_file(&self.storage_path);
-            }
-            fs::rename(&tmp_path, &self.storage_path)?;
-        }
-
-        Ok(())
+        crate::config::atomic_write_private(&self.storage_path, content.as_bytes())
+            .map_err(|error| CodexOAuthError::IoError(error.to_string()))
     }
 
     fn load_from_disk_sync(&self) -> Result<(), CodexOAuthError> {
@@ -2076,9 +2026,17 @@ impl CodexOAuthManager {
         let accounts = self.accounts.read().await.clone();
         let default = self.resolve_default_account_id().await;
 
+        self.write_account_snapshot(&accounts, default)
+    }
+
+    fn write_account_snapshot(
+        &self,
+        accounts: &HashMap<String, CodexAccountData>,
+        default: Option<String>,
+    ) -> Result<(), CodexOAuthError> {
         let store = CodexOAuthStore {
             version: 2,
-            accounts,
+            accounts: accounts.clone(),
             default_account_id: default,
         };
 
@@ -2116,14 +2074,28 @@ fn parse_interval(value: Option<&serde_json::Value>) -> u64 {
         Some(serde_json::Value::String(s)) => s.parse::<u64>().unwrap_or(5),
         _ => 5,
     };
-    raw.max(1) + POLLING_SAFETY_MARGIN_SECS
+    raw.clamp(1, 86_400) + POLLING_SAFETY_MARGIN_SECS
 }
 
 /// 从 expires_in（秒）计算过期时间戳（毫秒）
 fn compute_expires_at_ms(expires_in: Option<i64>) -> i64 {
     let now_ms = chrono::Utc::now().timestamp_millis();
-    let secs = expires_in.unwrap_or(3600);
+    let secs = expires_in.unwrap_or(3600).clamp(0, 31_536_000);
     now_ms + secs * 1000
+}
+
+async fn read_oauth_json<T: serde::de::DeserializeOwned>(
+    response: reqwest::Response,
+) -> Result<T, CodexOAuthError> {
+    let bytes = crate::proxy::http_client::read_body_with_limit(response, 64 * 1024)
+        .await
+        .map_err(CodexOAuthError::ParseError)?;
+    parse_oauth_json(&bytes)
+}
+
+fn parse_oauth_json<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, CodexOAuthError> {
+    serde_json::from_slice(bytes)
+        .map_err(|_| CodexOAuthError::ParseError("OAuth 响应格式无效".into()))
 }
 
 /// Whether a failed refresh means the refresh token itself is dead.
@@ -2208,6 +2180,45 @@ fn extract_account_metadata_from_tokens(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn oauth_lifetimes_are_bounded_and_parse_errors_never_expose_tokens() {
+        assert_eq!(
+            parse_interval(Some(&serde_json::json!(u64::MAX))),
+            86_400 + POLLING_SAFETY_MARGIN_SECS
+        );
+        let now = chrono::Utc::now().timestamp_millis();
+        assert!(compute_expires_at_ms(Some(i64::MAX)) <= now + 31_536_000_000 + 1000);
+        assert!(compute_expires_at_ms(Some(i64::MIN)) <= now + 1000);
+        let error = parse_oauth_json::<OAuthTokenResponse>(
+            br#"{"access_token":"secret-access","expires_in":"secret-refresh"}"#,
+        )
+        .unwrap_err();
+        let message = error.to_string();
+        assert!(!message.contains("secret-access"));
+        assert!(!message.contains("secret-refresh"));
+    }
+
+    #[tokio::test]
+    async fn failed_default_write_preserves_previous_account_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut manager = CodexOAuthManager::new(dir.path().into());
+        manager
+            .add_test_account_with_user_identity("one", "access-one", "user-one")
+            .await
+            .unwrap();
+        manager
+            .add_test_account_with_user_identity("two", "access-two", "user-two")
+            .await
+            .unwrap();
+        let original = std::fs::read(&manager.storage_path).unwrap();
+        let original_path = manager.storage_path.clone();
+        manager.storage_path = dir.path().join("blocked");
+        std::fs::create_dir(&manager.storage_path).unwrap();
+        assert!(manager.set_default_account("two").await.is_err());
+        assert_eq!(manager.default_account_id().await.as_deref(), Some("one"));
+        assert_eq!(std::fs::read(original_path).unwrap(), original);
+    }
 
     #[tokio::test]
     async fn missing_account_recovery_requires_valid_persisted_state() {

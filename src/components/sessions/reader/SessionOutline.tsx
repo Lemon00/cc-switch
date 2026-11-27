@@ -1,16 +1,13 @@
+import { cn } from "@/lib/utils";
 import { memo, useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
-
-import { cn } from "@/lib/utils";
 import { formatMessageTime } from "../utils";
 import { useReaderT } from "./i18n";
 import { SessionAgentAvatar } from "./SessionAgentAvatar";
 import { isFailureStep } from "./toolSummary";
 import type { SessionTurn } from "./turns";
-
 /** 目录里每条最多显示的字数：再多也只是两行截断，没必要整段传给 DOM */
 const SNIPPET_CHARS = 160;
-
 /** 去掉 Markdown 记号，只留可读文字作目录摘要 */
 const toSnippet = (text: string) =>
   text
@@ -22,7 +19,6 @@ const toSnippet = (text: string) =>
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, SNIPPET_CHARS);
-
 interface OutlineEntry {
   turn: SessionTurn;
   question?: string;
@@ -30,7 +26,6 @@ interface OutlineEntry {
   steps: number;
   failed: boolean;
 }
-
 export interface SessionOutlineProps {
   turns: SessionTurn[];
   /** 正文当前停在哪一轮（turns 下标），高亮并滚到可见 */
@@ -38,7 +33,6 @@ export interface SessionOutlineProps {
   onJumpQuestion: (turn: SessionTurn) => void;
   onJumpReply: (turn: SessionTurn) => void;
 }
-
 /**
  * 右侧对话目录：每轮拆成「你」和 Agent 两条，和正文一样人靠右、Agent 靠左，
  * 一眼分清谁说了什么；点哪条跳到正文对应位置，滚动正文时跟着高亮当前轮。
@@ -52,7 +46,6 @@ export const SessionOutline = memo(function SessionOutline({
   const { t } = useTranslation();
   const rt = useReaderT();
   const listRef = useRef<HTMLOListElement>(null);
-
   const entries = useMemo<OutlineEntry[]>(
     () =>
       turns
@@ -73,7 +66,6 @@ export const SessionOutline = memo(function SessionOutline({
         })),
     [turns],
   );
-
   // 正文滚到别的轮时，把目录里对应的条目滚进视野；只滚目录自己，不带动外层容器
   useEffect(() => {
     const list = listRef.current;
@@ -89,7 +81,6 @@ export const SessionOutline = memo(function SessionOutline({
       list.scrollTop = bottom - list.clientHeight;
     }
   }, [activeTurn]);
-
   return (
     <nav
       aria-label={rt("outlineTitle")}

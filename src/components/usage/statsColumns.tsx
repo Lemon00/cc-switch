@@ -1,13 +1,12 @@
-import { useTranslation } from "react-i18next";
 import { HelpTip } from "@/components/ui/help-tip";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "react-i18next";
 import {
   formatFirstTokenSeconds,
   formatTokensPerSecond,
   getAggregateTokensPerSecond,
 } from "./format";
 import { usageTable } from "./usageTable";
-
 /** 供应商 / 模型统计行共有的速度分子分母与首字中位数（后端只统计满足条件的明细请求）。 */
 export interface SpeedTotals {
   speedOutputTokens?: number;
@@ -17,14 +16,12 @@ export interface SpeedTotals {
   firstTokenMedianMs?: number | null;
   estFirstTokenMedianMs?: number | null;
 }
-
 /** 一行的汇总速度：Σ输出 ÷ Σ生成时间。 */
 export function getStatsSpeed(stat: SpeedTotals): string | null {
   return formatTokensPerSecond(
     getAggregateTokensPerSecond(stat.speedOutputTokens, stat.speedGenerationMs),
   );
 }
-
 /**
  * 会话日志导入的请求的汇总估算速度：Σ输出 ÷ Σ估算耗时（含首字等待）。
  * 没有精确速度时才拿它顶上，显示时前面带 ≈。
@@ -37,7 +34,6 @@ export function getStatsEstimatedSpeed(stat: SpeedTotals): string | null {
     ),
   );
 }
-
 /** 「成功率」「速度」「首字」三列的表头，供应商和模型统计共用；成功率是性能组的第一列，前面多留组间距。 */
 export function PerformanceHeaders() {
   const { t } = useTranslation();
@@ -65,12 +61,13 @@ export function PerformanceHeaders() {
     </>
   );
 }
-
 /** 「成功率」「速度」「首字」三列的单元格；精确值缺失时用会话日志的估算值，带 ≈。 */
 export function PerformanceCells({
   stat,
 }: {
-  stat: SpeedTotals & { successRate: number };
+  stat: SpeedTotals & {
+    successRate: number;
+  };
 }) {
   const exactSpeed = getStatsSpeed(stat);
   const estimatedSpeed =

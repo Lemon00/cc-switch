@@ -1,8 +1,7 @@
-import React from "react";
-import { useClaudeAccountQuota } from "@/lib/query/subscription";
 import { SubscriptionQuotaView } from "@/components/SubscriptionQuotaFooter";
 import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
-
+import { useClaudeAccountQuota } from "@/lib/query/subscription";
+import React from "react";
 interface ClaudeAccountQuotaFooterProps {
   /** 卡片绑定的 Claude 官方账号 */
   accountId: string;
@@ -10,7 +9,6 @@ interface ClaudeAccountQuotaFooterProps {
   isCurrent?: boolean;
   autoQueryInterval?: number;
 }
-
 /**
  * 绑了账号的 Claude 官方卡额度：每张卡按自己的号查，不只是正在用的那张。
  * 正在用的那张按设置的间隔自动刷新。
@@ -30,7 +28,6 @@ const ClaudeAccountQuotaFooter: React.FC<ClaudeAccountQuotaFooterProps> = ({
     autoQuery: isCurrent && autoQueryInterval > 0,
     autoQueryIntervalMinutes: autoQueryInterval,
   });
-
   return (
     <SubscriptionQuotaView
       quota={quota}
@@ -42,5 +39,4 @@ const ClaudeAccountQuotaFooter: React.FC<ClaudeAccountQuotaFooterProps> = ({
     />
   );
 };
-
 export default ClaudeAccountQuotaFooter;

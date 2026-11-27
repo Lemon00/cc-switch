@@ -1,6 +1,5 @@
 import { createContext, useContext } from "react";
 import { AGENT_READER_STYLES, type AgentReaderStyle } from "./agentStyles";
-
 /**
  * 阅读页各行组件共用的会话级信息。经 Context 下发，避免每一行都透传一长串 props；
  * 值在 SessionReader 里 useMemo，只有会话、查找词变化时才更新。
@@ -17,11 +16,9 @@ export interface ReaderContextValue {
   searchQuery?: string;
   onCopy: (text: string, message: string) => void;
 }
-
 export const ReaderContext = createContext<ReaderContextValue>({
   style: AGENT_READER_STYLES.generic,
   appName: "",
   onCopy: () => undefined,
 });
-
 export const useReaderContext = () => useContext(ReaderContext);

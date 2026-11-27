@@ -1,14 +1,11 @@
 // 供应商配置处理工具函数
-
-import type { TemplateValueConfig } from "../config/claudeProviderPresets";
 import type { CodexApiFormat } from "@/types";
 import { normalizeTomlText } from "@/utils/textNormalization";
 import { parse as parseToml } from "smol-toml";
-
+import type { TemplateValueConfig } from "../config/claudeProviderPresets";
 const isPlainObject = (value: unknown): value is Record<string, any> => {
   return Object.prototype.toString.call(value) === "[object Object]";
 };
-
 // 验证JSON配置格式
 export const validateJsonConfig = (
   value: string,
@@ -27,7 +24,6 @@ export const validateJsonConfig = (
     return `${fieldName}JSON格式错误，请检查语法`;
   }
 };
-
 // 读取配置中的 API Key（支持 Claude, Codex, Gemini）
 export const getApiKeyFromConfig = (
   jsonString: string,
@@ -35,13 +31,11 @@ export const getApiKeyFromConfig = (
 ): string => {
   try {
     const config = JSON.parse(jsonString);
-
     // Bedrock API Key：Claude Code 读的是 env.AWS_BEARER_TOKEN_BEDROCK
     const bedrockToken = config?.env?.AWS_BEARER_TOKEN_BEDROCK;
     if (typeof bedrockToken === "string" && bedrockToken) {
       return bedrockToken;
     }
-
     // 其次顶层 apiKey：旧版 Bedrock API Key 预设写在这里，存量行照常显示
     if (
       typeof config?.apiKey === "string" &&
@@ -50,27 +44,13 @@ export const getApiKeyFromConfig = (
     ) {
       return config.apiKey;
     }
-
-    if (appType === "kimi")
-      return typeof config?.provider?.api_key === "string"
-        ? config.provider.api_key
-        : "";
     const env = config?.env;
-
     if (!env) return "";
-
-    // Gemini API Key
-    if (appType === "gemini") {
-      const geminiKey = env.GEMINI_API_KEY;
-      return typeof geminiKey === "string" ? geminiKey : "";
-    }
-
     // Codex API Key
     if (appType === "codex") {
       const codexKey = env.CODEX_API_KEY;
       return typeof codexKey === "string" ? codexKey : "";
     }
-
     // Claude API Key (优先 ANTHROPIC_AUTH_TOKEN，其次 ANTHROPIC_API_KEY)
     const token = env.ANTHROPIC_AUTH_TOKEN;
     const apiKey = env.ANTHROPIC_API_KEY;
@@ -85,7 +65,6 @@ export const getApiKeyFromConfig = (
     return "";
   }
 };
-
 // 模板变量替换
 export const applyTemplateValues = (
   config: any,
@@ -100,7 +79,6 @@ export const applyTemplateValues = (
       return [key, resolvedValue];
     }),
   );
-
   const replaceInString = (str: string): string => {
     return Object.entries(resolvedValues).reduce((acc, [key, value]) => {
       const placeholder = `\${${key}}`;
@@ -110,7 +88,6 @@ export const applyTemplateValues = (
       return acc.split(placeholder).join(value ?? "");
     }, str);
   };
-
   const traverse = (obj: any): any => {
     if (typeof obj === "string") {
       return replaceInString(obj);
@@ -127,10 +104,8 @@ export const applyTemplateValues = (
     }
     return obj;
   };
-
   return traverse(config);
 };
-
 // 判断配置中是否存在 API Key 字段
 export const hasApiKeyField = (
   jsonString: string,
@@ -138,26 +113,17 @@ export const hasApiKeyField = (
 ): boolean => {
   try {
     const config = JSON.parse(jsonString);
-
     // 顶层 apiKey：旧版 Bedrock API Key 预设
     if (Object.prototype.hasOwnProperty.call(config, "apiKey")) {
       return true;
     }
-
     const env = config?.env ?? {};
-
     if (Object.prototype.hasOwnProperty.call(env, "AWS_BEARER_TOKEN_BEDROCK")) {
       return true;
     }
-
-    if (appType === "gemini") {
-      return Object.prototype.hasOwnProperty.call(env, "GEMINI_API_KEY");
-    }
-
     if (appType === "codex") {
       return Object.prototype.hasOwnProperty.call(env, "CODEX_API_KEY");
     }
-
     return (
       Object.prototype.hasOwnProperty.call(env, "ANTHROPIC_AUTH_TOKEN") ||
       Object.prototype.hasOwnProperty.call(env, "ANTHROPIC_API_KEY")
@@ -166,7 +132,6 @@ export const hasApiKeyField = (
     return false;
   }
 };
-
 // 写入/更新配置中的 API Key，默认不新增缺失字段
 export const setApiKeyInConfig = (
   jsonString: string,
@@ -180,7 +145,6 @@ export const setApiKeyInConfig = (
   const { createIfMissing = false, appType, apiKeyField } = options;
   try {
     const config = JSON.parse(jsonString);
-
     // Bedrock API Key：写回 env.AWS_BEARER_TOKEN_BEDROCK
     if (
       config?.env &&
@@ -192,31 +156,16 @@ export const setApiKeyInConfig = (
       config.env.AWS_BEARER_TOKEN_BEDROCK = apiKey;
       return JSON.stringify(config, null, 2);
     }
-
     // 顶层 apiKey：旧版 Bedrock API Key 预设的存量行，写回原处
     if (Object.prototype.hasOwnProperty.call(config, "apiKey")) {
       config.apiKey = apiKey;
       return JSON.stringify(config, null, 2);
     }
-
     if (!config.env) {
       if (!createIfMissing) return jsonString;
       config.env = {};
     }
     const env = config.env as Record<string, any>;
-
-    // Gemini API Key
-    if (appType === "gemini") {
-      if ("GEMINI_API_KEY" in env) {
-        env.GEMINI_API_KEY = apiKey;
-      } else if (createIfMissing) {
-        env.GEMINI_API_KEY = apiKey;
-      } else {
-        return jsonString;
-      }
-      return JSON.stringify(config, null, 2);
-    }
-
     // Codex API Key
     if (appType === "codex") {
       if ("CODEX_API_KEY" in env) {
@@ -228,7 +177,6 @@ export const setApiKeyInConfig = (
       }
       return JSON.stringify(config, null, 2);
     }
-
     // Claude API Key (优先写入已存在的字段；若两者均不存在且允许创建，则使用 apiKeyField 或默认 AUTH_TOKEN 字段)
     if ("ANTHROPIC_AUTH_TOKEN" in env) {
       env.ANTHROPIC_AUTH_TOKEN = apiKey;
@@ -244,9 +192,7 @@ export const setApiKeyInConfig = (
     return jsonString;
   }
 };
-
 // ========== Codex base_url utils ==========
-
 const TOML_SECTION_HEADER_PATTERN =
   /^\s*\[{1,2}([^\]\r\n]+)\]{1,2}\s*(?:#.*)?$/;
 const TOML_BARE_KEY_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -288,25 +234,21 @@ const CODEX_RESERVED_MODEL_PROVIDER_IDS = new Set([
   "ollama",
   "lmstudio",
 ]);
-
 interface TomlSectionRange {
   bodyEndIndex: number;
   bodyStartIndex: number;
   headerLineIndex: number;
 }
-
 interface TomlAssignmentMatch {
   index: number;
   sectionName?: string;
   value: string;
 }
-
 const finalizeTomlText = (lines: string[]): string =>
   lines
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .replace(/^\n+/, "");
-
 // 表名的规范写法：能用裸键的段用裸键，其余用基本字符串
 const tomlTableName = (...segments: string[]): string =>
   segments
@@ -314,7 +256,6 @@ const tomlTableName = (...segments: string[]): string =>
       TOML_BARE_KEY_PATTERN.test(segment) ? segment : tomlBasicString(segment),
     )
     .join(".");
-
 // `[model_providers."custom"]`、`[ model_providers . custom ]` 与
 // `[model_providers.custom]` 是同一张表（#8271），比较表头前先统一成规范写法；
 // 认不出的表头原样返回
@@ -333,7 +274,6 @@ const normalizeTomlTableName = (header: string): string => {
     index = TOML_DOTTED_KEY_SEGMENT_PATTERN.lastIndex;
   }
 };
-
 // 标出以多行字符串（""" 或 '''）内部开头的行。这些行是字符串内容，像表头或赋值也不算：
 // 说明文字里的 `[model_providers."custom"]` 示例不能被当成真正的 provider 表。
 // 逐字符跟踪字符串和注释状态；单行字符串和注释到行尾为止。
@@ -360,7 +300,6 @@ const getTomlMultilineStringLines = (lines: string[]): boolean[] => {
         index += 1;
         continue;
       }
-
       const ch = line[index];
       if (ch === "#") break;
       if (line.startsWith('"""', index) || line.startsWith("'''", index)) {
@@ -386,7 +325,6 @@ const getTomlMultilineStringLines = (lines: string[]): boolean[] => {
     return insideString;
   });
 };
-
 const getTomlSectionRange = (
   lines: string[],
   sectionName: string,
@@ -394,39 +332,33 @@ const getTomlSectionRange = (
   const targetName = normalizeTomlTableName(sectionName);
   const stringLines = getTomlMultilineStringLines(lines);
   let headerLineIndex = -1;
-
   for (let index = 0; index < lines.length; index += 1) {
     if (stringLines[index]) continue;
     const match = lines[index].match(TOML_SECTION_HEADER_PATTERN);
     if (!match) {
       continue;
     }
-
     if (headerLineIndex === -1) {
       if (normalizeTomlTableName(match[1]) === targetName) {
         headerLineIndex = index;
       }
       continue;
     }
-
     return {
       bodyStartIndex: headerLineIndex + 1,
       bodyEndIndex: index,
       headerLineIndex,
     };
   }
-
   if (headerLineIndex === -1) {
     return undefined;
   }
-
   return {
     bodyStartIndex: headerLineIndex + 1,
     bodyEndIndex: lines.length,
     headerLineIndex,
   };
 };
-
 const getTopLevelEndIndex = (lines: string[]): number => {
   const stringLines = getTomlMultilineStringLines(lines);
   const firstSectionIndex = lines.findIndex(
@@ -435,7 +367,6 @@ const getTopLevelEndIndex = (lines: string[]): number => {
   );
   return firstSectionIndex === -1 ? lines.length : firstSectionIndex;
 };
-
 const getTomlSectionInsertIndex = (
   lines: string[],
   sectionRange: TomlSectionRange,
@@ -449,7 +380,6 @@ const getTomlSectionInsertIndex = (
   }
   return insertIndex;
 };
-
 const getCodexModelProviderName = (configText: string): string | undefined => {
   const normalized = normalizeTomlText(configText);
   try {
@@ -462,7 +392,6 @@ const getCodexModelProviderName = (configText: string): string | undefined => {
   } catch {
     // Fall back to a top-level line scan while the user is editing invalid TOML.
   }
-
   const lines = normalized.split("\n");
   const index = getTopLevelModelProviderLineIndex(lines);
   if (index === -1) return undefined;
@@ -470,7 +399,6 @@ const getCodexModelProviderName = (configText: string): string | undefined => {
   const providerName = match?.[2]?.trim();
   return providerName || undefined;
 };
-
 const isCodexUnifiedSessionProjection = (configText: string): boolean => {
   try {
     const parsed = parseToml(normalizeTomlText(configText)) as Record<
@@ -491,7 +419,6 @@ const isCodexUnifiedSessionProjection = (configText: string): boolean => {
     return false;
   }
 };
-
 export const hasExplicitNonOpenAiCodexModelProvider = (
   configText: string | undefined | null,
 ): boolean => {
@@ -503,7 +430,6 @@ export const hasExplicitNonOpenAiCodexModelProvider = (
   // upstream, not the official provider.
   return Boolean(providerName && providerName.trim() !== "openai");
 };
-
 const getCodexProviderSectionName = (
   configText: string,
 ): string | undefined => {
@@ -512,7 +438,6 @@ const getCodexProviderSectionName = (
     ? tomlTableName("model_providers", providerName)
     : undefined;
 };
-
 const isCustomCodexModelProviderId = (providerName: string): boolean => {
   // Exact match, mirroring upstream Codex and the backend predicate: the
   // built-in provider lookup is case-sensitive, so "OpenAI" etc. are
@@ -520,7 +445,6 @@ const isCustomCodexModelProviderId = (providerName: string): boolean => {
   const id = providerName.trim();
   return Boolean(id) && !CODEX_RESERVED_MODEL_PROVIDER_IDS.has(id);
 };
-
 const getCodexCustomProviderSectionName = (
   configText: string,
 ): string | undefined => {
@@ -529,7 +453,6 @@ const getCodexCustomProviderSectionName = (
     ? tomlTableName("model_providers", providerName)
     : undefined;
 };
-
 const findTomlAssignmentInRange = (
   lines: string[],
   pattern: RegExp,
@@ -550,10 +473,8 @@ const findTomlAssignmentInRange = (
       };
     }
   }
-
   return undefined;
 };
-
 const findTomlAssignmentsInRange = (
   lines: string[],
   pattern: RegExp,
@@ -563,7 +484,6 @@ const findTomlAssignmentsInRange = (
 ): TomlAssignmentMatch[] => {
   const matches: TomlAssignmentMatch[] = [];
   const stringLines = getTomlMultilineStringLines(lines);
-
   for (let index = startIndex; index < endIndex; index += 1) {
     if (stringLines[index]) continue;
     const match = lines[index].match(pattern);
@@ -572,10 +492,8 @@ const findTomlAssignmentsInRange = (
       matches.push({ index, sectionName, value });
     }
   }
-
   return matches;
 };
-
 const findTomlLineInRange = (
   lines: string[],
   pattern: RegExp,
@@ -588,10 +506,8 @@ const findTomlLineInRange = (
       return index;
     }
   }
-
   return -1;
 };
-
 const findTomlAssignments = (
   lines: string[],
   pattern: RegExp,
@@ -599,7 +515,6 @@ const findTomlAssignments = (
   const assignments: TomlAssignmentMatch[] = [];
   let currentSectionName: string | undefined;
   const stringLines = getTomlMultilineStringLines(lines);
-
   lines.forEach((line, index) => {
     if (stringLines[index]) return;
     const sectionMatch = line.match(TOML_SECTION_HEADER_PATTERN);
@@ -607,27 +522,22 @@ const findTomlAssignments = (
       currentSectionName = normalizeTomlTableName(sectionMatch[1]);
       return;
     }
-
     const match = line.match(pattern);
     const value = match?.[2] ?? match?.[1];
     if (!value) {
       return;
     }
-
     assignments.push({
       index,
       sectionName: currentSectionName,
       value,
     });
   });
-
   return assignments;
 };
-
 const isMcpServerSection = (sectionName?: string): boolean =>
   sectionName === "mcp_servers" ||
   sectionName?.startsWith("mcp_servers.") === true;
-
 const isOtherProviderSection = (
   sectionName: string | undefined,
   targetSectionName: string | undefined,
@@ -638,7 +548,6 @@ const isOtherProviderSection = (
       (sectionName === "model_providers" ||
         sectionName.startsWith("model_providers.")),
   );
-
 const getRecoverableBaseUrlAssignments = (
   assignments: TomlAssignmentMatch[],
   targetSectionName: string | undefined,
@@ -649,9 +558,7 @@ const getRecoverableBaseUrlAssignments = (
       !isMcpServerSection(sectionName) &&
       !isOtherProviderSection(sectionName, targetSectionName),
   );
-
 const getRecoverableCodexProviderAssignments = getRecoverableBaseUrlAssignments;
-
 const getTopLevelModelProviderLineIndex = (lines: string[]): number => {
   return findTomlLineInRange(
     lines,
@@ -660,7 +567,6 @@ const getTopLevelModelProviderLineIndex = (lines: string[]): number => {
     getTopLevelEndIndex(lines),
   );
 };
-
 const TOML_BASIC_STRING_ESCAPES: Record<string, string> = {
   '"': '\\"',
   "\\": "\\\\",
@@ -670,17 +576,14 @@ const TOML_BASIC_STRING_ESCAPES: Record<string, string> = {
   "\f": "\\f",
   "\r": "\\r",
 };
-
 const escapeTomlBasicString = (value: string): string =>
   value.replace(/["\\\u0000-\u001f]/g, (ch) => {
     const escaped = TOML_BASIC_STRING_ESCAPES[ch];
     if (escaped) return escaped;
     return `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`;
   });
-
 const tomlBasicString = (value: string): string =>
   `"${escapeTomlBasicString(value)}"`;
-
 const TOML_BASIC_STRING_UNESCAPES: Record<string, string> = {
   '"': '"',
   "\\": "\\",
@@ -690,7 +593,6 @@ const TOML_BASIC_STRING_UNESCAPES: Record<string, string> = {
   f: "\f",
   r: "\r",
 };
-
 // escapeTomlBasicString 的逆运算；未知转义序列原样保留
 const unescapeTomlBasicString = (value: string): string =>
   value.replace(
@@ -700,33 +602,34 @@ const unescapeTomlBasicString = (value: string): string =>
       return TOML_BASIC_STRING_UNESCAPES[ch] ?? match;
     },
   );
-
-const CODEX_CHAT_WIRE_API_VALUES = new Set([
+// 后端 codex_config::CHAT_WIRE_APIS / ANTHROPIC_WIRE_APIS 的前端副本，
+// tests/config/backendConstants.test.ts 核对两边一致。
+export const CODEX_CHAT_WIRE_API_VALUES: readonly string[] = [
   "chat",
   "chat_completions",
   "chat-completions",
   "openai_chat",
   "openai-chat",
   "openai_chat_completions",
-]);
-
+];
+export const CODEX_ANTHROPIC_WIRE_API_VALUES: readonly string[] = [
+  "anthropic",
+  "anthropic_messages",
+  "anthropic-messages",
+  "messages",
+  "claude",
+];
 // 判断给定的 wire_api 字符串是否表示 Codex 的 Chat Completions 协议
 export const isCodexChatWireApi = (
   wireApi: string | undefined | null,
 ): boolean =>
-  CODEX_CHAT_WIRE_API_VALUES.has((wireApi ?? "").trim().toLowerCase());
-
+  CODEX_CHAT_WIRE_API_VALUES.includes((wireApi ?? "").trim().toLowerCase());
 export const isCodexAnthropicWireApi = (
   wireApi: string | undefined | null,
 ): boolean =>
-  [
-    "anthropic",
-    "anthropic_messages",
-    "anthropic-messages",
-    "messages",
-    "claude",
-  ].includes((wireApi ?? "").trim().toLowerCase());
-
+  CODEX_ANTHROPIC_WIRE_API_VALUES.includes(
+    (wireApi ?? "").trim().toLowerCase(),
+  );
 export const codexApiFormatFromWireApi = (
   wireApi: string | undefined | null,
 ): CodexApiFormat | undefined => {
@@ -741,7 +644,6 @@ export const codexApiFormatFromWireApi = (
       return undefined;
   }
 };
-
 // 从 Codex 的 TOML 配置文本中提取 wire_api（支持单/双引号）
 export const extractCodexWireApi = (
   configText: string | undefined | null,
@@ -750,10 +652,8 @@ export const extractCodexWireApi = (
     const raw = typeof configText === "string" ? configText : "";
     const text = normalizeTomlText(raw);
     if (!text) return undefined;
-
     const lines = text.split("\n");
     const targetSectionName = getCodexProviderSectionName(text);
-
     if (targetSectionName) {
       const sectionRange = getTomlSectionRange(lines, targetSectionName);
       if (sectionRange) {
@@ -769,7 +669,6 @@ export const extractCodexWireApi = (
         }
       }
     }
-
     const topLevelMatch = findTomlAssignmentInRange(
       lines,
       TOML_WIRE_API_PATTERN,
@@ -779,7 +678,6 @@ export const extractCodexWireApi = (
     if (topLevelMatch?.value) {
       return topLevelMatch.value;
     }
-
     const fallbackAssignments = getRecoverableCodexProviderAssignments(
       findTomlAssignments(lines, TOML_WIRE_API_PATTERN),
       targetSectionName,
@@ -791,7 +689,6 @@ export const extractCodexWireApi = (
     return undefined;
   }
 };
-
 // 在 Codex 的 TOML 配置文本中写入或更新 wire_api 字段
 export const setCodexWireApi = (
   configText: string,
@@ -806,7 +703,6 @@ export const setCodexWireApi = (
     allAssignments,
     targetSectionName,
   );
-
   if (targetSectionName) {
     let targetSectionRange = getTomlSectionRange(lines, targetSectionName);
     const targetMatch = targetSectionRange
@@ -818,30 +714,25 @@ export const setCodexWireApi = (
           targetSectionName,
         )
       : undefined;
-
     if (targetMatch) {
       lines[targetMatch.index] = replacementLine;
       return finalizeTomlText(lines);
     }
-
     if (recoverableAssignments.length === 1) {
       lines.splice(recoverableAssignments[0].index, 1);
       targetSectionRange = getTomlSectionRange(lines, targetSectionName);
     }
-
     if (targetSectionRange) {
       const insertIndex = getTomlSectionInsertIndex(lines, targetSectionRange);
       lines.splice(insertIndex, 0, replacementLine);
       return finalizeTomlText(lines);
     }
-
     if (lines.length > 0 && lines[lines.length - 1].trim() !== "") {
       lines.push("");
     }
     lines.push(`[${targetSectionName}]`, replacementLine);
     return finalizeTomlText(lines);
   }
-
   const topLevelEndIndex = getTopLevelEndIndex(lines);
   const topLevelMatch = findTomlAssignmentInRange(
     lines,
@@ -853,21 +744,17 @@ export const setCodexWireApi = (
     lines[topLevelMatch.index] = replacementLine;
     return finalizeTomlText(lines);
   }
-
   const modelProviderIndex = getTopLevelModelProviderLineIndex(lines);
   if (modelProviderIndex !== -1) {
     lines.splice(modelProviderIndex + 1, 0, replacementLine);
     return finalizeTomlText(lines);
   }
-
   if (lines.length === 0) {
     return `${replacementLine}\n`;
   }
-
   lines.splice(topLevelEndIndex, 0, replacementLine);
   return finalizeTomlText(lines);
 };
-
 export const isCodexRemoteCompactionEnabled = (
   configText: string | undefined | null,
 ): boolean => {
@@ -875,7 +762,6 @@ export const isCodexRemoteCompactionEnabled = (
     const raw = typeof configText === "string" ? configText : "";
     const text = normalizeTomlText(raw);
     if (!text) return false;
-
     try {
       const parsed = parseToml(text) as Record<string, any>;
       const providerId =
@@ -885,19 +771,15 @@ export const isCodexRemoteCompactionEnabled = (
       if (!providerId || !isCustomCodexModelProviderId(providerId)) {
         return false;
       }
-
       return parsed.model_providers?.[providerId]?.name === "OpenAI";
     } catch {
       // Fall back to line scanning while the user is editing invalid TOML.
     }
-
     const lines = text.split("\n");
     const targetSectionName = getCodexCustomProviderSectionName(text);
     if (!targetSectionName) return false;
-
     const sectionRange = getTomlSectionRange(lines, targetSectionName);
     if (!sectionRange) return false;
-
     const nameAssignment = findTomlAssignmentInRange(
       lines,
       TOML_PROVIDER_NAME_PATTERN,
@@ -905,13 +787,11 @@ export const isCodexRemoteCompactionEnabled = (
       sectionRange.bodyEndIndex,
       targetSectionName,
     );
-
     return nameAssignment?.value === "OpenAI";
   } catch {
     return false;
   }
 };
-
 export const setCodexRemoteCompaction = (
   configText: string,
   enabled: boolean,
@@ -920,11 +800,9 @@ export const setCodexRemoteCompaction = (
   const normalizedText = normalizeTomlText(configText);
   const lines = normalizedText ? normalizedText.split("\n") : [];
   const targetSectionName = getCodexCustomProviderSectionName(normalizedText);
-
   if (!targetSectionName) {
     return normalizedText;
   }
-
   let targetSectionRange = getTomlSectionRange(lines, targetSectionName);
   const replacementName = enabled
     ? "OpenAI"
@@ -932,7 +810,6 @@ export const setCodexRemoteCompaction = (
       getCodexModelProviderName(normalizedText) ||
       "custom";
   const replacementLine = `name = ${tomlBasicString(replacementName)}`;
-
   if (targetSectionRange) {
     const nameLine = findTomlLineInRange(
       lines,
@@ -940,7 +817,6 @@ export const setCodexRemoteCompaction = (
       targetSectionRange.bodyStartIndex,
       targetSectionRange.bodyEndIndex,
     );
-
     if (nameLine !== -1) {
       lines[nameLine] = lines[nameLine].replace(
         TOML_PROVIDER_NAME_REPLACE_PATTERN,
@@ -948,7 +824,6 @@ export const setCodexRemoteCompaction = (
       );
       return finalizeTomlText(lines);
     }
-
     lines.splice(
       getTomlSectionInsertIndex(lines, targetSectionRange),
       0,
@@ -956,18 +831,14 @@ export const setCodexRemoteCompaction = (
     );
     return finalizeTomlText(lines);
   }
-
   if (!enabled) return normalizedText;
-
   if (lines.length > 0 && lines[lines.length - 1].trim() !== "") {
     lines.push("");
   }
-
   lines.push(`[${targetSectionName}]`, replacementLine);
   targetSectionRange = getTomlSectionRange(lines, targetSectionName);
   return targetSectionRange ? finalizeTomlText(lines) : normalizedText;
 };
-
 // 从 Codex 的 TOML 配置文本中提取 base_url（支持单/双引号）
 export const extractCodexBaseUrl = (
   configText: string | undefined | null,
@@ -976,10 +847,8 @@ export const extractCodexBaseUrl = (
     const raw = typeof configText === "string" ? configText : "";
     const text = normalizeTomlText(raw);
     if (!text) return undefined;
-
     const lines = text.split("\n");
     const targetSectionName = getCodexProviderSectionName(text);
-
     if (targetSectionName) {
       const sectionRange = getTomlSectionRange(lines, targetSectionName);
       if (sectionRange) {
@@ -995,7 +864,6 @@ export const extractCodexBaseUrl = (
         }
       }
     }
-
     const topLevelMatch = findTomlAssignmentInRange(
       lines,
       TOML_BASE_URL_PATTERN,
@@ -1005,7 +873,6 @@ export const extractCodexBaseUrl = (
     if (topLevelMatch?.value) {
       return topLevelMatch.value;
     }
-
     const fallbackAssignments = getRecoverableBaseUrlAssignments(
       findTomlAssignments(lines, TOML_BASE_URL_PATTERN),
       targetSectionName,
@@ -1017,7 +884,6 @@ export const extractCodexBaseUrl = (
     return undefined;
   }
 };
-
 // 从 Codex 的 TOML 配置文本中提取 experimental_bearer_token（兼容 Mobile 模式）
 export const extractCodexExperimentalBearerToken = (
   configText: string | undefined | null,
@@ -1026,7 +892,6 @@ export const extractCodexExperimentalBearerToken = (
     const raw = typeof configText === "string" ? configText : "";
     const text = normalizeTomlText(raw);
     if (!text) return undefined;
-
     try {
       const parsed = parseToml(text) as Record<string, any>;
       const providerName =
@@ -1053,10 +918,8 @@ export const extractCodexExperimentalBearerToken = (
     } catch {
       // Fall back to the line scanner for partially edited TOML.
     }
-
     const lines = text.split("\n");
     const targetSectionName = getCodexCustomProviderSectionName(text);
-
     if (targetSectionName) {
       const sectionRange = getTomlSectionRange(lines, targetSectionName);
       if (sectionRange) {
@@ -1072,7 +935,6 @@ export const extractCodexExperimentalBearerToken = (
         }
       }
     }
-
     const topLevelMatch = findTomlAssignmentInRange(
       lines,
       TOML_EXPERIMENTAL_BEARER_TOKEN_PATTERN,
@@ -1084,7 +946,6 @@ export const extractCodexExperimentalBearerToken = (
     return undefined;
   }
 };
-
 // 同步更新 Codex config.toml 中已有的 experimental_bearer_token
 // 仅修改已存在的条目, 不主动新增——避免破坏未使用 Mobile 兼容模式的普通 third-party 配置
 // token 为空时删除该行 (让用户能真正清空 API key, 而不是被 pickCodexApiKey 的 fallback 又填回去)
@@ -1099,10 +960,8 @@ export const updateCodexExperimentalBearerToken = (
   ) {
     return configText;
   }
-
   const lines = normalizedText.split("\n");
   const targetSectionName = getCodexCustomProviderSectionName(normalizedText);
-
   let tokenLineIndex = -1;
   if (targetSectionName) {
     const sectionRange = getTomlSectionRange(lines, targetSectionName);
@@ -1125,9 +984,7 @@ export const updateCodexExperimentalBearerToken = (
     );
     if (topLevelIndex !== -1) tokenLineIndex = topLevelIndex;
   }
-
   if (tokenLineIndex === -1) return configText;
-
   const trimmed = token.trim();
   if (!trimmed) {
     lines.splice(tokenLineIndex, 1);
@@ -1145,10 +1002,14 @@ export const updateCodexExperimentalBearerToken = (
   }
   return finalizeTomlText(lines);
 };
-
 // 从 Provider 对象中提取 Codex base_url（当 settingsConfig.config 为 TOML 字符串时）
 export const getCodexBaseUrl = (
-  provider: { settingsConfig?: Record<string, any> } | undefined | null,
+  provider:
+    | {
+        settingsConfig?: Record<string, any>;
+      }
+    | undefined
+    | null,
 ): string | undefined => {
   try {
     const text =
@@ -1160,7 +1021,6 @@ export const getCodexBaseUrl = (
     return undefined;
   }
 };
-
 // 从任一应用的 settingsConfig 中取出请求地址：各应用存法不同（env 变量 / baseUrl /
 // base_url / options.baseURL / models[].baseUrl / Codex 风格 TOML），按已知形态依次找
 export const extractProviderBaseUrl = (
@@ -1168,13 +1028,11 @@ export const extractProviderBaseUrl = (
 ): string | undefined => {
   if (!settingsConfig || typeof settingsConfig !== "object") return undefined;
   const object = settingsConfig as Record<string, any>;
-
   const envBase =
     object.env?.ANTHROPIC_BASE_URL || object.env?.GOOGLE_GEMINI_BASE_URL;
   if (typeof envBase === "string" && envBase.trim()) {
     return envBase;
   }
-
   const directBaseUrl =
     (isPlainObject(object.provider) ? object.provider.base_url : undefined) ||
     object.baseUrl ||
@@ -1191,14 +1049,11 @@ export const extractProviderBaseUrl = (
   if (typeof directBaseUrl === "string" && directBaseUrl.trim()) {
     return directBaseUrl;
   }
-
   if (typeof object.config === "string" && object.config.includes("base_url")) {
     return extractCodexBaseUrl(object.config) || undefined;
   }
-
   return undefined;
 };
-
 // 解析后的 TOML 值转成可比较的普通值：键排序，日期按文本比
 const comparableTomlValue = (value: unknown): unknown => {
   if (value instanceof Date) return { $date: String(value) };
@@ -1215,7 +1070,6 @@ const comparableTomlValue = (value: unknown): unknown => {
   }
   return value;
 };
-
 // 没有选路时把地址写进选中的 custom 表：Codex 不认顶层 base_url（#8039）。逐行改写认不全
 // TOML 的写法（内联表、带注释的表头、多行字符串里像赋值的行），所以改完按解析结果核对：
 // 除了选路、地址和收进表里的顶层 wire_api，其余值都没变才采用；否则返回 undefined，由
@@ -1230,7 +1084,6 @@ const moveCodexBaseUrlIntoCustomTable = (
   } catch {
     return undefined;
   }
-
   const lines = text ? text.split("\n") : [];
   const topLevelEndIndex = getTopLevelEndIndex(lines);
   const topLevelWireApi = findTomlAssignmentInRange(
@@ -1249,7 +1102,6 @@ const moveCodexBaseUrlIntoCustomTable = (
     }
   }
   lines.unshift(`model_provider = "${CODEX_CUSTOM_ROUTE_ID}"`);
-
   const sectionName = `model_providers.${CODEX_CUSTOM_ROUTE_ID}`;
   const hadSection = Boolean(getTomlSectionRange(lines, sectionName));
   if (!hadSection) {
@@ -1263,7 +1115,6 @@ const moveCodexBaseUrlIntoCustomTable = (
     );
   }
   const candidate = setCodexBaseUrl(finalizeTomlText(lines), url);
-
   let after: unknown;
   try {
     after = parseToml(candidate);
@@ -1290,7 +1141,6 @@ const moveCodexBaseUrlIntoCustomTable = (
     ? candidate
     : undefined;
 };
-
 // 在 Codex 的 TOML 配置文本中写入或更新 base_url 字段
 export const setCodexBaseUrl = (
   configText: string,
@@ -1305,10 +1155,8 @@ export const setCodexBaseUrl = (
     allAssignments,
     targetSectionName,
   );
-
   if (!trimmed) {
     if (!normalizedText) return normalizedText;
-
     if (targetSectionName) {
       const sectionRange = getTomlSectionRange(lines, targetSectionName);
       const targetMatches = sectionRange
@@ -1320,7 +1168,6 @@ export const setCodexBaseUrl = (
             targetSectionName,
           )
         : [];
-
       if (targetMatches.length > 0) {
         for (const match of [...targetMatches].reverse()) {
           lines.splice(match.index, 1);
@@ -1328,18 +1175,14 @@ export const setCodexBaseUrl = (
         return finalizeTomlText(lines);
       }
     }
-
     if (recoverableAssignments.length === 1) {
       lines.splice(recoverableAssignments[0].index, 1);
       return finalizeTomlText(lines);
     }
-
     return finalizeTomlText(lines);
   }
-
   const normalizedUrl = trimmed.replace(/\s+/g, "");
   const replacementLine = `base_url = ${tomlBasicString(normalizedUrl)}`;
-
   if (targetSectionName) {
     let targetSectionRange = getTomlSectionRange(lines, targetSectionName);
     const targetMatches = targetSectionRange
@@ -1351,7 +1194,6 @@ export const setCodexBaseUrl = (
           targetSectionName,
         )
       : [];
-
     if (targetMatches.length > 0) {
       const [firstMatch, ...duplicateMatches] = targetMatches;
       lines[firstMatch.index] = replacementLine;
@@ -1360,28 +1202,23 @@ export const setCodexBaseUrl = (
       }
       return finalizeTomlText(lines);
     }
-
     if (recoverableAssignments.length === 1) {
       lines.splice(recoverableAssignments[0].index, 1);
       targetSectionRange = getTomlSectionRange(lines, targetSectionName);
     }
-
     if (targetSectionRange) {
       const insertIndex = getTomlSectionInsertIndex(lines, targetSectionRange);
       lines.splice(insertIndex, 0, replacementLine);
       return finalizeTomlText(lines);
     }
-
     if (lines.length > 0 && lines[lines.length - 1].trim() !== "") {
       lines.push("");
     }
     lines.push(`[${targetSectionName}]`, replacementLine);
     return finalizeTomlText(lines);
   }
-
   const moved = moveCodexBaseUrlIntoCustomTable(normalizedText, normalizedUrl);
   if (moved !== undefined) return moved;
-
   const topLevelEndIndex = getTopLevelEndIndex(lines);
   const topLevelMatches = findTomlAssignmentsInRange(
     lines,
@@ -1397,24 +1234,19 @@ export const setCodexBaseUrl = (
     }
     return finalizeTomlText(lines);
   }
-
   const modelProviderIndex = getTopLevelModelProviderLineIndex(lines);
   if (modelProviderIndex !== -1) {
     lines.splice(modelProviderIndex + 1, 0, replacementLine);
     return finalizeTomlText(lines);
   }
-
   if (lines.length === 0) {
     return `${replacementLine}\n`;
   }
-
   const insertIndex = topLevelEndIndex;
   lines.splice(insertIndex, 0, replacementLine);
   return finalizeTomlText(lines);
 };
-
 // ========== Codex model name utils ==========
-
 // 顶层范围内第一个能被严格模式识别的 model 行；-1 表示没有
 const findTopLevelModelLineIndex = (
   lines: string[],
@@ -1430,7 +1262,6 @@ const findTopLevelModelLineIndex = (
   }
   return -1;
 };
-
 // 从 Codex 的 TOML 配置文本中提取 model 字段（支持单/双引号；
 // 双引号串按 TOML 基本字符串反转义，保证与 setCodexModelName round-trip）
 export const extractCodexModelName = (
@@ -1453,7 +1284,6 @@ export const extractCodexModelName = (
     return undefined;
   }
 };
-
 // 在 Codex 的 TOML 配置文本中写入或更新 model 字段
 export const setCodexModelName = (
   configText: string,
@@ -1464,7 +1294,6 @@ export const setCodexModelName = (
   const lines = normalizedText ? normalizedText.split("\n") : [];
   const topLevelEndIndex = getTopLevelEndIndex(lines);
   const modelLineIndex = findTopLevelModelLineIndex(lines, topLevelEndIndex);
-
   if (!trimmed) {
     if (!normalizedText) return normalizedText;
     if (modelLineIndex !== -1) {
@@ -1472,7 +1301,6 @@ export const setCodexModelName = (
     }
     return finalizeTomlText(lines);
   }
-
   // 模型名可能来自远端 /models 响应（下拉选择），必须转义——裸插值会让
   // 含引号/控制字符的 id 破坏甚至注入 config.toml（如伪造 [mcp_servers.*]）
   const replacementLine = `model = ${tomlBasicString(trimmed)}`;
@@ -1480,34 +1308,26 @@ export const setCodexModelName = (
     lines[modelLineIndex] = replacementLine;
     return finalizeTomlText(lines);
   }
-
   const modelProviderIndex = getTopLevelModelProviderLineIndex(lines);
   if (modelProviderIndex !== -1) {
     lines.splice(modelProviderIndex + 1, 0, replacementLine);
     return finalizeTomlText(lines);
   }
-
   if (lines.length === 0) {
     return `${replacementLine}\n`;
   }
-
   lines.splice(topLevelEndIndex, 0, replacementLine);
   return finalizeTomlText(lines);
 };
-
 // ========== Codex [agents] subagent defaults ==========
-
 // 子代理的默认模型和推理强度（Codex 的 `[agents]` 表）。后端把这两个键当关键字段，随供应商
 // 切换；聚合模式下不写行里的，改用聚合页签「聚合设置」里的设备级设置。
 export type CodexAgentsStringKey =
   | "default_subagent_model"
   | "default_subagent_reasoning_effort";
-
 const CODEX_AGENTS_SECTION = "agents";
-
 // 键的三种等价写法：`key`、`"key"`、`'key'`。
 const tomlKeySource = (key: string): string => `(?:${key}|"${key}"|'${key}')`;
-
 const tomlStringAssignmentPatterns = (key: string) => {
   const keySource = tomlKeySource(key);
   return {
@@ -1520,7 +1340,6 @@ const tomlStringAssignmentPatterns = (key: string) => {
     anyValue: new RegExp(`^\\s*${keySource}\\s*=`),
   };
 };
-
 export const extractCodexAgentsString = (
   configText: string | undefined | null,
   key: CodexAgentsStringKey,
@@ -1549,7 +1368,6 @@ export const extractCodexAgentsString = (
   }
   return undefined;
 };
-
 // 在 `[agents]` 里写入一个键（valueText 为 undefined 时删除），并删掉 dropKeys 里的同义写法；
 // 删完表里没别的就连表头一起删。用户把 agents 写成行内表或点号键时按行改不了：改完解析失败
 // 就原样返回。
@@ -1563,7 +1381,6 @@ const writeCodexAgentsLine = (
   const lines = normalizedText ? normalizedText.split("\n") : [];
   const range = getTomlSectionRange(lines, CODEX_AGENTS_SECTION);
   const replacementLine = `${key} = ${valueText}`;
-
   if (range) {
     let bodyEndIndex = range.bodyEndIndex;
     const findLine = (name: string) =>
@@ -1613,7 +1430,6 @@ const writeCodexAgentsLine = (
     }
     lines.push(`[${CODEX_AGENTS_SECTION}]`, replacementLine, "");
   }
-
   const candidate = finalizeTomlText(lines);
   try {
     parseToml(normalizedText);
@@ -1627,7 +1443,6 @@ const writeCodexAgentsLine = (
     return normalizedText;
   }
 };
-
 // 写入或删除 `[agents]` 里的一个字符串键；空值删除。
 export const setCodexAgentsString = (
   configText: string,
@@ -1641,21 +1456,17 @@ export const setCodexAgentsString = (
     trimmed ? tomlBasicString(trimmed) : undefined,
   );
 };
-
 // ========== Codex [agents] sub-agent concurrency limit ==========
-
 // 子代理并发上限（不含主线程）。Codex 的全局设置，不随供应商切换。codex-rs 0.150 起改名
 // max_concurrent_threads_per_session，旧名 max_threads 留作别名：新写入用旧名（各版本都认），
 // 已经写了新名就改新名。两种写法同时出现 Codex 报重复字段，所以只留一个。
 const CODEX_AGENTS_MAX_THREADS_KEY = "max_threads";
 const CODEX_AGENTS_MAX_THREADS_CANONICAL_KEY =
   "max_concurrent_threads_per_session";
-
 const positiveInteger = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isInteger(value) && value > 0
     ? value
     : undefined;
-
 export const extractCodexAgentsMaxThreads = (
   configText: string | undefined | null,
 ): number | undefined => {
@@ -1691,7 +1502,6 @@ export const extractCodexAgentsMaxThreads = (
   }
   return undefined;
 };
-
 // 写入上限；undefined 删掉两种写法，回到 Codex 默认值。
 export const setCodexAgentsMaxThreads = (
   configText: string,
@@ -1718,7 +1528,6 @@ export const setCodexAgentsMaxThreads = (
     [other],
   );
 };
-
 // `[features.multi_agent_v2]` 里含主线程的总数：写了就盖过新版子 agent 工具的上限。
 export const extractCodexMultiAgentV2Total = (
   configText: string | undefined | null,
@@ -1737,17 +1546,19 @@ export const extractCodexMultiAgentV2Total = (
     return undefined;
   }
 };
-
 // ========== Codex top-level integer field utils ==========
-
 const tomlTopLevelIntPattern = (field: string) =>
   new RegExp(`^\\s*${field}\\s*=\\s*(\\d+)\\s*(?:#.*)?$`);
-
 const findTopLevelIntMatch = (
   lines: string[],
   fieldName: string,
   topLevelEndIndex: number,
-): { index: number; value: number } | undefined => {
+):
+  | {
+      index: number;
+      value: number;
+    }
+  | undefined => {
   const pattern = tomlTopLevelIntPattern(fieldName);
   for (let i = 0; i < topLevelEndIndex; i += 1) {
     const m = lines[i].match(pattern);
@@ -1757,7 +1568,6 @@ const findTopLevelIntMatch = (
   }
   return undefined;
 };
-
 // 从 Codex TOML 配置中提取顶级整数字段
 export const extractCodexTopLevelInt = (
   configText: string | undefined | null,
@@ -1774,7 +1584,6 @@ export const extractCodexTopLevelInt = (
     return undefined;
   }
 };
-
 // 在 Codex TOML 配置中设置或更新顶级整数字段
 export const setCodexTopLevelInt = (
   configText: string,
@@ -1786,21 +1595,17 @@ export const setCodexTopLevelInt = (
   const topLevelEndIndex = getTopLevelEndIndex(lines);
   const existing = findTopLevelIntMatch(lines, fieldName, topLevelEndIndex);
   const replacementLine = `${fieldName} = ${value}`;
-
   if (existing) {
     lines[existing.index] = replacementLine;
     return finalizeTomlText(lines);
   }
-
   // 插入位置：顶级区域末尾（section header 之前）
   if (lines.length === 0) {
     return `${replacementLine}\n`;
   }
-
   lines.splice(topLevelEndIndex, 0, replacementLine);
   return finalizeTomlText(lines);
 };
-
 // 从 Codex TOML 配置中移除顶级字段行
 export const removeCodexTopLevelField = (
   configText: string,

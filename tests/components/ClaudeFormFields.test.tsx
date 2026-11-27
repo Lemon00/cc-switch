@@ -10,23 +10,19 @@ import { useForm } from "react-hook-form";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ClaudeFormFields } from "@/components/providers/forms/ClaudeFormFields";
 import { Form } from "@/components/ui/form";
-
 const copilotApiMock = vi.hoisted(() => ({
   copilotGetModels: vi.fn(),
   copilotGetModelsForAccount: vi.fn(),
 }));
-
 const modelFetchApiMock = vi.hoisted(() => ({
   fetchCodexOauthModels: vi.fn(),
   fetchModelsForConfig: vi.fn(),
   showFetchModelsError: vi.fn(),
 }));
-
 vi.mock("@/lib/api/copilot", () => ({
   copilotGetModels: copilotApiMock.copilotGetModels,
   copilotGetModelsForAccount: copilotApiMock.copilotGetModelsForAccount,
 }));
-
 vi.mock("@/lib/api/model-fetch", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api/model-fetch")>();
   return {
@@ -36,23 +32,17 @@ vi.mock("@/lib/api/model-fetch", async (importOriginal) => {
     showFetchModelsError: modelFetchApiMock.showFetchModelsError,
   };
 });
-
 vi.mock("@/components/providers/forms/CopilotAuthSection", () => ({
   CopilotAuthSection: () => <div data-testid="copilot-auth-section" />,
 }));
-
 vi.mock("@/components/providers/forms/CodexOAuthSection", () => ({
   CodexOAuthSection: () => <div data-testid="codex-oauth-section" />,
 }));
-
 type ClaudeFormFieldsProps = ComponentProps<typeof ClaudeFormFields>;
-
 const FormShell = ({ children }: PropsWithChildren) => {
   const form = useForm();
-
   return <Form {...form}>{children}</Form>;
 };
-
 const renderCopilotForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) => {
   const props: ClaudeFormFieldsProps = {
     shouldShowApiKey: false,
@@ -114,14 +104,12 @@ const renderCopilotForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) => {
     onLocalProxyBodyOverrideChange: vi.fn(),
     ...overrides,
   };
-
   return render(
     <FormShell>
       <ClaudeFormFields {...props} />
     </FormShell>,
   );
 };
-
 const renderCodexOauthForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) =>
   renderCopilotForm({
     isCopilotPreset: false,
@@ -132,7 +120,6 @@ const renderCodexOauthForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) =>
     selectedCodexAccountId: "chatgpt-1",
     ...overrides,
   });
-
 describe("ClaudeFormFields", () => {
   beforeEach(() => {
     copilotApiMock.copilotGetModels.mockResolvedValue([]);
@@ -140,14 +127,11 @@ describe("ClaudeFormFields", () => {
     modelFetchApiMock.fetchCodexOauthModels.mockResolvedValue([]);
     modelFetchApiMock.fetchModelsForConfig.mockResolvedValue([]);
   });
-
   it("不会在 Copilot 表单打开时自动获取模型列表", () => {
     renderCopilotForm();
-
     expect(copilotApiMock.copilotGetModels).not.toHaveBeenCalled();
     expect(copilotApiMock.copilotGetModelsForAccount).not.toHaveBeenCalled();
   });
-
   it.each(["classic", "stack"] as const)(
     "Copilot %s 布局显示自动协议并禁用无效的手选格式",
     (variant) => {
@@ -158,7 +142,6 @@ describe("ClaudeFormFields", () => {
       expect(screen.getByText(/copilot.automaticFormatHint/)).toBeVisible();
     },
   );
-
   it.each(["classic", "stack"] as const)(
     "%s 布局只在转成 OpenAI 格式时显示思考档位",
     (variant) => {
@@ -169,7 +152,6 @@ describe("ClaudeFormFields", () => {
       });
       expect(screen.getByRole("combobox", { name: "思考档位" })).toBeVisible();
       unmount();
-
       renderCopilotForm({
         variant,
         isCopilotPreset: false,
@@ -178,21 +160,17 @@ describe("ClaudeFormFields", () => {
       expect(screen.queryByRole("combobox", { name: "思考档位" })).toBeNull();
     },
   );
-
   it("Copilot 卡不显示思考档位", () => {
     renderCopilotForm({ apiFormat: "openai_chat" });
     expect(screen.queryByRole("combobox", { name: "思考档位" })).toBeNull();
   });
-
   it("点击获取模型列表后才请求当前 Copilot 账号的模型", async () => {
     renderCopilotForm();
-
     fireEvent.click(
       screen.getByRole("button", {
         name: "providerForm.fetchModels",
       }),
     );
-
     await waitFor(() => {
       expect(copilotApiMock.copilotGetModelsForAccount).toHaveBeenCalledWith(
         "gh-1",
@@ -200,29 +178,23 @@ describe("ClaudeFormFields", () => {
     });
     expect(copilotApiMock.copilotGetModels).not.toHaveBeenCalled();
   });
-
   it("不会在 Codex OAuth 表单打开时自动获取模型列表", () => {
     renderCodexOauthForm();
-
     expect(modelFetchApiMock.fetchCodexOauthModels).not.toHaveBeenCalled();
   });
-
   it("点击获取模型列表后才请求当前 Codex OAuth 账号的模型", async () => {
     renderCodexOauthForm();
-
     fireEvent.click(
       screen.getByRole("button", {
         name: "providerForm.fetchModels",
       }),
     );
-
     await waitFor(() => {
       expect(modelFetchApiMock.fetchCodexOauthModels).toHaveBeenCalledWith(
         "chatgpt-1",
       );
     });
   });
-
   it("DeepSeek 使用当前 Key 拉取预设的对话模型", async () => {
     Element.prototype.scrollIntoView ??= vi.fn();
     const onModelChange = vi.fn();
@@ -241,7 +213,6 @@ describe("ClaudeFormFields", () => {
       defaultSonnetModelName: "",
       onModelChange,
     });
-
     fireEvent.click(
       screen.getByRole("button", {
         name: "providerForm.advancedOptionsToggle",
@@ -250,7 +221,6 @@ describe("ClaudeFormFields", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "providerForm.fetchModels" }),
     );
-
     await waitFor(() => {
       expect(modelFetchApiMock.fetchModelsForConfig).toHaveBeenCalledWith(
         "https://api.deepseek.com/anthropic",
@@ -261,7 +231,6 @@ describe("ClaudeFormFields", () => {
         { apiFormat: undefined, requestHeaders: undefined },
       );
     });
-
     fireEvent.click(screen.getAllByRole("button", { name: "Select model" })[0]);
     fireEvent.click(screen.getByText("chat-model-b"));
     expect(onModelChange).toHaveBeenCalledWith(
@@ -269,7 +238,6 @@ describe("ClaudeFormFields", () => {
       "chat-model-b",
     );
   });
-
   it("Gemini Native 拉取模型时用 Google 的 API Key 头", async () => {
     modelFetchApiMock.fetchModelsForConfig.mockResolvedValueOnce([]);
     renderCopilotForm({
@@ -281,12 +249,10 @@ describe("ClaudeFormFields", () => {
       baseUrl: "https://generativelanguage.googleapis.com",
       apiFormat: "gemini_native",
     });
-
     // 非 Anthropic 格式的高级选项默认展开，直接点获取模型
     fireEvent.click(
       screen.getByRole("button", { name: "providerForm.fetchModels" }),
     );
-
     await waitFor(() => {
       expect(modelFetchApiMock.fetchModelsForConfig).toHaveBeenCalledWith(
         "https://generativelanguage.googleapis.com",
@@ -298,7 +264,6 @@ describe("ClaudeFormFields", () => {
       );
     });
   });
-
   it("一键设置会同时写入 Subagent 模型", () => {
     const onModelChange = vi.fn();
     renderCopilotForm({
@@ -307,19 +272,16 @@ describe("ClaudeFormFields", () => {
       defaultSonnetModelName: "",
       onModelChange,
     });
-
     fireEvent.click(
       screen.getByRole("button", {
         name: "一键设置",
       }),
     );
-
     expect(onModelChange).toHaveBeenCalledWith(
       "CLAUDE_CODE_SUBAGENT_MODEL",
       "shared-model[1M]",
     );
   });
-
   it("Haiku 行也能勾 1M：勾选状态即模型名的 [1M] 后缀", () => {
     const onModelChange = vi.fn();
     renderCopilotForm({
@@ -329,12 +291,10 @@ describe("ClaudeFormFields", () => {
       defaultHaikuModelName: "",
       onModelChange,
     });
-
     const haikuRow = screen.getByText("Haiku").parentElement!;
     expect(within(haikuRow).getByDisplayValue("glm-5.3-flash")).toBeTruthy();
     const checkbox = within(haikuRow).getByRole("checkbox");
     expect(checkbox).toBeChecked();
-
     fireEvent.click(checkbox);
     expect(onModelChange).toHaveBeenCalledWith(
       "ANTHROPIC_DEFAULT_HAIKU_MODEL",

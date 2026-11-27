@@ -1,20 +1,19 @@
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
+import { useModelStats } from "@/lib/query/usage";
+import { cn } from "@/lib/utils";
+import type { UsageRangeSelection } from "@/types/usage";
+import { ArrowDown } from "lucide-react";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowDown } from "lucide-react";
-import { useModelStats } from "@/lib/query/usage";
-import { TablePagination, useClientPagination } from "./TablePagination";
-import { cn } from "@/lib/utils";
 import {
   fmtInt,
   formatTokensCompact,
   getLocaleFromLanguage,
   getResolvedLang,
 } from "./format";
-import { usageTable } from "./usageTable";
 import { PerformanceCells, PerformanceHeaders } from "./statsColumns";
-import type { UsageRangeSelection } from "@/types/usage";
-import { useMoneyFormat } from "@/hooks/useMoneyFormat";
-
+import { TablePagination, useClientPagination } from "./TablePagination";
+import { usageTable } from "./usageTable";
 interface ModelStatsTableProps {
   range: UsageRangeSelection;
   appType?: string;
@@ -22,7 +21,6 @@ interface ModelStatsTableProps {
   model?: string;
   refreshIntervalMs: number;
 }
-
 export function ModelStatsTable({
   range,
   appType,
@@ -40,7 +38,6 @@ export function ModelStatsTable({
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },
   );
-
   const rows = useMemo(
     () => [...(stats ?? [])].sort((a, b) => b.requestCount - a.requestCount),
     [stats],
@@ -49,11 +46,9 @@ export function ModelStatsTable({
     rows,
     JSON.stringify([range, appType, providerName, model]),
   );
-
   if (isLoading) {
     return <div className={usageTable.skeleton} />;
   }
-
   return (
     <div className="flex flex-col">
       <div className={usageTable.scroller}>

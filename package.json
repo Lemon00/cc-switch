@@ -1,7 +1,7 @@
 {
   "name": "cc-switch",
-  "version": "4.0.28",
-  "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI",
+  "version": "1.0.0",
+  "description": "Assistant for Claude Code, Codex, OpenCode, DeepSeek Harness and Antigravity",
   "type": "module",
   "scripts": {
     "dev": "pnpm tauri dev",
@@ -13,6 +13,7 @@
     "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,css,json}\"",
     "format:check": "prettier --check \"src/**/*.{js,jsx,ts,tsx,css,json}\"",
     "test:unit": "vitest run",
+    "test:scripts": "node --test scripts/tests/release-manifests.test.mjs",
     "test:unit:watch": "vitest watch"
   },
   "keywords": [],
@@ -64,7 +65,7 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "@tanstack/react-query": "^5.90.3",
     "@tanstack/react-virtual": "^3.13.23",
-    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/api": "^2.12.5",
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "@tauri-apps/plugin-log": "2.8.0",
     "@tauri-apps/plugin-process": "^2.0.0",

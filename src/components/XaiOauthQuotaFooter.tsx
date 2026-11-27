@@ -1,8 +1,8 @@
-import React from "react";
-import type { ProviderMeta } from "@/types";
-import { useXaiOauthQuota } from "@/lib/query/subscription";
 import { SubscriptionQuotaView } from "@/components/SubscriptionQuotaFooter";
 import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
+import { useXaiOauthQuota } from "@/lib/query/subscription";
+import type { ProviderMeta } from "@/types";
+import React from "react";
 
 interface XaiOauthQuotaFooterProps {
   meta?: ProviderMeta;

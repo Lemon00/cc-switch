@@ -1,6 +1,6 @@
-import { useTranslation } from "react-i18next";
-import { ChevronRight } from "lucide-react";
-import type { ProxyAppId } from "@/config/appConfig";
+import { AutoFailoverConfigPanel } from "@/components/proxy/AutoFailoverConfigPanel";
+import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
+import { Button } from "@/components/ui/button";
 import {
   Sheet,
   SheetBody,
@@ -10,17 +10,15 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { Button } from "@/components/ui/button";
-import { AutoFailoverConfigPanel } from "@/components/proxy/AutoFailoverConfigPanel";
-import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
-
+import type { ProxyAppId } from "@/config/appConfig";
+import { ChevronRight } from "lucide-react";
+import { useTranslation } from "react-i18next";
 interface RouteSettingsSheetProps {
   app: ProxyAppId;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onOpenSettings: () => void;
 }
-
 /** 路由页签上的「路由设置 ›」：当前应用的超时、重试、熔断；更多在设置 → 本地路由。 */
 export function RouteSettingsSheet({
   app,

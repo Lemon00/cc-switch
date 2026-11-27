@@ -16,34 +16,29 @@ pub mod agy;
 pub mod claude;
 pub mod codex;
 pub mod dsh;
-pub mod gemini;
-pub mod grokbuild;
-pub mod hermes;
-pub mod omp;
 pub mod opencode;
 pub mod validation;
 
 // 重新导出公共 API
-pub use claude::{
-    import_from_claude, remove_server_from_claude, sync_enabled_to_claude,
-    sync_single_server_to_claude,
-};
-pub use codex::{
-    import_from_codex, remove_server_from_codex, sync_enabled_to_codex, sync_single_server_to_codex,
-};
-pub use gemini::{
-    import_from_gemini, remove_server_from_gemini, sync_enabled_to_gemini,
-    sync_single_server_to_gemini,
-};
-pub use grokbuild::{
-    import_from_grokbuild, remove_server_from_grokbuild, sync_single_server_to_grokbuild,
-};
-pub use hermes::{import_from_hermes, remove_server_from_hermes, sync_single_server_to_hermes};
-pub use omp::{remove_server_from_omp, sync_single_server_to_omp};
+pub use claude::{import_from_claude, remove_server_from_claude, sync_single_server_to_claude};
+pub use codex::{import_from_codex, remove_server_from_codex, sync_single_server_to_codex};
 pub use opencode::{
     import_from_opencode, remove_server_from_opencode, sync_single_server_to_opencode,
 };
 
-pub mod kimi;
-pub mod mcode;
-pub mod pi;
+/// Imports can persist valid rows before encountering conflicts. Report the
+/// skipped IDs to the caller without including connection strings or secrets.
+pub(crate) fn import_outcome(
+    count: usize,
+    label: &str,
+    skipped: Vec<String>,
+) -> Result<usize, crate::error::AppError> {
+    if skipped.is_empty() {
+        Ok(count)
+    } else {
+        Err(crate::error::AppError::McpValidation(format!(
+            "Imported {count} {label} MCP servers; skipped {}. Native configurations were preserved.",
+            skipped.join("; ")
+        )))
+    }
+}

@@ -1,63 +1,59 @@
-import { useMemo, useState, useEffect } from "react";
-import {
-  AlertTriangle,
-  GripVertical,
-  ChevronDown,
-  ChevronUp,
-} from "lucide-react";
-import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
-import type {
-  DraggableAttributes,
-  DraggableSyntheticListeners,
-} from "@dnd-kit/core";
-import type { Provider } from "@/types";
-import type { AppId } from "@/lib/api";
-import { authApi } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import AgyAccountQuotaFooter from "@/components/AgyAccountQuotaFooter";
+import ClaudeAccountQuotaFooter from "@/components/ClaudeAccountQuotaFooter";
+import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
+import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
 import { ProviderIconBox } from "@/components/ProviderIconBox";
+import { ClaudeBoundAccountLine } from "@/components/providers/forms/ClaudeOfficialSection";
+import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
 import { HoverTip } from "@/components/ui/hover-tip";
 import UsageFooter from "@/components/UsageFooter";
-import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
-import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
-import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
 import XaiOauthQuotaFooter from "@/components/XaiOauthQuotaFooter";
-import AgyAccountQuotaFooter from "@/components/AgyAccountQuotaFooter";
-import { ClaudeBoundAccountLine } from "@/components/providers/forms/ClaudeOfficialSection";
-import ClaudeAccountQuotaFooter from "@/components/ClaudeAccountQuotaFooter";
-import { claudePlanLabel } from "@/lib/claudePlan";
-import { useClaudeDefaultPlan } from "@/lib/query/subscription";
-import KimiAccountQuotaFooter from "@/components/KimiAccountQuotaFooter";
+import { isProxyAppId } from "@/config/appConfig";
 import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
+import type { AppId } from "@/lib/api";
+import { authApi } from "@/lib/api";
+import { resolveManagedAccountId } from "@/lib/authBinding";
+import { claudePlanLabel } from "@/lib/claudePlan";
+import { isMac } from "@/lib/platform";
+import { useProviderHealth } from "@/lib/query/failover";
+import { useUsageQuery } from "@/lib/query/queries";
+import { useClaudeDefaultPlan } from "@/lib/query/subscription";
+import { cn } from "@/lib/utils";
+import type { Provider } from "@/types";
+import {
+  resolveCodexOfficialIdentity,
+  supportsConnectivityCheck,
+} from "@/utils/providerCapabilities";
 import {
   extractCodexExperimentalBearerToken,
   extractProviderBaseUrl,
 } from "@/utils/providerConfigUtils";
-import { resolveManagedAccountId } from "@/lib/authBinding";
-import { isMac } from "@/lib/platform";
-import {
-  isOfficialAccount,
-  resolveCodexOfficialIdentity,
-  supportsConnectivityCheck,
-} from "@/utils/providerCapabilities";
-import { useProviderHealth } from "@/lib/query/failover";
-import { useUsageQuery } from "@/lib/query/queries";
 import { resolveProviderIcon } from "@/utils/providerIcon";
-import { isProxyAppId } from "@/config/appConfig";
-import { ProviderCardActions } from "./ProviderCardActions";
+import type {
+  DraggableAttributes,
+  DraggableSyntheticListeners,
+} from "@dnd-kit/core";
+import { useQuery } from "@tanstack/react-query";
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  GripVertical,
+} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   terminalAvailable,
   terminalIsIsolated,
   terminalNeedsRoute,
 } from "./OpenTerminalDialog";
 import type { CardChip, CardPresentation, CardTone } from "./presentation";
-
+import { ProviderCardActions } from "./ProviderCardActions";
 interface DragHandleProps {
   attributes: DraggableAttributes;
   listeners: DraggableSyntheticListeners;
   isDragging: boolean;
 }
-
 interface ProviderCardProps {
   provider: Provider;
   appId: AppId;
@@ -75,14 +71,12 @@ interface ProviderCardProps {
   isTesting?: boolean;
   dragHandleProps?: DragHandleProps;
 }
-
 /** 当前那张：模式色边框 + 淡底；共存式应用的默认那家同直连色。 */
 const TONE_CLASS: Record<CardTone, string> = {
   direct: "border-direct-border bg-direct-soft",
   route: "border-route-border bg-route-soft",
   stack: "border-stack-border bg-stack-soft",
 };
-
 const CHIP_CLASS: Record<CardChip["tone"], string> = {
   outline: "border border-border-strong text-fg-2",
   direct: "bg-direct-soft text-direct-text",
@@ -92,7 +86,6 @@ const CHIP_CLASS: Record<CardChip["tone"], string> = {
   warning: "bg-warning-soft text-warning-text",
   danger: "bg-danger-soft text-danger-text",
 };
-
 export function CardChipBadge({ chip }: { chip: CardChip }) {
   return (
     <span
@@ -107,7 +100,6 @@ export function CardChipBadge({ chip }: { chip: CardChip }) {
     </span>
   );
 }
-
 function HealthChip({
   consecutiveFailures,
   isHealthy,
@@ -124,14 +116,11 @@ function HealthChip({
         : { key: "health", label: t("health.circuitOpen"), tone: "danger" };
   return <CardChipBadge chip={chip} />;
 }
-
 /** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
 function isOfficialProvider(provider: Provider, appId: AppId): boolean {
-  if (appId === "kimi") return isOfficialAccount(appId, provider);
   if (provider.category === "official") {
     return true;
   }
-
   const config = provider.settingsConfig as Record<string, any>;
   if (appId === "claude") {
     const baseUrl = config?.env?.ANTHROPIC_BASE_URL;
@@ -149,7 +138,7 @@ function isOfficialProvider(provider: Provider, appId: AppId): boolean {
       (!apiKey || (typeof apiKey === "string" && apiKey.trim() === ""))
     );
   }
-  if (appId === "gemini" || appId === "agy") {
+  if (appId === "agy") {
     // 无 GEMINI_API_KEY 且无 GOOGLE_GEMINI_BASE_URL → Google OAuth 官方模式
     const apiKey = config?.env?.GEMINI_API_KEY;
     const baseUrl = config?.env?.GOOGLE_GEMINI_BASE_URL;
@@ -160,7 +149,6 @@ function isOfficialProvider(provider: Provider, appId: AppId): boolean {
   }
   return false;
 }
-
 /** Antigravity 卡片直接显示当前模型，省得进编辑才知道。 */
 function extractAgyModel(provider: Provider): string | null {
   const config = provider.settingsConfig as Record<string, any>;
@@ -171,19 +159,15 @@ function extractAgyModel(provider: Provider): string | null {
     ? envModel.trim()
     : null;
 }
-
 const extractApiUrl = (provider: Provider, fallbackText: string) => {
   if (provider.notes?.trim()) {
     return provider.notes.trim();
   }
-
   if (provider.websiteUrl) {
     return provider.websiteUrl;
   }
-
   return extractProviderBaseUrl(provider.settingsConfig) ?? fallbackText;
 };
-
 export function ProviderCard({
   provider,
   appId,
@@ -218,7 +202,7 @@ export function ProviderCard({
     queryKey: ["managed-auth-status", "codex_oauth"],
     queryFn: () => authApi.authGetStatus("codex_oauth"),
     enabled: isCodexOauth,
-    staleTime: 30_000,
+    staleTime: 30000,
   });
   const managedCodexAccount = codexAuthStatus?.accounts.find(
     (account) =>
@@ -232,26 +216,21 @@ export function ProviderCard({
         provider.name.trim() ===
           `OpenAI Official (${managedCodexAccount.login})`),
   );
-
   const { data: health } = useProviderHealth(
     provider.id,
     appId,
     Boolean(presentation.showHealth) && isProxyAppId(appId),
   );
-
   const fallbackUrlText = t("provider.notConfigured", {
     defaultValue: "未配置接口地址",
   });
-
   const displayUrl = useMemo(() => {
     return extractApiUrl(provider, fallbackUrlText);
   }, [provider, fallbackUrlText]);
-
   const agyModel = useMemo(
     () => (appId === "agy" ? extractAgyModel(provider) : null),
     [appId, provider],
   );
-
   const isClickableUrl = useMemo(() => {
     if (provider.notes?.trim()) {
       return false;
@@ -261,7 +240,6 @@ export function ProviderCard({
     }
     return true;
   }, [provider.notes, displayUrl, fallbackUrlText]);
-
   const isOfficial = isOfficialProvider(provider, appId);
   // Claude 官方卡绑了 Claude 官方账号：副标题写账号，额度按这个号查
   const claudeBoundAccountId =
@@ -297,7 +275,6 @@ export function ProviderCard({
         claudeDefaultPlan?.rateLimitTier,
       )
     : null;
-
   const isCopilot =
     provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
     provider.meta?.usage_script?.templateType === "github_copilot";
@@ -310,7 +287,6 @@ export function ProviderCard({
       : null;
   // 获取用量数据以判断是否有多套餐，按用户配置刷新，不依赖供应商启用状态。
   const autoQueryInterval = provider.meta?.usage_script?.autoQueryInterval ?? 0;
-
   // 脚本用量只在「已启用 + 非官方 + 非官方订阅模板」时才查询；展开判定必须复用同一谓词，
   // 因为禁用的 React Query observer 仍会返回同 key 的旧缓存。
   const scriptUsageActive =
@@ -319,7 +295,6 @@ export function ProviderCard({
     enabled: scriptUsageActive,
     autoQueryInterval,
   });
-
   const isTokenPlan =
     provider.meta?.usage_script?.templateType === "token_plan";
   // 官方订阅的额度窗口不能按普通多套餐展开；缓存残留的旧脚本结果同样不认。
@@ -329,18 +304,15 @@ export function ProviderCard({
     usage?.success &&
     usage.data &&
     usage.data.length > 1;
-
   const [isExpanded, setIsExpanded] = useState(false);
   const expandLabel = isExpanded
     ? t("usage.collapse", { defaultValue: "收起" })
     : t("usage.expand", { defaultValue: "展开" });
-
   useEffect(() => {
     if (hasMultiplePlans) {
       setIsExpanded(true);
     }
   }, [hasMultiplePlans]);
-
   const handleOpenWebsite = () => {
     if (!isClickableUrl) {
       return;
@@ -554,14 +526,6 @@ export function ProviderCard({
                   inline={true}
                   isCurrent={isCurrent}
                 />
-              ) : appId === "kimi" && isOfficial ? (
-                // 每张 Kimi 官方卡就是授权中心里的一个账号，额度按卡上那个号查
-                <KimiAccountQuotaFooter
-                  accountId={provider.id}
-                  name={provider.name}
-                  inline={true}
-                  isCurrent={isCurrent}
-                />
               ) : claudeBoundAccountId ? (
                 usageEnabled ? (
                   <ClaudeAccountQuotaFooter
@@ -637,11 +601,7 @@ export function ProviderCard({
             presentation={presentation}
             onEdit={() => onEdit(provider)}
             onDelete={() => onDelete(provider)}
-            onDuplicate={
-              onDuplicate && !(appId === "kimi" && isOfficial)
-                ? () => onDuplicate(provider)
-                : undefined
-            }
+            onDuplicate={onDuplicate ? () => onDuplicate(provider) : undefined}
             onTest={
               onTest && supportsConnectivityCheck(appId, provider)
                 ? () => onTest(provider)

@@ -10,7 +10,6 @@ import {
   uniqueId,
   validateDraft,
 } from "@/components/mcp/mcpDraft";
-
 describe("mcpDraft paste recognition", () => {
   it("recognizes a single named mcpServers entry", () => {
     const result = recognizePaste(
@@ -39,7 +38,6 @@ describe("mcpDraft paste recognition", () => {
       ],
     });
   });
-
   it("recognizes Codex TOML with env subtables", () => {
     const result = recognizePaste(
       [
@@ -71,7 +69,6 @@ describe("mcpDraft paste recognition", () => {
       },
     ]);
   });
-
   it("normalizes OpenCode local and remote entries", () => {
     const result = recognizePaste(
       JSON.stringify({
@@ -98,17 +95,14 @@ describe("mcpDraft paste recognition", () => {
       { name: "remote", spec: { type: "http", url: "https://x.dev/mcp" } },
     ]);
   });
-
   it("accepts a bare server object and a name fragment", () => {
     const single = recognizePaste('{"command": "uvx", "args": ["fetch"]}');
     expect(single && single.ok && single.format).toBe("single");
     expect(single && single.ok && single.items[0].name).toBe("");
-
     const fragment = recognizePaste('"fetch": {"command": "uvx"}');
     expect(fragment && fragment.ok && fragment.format).toBe("named");
     expect(fragment && fragment.ok && fragment.items[0].name).toBe("fetch");
   });
-
   it("maps streamable-http to http and reports unrecognized text", () => {
     const result = recognizePaste(
       '{"type": "streamable-http", "url": "https://a.dev"}',
@@ -118,8 +112,50 @@ describe("mcpDraft paste recognition", () => {
     expect(recognizePaste("   ")).toBeNull();
   });
 });
-
 describe("mcpDraft form ⇄ JSON", () => {
+  it("preserves empty arguments and names that collide with object properties", () => {
+    const spec = JSON.parse(
+      '{"command":"node","args":["--value","","last"],"env":{"__proto__":"token","constructor":"value"},"__proto__":{"custom":true}}',
+    );
+    const conn = connectionOf(spec);
+    expect(specOf(conn)).toEqual({ ...spec, type: "stdio" });
+    const parsed = parseJsonText(jsonTextOf(conn, false), conn);
+    expect(parsed.ok && parsed.spec.env).toEqual(spec.env);
+    const unknown = parseJsonText(
+      JSON.stringify({ command: "node", env: { toString: SECRET_MASK } }),
+      conn,
+    );
+    expect(unknown.ok).toBe(false);
+  });
+  it("keeps OpenCode options when pasting and recognizes HTTP aliases when editing", () => {
+    const pasted = recognizePaste(
+      JSON.stringify({
+        type: "local",
+        command: ["node", ""],
+        cwd: "/work",
+        timeout: 5000,
+        environment: { TOKEN: "secret" },
+      }),
+    );
+    expect(
+      pasted && pasted.ok && specOf(connectionOf(pasted.items[0].spec)),
+    ).toMatchObject({
+      command: "node",
+      args: [""],
+      cwd: "/work",
+      timeout: 5000,
+      env: { TOKEN: "secret" },
+    });
+    for (const type of ["streamable-http", "streamableHttp", "stdio"]) {
+      const conn = connectionOf(
+        JSON.parse(
+          JSON.stringify({ type, url: "https://example.com", command: " " }),
+        ),
+      );
+      expect(conn.transport).toBe("http");
+      expect(specOf(conn).url).toBe("https://example.com");
+    }
+  });
   const spec = {
     type: "stdio" as const,
     command: "uvx",
@@ -127,7 +163,6 @@ describe("mcpDraft form ⇄ JSON", () => {
     env: { TOKEN: "secret-value" },
     startup_timeout_ms: 30000,
   };
-
   it("keeps unknown fields and masks secrets only for display", () => {
     const conn = connectionOf(spec);
     expect(conn.extra).toEqual({ startup_timeout_ms: 30000 });
@@ -136,14 +171,12 @@ describe("mcpDraft form ⇄ JSON", () => {
     expect(masked.env.TOKEN).toBe(SECRET_MASK);
     expect(JSON.parse(jsonTextOf(conn, true)).env.TOKEN).toBe("secret-value");
   });
-
   it("restores masked values when parsing the JSON tab", () => {
     const conn = connectionOf(spec);
     const edited = jsonTextOf(conn, false).replace('"uvx"', '"npx"');
     const parsed = parseJsonText(edited, conn);
     expect(parsed.ok && parsed.spec).toEqual({ ...spec, command: "npx" });
   });
-
   it("refuses a placeholder whose key has no original value instead of saving an empty secret", () => {
     const conn = connectionOf(spec);
     // 改了键名、占位符还在：原值按键名找不到，不能悄悄存成 ""
@@ -159,7 +192,6 @@ describe("mcpDraft form ⇄ JSON", () => {
     const ok = parseJsonText(filled, conn);
     expect(ok.ok && ok.spec.env).toEqual({ API_TOKEN: "new-secret" });
   });
-
   it("reports the line of a JSON syntax error", () => {
     const parsed = parseJsonText(
       '{\n  "command": "uvx"\n  "args": []\n}',
@@ -168,7 +200,6 @@ describe("mcpDraft form ⇄ JSON", () => {
     expect(parsed.ok).toBe(false);
     expect(!parsed.ok && parsed.error.kind).toBe("syntax");
   });
-
   it("summarizes rows without env or headers", () => {
     expect(summaryOf(spec)).toBe("uvx serena");
     expect(
@@ -180,7 +211,6 @@ describe("mcpDraft form ⇄ JSON", () => {
     ).toBe("api.example.com/mcp");
   });
 });
-
 describe("mcpDraft validation", () => {
   it("checks the name, command and URL", () => {
     const stdio = connectionOf({ type: "stdio", command: "" });
@@ -199,7 +229,6 @@ describe("mcpDraft validation", () => {
       validateDraft("x", http, { checkName: false, existingIds: [] }),
     ).toEqual({ url: "urlScheme" });
   });
-
   it("makes template ids unique", () => {
     expect(uniqueId("fetch", ["fetch", "fetch-1"])).toBe("fetch-2");
     expect(uniqueId("time", [])).toBe("time");

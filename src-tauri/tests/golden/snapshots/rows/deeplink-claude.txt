@@ -1,4 +1,4 @@
-id: relaya-<ts>
+id: relaya-<uuid>
 name: Relay A
 settings_config: {"env":{"ANTHROPIC_AUTH_TOKEN":"sk-relay-a","ANTHROPIC_BASE_URL":"https://api.relay-a.example/anthropic","ANTHROPIC_MODEL":"claude-sonnet-4-5","ANTHROPIC_DEFAULT_HAIKU_MODEL":"claude-haiku-4-5","ANTHROPIC_DEFAULT_SONNET_MODEL":"claude-sonnet-4-5","ANTHROPIC_DEFAULT_OPUS_MODEL":"claude-opus-4-1"}}
 website_url: https://relay-a.example
@@ -11,7 +11,7 @@ meta: {"commonConfigEnabled":true}
 is_current: false
 in_failover_queue: false
 
-id: relayb-<ts>
+id: relayb-<uuid>
 name: Relay B
 settings_config: {"env":{"ANTHROPIC_AUTH_TOKEN":"sk-relay-b","ANTHROPIC_BASE_URL":"https://api.relay-b.example"}}
 website_url: https://relay-b.example
@@ -24,4 +24,4 @@ meta: {"commonConfigEnabled":true}
 is_current: false
 in_failover_queue: false
 
-endpoint: relaya-<ts> https://backup.relay-a.example
+endpoint: relaya-<uuid> https://backup.relay-a.example

@@ -1,10 +1,17 @@
-import { useId, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { ChevronDown } from "lucide-react";
-import { useUsageSummaryByApp } from "@/lib/query/usage";
 import { HelpTip } from "@/components/ui/help-tip";
 import { HoverTip } from "@/components/ui/hover-tip";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
+import { useUsageSummaryByApp } from "@/lib/query/usage";
 import { cn } from "@/lib/utils";
+import {
+  getCacheWriteAvailability,
+  type UsageRangeSelection,
+  type UsageSummary,
+  type UsageSummaryByApp,
+} from "@/types/usage";
+import { ChevronDown } from "lucide-react";
+import { useId, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   fmtInt,
   formatHitRatePercent,
@@ -13,15 +20,7 @@ import {
   getResolvedLang,
   parseFiniteNumber,
 } from "./format";
-import {
-  getCacheWriteAvailability,
-  type UsageRangeSelection,
-  type UsageSummary,
-  type UsageSummaryByApp,
-} from "@/types/usage";
-import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import type { UsageMetric } from "./rememberedChoice";
-
 interface UsageHeroProps {
   range: UsageRangeSelection;
   appType?: string;
@@ -34,7 +33,6 @@ interface UsageHeroProps {
   metric: UsageMetric;
   onMetricChange: (metric: UsageMetric) => void;
 }
-
 /**
  * Combine per-app summaries into a single rolled-up summary.
  *
@@ -51,7 +49,6 @@ export function aggregateSummaries(items: UsageSummary[]): UsageSummary {
   let output = 0;
   let cacheCreation = 0;
   let cacheRead = 0;
-
   for (const s of items) {
     totalRequests += s.totalRequests;
     successCount += Math.round((s.totalRequests * s.successRate) / 100);
@@ -61,7 +58,6 @@ export function aggregateSummaries(items: UsageSummary[]): UsageSummary {
     cacheCreation += s.totalCacheCreationTokens;
     cacheRead += s.totalCacheReadTokens;
   }
-
   const cacheableInput = input + cacheCreation + cacheRead;
   return {
     totalRequests,
@@ -75,7 +71,6 @@ export function aggregateSummaries(items: UsageSummary[]): UsageSummary {
     cacheHitRate: cacheableInput > 0 ? cacheRead / cacheableInput : 0,
   };
 }
-
 function pickSummary(
   apps: UsageSummaryByApp[],
   appType: string | undefined,
@@ -86,7 +81,6 @@ function pickSummary(
   }
   return aggregateSummaries(apps.map((a) => a.summary));
 }
-
 /**
  * 指标格：整格是一个按下态按钮（铺满整格、放在内容底下），内容层不接指针事件，
  * 只有「?」接——按钮里不能再套按钮。选中的格子是实心底色，其余透明。
@@ -100,7 +94,10 @@ function MetricCell({
   onSelect,
 }: {
   label: string;
-  help?: { title: string; body: string };
+  help?: {
+    title: string;
+    body: string;
+  };
   value: string;
   title?: string;
   selected: boolean;
@@ -160,7 +157,6 @@ function MetricCell({
     </div>
   );
 }
-
 /**
  * Tokens 的一个组成部分：展开行里的一格，和上面的指标格同列、同内边距；
  * 标签在上、数值在下，「?」跟在标签后面。数值不截断。
@@ -177,7 +173,10 @@ function SubMetric({
   value: string;
   title?: string;
   muted?: boolean;
-  help?: { title: string; body: string };
+  help?: {
+    title: string;
+    body: string;
+  };
 }) {
   return (
     <div className="flex min-w-0 flex-col gap-0.5 px-4 py-2.5">
@@ -198,7 +197,6 @@ function SubMetric({
     </div>
   );
 }
-
 /**
  * 指标条（概览面板顶部）：总成本、总请求数、真实消耗 Tokens、缓存命中率 4 格等宽，
  * 点一格切换下方图表的指标。Tokens 的 4 个组成部分（新增输入、输出、缓存写入、缓存命中）
@@ -219,7 +217,6 @@ export function UsageHero({
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
   const [moreOpen, setMoreOpen] = useState(false);
   const moreId = useId();
-
   const { data, isLoading } = useUsageSummaryByApp(
     range,
     { providerName, model },
@@ -227,17 +224,14 @@ export function UsageHero({
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },
   );
-
   // No client-side filtering: totals must match the Trend/Logs/Stats below,
   // which all go through the backend's full set of app_types. The
   // KNOWN_APP_TYPES list only governs which filter chips appear.
   const allApps = data ?? [];
   const summary = pickSummary(allApps, appType);
-
   const cacheWriteState = getCacheWriteAvailability(
     appType ? [appType] : allApps.map((a) => a.appType),
   );
-
   const input = summary?.totalInputTokens ?? 0;
   const output = summary?.totalOutputTokens ?? 0;
   const cacheWrite = summary?.totalCacheCreationTokens ?? 0;
@@ -246,7 +240,6 @@ export function UsageHero({
   const hitRate = summary?.cacheHitRate ?? 0;
   const totalCost = parseFiniteNumber(summary?.totalCost);
   const requests = summary?.totalRequests ?? 0;
-
   // 加载中写「…」；这段时间一条请求都没有时，各项都写「—」（和表格的空值一致），
   // 不写 0 / 0.0%：那是「有数据、结果为零」的意思
   const placeholder = isLoading ? "…" : requests === 0 ? "—" : undefined;
@@ -256,14 +249,12 @@ export function UsageHero({
   // 悬停看完整数字；加载中、没有数据时格子里是「…」「—」，不提示
   const exact = (text: string | undefined) => (placeholder ? undefined : text);
   const columns = compact ? "grid-cols-2" : "grid-cols-4";
-
   const cacheWriteHelp =
     cacheWriteState === "na"
       ? t("usage.cacheWriteNotReported")
       : cacheWriteState === "partial"
         ? t("usage.cacheWritePartial")
         : undefined;
-
   return (
     <section
       aria-label={t("usage.metrics.label")}
@@ -363,7 +354,7 @@ export function UsageHero({
       </div>
 
       {/* 展开按钮压在面板分隔线正中（24 见方的圆，上下各占 12）：上面的指标格底部留 14、下面的图表顶部留 20，都盖得住它；展开时子指标行不另留。
-          只有箭头，名字放 aria-label 和悬停提示 */}
+                    只有箭头，名字放 aria-label 和悬停提示 */}
       <HoverTip content={t("usage.metrics.more")}>
         <button
           type="button"

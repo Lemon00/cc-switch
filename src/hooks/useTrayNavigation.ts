@@ -1,10 +1,10 @@
-import { useEffect, useRef } from "react";
+import { APP_IDS } from "@/config/appCapabilities";
+import type { AppId } from "@/lib/api/types";
+import { SETTINGS_SECTIONS, type SettingsSection } from "@/lib/navigation";
+import { cleanupTauriListener } from "@/lib/tauriEventCleanup";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AppId } from "@/lib/api/types";
-import { APP_IDS } from "@/config/appConfig";
-import { SETTINGS_SECTIONS, type SettingsSection } from "@/lib/navigation";
-
+import { useEffect, useRef } from "react";
 /** 托盘让主界面去的地方（后端 `tray::TrayNavigation`）。 */
 export interface TrayNavigation {
   app?: AppId;
@@ -13,14 +13,12 @@ export interface TrayNavigation {
   intent?: "needsRoute" | "add";
   providerId?: string;
 }
-
 interface RawTrayNavigation {
   app?: string;
   section?: string;
   intent?: string;
   providerId?: string;
 }
-
 export function parseTrayNavigation(
   raw: RawTrayNavigation | null | undefined,
 ): TrayNavigation | null {
@@ -36,7 +34,6 @@ export function parseTrayNavigation(
   if (intent === "needsRoute" && !raw.providerId) return { app };
   return { app, intent, providerId: raw.providerId };
 }
-
 /**
  * 托盘里点「打开 X 页面」「（需要路由）…」「添加供应商…」和问题区：后端先打开主窗口，留下一条
  * 导航再发 `tray-navigate`。轻量模式下窗口是新建的，事件可能早于监听，所以挂载时也取一次。
@@ -46,28 +43,38 @@ export function useTrayNavigation(
 ): void {
   const handlerRef = useRef(onNavigate);
   handlerRef.current = onNavigate;
-
   useEffect(() => {
     let disposed = false;
     let unlisten: UnlistenFn | undefined;
-
+    let taking = false;
+    let takeAgain = false;
     const take = async () => {
+      if (disposed) return;
+      takeAgain = true;
+      if (taking) return;
+      taking = true;
       try {
-        const raw = await invoke<RawTrayNavigation | null>(
-          "take_tray_navigation",
-        );
-        const navigation = parseTrayNavigation(raw);
-        if (navigation && !disposed) handlerRef.current(navigation);
-      } catch (error) {
-        console.error("Failed to take tray navigation", error);
+        do {
+          takeAgain = false;
+          try {
+            const raw = await invoke<RawTrayNavigation | null>(
+              "take_tray_navigation",
+            );
+            const navigation = parseTrayNavigation(raw);
+            if (navigation && !disposed) handlerRef.current(navigation);
+          } catch (error) {
+            console.error("Failed to take tray navigation", error);
+          }
+        } while (takeAgain && !disposed);
+      } finally {
+        taking = false;
       }
     };
-
     void (async () => {
       try {
         const off = await listen("tray-navigate", () => void take());
         if (disposed) {
-          off();
+          cleanupTauriListener(off, "tray-navigate");
           return;
         }
         unlisten = off;
@@ -76,14 +83,12 @@ export function useTrayNavigation(
       }
       await take();
     })();
-
     return () => {
       disposed = true;
-      unlisten?.();
+      if (unlisten) cleanupTauriListener(unlisten, "tray-navigate");
     };
   }, []);
 }
-
 /**
  * 主界面正显示某个应用的供应商页：告诉托盘这个应用的问题行处理过了（规格「打开过对应页面」）。
  * 切到这个页面、以及窗口重新拿到焦点时各报一次；`app` 为 null 表示当前不是应用页。

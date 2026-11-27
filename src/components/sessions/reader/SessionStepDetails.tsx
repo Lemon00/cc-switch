@@ -1,9 +1,8 @@
-import { memo, useMemo, useState, type ReactNode } from "react";
-import { ChevronRight } from "lucide-react";
-
 import { useBlockContent } from "@/lib/query/sessions";
 import { cn } from "@/lib/utils";
 import type { ContentRef, ToolCallBlock, ToolStatus } from "@/types";
+import { ChevronRight } from "lucide-react";
+import { memo, useMemo, useState, type ReactNode } from "react";
 import { highlightText } from "../utils";
 import type { AgentReaderStyle } from "./agentStyles";
 import { useReaderContext } from "./context";
@@ -14,10 +13,8 @@ import { buildInputDiff, SessionDiff } from "./SessionDiff";
 import { SessionImageGrid } from "./SessionImage";
 import { isFailureStatus, shortenPath } from "./toolSummary";
 import type { ToolStep } from "./turns";
-
 const linkButton =
   "rounded-[2px] text-caption text-fg-2 underline decoration-border-strong underline-offset-[3px] transition-colors hover:text-fg-1 hover:decoration-fg-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
-
 /** 状态色：Gemini 的框线、Pi 的竖条用 */
 export const STATUS_BORDER: Record<ToolStatus, string> = {
   success: "border-success",
@@ -26,7 +23,6 @@ export const STATUS_BORDER: Record<ToolStatus, string> = {
   pending: "border-border-strong",
   unknown: "border-border-strong",
 };
-
 /** 同上，只给起始边（Gemini 的框线左侧加粗着色）；Tailwind 需要完整类名字面量 */
 const STATUS_BORDER_START: Record<ToolStatus, string> = {
   success: "border-s-success",
@@ -35,9 +31,7 @@ const STATUS_BORDER_START: Record<ToolStatus, string> = {
   pending: "border-s-border-strong",
   unknown: "border-s-border-strong",
 };
-
 // ─── 可按需取全文的文本块 ─────────────────────────────────────────────────
-
 export interface BlockTextProps {
   /** 预览文本（后端已截断到 12 行 / 1200 字） */
   preview: string;
@@ -55,7 +49,6 @@ export interface BlockTextProps {
   emphasis?: boolean;
   className?: string;
 }
-
 const VARIANT_CLASS = {
   output:
     "whitespace-pre rounded-[8px] bg-subtle px-3 py-2 font-mono text-caption",
@@ -65,7 +58,6 @@ const VARIANT_CLASS = {
   /** 注入文本、压缩摘要等长说明 */
   plain: "whitespace-pre-wrap break-words text-caption",
 } as const;
-
 /**
  * 输出 / 参数 / 思考的文本块：默认显示前 N 行，「显示全部」时预览已完整就直接展开，
  * 否则按 ContentRef 取全文（512K 一页，「加载更多」；累计超过 2MB 提示复制源文件路径）。
@@ -88,7 +80,6 @@ export const BlockText = memo(function BlockText({
   const content = useBlockContent(providerId, sourcePath, full, {
     enabled: showAll && needsFetch,
   });
-
   const previewRows = useMemo(() => preview.split("\n"), [preview]);
   const totalLines = Math.max(lineCount ?? 0, previewRows.length);
   const fullText = showAll && needsFetch && content.text ? content.text : null;
@@ -105,7 +96,6 @@ export const BlockText = memo(function BlockText({
     ? 0
     : totalLines - Math.min(previewLines, previewRows.length);
   const canExpand = hiddenLines > 0 || (truncated && Boolean(full));
-
   return (
     <div className={cn("min-w-0", className)}>
       <pre
@@ -188,9 +178,7 @@ export const BlockText = memo(function BlockText({
     </div>
   );
 });
-
 // ─── 参数 ─────────────────────────────────────────────────────────────────
-
 const prettyJson = (text: string) => {
   try {
     return JSON.stringify(JSON.parse(text), null, 2);
@@ -198,13 +186,12 @@ const prettyJson = (text: string) => {
     return text;
   }
 };
-
 /** 从完整的参数 JSON 里取 shell 命令全文（多行命令的标题只有首行） */
 const fullCommand = (call: ToolCallBlock) => {
   if (call.inputPreview.length < call.inputTotalLen) return null;
   try {
     const input = JSON.parse(call.inputPreview) as Record<string, unknown>;
-    for (const key of ["command", "cmd", "script"]) {
+    for (const key of ["command", "cmd", "script", "CommandLine"]) {
       const value = input[key];
       if (typeof value === "string") return value;
       if (Array.isArray(value) && value.every((v) => typeof v === "string")) {
@@ -216,7 +203,6 @@ const fullCommand = (call: ToolCallBlock) => {
   }
   return null;
 };
-
 const Section = ({
   label,
   children,
@@ -258,9 +244,7 @@ const Section = ({
     </section>
   );
 };
-
 // ─── 改动 ─────────────────────────────────────────────────────────────────
-
 const DiffFromRef = ({
   diffRef,
   formatPath,
@@ -287,7 +271,6 @@ const DiffFromRef = ({
     />
   );
 };
-
 const DiffSection = ({ call }: { call: ToolCallBlock }) => {
   const rt = useReaderT();
   const { projectDir, searchQuery } = useReaderContext();
@@ -297,11 +280,11 @@ const DiffSection = ({ call }: { call: ToolCallBlock }) => {
     () => (diff?.full ? null : buildInputDiff(call)),
     [call, diff?.full],
   );
-  if (!diff && !inputDiff) return null;
-
+  const hasFileList = Boolean(diff && diff.files.length > 1);
+  if (!hasFileList && !diff?.full && !inputDiff) return null;
   return (
     <Section label={rt("diff")}>
-      {diff && diff.files.length > 1 && (
+      {hasFileList && diff && (
         <ul className="m-0 mb-1.5 list-none space-y-0.5 p-0 font-mono text-caption text-fg-2">
           {diff.files.map((file) => (
             <li key={file.path} className="flex items-center gap-1.5">
@@ -331,9 +314,7 @@ const DiffSection = ({ call }: { call: ToolCallBlock }) => {
     </Section>
   );
 };
-
 // ─── 详情 ─────────────────────────────────────────────────────────────────
-
 export interface SessionStepDetailsProps {
   step: ToolStep;
   style: AgentReaderStyle;
@@ -342,7 +323,6 @@ export interface SessionStepDetailsProps {
   id: string;
   label: string;
 }
-
 /**
  * 步骤展开区（规则 6、7）：参数（失败时展开，成功时折叠在「参数」下；shell 显示完整命令）、
  * 改动、输出预览 + 显示全部、结果图片、落盘路径。结果引出符随风格：tree / box / none。
@@ -358,18 +338,18 @@ export const SessionStepDetails = memo(function SessionStepDetails({
   const { projectDir } = useReaderContext();
   const { call, result, status } = step;
   const failure = isFailureStatus(status);
-
   const command = call?.kind === "shell" ? fullCommand(call) : null;
-  const showCommand = Boolean(command && command.trim() !== call?.title.trim());
-  // shell 一般直接显示完整命令；但参数超过预览上限时取不到全文，
-  // 这时也给出「参数」区，按需加载完整参数（否则只剩最多 200 字的标题）
+  const hasCommand = Boolean(command && command.trim() !== "");
+  const showCommand = Boolean(
+    hasCommand && command!.trim() !== call?.title.trim(),
+  );
+  // shell 一般直接显示完整命令；参数超过预览上限或不含命令字段（如 manage_task）时给出「参数」区
   const shellTruncated =
     call?.kind === "shell" && call.inputPreview.length < call.inputTotalLen;
   const hasParams =
     Boolean(call) &&
     call!.inputPreview.trim() !== "" &&
-    (call!.kind !== "shell" || shellTruncated);
-
+    (call!.kind !== "shell" || !hasCommand || shellTruncated);
   const output = result && (result.preview || result.totalLen > 0) && (
     <BlockText
       preview={result.preview}
@@ -381,7 +361,6 @@ export const SessionStepDetails = memo(function SessionStepDetails({
       emphasis={failure}
     />
   );
-
   const framed =
     style.resultFrame === "tree" && output ? (
       <div className="flex min-w-0 gap-1.5">
@@ -396,7 +375,6 @@ export const SessionStepDetails = memo(function SessionStepDetails({
     ) : (
       output
     );
-
   return (
     <div
       id={id}

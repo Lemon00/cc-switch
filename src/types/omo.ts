@@ -5,7 +5,6 @@ export interface OmoLocalFileData {
   filePath: string;
   lastModified?: string;
 }
-
 export interface OmoAgentDef {
   key: string;
   display: string;
@@ -14,7 +13,6 @@ export interface OmoAgentDef {
   recommended?: string;
   group: "main" | "sub";
 }
-
 export interface OmoCategoryDef {
   key: string;
   display: string;
@@ -22,7 +20,6 @@ export interface OmoCategoryDef {
   tooltipKey: string;
   recommended?: string;
 }
-
 export const OMO_BUILTIN_AGENTS: OmoAgentDef[] = [
   {
     key: "sisyphus",
@@ -113,7 +110,6 @@ export const OMO_BUILTIN_AGENTS: OmoAgentDef[] = [
     group: "sub",
   },
 ];
-
 export const OMO_BUILTIN_CATEGORIES: OmoCategoryDef[] = [
   {
     key: "visual-engineering",
@@ -172,7 +168,6 @@ export const OMO_BUILTIN_CATEGORIES: OmoCategoryDef[] = [
     recommended: "k2p5",
   },
 ];
-
 export const OMO_DISABLEABLE_AGENTS = [
   { value: "Prometheus (Planner)", label: "Prometheus (Planner)" },
   { value: "Atlas", label: "Atlas" },
@@ -187,13 +182,11 @@ export const OMO_DISABLEABLE_AGENTS = [
   { value: "Momus (Plan Reviewer)", label: "Momus (Plan Reviewer)" },
   { value: "OpenCode-Builder", label: "OpenCode-Builder" },
 ] as const;
-
 export const OMO_DISABLEABLE_MCPS = [
   { value: "context7", label: "context7" },
   { value: "grep_app", label: "grep_app" },
   { value: "websearch", label: "websearch" },
 ] as const;
-
 export const OMO_DISABLEABLE_HOOKS = [
   { value: "todo-continuation-enforcer", label: "todo-continuation-enforcer" },
   { value: "context-window-monitor", label: "context-window-monitor" },
@@ -239,23 +232,19 @@ export const OMO_DISABLEABLE_HOOKS = [
   { value: "ralph-loop", label: "ralph-loop" },
   { value: "preemptive-compaction", label: "preemptive-compaction" },
 ] as const;
-
 export const OMO_DISABLEABLE_SKILLS = [
   { value: "playwright", label: "playwright" },
   { value: "agent-browser", label: "agent-browser" },
   { value: "git-master", label: "git-master" },
 ] as const;
-
 export const OMO_DEFAULT_SCHEMA_URL =
   "https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/dev/assets/oh-my-opencode.schema.json";
-
 export const OMO_SISYPHUS_AGENT_PLACEHOLDER = `{
   "disabled": false,
   "default_builder_enabled": false,
   "planner_enabled": true,
   "replace_plan": true
 }`;
-
 export const OMO_LSP_PLACEHOLDER = `{
   "typescript-language-server": {
     "command": ["typescript-language-server", "--stdio"],
@@ -266,13 +255,11 @@ export const OMO_LSP_PLACEHOLDER = `{
     "disabled": true
   }
 }`;
-
 export const OMO_EXPERIMENTAL_PLACEHOLDER = `{
   "truncate_all_tool_outputs": true,
   "aggressive_truncation": true,
   "auto_resume": true
 }`;
-
 export const OMO_BACKGROUND_TASK_PLACEHOLDER = `{
   "defaultConcurrency": 5,
   "providerConcurrency": {
@@ -285,11 +272,9 @@ export const OMO_BACKGROUND_TASK_PLACEHOLDER = `{
     "google/gemini-3.6-flash": 10
   }
 }`;
-
 export const OMO_BROWSER_AUTOMATION_PLACEHOLDER = `{
   "provider": "playwright"
 }`;
-
 export const OMO_CLAUDE_CODE_PLACEHOLDER = `{
   "mcp": true,
   "commands": true,
@@ -298,7 +283,6 @@ export const OMO_CLAUDE_CODE_PLACEHOLDER = `{
   "hooks": true,
   "plugins": true
 }`;
-
 export function parseOmoOtherFieldsObject(
   raw: string,
 ): Record<string, unknown> | undefined {
@@ -309,11 +293,9 @@ export function parseOmoOtherFieldsObject(
   }
   return parsed as Record<string, unknown>;
 }
-
 // ============================================================================
 // OMO Slim (oh-my-opencode-slim) definitions
 // ============================================================================
-
 export const OMO_SLIM_BUILTIN_AGENTS: OmoAgentDef[] = [
   {
     key: "orchestrator",
@@ -372,7 +354,6 @@ export const OMO_SLIM_BUILTIN_AGENTS: OmoAgentDef[] = [
     group: "sub",
   },
 ];
-
 export const OMO_SLIM_DISABLEABLE_AGENTS = [
   { value: "orchestrator", label: "Orchestrator" },
   { value: "oracle", label: "Oracle" },
@@ -382,35 +363,31 @@ export const OMO_SLIM_DISABLEABLE_AGENTS = [
   { value: "fixer", label: "Fixer" },
   { value: "council", label: "Council" },
 ] as const;
-
 export const OMO_SLIM_DISABLEABLE_MCPS = [
   { value: "context7", label: "context7" },
   { value: "grep_app", label: "grep_app" },
   { value: "websearch", label: "websearch" },
 ] as const;
-
 export const OMO_SLIM_DISABLEABLE_HOOKS = [
   { value: "auto-update-checker", label: "auto-update-checker" },
   { value: "phase-reminder", label: "phase-reminder" },
   { value: "post-read-nudge", label: "post-read-nudge" },
 ] as const;
-
 export const OMO_SLIM_DEFAULT_SCHEMA_URL =
   "https://raw.githubusercontent.com/alvinunreal/oh-my-opencode-slim/master/assets/oh-my-opencode-slim.schema.json";
-
 export function buildOmoProfilePreview(
   agents: Record<string, Record<string, unknown>>,
   categories: Record<string, Record<string, unknown>> | undefined,
   otherFieldsStr: string,
-  options?: { slim?: boolean },
+  options?: {
+    slim?: boolean;
+  },
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   const isSlim = options?.slim ?? false;
-
   if (Object.keys(agents).length > 0) result["agents"] = agents;
   if (!isSlim && categories && Object.keys(categories).length > 0)
     result["categories"] = categories;
-
   try {
     const other = parseOmoOtherFieldsObject(otherFieldsStr);
     if (other) {
@@ -419,10 +396,8 @@ export function buildOmoProfilePreview(
       }
     }
   } catch {}
-
   return result;
 }
-
 /** @deprecated Use buildOmoProfilePreview with options.slim=true */
 export function buildOmoSlimProfilePreview(
   agents: Record<string, Record<string, unknown>>,

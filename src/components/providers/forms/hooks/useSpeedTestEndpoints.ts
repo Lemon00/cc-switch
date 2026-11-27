@@ -1,15 +1,13 @@
-import { useMemo } from "react";
-import type { AppId } from "@/lib/api";
 import type { ProviderPreset } from "@/config/claudeProviderPresets";
 import type { CodexProviderPreset } from "@/config/codexProviderPresets";
-import type { ProviderMeta, EndpointCandidate } from "@/types";
+import type { AppId } from "@/lib/api";
+import type { EndpointCandidate, ProviderMeta } from "@/types";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
-
+import { useMemo } from "react";
 type PresetEntry = {
   id: string;
   preset: ProviderPreset | CodexProviderPreset;
 };
-
 interface UseSpeedTestEndpointsProps {
   appId: AppId;
   selectedPresetId: string | null;
@@ -21,7 +19,6 @@ interface UseSpeedTestEndpointsProps {
     meta?: ProviderMeta;
   };
 }
-
 /**
  * 收集端点测速弹窗的初始端点列表
  *
@@ -43,8 +40,7 @@ export function useSpeedTestEndpoints({
 }: UseSpeedTestEndpointsProps) {
   const claudeEndpoints = useMemo<EndpointCandidate[]>(() => {
     // Reuse this branch for Claude and Gemini (non-Codex)
-    if (appId !== "claude" && appId !== "gemini") return [];
-
+    if (appId !== "claude") return [];
     const map = new Map<string, EndpointCandidate>();
     // 候选端点标记为 isCustom: false，表示来自预设或配置
     // 已保存的自定义端点会在 EndpointSpeedTest 组件中通过 API 加载
@@ -54,16 +50,17 @@ export function useSpeedTestEndpoints({
       if (!sanitized || map.has(sanitized)) return;
       map.set(sanitized, { url: sanitized, isCustom });
     };
-
     // 1. 当前 Base URL
     if (baseUrl) {
       add(baseUrl);
     }
-
     // 2. 编辑模式：初始数据中的 URL
     if (initialData && typeof initialData.settingsConfig === "object") {
       const configEnv = initialData.settingsConfig as {
-        env?: { ANTHROPIC_BASE_URL?: string; GOOGLE_GEMINI_BASE_URL?: string };
+        env?: {
+          ANTHROPIC_BASE_URL?: string;
+          GOOGLE_GEMINI_BASE_URL?: string;
+        };
       };
       const envUrls = [
         configEnv.env?.ANTHROPIC_BASE_URL,
@@ -73,13 +70,16 @@ export function useSpeedTestEndpoints({
         if (typeof u === "string") add(u);
       });
     }
-
     // 3. 预设中的 endpointCandidates
     if (selectedPresetId && selectedPresetId !== "custom") {
       const entry = presetEntries.find((item) => item.id === selectedPresetId);
       if (entry) {
         const preset = entry.preset as ProviderPreset & {
-          settingsConfig?: { env?: { GOOGLE_GEMINI_BASE_URL?: string } };
+          settingsConfig?: {
+            env?: {
+              GOOGLE_GEMINI_BASE_URL?: string;
+            };
+          };
           endpointCandidates?: string[];
         };
         // 添加预设自己的 baseUrl（兼容 Claude/Gemini）
@@ -100,13 +100,10 @@ export function useSpeedTestEndpoints({
         }
       }
     }
-
     return Array.from(map.values());
   }, [appId, baseUrl, initialData, selectedPresetId, presetEntries]);
-
   const codexEndpoints = useMemo<EndpointCandidate[]>(() => {
     if (appId !== "codex") return [];
-
     const map = new Map<string, EndpointCandidate>();
     // 候选端点标记为 isCustom: false，表示来自预设或配置
     // 已保存的自定义端点会在 EndpointSpeedTest 组件中通过 API 加载
@@ -116,12 +113,10 @@ export function useSpeedTestEndpoints({
       if (!sanitized || map.has(sanitized)) return;
       map.set(sanitized, { url: sanitized, isCustom });
     };
-
     // 1. 当前 Codex Base URL
     if (codexBaseUrl) {
       add(codexBaseUrl);
     }
-
     // 2. 编辑模式：初始数据中的 URL
     const initialCodexConfig = initialData?.settingsConfig as
       | {
@@ -133,7 +128,6 @@ export function useSpeedTestEndpoints({
     if (extractedBaseUrl) {
       add(extractedBaseUrl);
     }
-
     // 3. 预设中的 endpointCandidates
     if (selectedPresetId && selectedPresetId !== "custom") {
       const entry = presetEntries.find((item) => item.id === selectedPresetId);
@@ -151,9 +145,7 @@ export function useSpeedTestEndpoints({
         }
       }
     }
-
     return Array.from(map.values());
   }, [appId, codexBaseUrl, initialData, selectedPresetId, presetEntries]);
-
   return appId === "codex" ? codexEndpoints : claudeEndpoints;
 }

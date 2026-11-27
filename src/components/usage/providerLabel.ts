@@ -1,7 +1,6 @@
-import type { TFunction } from "i18next";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import type { AppId } from "@/lib/api";
-
+import type { TFunction } from "i18next";
 /**
  * 后端给会话日志导入的用量返回的占位供应商名（`usage_stats.rs` 的
  * `provider_name_coalesce`）。这些名字同时是供应商筛选的取值，原样回传后端
@@ -10,17 +9,20 @@ import type { AppId } from "@/lib/api";
 const SESSION_PROVIDER_APPS: Record<string, AppId> = {
   "Claude (Session)": "claude",
   "Codex (Session)": "codex",
-  "Gemini (Session)": "gemini",
   "OpenCode (Session)": "opencode",
-  "Grok Build (Session)": "grokbuild",
-  "MiniMax Code (Session)": "mcode",
-  "Kimi Code (Session)": "kimi",
-  "Pi (Session)": "pi",
-  "Oh My Pi (Session)": "omp",
   "Antigravity (Session)": "agy",
   "DeepSeek Harness (Session)": "dsh",
 };
-
+// Old SQLite usage rows remain readable after a client is retired. These labels
+// are display-only compatibility data; they do not enable a retired client.
+const LEGACY_SESSION_PROVIDER_NAMES: Record<string, string> = {
+  "Gemini (Session)": "Gemini CLI",
+  "Grok Build (Session)": "Grok Build",
+  "Kimi Code (Session)": "Kimi Code",
+  "MiniMax Code (Session)": "MiniMax Code",
+  "Pi (Session)": "Pi",
+  "Oh My Pi (Session)": "Oh My Pi",
+};
 /**
  * 同样来自会话日志、但能认出走的是官方账号登录（OAuth）的占位名。
  * DeepSeek Harness 的 Web 与 Desktop 共用一份 DeepSeek 账号登录，用量合并记在 dsh 下。
@@ -28,7 +30,6 @@ const SESSION_PROVIDER_APPS: Record<string, AppId> = {
 const SESSION_ACCOUNT_PROVIDER_APPS: Record<string, AppId> = {
   "DeepSeek Harness (OAuth)": "dsh",
 };
-
 export interface UsageProviderLabel {
   label: string;
   /** 旁边已经有「应用」列时用的短名：会话日志占位名省掉应用名，其余同 label */
@@ -36,7 +37,6 @@ export interface UsageProviderLabel {
   /** 会话日志占位名才有：说明为什么分不出具体供应商 */
   hint?: string;
 }
-
 /** 用量面板里供应商名的显示文案；空名显示「未知供应商」。 */
 export function getUsageProviderLabel(
   name: string | undefined,
@@ -57,14 +57,16 @@ export function getUsageProviderLabel(
     };
   }
   const app = SESSION_PROVIDER_APPS[name];
-  if (!app) return { label: name, shortLabel: name };
+  const appName = app
+    ? APP_DISPLAY_NAME[app]
+    : LEGACY_SESSION_PROVIDER_NAMES[name];
+  if (!appName) return { label: name, shortLabel: name };
   return {
-    label: t("usage.sessionProvider.label", { app: APP_DISPLAY_NAME[app] }),
+    label: t("usage.sessionProvider.label", { app: appName }),
     shortLabel: t("usage.sessionProvider.short"),
     hint: t("usage.sessionProvider.hint"),
   };
 }
-
 /** 悬停提示：名字本身（截断时看全名），会话日志占位名再附上说明。 */
 export function usageProviderTitle({
   label,

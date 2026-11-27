@@ -1,9 +1,8 @@
-import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
-import { Switch } from "@/components/ui/switch";
 import { HelpTip } from "@/components/ui/help-tip";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-
+import { useTranslation } from "react-i18next";
 interface FullUrlToggleProps {
   checked: boolean;
   onCheckedChange: (value: boolean) => void;
@@ -11,7 +10,6 @@ interface FullUrlToggleProps {
   geminiNative?: boolean;
   className?: string;
 }
-
 /**
  * 「完整 URL」开关（Claude Code、Codex、Grok Build 的高级选项共用）。
  * 只对端点路径不标准的网关有用，只在路由、聚合下生效；说明全在「?」里。
@@ -24,7 +22,6 @@ export function FullUrlToggle({
 }: FullUrlToggleProps) {
   const { t } = useTranslation();
   const label = t("providerForm.fullUrlLabel", { defaultValue: "完整 URL" });
-
   return (
     <div className={cn("flex items-center justify-between gap-4", className)}>
       <div className="flex items-center gap-0.5">

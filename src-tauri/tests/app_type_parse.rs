@@ -1,30 +1,34 @@
+use cc_switch_lib::AppType;
 use std::str::FromStr;
 
-use cc_switch_lib::AppType;
-
 #[test]
-fn parse_known_apps_case_insensitive_and_trim() {
-    assert!(matches!(AppType::from_str("claude"), Ok(AppType::Claude)));
-    assert!(matches!(AppType::from_str("codex"), Ok(AppType::Codex)));
-    assert!(matches!(
-        AppType::from_str("grokbuild"),
-        Ok(AppType::GrokBuild)
-    ));
-    assert!(matches!(
-        AppType::from_str("Grok-Build"),
-        Ok(AppType::GrokBuild)
-    ));
-    assert!(matches!(
-        AppType::from_str(" ClAuDe \n"),
-        Ok(AppType::Claude)
-    ));
-    assert!(matches!(AppType::from_str("\tcoDeX\t"), Ok(AppType::Codex)));
+fn parses_only_supported_apps_and_aliases() {
+    for (value, expected) in [
+        (" ClAuDe ", AppType::Claude),
+        ("codex", AppType::Codex),
+        ("opencode", AppType::OpenCode),
+        ("deepseek-harness", AppType::Dsh),
+        ("antigravity", AppType::Agy),
+    ] {
+        assert_eq!(AppType::from_str(value).unwrap(), expected);
+    }
+    for retired in [
+        "gemini",
+        "grokbuild",
+        "claude-desktop",
+        "hermes",
+        "openclaw",
+        "kimi",
+        "mcode",
+        "pi",
+        "omp",
+    ] {
+        assert!(AppType::from_str(retired).is_err());
+    }
 }
 
 #[test]
-fn parse_unknown_app_returns_localized_error_message() {
-    let err = AppType::from_str("unknown").unwrap_err();
-    let msg = err.to_string();
-    assert!(msg.contains("可选值") || msg.contains("Allowed"));
-    assert!(msg.contains("unknown"));
+fn unknown_apps_have_an_actionable_error() {
+    let message = AppType::from_str("unknown").unwrap_err().to_string();
+    assert!(message.contains("可选值") && message.contains("unknown"));
 }

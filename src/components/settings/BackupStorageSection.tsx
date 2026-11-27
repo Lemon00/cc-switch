@@ -1,7 +1,9 @@
-import { useState } from "react";
-import { useTranslation } from "react-i18next";
-import { toast } from "@/lib/toast";
-import { ChevronRight, FolderOpen, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   Dialog,
   DialogContent,
@@ -10,17 +12,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { HoverTip } from "@/components/ui/hover-tip";
-import { backupsApi, type BackupLocation } from "@/lib/api/settings";
 import { useBackupLocations } from "@/hooks/useBackupManager";
+import { backupsApi, type BackupLocation } from "@/lib/api/settings";
+import { toast } from "@/lib/toast";
 import { extractErrorMessage } from "@/utils/errorUtils";
-
+import { ChevronRight, FolderOpen, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { useTranslation } from "react-i18next";
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -28,7 +27,6 @@ export function formatBytes(bytes: number): string {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
-
 /** 各类备份的位置与大小，删不删由用户决定（类别与路径由后端给出） */
 export function BackupStorageSection() {
   const { t } = useTranslation();
@@ -37,13 +35,11 @@ export function BackupStorageSection() {
   const [pending, setPending] = useState<BackupLocation | null>(null);
   // 默认折叠：备份类别多时列表较长，标题行仍显示合计大小
   const [open, setOpen] = useState(false);
-
   const itemText = (id: string, field: "name" | "hint") =>
     t(`settings.backupStorage.items.${id}.${field}`, { defaultValue: id });
   const revealLabel = t("settings.backupStorage.reveal");
   const deleteLabel = t("settings.backupStorage.delete");
   const totalBytes = locations.reduce((sum, l) => sum + l.sizeBytes, 0);
-
   const handleReveal = async (id: string) => {
     try {
       await backupsApi.revealBackupLocation(id);
@@ -53,7 +49,6 @@ export function BackupStorageSection() {
       );
     }
   };
-
   const handleDelete = async () => {
     if (!pending) return;
     try {
@@ -70,7 +65,6 @@ export function BackupStorageSection() {
       );
     }
   };
-
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger asChild>
@@ -80,9 +74,7 @@ export function BackupStorageSection() {
         >
           <span className="flex items-center gap-1 text-sm font-medium">
             <ChevronRight
-              className={`h-3.5 w-3.5 text-fg-2 transition-transform ${
-                open ? "rotate-90" : ""
-              }`}
+              className={`h-3.5 w-3.5 text-fg-2 transition-transform ${open ? "rotate-90" : ""}`}
             />
             {t("settings.backupStorage.title")}
           </span>

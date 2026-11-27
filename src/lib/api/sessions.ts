@@ -1,4 +1,3 @@
-import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
   ContentRef,
   ImageRef,
@@ -6,18 +5,16 @@ import type {
   SessionMeta,
   TranscriptChunk,
 } from "@/types";
-
+import { Channel, invoke } from "@tauri-apps/api/core";
 export interface DeleteSessionOptions {
   providerId: string;
   sessionId: string;
   sourcePath: string;
 }
-
 export interface DeleteSessionResult extends DeleteSessionOptions {
   success: boolean;
   error?: string;
 }
-
 /** get_session_block_content 的返回：按字符分页取工具输出 / 参数 / 思考 / diff 全文 */
 export interface BlockContent {
   text: string;
@@ -28,24 +25,20 @@ export interface BlockContent {
   /** 下一页的起始字符偏移 */
   nextOffset?: number;
 }
-
 export interface BlockContentPage {
   offset?: number;
   limit?: number;
 }
-
 export const sessionsApi = {
   async list(): Promise<SessionMeta[]> {
     return await invoke("list_sessions");
   },
-
   async getMessages(
     providerId: string,
     sourcePath: string,
   ): Promise<SessionMessage[]> {
     return await invoke("get_session_messages", { providerId, sourcePath });
   },
-
   /**
    * 分块读取会话（stream_session_messages）：后端先推 Header，再按批推 Messages，
    * 最后 Done；失败时先推 Error 再以同一文案 reject。
@@ -63,7 +56,6 @@ export const sessionsApi = {
       onChunk: channel,
     });
   },
-
   /** 按 ContentRef 取全文（引用原样回传，前端不解析）；按字符分页，每页最多 512K 字符 */
   async getBlockContent(
     providerId: string,
@@ -79,7 +71,6 @@ export const sessionsApi = {
       limit: page.limit,
     });
   },
-
   /** 取图片原始字节（后端返回 tauri::ipc::Response），调用方按 mediaType 转 Blob；SVG 会被后端拒绝 */
   async getImage(
     providerId: string,
@@ -92,12 +83,10 @@ export const sessionsApi = {
       image,
     });
   },
-
   /** 在 Finder / 文件管理器中显示本地路径（绝对路径或 file://，决策 D3） */
   async revealPath(path: string): Promise<boolean> {
     return await invoke("reveal_session_path", { path });
   },
-
   /** 弹出保存对话框把会话存成 Markdown 文件；取消时返回 null，成功返回保存路径 */
   async exportMarkdown(
     defaultName: string,
@@ -105,7 +94,6 @@ export const sessionsApi = {
   ): Promise<string | null> {
     return await invoke("export_session_markdown", { defaultName, content });
   },
-
   async delete(options: DeleteSessionOptions): Promise<boolean> {
     const { providerId, sessionId, sourcePath } = options;
     return await invoke("delete_session", {
@@ -114,13 +102,11 @@ export const sessionsApi = {
       sourcePath,
     });
   },
-
   async deleteMany(
     items: DeleteSessionOptions[],
   ): Promise<DeleteSessionResult[]> {
     return await invoke("delete_sessions", { items });
   },
-
   async launchTerminal(options: {
     command: string;
     cwd?: string | null;

@@ -3,15 +3,13 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
-
 import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
+import type { ModelsDevResponse } from "@/lib/modelsDev";
 import type { PresetModelSource } from "@/lib/modelMetadata";
 import { server } from "../msw/server";
 import { createTestQueryClient } from "../utils/testQueryClient";
-
 const toastInfo = vi.hoisted(() => vi.fn());
 vi.mock("sonner", () => ({ toast: { info: toastInfo } }));
-
 const presets = (): PresetModelSource[] => [
   {
     baseUrl: "https://api.example.com/v1",
@@ -21,7 +19,6 @@ const presets = (): PresetModelSource[] => [
     ]),
   },
 ];
-
 const renderFill = () => {
   const client = createTestQueryClient();
   const wrapper = ({ children }: { children: ReactNode }) => (
@@ -37,28 +34,60 @@ const renderFill = () => {
     { wrapper },
   );
 };
-
 describe("useModelMetadataFill", () => {
+  it.each(["unmount", "endpoint"])(
+    "ignores late metadata after %s",
+    async (change) => {
+      const client = createTestQueryClient();
+      let complete!: (data: ModelsDevResponse) => void;
+      const pending = new Promise<ModelsDevResponse>((resolve) => {
+        complete = resolve;
+      });
+      const fetch = vi.spyOn(client, "fetchQuery").mockReturnValue(pending);
+      const wrapper = ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      );
+      const { result, rerender, unmount } = renderHook(
+        ({ baseUrl }) =>
+          useModelMetadataFill({ baseUrl, presets, prefetch: false }),
+        {
+          wrapper,
+          initialProps: { baseUrl: "https://api.example.com/v1" },
+        },
+      );
+      const apply = vi.fn(() => false);
+      result.current("model-x", apply);
+      expect(apply).toHaveBeenCalledTimes(1);
+      if (change === "unmount") unmount();
+      else rerender({ baseUrl: "https://different.example/v1" });
+      complete({
+        example: {
+          api: "https://api.example.com/v1",
+          models: { "model-x": { limit: { output: 64000 } } },
+        },
+      });
+      await pending;
+      await Promise.resolve();
+      expect(apply).toHaveBeenCalledTimes(1);
+      fetch.mockRestore();
+    },
+  );
   it("applies preset values at once and models.dev values when they arrive", async () => {
     server.use(
       http.post("http://tauri.local/fetch_models_dev", () =>
-        HttpResponse.json(
-          JSON.stringify({
-            example: {
-              api: "https://api.example.com/v1",
-              models: {
-                "model-x": { limit: { context: 1000000, output: 64000 } },
-              },
+        HttpResponse.json({
+          example: {
+            api: "https://api.example.com/v1",
+            models: {
+              "model-x": { limit: { context: 1000000, output: 64000 } },
             },
-          }),
-        ),
+          },
+        }),
       ),
     );
     const { result } = renderFill();
     const apply = vi.fn(() => true);
-
     result.current("model-x", apply);
-
     expect(apply).toHaveBeenCalledTimes(1);
     expect(apply).toHaveBeenCalledWith({
       contextWindow: 500000,
@@ -72,7 +101,6 @@ describe("useModelMetadataFill", () => {
       }),
     );
   });
-
   it("looks a row up by its own address when it overrides the form's", () => {
     server.use(
       http.post("http://tauri.local/fetch_models_dev", () =>
@@ -81,13 +109,11 @@ describe("useModelMetadataFill", () => {
     );
     const { result } = renderFill();
     const apply = vi.fn(() => true);
-
     result.current("model-x", apply, {
       baseUrl: "https://other.example.com/v1",
     });
     expect(apply).not.toHaveBeenCalled();
   });
-
   it("keeps preset values and stays quiet when models.dev is unreachable", async () => {
     server.use(
       http.post("http://tauri.local/fetch_models_dev", () =>
@@ -96,12 +122,10 @@ describe("useModelMetadataFill", () => {
     );
     const { result } = renderFill();
     const apply = vi.fn(() => true);
-
     result.current("unknown", apply);
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(apply).not.toHaveBeenCalled();
   });
-
   it("merges fills that changed something into one reminder", async () => {
     server.use(
       http.post("http://tauri.local/fetch_models_dev", () =>
@@ -110,7 +134,6 @@ describe("useModelMetadataFill", () => {
     );
     toastInfo.mockClear();
     const { result } = renderFill();
-
     result.current("model-x", () => true);
     result.current("model-y", () => true);
     result.current("model-x", () => false);
@@ -119,7 +142,6 @@ describe("useModelMetadataFill", () => {
       "已补全 2 个模型的上下文等参数（来源：预设），请核对",
       { id: "model-metadata-filled" },
     );
-
     toastInfo.mockClear();
     result.current("model-y", () => false);
     await new Promise((resolve) => setTimeout(resolve, 80));
@@ -134,7 +156,6 @@ describe("useModelMetadataFill", () => {
     toastInfo.mockClear();
     const { result } = renderFill();
     const apply = vi.fn(() => true);
-
     result.current("model-x", apply, { silent: true });
     expect(apply).toHaveBeenCalledTimes(1);
     await new Promise((resolve) => setTimeout(resolve, 80));

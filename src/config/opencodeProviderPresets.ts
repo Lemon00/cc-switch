@@ -1,7 +1,6 @@
-import type { ProviderCategory, OpenCodeProviderConfig } from "../types";
+import type { OpenCodeProviderConfig, ProviderCategory } from "../types";
 import type { PresetTheme, TemplateValueConfig } from "./claudeProviderPresets";
 import type { PresetFamilyFields } from "./presetFamilies";
-
 export interface OpenCodeProviderPreset extends PresetFamilyFields {
   name: string;
   nameKey?: string; // i18n key for localized display name
@@ -19,7 +18,6 @@ export interface OpenCodeProviderPreset extends PresetFamilyFields {
   iconColor?: string;
   isCustomTemplate?: boolean;
 }
-
 export const opencodeNpmPackages = [
   { value: "@ai-sdk/openai", label: "OpenAI Responses" },
   { value: "@ai-sdk/openai-compatible", label: "OpenAI Compatible" },
@@ -27,17 +25,18 @@ export const opencodeNpmPackages = [
   { value: "@ai-sdk/amazon-bedrock", label: "Amazon Bedrock" },
   { value: "@ai-sdk/google", label: "Google (Gemini)" },
 ] as const;
-
 export interface PresetModelVariant {
   id: string;
   name?: string;
   contextLimit?: number;
   outputLimit?: number;
-  modalities?: { input: string[]; output: string[] };
+  modalities?: {
+    input: string[];
+    output: string[];
+  };
   options?: Record<string, unknown>;
   variants?: Record<string, Record<string, unknown>>;
 }
-
 // MiniMax-M3.1-Flash 的思考不可关：禁用 OpenCode 自带的 none 档，
 // 并把 effort 档位（low…max）直接传给接口。
 const MINIMAX_M31_VARIANTS = {
@@ -48,7 +47,6 @@ const MINIMAX_M31_VARIANTS = {
   xhigh: { reasoningEffort: "xhigh" },
   max: { reasoningEffort: "max" },
 };
-
 export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
   string,
   PresetModelVariant[]
@@ -327,7 +325,6 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
     },
   ],
 };
-
 // Model lists that several presets share, each named after the first preset
 // that uses it. Every call builds fresh objects, so presets never share state.
 const kimiModels = (): OpenCodeProviderConfig["models"] => ({
@@ -349,11 +346,9 @@ const kimiModels = (): OpenCodeProviderConfig["models"] => ({
     modalities: { input: ["text", "image"], output: ["text"] },
   },
 });
-
 const kimiForCodingModels = (): OpenCodeProviderConfig["models"] => ({
   "kimi-for-coding": { name: "Kimi For Coding", reasoning: true },
 });
-
 const apiNebulaModels = (): OpenCodeProviderConfig["models"] => ({
   "gpt-6.1-sol": { name: "GPT-6.1 Sol", reasoning: true },
   "gpt-6-astra": {
@@ -363,16 +358,13 @@ const apiNebulaModels = (): OpenCodeProviderConfig["models"] => ({
     modalities: { input: ["text", "image"], output: ["text"] },
   },
 });
-
 const aiCodeMirrorModels = (): OpenCodeProviderConfig["models"] => ({
   "claude-sonnet-5-5": { name: "Claude Sonnet 5.5", reasoning: true },
   "claude-opus-5-5": { name: "Claude Opus 5.5", reasoning: true },
 });
-
 const fennoAiModels = (): OpenCodeProviderConfig["models"] => ({
   "gpt-6.1-sol": { name: "GPT-6.1 Sol", reasoning: true },
 });
-
 const runApiModels = (): OpenCodeProviderConfig["models"] => ({
   "claude-sonnet-5-5": {
     name: "Claude Sonnet 5.5",
@@ -399,7 +391,6 @@ const runApiModels = (): OpenCodeProviderConfig["models"] => ({
     modalities: { input: ["text", "image"], output: ["text"] },
   },
 });
-
 const openModelModels = (): OpenCodeProviderConfig["models"] => ({
   "claude-fable-5-1": {
     name: "Claude Fable 5.1",
@@ -426,7 +417,6 @@ const openModelModels = (): OpenCodeProviderConfig["models"] => ({
     modalities: { input: ["text", "image"], output: ["text"] },
   },
 });
-
 const grooRouteProModels = (): OpenCodeProviderConfig["models"] => ({
   "claude-opus-5-5": {
     name: "Claude Opus 5.5",
@@ -441,7 +431,6 @@ const grooRouteProModels = (): OpenCodeProviderConfig["models"] => ({
     modalities: { input: ["text", "image"], output: ["text"] },
   },
 });
-
 const vApiModels = (): OpenCodeProviderConfig["models"] => ({
   "claude-fable-5-1": {
     name: "Claude Fable 5.1",
@@ -462,7 +451,6 @@ const vApiModels = (): OpenCodeProviderConfig["models"] => ({
     modalities: { input: ["text", "image"], output: ["text"] },
   },
 });
-
 const api88Models = (): OpenCodeProviderConfig["models"] => ({
   "claude-opus-5-5": {
     name: "Claude Opus 5.5",
@@ -489,7 +477,6 @@ const api88Models = (): OpenCodeProviderConfig["models"] => ({
     modalities: { input: ["text", "image"], output: ["text"] },
   },
 });
-
 const apikeyFunModels = (): OpenCodeProviderConfig["models"] => ({
   "claude-fable-5-1": {
     name: "Claude Fable 5.1",
@@ -501,13 +488,11 @@ const apikeyFunModels = (): OpenCodeProviderConfig["models"] => ({
   "claude-sonnet-5-5": { name: "Claude Sonnet 5.5", reasoning: true },
   "claude-haiku-5-5": { name: "Claude Haiku 5.5", reasoning: true },
 });
-
 const volcengineAgentPlanModels = (): OpenCodeProviderConfig["models"] => ({
   "ark-code-latest": {
     name: "Ark Code Latest",
   },
 });
-
 const sudoCodeUsModels = (): OpenCodeProviderConfig["models"] => ({
   "gpt-6.1-sol": {
     name: "GPT-6.1 Sol",
@@ -528,7 +513,6 @@ const sudoCodeUsModels = (): OpenCodeProviderConfig["models"] => ({
     modalities: { input: ["text", "image"], output: ["text"] },
   },
 });
-
 const modelflareModels = (): OpenCodeProviderConfig["models"] => ({
   "gpt-6.1-sol": {
     name: "GPT-6.1 Sol",
@@ -543,7 +527,6 @@ const modelflareModels = (): OpenCodeProviderConfig["models"] => ({
     modalities: { input: ["text", "image"], output: ["text"] },
   },
 });
-
 const zhipuGlmModels = (): OpenCodeProviderConfig["models"] => ({
   "glm-5.3": { name: "GLM-5.3", reasoning: true },
   "glm-5.3-flash": {
@@ -553,12 +536,10 @@ const zhipuGlmModels = (): OpenCodeProviderConfig["models"] => ({
     modalities: { input: ["text", "image"], output: ["text"] },
   },
 });
-
 const tencentTokenPlanEnterpriseLiteModels =
   (): OpenCodeProviderConfig["models"] => ({
     auto: { name: "Auto" },
   });
-
 const qwenAiPlatformModels = (): OpenCodeProviderConfig["models"] => ({
   "qwen3.8-max": {
     name: "Qwen3.8 Max",
@@ -573,7 +554,6 @@ const qwenAiPlatformModels = (): OpenCodeProviderConfig["models"] => ({
     modalities: { input: ["text", "image", "video"], output: ["text"] },
   },
 });
-
 const qwenCloudModels = (): OpenCodeProviderConfig["models"] => ({
   "qwen3.8-max": {
     name: "Qwen3.8 Max",
@@ -589,7 +569,6 @@ const qwenCloudModels = (): OpenCodeProviderConfig["models"] => ({
   },
   "qwen3.7-max": { name: "Qwen3.7 Max", reasoning: true },
 });
-
 const stepFunModels = (): OpenCodeProviderConfig["models"] => ({
   "step-3.5-flash-2603": { name: "Step 3.5 Flash 2603", reasoning: true },
   "step-3.5-flash": { name: "Step 3.5 Flash", reasoning: true },
@@ -606,14 +585,12 @@ const stepFunModels = (): OpenCodeProviderConfig["models"] => ({
     modalities: { input: ["text", "image"], output: ["text"] },
   },
 });
-
 const streamLakeModels = (): OpenCodeProviderConfig["models"] => ({
   "kat-coder-pro-v2.5": {
     name: "KAT-Coder Pro V2.5",
     limit: { context: 256000, output: 80000 },
   },
 });
-
 const miniMaxModels = (): OpenCodeProviderConfig["models"] => ({
   "MiniMax-M3.1-Flash": {
     name: "MiniMax M3.1 Flash",
@@ -629,7 +606,6 @@ const miniMaxModels = (): OpenCodeProviderConfig["models"] => ({
     modalities: { input: ["text", "image"], output: ["text"] },
   },
 });
-
 export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   // ===== 赞助商预设：文件顺序与 README 赞助商表对齐（仅维护约定；应用内一律按显示名排序，不置顶）=====
   {
@@ -776,7 +752,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
   },
-
   {
     name: "PackyCode",
     websiteUrl: "https://www.packyapi.ai",
@@ -3397,7 +3372,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
   },
-
   {
     name: "OpenCode Go",
     websiteUrl: "https://opencode.ai/go",
@@ -3415,7 +3389,19 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "glm-5.3": { name: "GLM 5.3", reasoning: true },
         "glm-5.3-flash": { name: "GLM 5.3 Flash", reasoning: true },
         "kimi-k3.1-pro": { name: "Kimi K3.1 Pro", reasoning: true },
-        "deepseek-v4.1-flash": { name: "DeepSeek V4.1 Flash", reasoning: true },
+        // OpenCode Go 的 DeepSeek V4.1 Flash 只收 low / high / max（models.dev
+        // opencode-go 的 reasoning_options）；OpenCode 给 openai-compatible 默认生成
+        // low / medium / high，故禁用 medium、补上 max
+        "deepseek-v4.1-flash": {
+          name: "DeepSeek V4.1 Flash",
+          reasoning: true,
+          variants: {
+            low: { reasoningEffort: "low" },
+            medium: { disabled: true },
+            high: { reasoningEffort: "high" },
+            max: { reasoningEffort: "max" },
+          },
+        },
         "mimo-v2.6-pro": { name: "MiMo V2.6 Pro", reasoning: true },
       },
     },

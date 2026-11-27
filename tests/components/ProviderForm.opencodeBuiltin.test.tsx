@@ -11,16 +11,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ProviderForm } from "@/components/providers/forms/ProviderForm";
 import { server } from "../msw/server";
 import { createTestQueryClient } from "../utils/testQueryClient";
-
 const toastError = vi.hoisted(() => vi.fn());
 vi.mock("sonner", () => ({ toast: { error: toastError, success: vi.fn() } }));
-
 vi.mock("@/components/JsonEditor", () => ({
   default: ({ value }: { value: string }) => (
     <textarea readOnly value={value} />
   ),
 }));
-
 vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("@/components/providers/forms/hooks")>();
@@ -39,12 +36,10 @@ vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
     useXaiOauth: () => ({ isAuthenticated: false, accounts: [] }),
   };
 });
-
 describe("OpenCode built-in provider editing", () => {
   beforeEach(() => {
     toastError.mockClear();
   });
-
   const renderOverride = (
     settingsConfig: Record<string, unknown>,
     providerId = "opencode-go",
@@ -64,7 +59,6 @@ describe("OpenCode built-in provider editing", () => {
     );
     return onSubmit;
   };
-
   it.each([undefined, "@ai-sdk/openai-compatible"])(
     "edits an existing key-only override with npm %s without requiring models",
     async (npm) => {
@@ -91,7 +85,6 @@ describe("OpenCode built-in provider editing", () => {
       expect(toastError).not.toHaveBeenCalled();
     },
   );
-
   it.each([
     { options: { apiKey: "test-key" } },
     { npm: "@ai-sdk/openai-compatible", models: {} },
@@ -116,7 +109,6 @@ describe("OpenCode built-in provider editing", () => {
       expect(screen.queryByText("仍要保存")).not.toBeInTheDocument();
     },
   );
-
   it("does not grant the exception when an existing ID changes", async () => {
     server.use(
       http.post("http://tauri.local/get_opencode_live_provider_ids", () =>
@@ -137,7 +129,6 @@ describe("OpenCode built-in provider editing", () => {
     );
     expect(onSubmit).not.toHaveBeenCalled();
   });
-
   it("does not grant the exception when live membership cannot be read", async () => {
     server.use(
       http.post("http://tauri.local/get_opencode_live_provider_ids", () =>
@@ -156,7 +147,6 @@ describe("OpenCode built-in provider editing", () => {
     );
     expect(onSubmit).not.toHaveBeenCalled();
   });
-
   it("requires models when creating a new provider", async () => {
     const onSubmit = vi.fn();
     render(
@@ -180,7 +170,6 @@ describe("OpenCode built-in provider editing", () => {
     );
     expect(onSubmit).not.toHaveBeenCalled();
   });
-
   it.each(["https://opencode.ai/zen/go/v1", "https://custom.example/v1"])(
     "fetches models using the imported Base URL %s and saves the override",
     async (baseURL) => {
@@ -214,7 +203,6 @@ describe("OpenCode built-in provider editing", () => {
           />
         </QueryClientProvider>,
       );
-
       // The input is also disabled while loading; wait for the loaded lock hint.
       await screen.findByText("该供应商已添加到应用配置中，供应商标识不可修改");
       expect(screen.getByDisplayValue("opencode-go")).toBeDisabled();

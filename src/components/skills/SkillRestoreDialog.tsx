@@ -1,17 +1,15 @@
-import { useTranslation } from "react-i18next";
+import { V7Dialog } from "@/components/mcp/formBits";
 import { Button } from "@/components/ui/button";
 import { DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import type { SkillBackupEntry } from "@/lib/api/skills";
 import { cn } from "@/lib/utils";
-import { V7Dialog } from "@/components/mcp/formBits";
-
+import { useTranslation } from "react-i18next";
 function formatSkillBackupDate(unixSeconds: number): string {
   const date = new Date(unixSeconds * 1000);
   return Number.isNaN(date.getTime())
     ? String(unixSeconds)
     : date.toLocaleString();
 }
-
 interface SkillRestoreDialogProps {
   open: boolean;
   backups: SkillBackupEntry[];
@@ -24,7 +22,6 @@ interface SkillRestoreDialogProps {
   onDelete: (backup: SkillBackupEntry) => void;
   onClose: () => void;
 }
-
 /** 「从备份恢复…」：列出卸载 / 更新前留下的备份。 */
 export function SkillRestoreDialog({
   open,

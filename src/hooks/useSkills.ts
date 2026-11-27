@@ -1,30 +1,32 @@
-import { useCallback } from "react";
 import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-  keepPreviousData,
-  type QueryClient,
-} from "@tanstack/react-query";
+  mergeImportedSkills,
+  replaceRepoDiscovery,
+} from "@/hooks/useSkills.helpers";
 import {
   skillsApi,
-  type SkillBackupEntry,
   type DiscoverableSkill,
-  type SkillRepo,
   type ImportSkillSelection,
   type InstalledSkill,
+  type SkillBackupEntry,
   type SkillDiscoveryResult,
+  type SkillRepo,
   type SkillUpdateCheckResult,
   type SkillUpdateInfo,
   type SkillsShSearchResult,
 } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
-import {
-  mergeImportedSkills,
-  replaceRepoDiscovery,
-} from "@/hooks/useSkills.helpers";
+import { isSkillDiscoveryCache } from "@/lib/cacheValidation";
 import { readLocalCache, writeLocalCache } from "@/lib/localCache";
+import { invalidateQueriesAfterChange } from "@/lib/query/invalidation";
 import { runSequentialBulkAction } from "@/lib/utils/sequentialBulkAction";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
+import { useCallback } from "react";
 
 /**
  * 查询所有已安装的 Skills
@@ -54,7 +56,7 @@ export function useRefreshLocalSkillMetadata() {
     queryFn: async () => {
       const refreshed = await skillsApi.refreshLocalMetadata();
       if (refreshed > 0) {
-        await queryClient.invalidateQueries({
+        await invalidateQueriesAfterChange(queryClient, {
           queryKey: ["skills", "installed"],
         });
       }
@@ -86,7 +88,9 @@ export function useDeleteSkillBackup() {
     // remove_dir_all can partially change the backup directory before
     // returning an error, so reconcile the authoritative list either way.
     onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: ["skills", "backups"] }),
+      invalidateQueriesAfterChange(queryClient, {
+        queryKey: ["skills", "backups"],
+      }),
   });
 }
 
@@ -107,19 +111,19 @@ let discoverGeneration = 0;
 
 const discoverableQuery = {
   queryKey: DISCOVERABLE_QUERY_KEY,
-  queryFn: async () => {
+  queryFn: async ({ signal }: { signal: AbortSignal }) => {
     const force = discoverForceNext;
     discoverForceNext = false;
     const generation = discoverGeneration;
     const result = await skillsApi.discoverAvailable(force);
-    if (generation === discoverGeneration) {
+    if (!signal.aborted && generation === discoverGeneration) {
       discoverRevalidated = true;
       writeLocalCache(DISCOVER_CACHE_KEY, result);
     }
     return result;
   },
   staleTime: Infinity,
-  initialData: () => readLocalCache<SkillDiscoveryResult>(DISCOVER_CACHE_KEY),
+  initialData: () => readLocalCache(DISCOVER_CACHE_KEY, isSkillDiscoveryCache),
   // 本地缓存是旧数据：时间记成 0，配合 refetchOnMount 在后台刷新
   initialDataUpdatedAt: 0,
   refetchOnMount: () => (discoverRevalidated ? false : ("always" as const)),
@@ -135,13 +139,29 @@ export function useDiscoverableSkills() {
  */
 export function useRefreshDiscoverableSkills() {
   const queryClient = useQueryClient();
-  return useCallback(() => {
+  return useCallback(async () => {
+    discoverGeneration += 1;
+    await queryClient.cancelQueries({
+      queryKey: DISCOVERABLE_QUERY_KEY,
+      exact: true,
+    });
     discoverForceNext = true;
     return queryClient.refetchQueries({
       queryKey: DISCOVERABLE_QUERY_KEY,
       exact: true,
     });
   }, [queryClient]);
+}
+
+/**
+ * Deeplink / 外部加仓后作废进行中的发现请求，避免旧结果盖掉新仓（M06-10）
+ */
+export function invalidateSkillsDiscoverCache(queryClient: QueryClient) {
+  discoverRevalidated = false;
+  discoverGeneration += 1;
+  return invalidateQueriesAfterChange(queryClient, {
+    queryKey: DISCOVERABLE_QUERY_KEY,
+  });
 }
 
 /**
@@ -153,6 +173,7 @@ async function patchRepoDiscovery(
   repo: { owner: string; name: string },
   next?: SkillDiscoveryResult,
 ) {
+  discoverGeneration += 1;
   await queryClient.cancelQueries({
     queryKey: DISCOVERABLE_QUERY_KEY,
     exact: true,
@@ -160,13 +181,12 @@ async function patchRepoDiscovery(
   // 还没有任何发现结果（首次发现被上面取消了，或压根没开始）：没有底可以
   // 打补丁，重新整体发现一次，此时读到的仓库表已包含这次改动
   if (!queryClient.getQueryData(DISCOVERABLE_QUERY_KEY)) {
-    void queryClient.invalidateQueries({
+    void invalidateQueriesAfterChange(queryClient, {
       queryKey: DISCOVERABLE_QUERY_KEY,
       exact: true,
     });
     return;
   }
-  discoverGeneration += 1;
   const updated = queryClient.setQueryData<SkillDiscoveryResult>(
     DISCOVERABLE_QUERY_KEY,
     (old) => replaceRepoDiscovery(old, repo, next),
@@ -221,8 +241,12 @@ export function useInstallSkill() {
     // Always refresh the authoritative list, including rejected mutations.
     onSettled: () =>
       Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
-        queryClient.invalidateQueries({ queryKey: ["skills", "unmanaged"] }),
+        invalidateQueriesAfterChange(queryClient, {
+          queryKey: ["skills", "installed"],
+        }),
+        invalidateQueriesAfterChange(queryClient, {
+          queryKey: ["skills", "unmanaged"],
+        }),
       ]),
   });
 }
@@ -261,8 +285,15 @@ export function useUninstallSkill() {
     // unmanaged copy after a successful uninstall.
     onSettled: () =>
       Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["skills", "backups"] }),
-        queryClient.invalidateQueries({ queryKey: ["skills", "unmanaged"] }),
+        invalidateQueriesAfterChange(queryClient, {
+          queryKey: ["skills", "backups"],
+        }),
+        invalidateQueriesAfterChange(queryClient, {
+          queryKey: ["skills", "unmanaged"],
+        }),
+        invalidateQueriesAfterChange(queryClient, {
+          queryKey: ["skills", "installed"],
+        }),
       ]),
   });
 }
@@ -279,8 +310,12 @@ export function useRestoreSkillBackup() {
     }) => skillsApi.restoreBackup(backupId, currentApp),
     onSettled: () =>
       Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
-        queryClient.invalidateQueries({ queryKey: ["skills", "backups"] }),
+        invalidateQueriesAfterChange(queryClient, {
+          queryKey: ["skills", "installed"],
+        }),
+        invalidateQueriesAfterChange(queryClient, {
+          queryKey: ["skills", "backups"],
+        }),
       ]),
   });
 }
@@ -317,15 +352,30 @@ export function useToggleSkillApp() {
           ),
         );
       }
-      return { previous };
+      return {
+        previousEnabled: previous?.find((skill) => skill.id === id)?.apps[app],
+      };
     },
-    onError: (_error, _vars, context) => {
-      if (context?.previous) {
-        queryClient.setQueryData(["skills", "installed"], context.previous);
+    onError: (_error, { id, app, enabled }, context) => {
+      if (context?.previousEnabled !== undefined) {
+        queryClient.setQueryData<InstalledSkill[]>(
+          ["skills", "installed"],
+          (current) =>
+            current?.map((skill) =>
+              skill.id === id && skill.apps[app] === enabled
+                ? {
+                    ...skill,
+                    apps: { ...skill.apps, [app]: context.previousEnabled! },
+                  }
+                : skill,
+            ),
+        );
       }
     },
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
+    onSettled: () =>
+      invalidateQueriesAfterChange(queryClient, {
+        queryKey: ["skills", "installed"],
+      }),
   });
 }
 
@@ -346,7 +396,9 @@ export function useBulkToggleSkillApp() {
         skillsApi.toggleApp(id, app, enabled),
       ),
     onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
+      invalidateQueriesAfterChange(queryClient, {
+        queryKey: ["skills", "installed"],
+      }),
   });
 }
 
@@ -388,19 +440,21 @@ export function useImportSkillsFromApps() {
     // 只等导入弹窗关心的两个列表：mutation 要等 onSettled 返回的 Promise
     // 才结束，「发现」重拉要从 GitHub 下载仓库，等它会让弹窗一直锁着（#7994）
     onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: ["skills", "repos"] });
+      void invalidateQueriesAfterChange(queryClient, {
+        queryKey: ["skills", "repos"],
+      });
       // 导入可能新增了来源仓库。没人在看发现列表时 invalidate 不会马上重拉，
       // 而 refetchOnMount 在本次运行验证过一次后就是 false，下次打开还是旧
       // 结果（新仓库显示 0 个，#9273）：清掉标记，下次挂载时重新发现。
       // 代次加一：导入前开始的整体发现读的是旧仓库表，晚到不能写回本地缓存
-      discoverRevalidated = false;
-      discoverGeneration += 1;
-      void queryClient.invalidateQueries({
-        queryKey: ["skills", "discoverable"],
-      });
+      void invalidateSkillsDiscoverCache(queryClient);
       return Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
-        queryClient.invalidateQueries({ queryKey: ["skills", "unmanaged"] }),
+        invalidateQueriesAfterChange(queryClient, {
+          queryKey: ["skills", "installed"],
+        }),
+        invalidateQueriesAfterChange(queryClient, {
+          queryKey: ["skills", "unmanaged"],
+        }),
       ]);
     },
   });
@@ -428,7 +482,9 @@ export function useAddSkillRepo() {
     mutationFn: async (repo: SkillRepo) => {
       await skillsApi.addRepo(repo);
       // 写库后马上刷新仓库列表：勾选框读的是它，不能等下面的归档下载完
-      void queryClient.invalidateQueries({ queryKey: ["skills", "repos"] });
+      void invalidateQueriesAfterChange(queryClient, {
+        queryKey: ["skills", "repos"],
+      });
       if (!repo.enabled) return { skills: [], failures: [] };
       try {
         return await skillsApi.discoverRepo(repo.owner, repo.name);
@@ -443,7 +499,7 @@ export function useAddSkillRepo() {
       if (discovery) {
         await patchRepoDiscovery(queryClient, repo, discovery);
       } else {
-        void queryClient.invalidateQueries({
+        void invalidateQueriesAfterChange(queryClient, {
           queryKey: DISCOVERABLE_QUERY_KEY,
         });
       }
@@ -461,7 +517,9 @@ export function useRemoveSkillRepo() {
       skillsApi.removeRepo(owner, name),
     onMutate: nextRepoMutation,
     onSuccess: async (_result, repo, ctx) => {
-      void queryClient.invalidateQueries({ queryKey: ["skills", "repos"] });
+      void invalidateQueriesAfterChange(queryClient, {
+        queryKey: ["skills", "repos"],
+      });
       if (!isLatestRepoMutation(ctx)) return;
       await patchRepoDiscovery(queryClient, repo);
     },
@@ -492,8 +550,12 @@ export function useInstallSkillsFromZip() {
     // fails, so refresh even when the mutation rejects.
     onSettled: () =>
       Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
-        queryClient.invalidateQueries({ queryKey: ["skills", "unmanaged"] }),
+        invalidateQueriesAfterChange(queryClient, {
+          queryKey: ["skills", "installed"],
+        }),
+        invalidateQueriesAfterChange(queryClient, {
+          queryKey: ["skills", "unmanaged"],
+        }),
       ]),
   });
 }
@@ -542,8 +604,16 @@ export function useUpdateSkill() {
     },
     // Updating creates an uninstall-style backup before replacing SSOT files;
     // refresh even when replacement or persistence fails later.
+    // 半失败时也要刷 installed，避免列表哈希/描述停在旧快照（M06-12）
     onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: ["skills", "backups"] }),
+      Promise.all([
+        invalidateQueriesAfterChange(queryClient, {
+          queryKey: ["skills", "backups"],
+        }),
+        invalidateQueriesAfterChange(queryClient, {
+          queryKey: ["skills", "installed"],
+        }),
+      ]),
   });
 }
 
@@ -570,13 +640,13 @@ export function useSearchSkillsSh(
 // ========== 辅助类型 ==========
 
 export type {
-  InstalledSkill,
+  AppId,
   DiscoverableSkill,
   ImportSkillSelection,
+  InstalledSkill,
   SkillBackupEntry,
   SkillUpdateInfo,
   SkillsShSearchResult,
-  AppId,
 };
 
 /**
@@ -587,7 +657,9 @@ export function useResyncSkillsToApps() {
   return useMutation({
     mutationFn: () => skillsApi.resyncToApps(),
     onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
+      invalidateQueriesAfterChange(queryClient, {
+        queryKey: ["skills", "installed"],
+      }),
   });
 }
 

@@ -336,11 +336,11 @@ pub const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
 /// 模型，haiku 档会发 `thinking: disabled`，强制思考的上游直接拒（#8118）。别名要跟上
 /// 当代模型。
 const PROXY_HAIKU_ALIAS: &str = "claude-haiku-5-5";
-const PROXY_SONNET_ALIAS: &str = "claude-sonnet-5";
-const PROXY_OPUS_ALIAS: &str = "claude-opus-5";
-const PROXY_FABLE_ALIAS: &str = "claude-fable-5";
+pub use crate::model_names::PROXY_FABLE_ALIAS;
+pub use crate::model_names::PROXY_OPUS_ALIAS;
+pub use crate::model_names::PROXY_SONNET_ALIAS;
 // 写给 Claude Code 时沿用文档示例的大写形式；解析侧大小写不敏感。
-pub const ONE_M_MARKER_FOR_CLIENT: &str = "[1M]";
+pub use crate::model_names::ONE_M_MARKER_FOR_CLIENT;
 
 /// 代理契约里怎么写凭据。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -364,7 +364,7 @@ pub enum ProxyAuth {
 /// （`mode::stack::claude_route_default`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StackRoleModel<'a> {
-    /// 发布给客户端的 Stack id，1M 模型带 `[1M]`。
+    /// 发布给客户端的 Stack id，1M 模型带 `[1m]`。
     pub id: &'a str,
     /// 模型自己的显示名（不带供应商名）。
     pub name: &'a str,
@@ -508,14 +508,13 @@ impl TierModel<'_> {
         env_string(env, self.tier.description_key())
             .map(str::to_string)
             .unwrap_or_else(|| {
-                let model =
-                    crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(self.upstream);
+                let model = crate::model_names::strip_one_m_suffix_for_upstream(self.upstream);
                 let window = if has_one_m_marker(self.upstream) {
                     1_000_000
                 } else {
                     0
                 };
-                crate::mode::stack::provider_model_description(provider_name, model.trim(), window)
+                crate::model_names::provider_model_description(provider_name, model.trim(), window)
             })
     }
 
@@ -541,7 +540,7 @@ fn tier_model<'a>(env: &Map<String, Value>, tier: Tier, upstream: &'a str) -> Ti
     let display_name = env_string(env, tier.name_key())
         .map(str::to_string)
         .unwrap_or_else(|| {
-            crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(upstream)
+            crate::model_names::strip_one_m_suffix_for_upstream(upstream)
                 .trim()
                 .to_string()
         });
@@ -618,58 +617,24 @@ fn proxy_model_fields(env: &Map<String, Value>, route_name: &str) -> Vec<(&'stat
     fields
 }
 
-/// 上游是比代际别名更新的小版本（5.5）时，Claude Code 目录里对应的客户端 id。
+/// 上游是比代际别名更新的小版本（Opus / Sonnet 5.5、Fable 5.1 / 5.2）时，Claude Code
+/// 目录里对应的客户端 id。
 ///
 /// Claude Code 按客户端 id 查自己的模型表决定显示名和输出上限：`claude-opus-5` 是
-/// 「Opus 5」、64K 输出，`claude-opus-5-5` 才是「Opus 5.5」、128K。上游配的是 5.5 却
-/// 写代际别名，菜单显示错、长输出被截断。上游 id 的分隔符各家不同（`claude-opus-5.5`、
-/// `claude-opus-5-5`、`anthropic/claude-opus-5.5`、带日期的），按版本号匹配。
+/// 「Opus 5」、64K 输出，`claude-opus-5-5` 才是「Opus 5.5」、128K；`claude-fable-5` 同样
+/// 只是「Fable 5」（#9608）。上游配的是小版本却写代际别名，菜单显示错、长输出被截断。
+/// 上游 id 的分隔符各家不同（`claude-opus-5.5`、`claude-opus-5-5`、`anthropic/claude-opus-5.5`、
+/// 带日期的），按版本号匹配。每项是（代际别名, 家族前缀, 小版本号, 目录 id）。
 ///
 /// 这张表也供反向映射用：接管写出的目录 id 要能被 [`ModelMapping::map_model`] 认成
 /// 同一个子代理模型。
-const POINT_RELEASE_CLIENT_IDS: &[(&str, &str, &str)] = &[
-    (PROXY_OPUS_ALIAS, "opus-5", "claude-opus-5-5"),
-    (PROXY_SONNET_ALIAS, "sonnet-5", "claude-sonnet-5-5"),
-];
-
-pub fn point_release_client_id(family_alias: &str, upstream: &str) -> Option<&'static str> {
-    let id = crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(upstream)
-        .trim()
-        .to_ascii_lowercase();
-    POINT_RELEASE_CLIENT_IDS
-        .iter()
-        .filter(|(alias, _, _)| *alias == family_alias)
-        .find(|(_, stem, _)| {
-            [".5", "-5"].iter().any(|minor| {
-                id.find(&format!("{stem}{minor}")).is_some_and(|at| {
-                    let rest = &id[at + stem.len() + minor.len()..];
-                    !rest.starts_with(|c: char| c.is_ascii_digit() || c == '.')
-                })
-            })
-        })
-        .map(|(_, _, client)| *client)
-}
+pub use crate::model_names::{client_model_for_subagent, point_release_client_id};
 
 fn client_alias_for_upstream<'a>(default_alias: &'a str, upstream: &str) -> &'a str {
     point_release_client_id(default_alias, upstream).unwrap_or(default_alias)
 }
 
-/// 子代理模型原样写给客户端；上游是 5.5 时同样换成目录 id，否则 Claude Code 不认识它。
-pub fn client_model_for_subagent(upstream: &str) -> String {
-    let Some(alias) = [PROXY_OPUS_ALIAS, PROXY_SONNET_ALIAS]
-        .into_iter()
-        .find_map(|family| point_release_client_id(family, upstream))
-    else {
-        return upstream.to_string();
-    };
-    let mut client_model = alias.to_string();
-    if has_one_m_marker(upstream) {
-        client_model.push_str(ONE_M_MARKER_FOR_CLIENT);
-    }
-    client_model
-}
-
-/// Stack 模式的四档：都写同一个 Stack id（1M 模型带 `[1M]` 标记），显示名也一样。haiku 档
+/// Stack 模式的四档：都写同一个 Stack id（1M 模型带 `[1m]` 标记），显示名也一样。haiku 档
 /// 也带标记：Stack id 不是 `claude-` 开头，不带标记 Claude Code 会按 200K 算这一档的窗口
 /// （路由契约的 haiku 别名是 `claude-haiku-5-5`，Claude Code 本身就按 1M 算，所以那边不用）。
 /// 不写 `CLAUDE_CODE_SUBAGENT_MODEL`：子代理跟随主模型，也就是用户在 `/model` 里选的。
@@ -714,12 +679,7 @@ pub fn env_string<'a>(env: &'a Map<String, Value>, key: &str) -> Option<&'a str>
         .filter(|value| !value.is_empty())
 }
 
-pub fn has_one_m_marker(model: &str) -> bool {
-    model
-        .trim_end()
-        .to_ascii_lowercase()
-        .ends_with(crate::claude_desktop_config::ONE_M_CONTEXT_MARKER)
-}
+pub use crate::model_names::has_one_m_marker;
 
 fn is_truthy(value: &Value) -> bool {
     match value {
@@ -755,15 +715,6 @@ mod tests {
             "ANTHROPIC_AUTH_TOKEN": "sk-qwen",
             "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "983616",
             "API_TIMEOUT_MS": "300000"
-        }})
-    }
-
-    fn kimi() -> Value {
-        json!({ "env": {
-            "ANTHROPIC_BASE_URL": "https://kimi.example",
-            "ANTHROPIC_AUTH_TOKEN": "sk-kimi",
-            "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "262144",
-            "CLAUDE_CODE_DISABLE_ARTIFACT": "1"
         }})
     }
 
@@ -1027,7 +978,7 @@ mod tests {
             "http://127.0.0.1:15721",
             ProxyAuth::AuthToken,
             Some(StackRoleModel {
-                id: "ccs-claude-z--glm-5.2[1M]",
+                id: "ccs-claude-z--glm-5.2[1m]",
                 name: "GLM 5.2",
             }),
         );
@@ -1036,7 +987,7 @@ mod tests {
         for role in ["HAIKU", "SONNET", "OPUS", "FABLE"] {
             assert_eq!(
                 env(&format!("ANTHROPIC_DEFAULT_{role}_MODEL")),
-                Some("ccs-claude-z--glm-5.2[1M]")
+                Some("ccs-claude-z--glm-5.2[1m]")
             );
         }
         for role in ["HAIKU", "SONNET", "OPUS", "FABLE"] {
@@ -1058,7 +1009,7 @@ mod tests {
         );
         assert_eq!(
             routed.env["ANTHROPIC_DEFAULT_SONNET_MODEL"],
-            "claude-sonnet-5[1M]"
+            "claude-sonnet-5[1m]"
         );
         assert_eq!(routed.env["CLAUDE_CODE_SUBAGENT_MODEL"], "glm-4.7-air");
         // `/model` 的说明：哪家的哪个模型，上游标了 1M 才写窗口；fable 没配不写；不写菜单。
@@ -1168,19 +1119,43 @@ mod tests {
         );
         assert_eq!(
             env("ANTHROPIC_DEFAULT_SONNET_MODEL"),
-            Some("claude-sonnet-5-5[1M]")
+            Some("claude-sonnet-5-5[1m]")
         );
         assert_eq!(
             env("ANTHROPIC_DEFAULT_OPUS_MODEL"),
-            Some("claude-opus-5-5[1M]")
+            Some("claude-opus-5-5[1m]")
         );
         assert_eq!(
             env("ANTHROPIC_DEFAULT_FABLE_MODEL"),
-            Some("claude-fable-5[1M]")
+            Some("claude-fable-5[1m]")
         );
         assert_eq!(
             env("CLAUDE_CODE_SUBAGENT_MODEL"),
-            Some("claude-opus-5-5[1M]")
+            Some("claude-opus-5-5[1m]")
+        );
+    }
+
+    #[test]
+    fn fable_point_release_upstream_uses_catalog_id() {
+        let row = json!({ "env": {
+            "ANTHROPIC_AUTH_TOKEN": "sk",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5.5[1M]",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-5.5[1M]",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL": "claude-fable-5.2[1M]"
+        }});
+        let routed = proxy_projection(
+            &ClaudeProjection::of(&row),
+            "Route",
+            "http://127.0.0.1:15721",
+            ProxyAuth::AuthToken,
+            None,
+        );
+        assert_eq!(
+            routed
+                .env
+                .get("ANTHROPIC_DEFAULT_FABLE_MODEL")
+                .and_then(Value::as_str),
+            Some("claude-fable-5-2[1m]")
         );
     }
 
@@ -1217,10 +1192,38 @@ mod tests {
             client_alias_for_upstream(PROXY_SONNET_ALIAS, "claude-opus-5.5"),
             PROXY_SONNET_ALIAS
         );
+        // Fable 的小版本是 5.1 / 5.2（#9608）；代际 Fable 5（含带日期的）照旧写别名。
+        for (upstream, client) in [
+            ("claude-fable-5.2[1M]", "claude-fable-5-2"),
+            ("claude-fable-5-2", "claude-fable-5-2"),
+            ("anthropic/claude-fable-5.2", "claude-fable-5-2"),
+            ("claude-fable-5-2-20261101", "claude-fable-5-2"),
+            ("claude-fable-5.1", "claude-fable-5-1"),
+            ("claude-fable-5", PROXY_FABLE_ALIAS),
+            ("claude-fable-5-20260609", PROXY_FABLE_ALIAS),
+            ("claude-fable-5.25", PROXY_FABLE_ALIAS),
+            ("claude-fable-5.5", PROXY_FABLE_ALIAS),
+            ("claude-opus-5.5", PROXY_FABLE_ALIAS),
+        ] {
+            assert_eq!(
+                client_alias_for_upstream(PROXY_FABLE_ALIAS, upstream),
+                client,
+                "{upstream}"
+            );
+        }
+        // 只有 5.5 的家族不会把 5.1 / 5.2 换成目录 id。
+        assert_eq!(
+            client_alias_for_upstream(PROXY_OPUS_ALIAS, "claude-opus-5.2"),
+            PROXY_OPUS_ALIAS
+        );
         assert_eq!(client_model_for_subagent("glm-4.7-air"), "glm-4.7-air");
         assert_eq!(
             client_model_for_subagent("claude-sonnet-5.5"),
             "claude-sonnet-5-5"
+        );
+        assert_eq!(
+            client_model_for_subagent("claude-fable-5.2[1M]"),
+            "claude-fable-5-2[1m]"
         );
     }
 
@@ -1258,7 +1261,7 @@ mod tests {
                 .as_str()
                 .expect("subagent id written");
             assert_eq!(
-                crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(client_id),
+                crate::model_names::strip_one_m_suffix_for_upstream(client_id),
                 "claude-opus-5-5",
                 "{env}"
             );
@@ -1271,8 +1274,8 @@ mod tests {
             let sent = mapped["model"].as_str().unwrap();
             let configured = env["CLAUDE_CODE_SUBAGENT_MODEL"].as_str().unwrap();
             assert_eq!(
-                crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(sent),
-                crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(configured),
+                crate::model_names::strip_one_m_suffix_for_upstream(sent),
+                crate::model_names::strip_one_m_suffix_for_upstream(configured),
                 "{env}"
             );
         }
@@ -1392,5 +1395,14 @@ mod tests {
         for key in CLAUDE_HOT_UNSET_EXCLUSIVE_ENV {
             assert!(floor::claude_exclusive_env(key), "{key}");
         }
+    }
+
+    fn kimi() -> Value {
+        json!({ "env": {
+            "ANTHROPIC_BASE_URL": "https://kimi.example",
+            "ANTHROPIC_AUTH_TOKEN": "sk-kimi",
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "262144",
+            "CLAUDE_CODE_DISABLE_ARTIFACT": "1"
+        }})
     }
 }

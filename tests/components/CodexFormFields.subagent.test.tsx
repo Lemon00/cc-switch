@@ -5,20 +5,15 @@ import { useForm } from "react-hook-form";
 import { describe, expect, it, vi } from "vitest";
 import { CodexFormFields } from "@/components/providers/forms/CodexFormFields";
 import { Form } from "@/components/ui/form";
-
 vi.mock("@/hooks/useModelMetadataFill", () => ({
   useModelMetadataFill: () => () => {},
 }));
-
 type CodexFormFieldsProps = ComponentProps<typeof CodexFormFields>;
-
 const FormShell = ({ children }: PropsWithChildren) => {
   const form = useForm();
   return <Form {...form}>{children}</Form>;
 };
-
 const NOT_IN_CATALOG = /该模型不在模型列表中：Codex 拿不到它的上下文窗口/;
-
 function codexFormProps(
   overrides: Partial<CodexFormFieldsProps> = {},
 ): CodexFormFieldsProps {
@@ -63,7 +58,6 @@ function codexFormProps(
     ...overrides,
   };
 }
-
 function renderCodexForm(overrides: Partial<CodexFormFieldsProps> = {}) {
   const props = codexFormProps(overrides);
   render(
@@ -73,22 +67,18 @@ function renderCodexForm(overrides: Partial<CodexFormFieldsProps> = {}) {
   );
   return props;
 }
-
 const subagentInput = () =>
   document.getElementById("codexSubagentModel") as HTMLInputElement | null;
-
 describe("CodexFormFields sub-agent defaults", () => {
   it("writes the typed model through the change handler", () => {
     const props = renderCodexForm();
     fireEvent.change(subagentInput()!, { target: { value: "gpt-a-mini" } });
     expect(props.onSubagentModelChange).toHaveBeenCalledWith("gpt-a-mini");
   });
-
   it("is hidden when the caller gives no handler (Grok Build)", () => {
     renderCodexForm({ onSubagentModelChange: undefined });
     expect(subagentInput()).toBeNull();
   });
-
   it("offers to add a model outside the list, with the default model when the list is empty", () => {
     const onCatalogModelsChange = vi.fn();
     renderCodexForm({
@@ -98,7 +88,6 @@ describe("CodexFormFields sub-agent defaults", () => {
       onCatalogModelsChange,
     });
     expect(screen.getByText(NOT_IN_CATALOG)).toBeTruthy();
-
     onCatalogModelsChange.mockClear();
     fireEvent.click(screen.getByRole("button", { name: "加入列表" }));
     const rows = onCatalogModelsChange.mock.calls.at(-1)?.[0] ?? [];
@@ -107,26 +96,21 @@ describe("CodexFormFields sub-agent defaults", () => {
       "k3-mini",
     ]);
   });
-
   it("stays quiet for a native Responses provider without a list", () => {
     renderCodexForm({ subagentModel: "k3-mini", catalogModels: [] });
     expect(screen.queryByText(NOT_IN_CATALOG)).toBeNull();
   });
 });
-
 const maxThreadsInput = () =>
   document.getElementById("codexAgentMaxThreads") as HTMLInputElement | null;
-
 describe("CodexFormFields sub-agent concurrency limit", () => {
   it("shows the value and writes the typed text through the handler", () => {
     const onAgentMaxThreadsChange = vi.fn();
     renderCodexForm({ agentMaxThreads: "8", onAgentMaxThreadsChange });
     expect(maxThreadsInput()!.value).toBe("8");
-
     fireEvent.change(maxThreadsInput()!, { target: { value: "12" } });
     expect(onAgentMaxThreadsChange).toHaveBeenCalledWith("12");
   });
-
   it("is shown for the official card too: it is a Codex-wide setting", () => {
     renderCodexForm({
       category: "official",
@@ -135,12 +119,10 @@ describe("CodexFormFields sub-agent concurrency limit", () => {
     expect(maxThreadsInput()).not.toBeNull();
     expect(subagentInput()).toBeNull();
   });
-
   it("is hidden when the caller gives no handler (Grok Build)", () => {
     renderCodexForm();
     expect(maxThreadsInput()).toBeNull();
   });
-
   it("points out a multi_agent_v2 total that takes precedence", () => {
     renderCodexForm({
       multiAgentV2Total: 5,
@@ -151,19 +133,16 @@ describe("CodexFormFields sub-agent concurrency limit", () => {
     ).toBeTruthy();
   });
 });
-
 const rowModels = () =>
   screen
     .getAllByPlaceholderText("例如: deepseek-v4-flash")
     .map((input) => (input as HTMLInputElement).value);
-
 describe("CodexFormFields direct layout", () => {
   it("lets the list own the default model: no separate field, list outside the advanced section", () => {
     renderCodexForm({
       catalogModels: [{ model: "gpt-a" }],
       onCatalogModelsChange: vi.fn(),
     });
-
     expect(screen.getByText("模型列表")).toBeVisible();
     // 「第一行是默认模型」写在「模型列表」后面的「?」里。
     expect(screen.getByRole("button", { name: "模型列表" })).toBeVisible();
@@ -173,18 +152,15 @@ describe("CodexFormFields direct layout", () => {
       screen.getAllByRole("button", { name: /providerForm\.fetchModels/ }),
     ).toHaveLength(1);
   });
-
   it("shows the default model field below an empty list, and seeds the first row with it", () => {
     const onCatalogModelsChange = vi.fn();
     renderCodexForm({ catalogModels: [], onCatalogModelsChange });
-
     const listTitle = screen.getByText("模型列表");
     const defaultModel = document.getElementById("codexDefaultModel")!;
     expect(
       listTitle.compareDocumentPosition(defaultModel) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-
     fireEvent.click(screen.getByRole("button", { name: "手动添加" }));
     expect(rowModels()).toEqual(["gpt-a", ""]);
     expect(document.getElementById("codexDefaultModel")).toBeNull();
@@ -194,7 +170,6 @@ describe("CodexFormFields direct layout", () => {
       "",
     ]);
   });
-
   it("shows an older card's default row first without reporting a change", () => {
     const onCatalogModelsChange = vi.fn();
     renderCodexForm({
@@ -202,11 +177,9 @@ describe("CodexFormFields direct layout", () => {
       catalogModels: [{ model: "gpt-a" }, { model: "gpt-b" }],
       onCatalogModelsChange,
     });
-
     expect(rowModels()).toEqual(["gpt-b", "gpt-a"]);
     expect(onCatalogModelsChange).not.toHaveBeenCalled();
   });
-
   it("keeps the default model field and its fetch button without a list (Grok Build)", () => {
     renderCodexForm();
     expect(screen.queryByText("模型列表")).toBeNull();
@@ -216,7 +189,6 @@ describe("CodexFormFields direct layout", () => {
     ).toBeInTheDocument();
   });
 });
-
 describe("CodexFormFields help tips", () => {
   it("puts field explanations behind「?」and keeps consequences on the page", () => {
     renderCodexForm({
@@ -226,7 +198,6 @@ describe("CodexFormFields help tips", () => {
       catalogModels: [],
       onCatalogModelsChange: vi.fn(),
     });
-
     for (const name of ["codexConfig.apiUrlLabel", "默认模型", "子代理模型"]) {
       expect(screen.getByRole("button", { name })).toBeInTheDocument();
     }
@@ -242,10 +213,8 @@ describe("CodexFormFields help tips", () => {
     ).toBeVisible();
   });
 });
-
 const autoReviewSelect = () =>
   document.getElementById("codexAutoReviewModel") as HTMLButtonElement | null;
-
 describe("CodexFormFields Auto Review model", () => {
   it("offers the card's own models and writes the pick through the handler", async () => {
     Element.prototype.scrollIntoView = vi.fn();
@@ -263,7 +232,6 @@ describe("CodexFormFields Auto Review model", () => {
     // 列表里没有 codex-auto-review：默认由主模型自己审批
     expect(trigger.textContent).toBe("主模型自己审批（默认）");
     expect(trigger).not.toBeDisabled();
-
     await user.click(trigger);
     const options = await screen.findAllByRole("option");
     expect(options.map((option) => option.textContent)).toEqual([
@@ -274,7 +242,6 @@ describe("CodexFormFields Auto Review model", () => {
     await user.click(screen.getByRole("option", { name: "DeepSeek V4 Flash" }));
     expect(onAutoReviewModelChange).toHaveBeenCalledWith("deepseek-v4-flash");
   });
-
   it("keeps a saved pick when the list and the value arrive together inside a form", () => {
     // 编辑页：表单先空着渲染，读到卡之后列表和已存的值在同一次渲染里到达。Radix 在 <form>
     // 里带一个隐藏的原生 select，值先到、选项后注册时它会回报一次空串，不能当成「改回默认」。
@@ -304,7 +271,6 @@ describe("CodexFormFields Auto Review model", () => {
     expect(autoReviewSelect()!.textContent).toBe("deepseek-flash");
     expect(onAutoReviewModelChange).not.toHaveBeenCalled();
   });
-
   it("shows a pick that left the list as the default", () => {
     renderCodexForm({
       catalogModels: [{ model: "deepseek-v4-pro" }],
@@ -314,7 +280,6 @@ describe("CodexFormFields Auto Review model", () => {
     });
     expect(autoReviewSelect()!.textContent).toBe("主模型自己审批（默认）");
   });
-
   it("is disabled with Codex's default and an explanation when the card has no list", () => {
     renderCodexForm({
       catalogModels: [],
@@ -330,7 +295,6 @@ describe("CodexFormFields Auto Review model", () => {
       ),
     ).toBeTruthy();
   });
-
   it("is hidden for the official card", () => {
     renderCodexForm({
       category: "official",

@@ -2,8 +2,7 @@ import type { ReactNode } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import CodexConfigEditor from "@/components/providers/forms/CodexConfigEditor";
-import GeminiConfigEditor from "@/components/providers/forms/GeminiConfigEditor";
-
+import AgyConfigEditor from "@/components/providers/forms/AgyConfigEditor";
 vi.mock("@/components/common/FullScreenPanel", () => ({
   FullScreenPanel: ({
     isOpen,
@@ -29,7 +28,6 @@ vi.mock("@/components/common/FullScreenPanel", () => ({
       </div>
     ) : null,
 }));
-
 vi.mock("@/components/JsonEditor", () => ({
   default: ({
     value,
@@ -45,7 +43,6 @@ vi.mock("@/components/JsonEditor", () => ({
     />
   ),
 }));
-
 describe("Common config modals", () => {
   it("shows no Codex common config snippet and lists fields that do not follow the provider", () => {
     render(
@@ -64,7 +61,6 @@ describe("Common config modals", () => {
         ]}
       />,
     );
-
     expect(
       screen.queryByRole("button", {
         name: /codexConfig.editCommonConfig|编辑通用配置/,
@@ -74,12 +70,11 @@ describe("Common config modals", () => {
       screen.getByRole("button", { name: "mcp_servers.legacy" }),
     ).toBeInTheDocument();
   });
-
   it("shows no Gemini common config snippet and adds inactive fields to the global settings", () => {
     const onEnvChange = vi.fn();
     const onConfigChange = vi.fn();
     render(
-      <GeminiConfigEditor
+      <AgyConfigEditor
         envValue={"GEMINI_API_KEY=k\nDEBUG=0"}
         configValue={'{\n  "ui": {}\n}'}
         onEnvChange={onEnvChange}
@@ -93,13 +88,11 @@ describe("Common config modals", () => {
         ]}
       />,
     );
-
     expect(
       screen.queryByRole("button", {
         name: /geminiConfig.editCommonConfig|编辑通用配置/,
       }),
     ).not.toBeInTheDocument();
-
     fireEvent.click(screen.getByRole("button", { name: "+ env.DEBUG" }));
     expect(onEnvChange).toHaveBeenLastCalledWith("GEMINI_API_KEY=k\nDEBUG=1");
     fireEvent.click(screen.getByRole("button", { name: "+ env.HTTPS_PROXY" }));
@@ -113,10 +106,9 @@ describe("Common config modals", () => {
     });
   });
 });
-
 it("describes the Antigravity launcher instead of Gemini CLI global files", () => {
   render(
-    <GeminiConfigEditor
+    <AgyConfigEditor
       isAgy
       envValue=""
       configValue="{}"

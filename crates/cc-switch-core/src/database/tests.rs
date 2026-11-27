@@ -3,7 +3,7 @@
 //! 包含 Schema 迁移和基本功能的测试。
 
 use super::*;
-use crate::app_config::MultiAppConfig;
+use crate::app_config::{AppType, MultiAppConfig};
 use crate::provider::{Provider, ProviderManager};
 use indexmap::IndexMap;
 use rusqlite::{params, Connection};
@@ -172,7 +172,7 @@ fn deleted_default_skill_repo_is_not_restored() {
 #[test]
 fn existing_skill_repo_selection_is_not_supplemented() {
     let db = Database::memory().expect("create memory db");
-    let default_store = crate::services::skill::SkillStore::default();
+    let default_store = crate::skill_model::SkillStore::default();
     db.save_skill_repo(&default_store.repos[0])
         .expect("save existing repo");
 
@@ -685,11 +685,15 @@ fn migration_from_v3_8_schema_v1_to_current_schema_v3() {
         "skills migration snapshot should preserve legacy app mapping"
     );
 
-    // v3.9+ 新增：proxy_config 三行 seed 必须存在（否则 UI 会查不到默认值）
-    let proxy_rows: i64 = conn
-        .query_row("SELECT COUNT(*) FROM proxy_config", [], |r| r.get(0))
-        .expect("count proxy_config rows");
-    assert_eq!(proxy_rows, 4);
+    // 缺失代理配置的旧库只补当前支持的 Claude/Codex 默认项。
+    let proxy_apps: Vec<String> = conn
+        .prepare("SELECT app_type FROM proxy_config ORDER BY app_type")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(proxy_apps, ["claude", "codex"]);
 
     // model_pricing 应具备默认数据（迁移时会 seed）
     let pricing_rows: i64 = conn
@@ -1272,58 +1276,6 @@ fn model_pricing_seed_includes_glm_5_3_flash() {
 }
 
 #[test]
-fn model_pricing_seed_includes_gemini_4_argon() {
-    let db = Database::memory().expect("create memory db");
-    let conn = db.conn.lock().expect("lock conn");
-
-    let price: (String, String, String, String) = conn
-        .query_row(
-            "SELECT input_cost_per_million, output_cost_per_million,
-                    cache_read_cost_per_million, cache_creation_cost_per_million
-             FROM model_pricing WHERE model_id = 'gemini-4-argon'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )
-        .expect("query Gemini 4 Argon price");
-
-    assert_eq!(
-        price,
-        (
-            "2.00".to_string(),
-            "10.00".to_string(),
-            "0.10".to_string(),
-            "0".to_string(),
-        )
-    );
-}
-
-#[test]
-fn model_pricing_seed_includes_gemini_3_8_flash() {
-    let db = Database::memory().expect("create memory db");
-    let conn = db.conn.lock().expect("lock conn");
-
-    let price: (String, String, String, String) = conn
-        .query_row(
-            "SELECT input_cost_per_million, output_cost_per_million,
-                    cache_read_cost_per_million, cache_creation_cost_per_million
-             FROM model_pricing WHERE model_id = 'gemini-3.8-flash'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )
-        .expect("query Gemini 3.8 Flash price");
-
-    assert_eq!(
-        price,
-        (
-            "0.75".to_string(),
-            "3.75".to_string(),
-            "0.075".to_string(),
-            "0".to_string(),
-        )
-    );
-}
-
-#[test]
 fn model_pricing_seed_repairs_sonnet_5_list_price_but_keeps_custom_price() {
     let db = Database::memory().expect("create memory db");
 
@@ -1459,36 +1411,6 @@ fn incremental_vacuum_reclaims_entire_freelist() {
     assert_eq!(freelist(&conn), 0, "all free pages should be reclaimed");
 }
 
-/// v22 已随 v4.0.19 发布：从它升级必须补上 `mcp_servers.enabled_omp`，否则读 MCP 列表报
-/// `no such column`。Skills 没有 omp 列（启用状态按原生目录现算）。
-#[test]
-fn migration_v22_to_v23_adds_enabled_omp_to_mcp_servers_only() {
-    let conn = Connection::open_in_memory().expect("open memory db");
-    Database::create_tables_on_conn(&conn).expect("create tables");
-    conn.execute_batch("ALTER TABLE mcp_servers DROP COLUMN enabled_omp;")
-        .expect("rewind mcp_servers to v22 shape");
-    conn.execute(
-        "INSERT INTO mcp_servers (id, name, server_config, enabled_pi) VALUES ('mcp-1', 'm', '{}', 1)",
-        [],
-    )
-    .expect("seed mcp row");
-    Database::set_user_version(&conn, 22).expect("set user_version=22");
-
-    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
-
-    assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
-    assert!(Database::has_column(&conn, "mcp_servers", "enabled_omp").unwrap());
-    assert!(!Database::has_column(&conn, "skills", "enabled_omp").unwrap());
-    let (pi, omp): (i64, i64) = conn
-        .query_row(
-            "SELECT enabled_pi, enabled_omp FROM mcp_servers WHERE id = 'mcp-1'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .expect("read mcp row");
-    assert_eq!((pi, omp), (1, 0));
-}
-
 #[test]
 fn migration_v23_to_v24_adds_dsh_flags_without_changing_omp_or_skill_state() {
     let conn = Connection::open_in_memory().expect("open memory db");
@@ -1587,7 +1509,7 @@ fn keeps_the_lock_poisoned_when_rollback_fails() {
 #[tokio::test]
 async fn proxy_dao_calls_survive_a_poisoned_lock() {
     let db = std::sync::Arc::new(Database::memory().expect("memory db"));
-    db.set_proxy_flags_sync("claude", true, true)
+    db.set_proxy_flags_sync(&AppType::Claude, true, true)
         .expect("set flags");
     db.update_proxy_config(crate::proxy::types::ProxyConfig {
         listen_port: 25721,
@@ -1609,11 +1531,11 @@ async fn proxy_dao_calls_survive_a_poisoned_lock() {
     };
 
     poison();
-    db.set_proxy_flags_sync("claude", true, false)
+    db.set_proxy_flags_sync(&AppType::Claude, true, false)
         .expect("set flags after poison");
     poison();
     assert_eq!(
-        db.get_proxy_flags_sync("claude"),
+        db.get_proxy_flags_sync(&AppType::Claude),
         (true, false),
         "get_proxy_flags_sync after poison"
     );
@@ -1629,14 +1551,13 @@ async fn proxy_dao_calls_survive_a_poisoned_lock() {
         "get_proxy_client_endpoint_sync after poison"
     );
     poison();
-    db.set_pricing_model_source("claude", "request")
+    db.set_pricing_model_source(&AppType::Claude, "request")
         .await
         .expect("set pricing source after poison");
     assert_eq!(
-        db.get_pricing_model_source("claude")
+        db.get_pricing_model_source(&AppType::Claude)
             .await
             .expect("read pricing source"),
         "request"
     );
 }
-

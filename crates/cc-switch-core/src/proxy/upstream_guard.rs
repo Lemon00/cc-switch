@@ -14,8 +14,13 @@ pub(super) async fn reject_self_forwarding(
     if listen_port == 0 || url.port_or_known_default() != Some(listen_port) {
         return Ok(());
     }
-    let Ok(listener) = listen_address.trim_matches(['[', ']']).parse::<IpAddr>() else {
-        return Ok(());
+    let address = listen_address.trim().trim_matches(['[', ']']);
+    let listener = if address.eq_ignore_ascii_case("localhost") {
+        std::net::Ipv4Addr::LOCALHOST.into()
+    } else {
+        address
+            .parse::<IpAddr>()
+            .map_err(|_| ProxyError::ConfigError("Invalid proxy listener address".to_string()))?
     };
     let targets_listener = match url.host() {
         Some(url::Host::Ipv4(ip)) => is_listener_address(ip.into(), listener),
@@ -80,6 +85,11 @@ mod tests {
     #[tokio::test]
     async fn rejects_own_listener_including_custom_ports_and_url_aliases() {
         for (target, address, port) in [
+            ("http://127.0.0.1:15721/v1", "localhost", 15721),
+            ("http://127.0.0.1:15721/v1", "LOCALHOST", 15721),
+            ("http://127.0.0.1:15721/v1", " 127.0.0.1 ", 15721),
+            ("http://[::1]:15721/v1", " [::1] ", 15721),
+            ("http://127.0.0.1:15721/v1", " :: ", 15721),
             ("http://127.0.0.1:3688/v1/responses", "127.0.0.1", 3688),
             ("http://localhost:15721/v1", "127.0.0.1", 15721),
             ("http://LOCALHOST.:15721/v1", "127.0.0.1", 15721),

@@ -284,7 +284,7 @@ pub async fn auth_poll_for_account(
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
         AUTH_PROVIDER_GITHUB_COPILOT => {
-            let auth_manager = copilot_state.0.write().await;
+            let auth_manager = copilot_state.0.read().await;
             match auth_manager
                 .poll_for_token(&device_code, github_domain.as_deref())
                 .await
@@ -304,8 +304,8 @@ pub async fn auth_poll_for_account(
             match auth_manager
                 .poll_for_token(&device_code, || async {
                     app_state
-                        .proxy_service
-                        .lock_switch_for_app(AppType::Codex.as_str())
+                        .operations
+                        .lock_for_app(AppType::Codex.as_str())
                         .await
                 })
                 .await
@@ -321,7 +321,7 @@ pub async fn auth_poll_for_account(
             }
         }
         AUTH_PROVIDER_XAI_OAUTH => {
-            let auth_manager = xai_state.0.write().await;
+            let auth_manager = xai_state.0.read().await;
             match auth_manager.poll_for_token(&device_code).await {
                 Ok(account) => {
                     let default_account_id = auth_manager.get_status().await.default_account_id;
@@ -373,16 +373,30 @@ pub async fn auth_poll_for_account(
 pub async fn auth_cancel_login(
     auth_provider: String,
     device_code: String,
+    copilot_state: State<'_, CopilotAuthState>,
+    xai_state: State<'_, XaiOAuthState>,
     codex_state: State<'_, CodexOAuthState>,
     agy_state: State<'_, AgyAccountState>,
     claude_state: State<'_, ClaudeAccountState>,
 ) -> Result<bool, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
+        AUTH_PROVIDER_GITHUB_COPILOT => Ok(copilot_state
+            .0
+            .read()
+            .await
+            .cancel_device_flow(&device_code)
+            .await),
+        AUTH_PROVIDER_XAI_OAUTH => Ok(xai_state
+            .0
+            .read()
+            .await
+            .cancel_device_flow(&device_code)
+            .await),
         AUTH_PROVIDER_CODEX_OAUTH => Ok(codex_state.0.cancel_device_flow(&device_code).await),
         AUTH_PROVIDER_AGY_OAUTH => Ok(agy_state.0.cancel_login(&device_code).await),
         AUTH_PROVIDER_CLAUDE_OFFICIAL => Ok(claude_state.0.cancel_login(&device_code).await),
-        _ => Err("Login cancellation is only supported for Codex OAuth".to_string()),
+        _ => unreachable!(),
     }
 }
 

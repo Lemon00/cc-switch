@@ -1,18 +1,15 @@
+import { parseHeaderOverrideJson } from "@/lib/requestOverrides";
+import { toast } from "@/lib/toast";
 import { invoke } from "@tauri-apps/api/core";
 import type { TFunction } from "i18next";
-import { toast } from "@/lib/toast";
-import { parseHeaderOverrideJson } from "@/lib/requestOverrides";
-
 export interface FetchedModel {
   id: string;
   ownedBy: string | null;
 }
-
 export interface ModelFetchOptions {
   apiFormat?: string;
   requestHeaders?: Record<string, string>;
 }
-
 /**
  * Claude / Claude Desktop 卡片的 `meta.apiFormat` 换成取模型列表要用的格式名。
  *
@@ -23,9 +20,17 @@ export interface ModelFetchOptions {
 export function claudeModelFetchApiFormat(
   apiFormat: string | undefined,
 ): string | undefined {
-  return apiFormat === "gemini_native" ? "google-generative-ai" : undefined;
+  return upstreamModelFetchApiFormat(apiFormat);
 }
-
+export function upstreamModelFetchApiFormat(
+  apiFormat: string | undefined,
+): string | undefined {
+  return apiFormat === "gemini_native" ||
+    apiFormat === "@ai-sdk/google" ||
+    apiFormat === "google-generative-ai"
+    ? "google-generative-ai"
+    : undefined;
+}
 /**
  * 把表单里的本地代理 Header 覆盖 JSON 解析成取模型列表时要携带的请求头。
  *
@@ -41,7 +46,6 @@ export function modelFetchRequestHeaders(
   }
   return headers;
 }
-
 /**
  * 从供应商获取可用模型列表
  *
@@ -73,7 +77,6 @@ export async function fetchModelsForConfig(
     requestHeaders: options?.requestHeaders,
   });
 }
-
 /**
  * Models reported by the locally installed Antigravity runtime. With an API key it asks agy's
  * API-key mode, which only accepts its built-in Gemini models (by display name).
@@ -87,17 +90,14 @@ export async function getAgyModels(options?: {
     baseUrl: options?.baseUrl || null,
   });
 }
-
 export interface OpenCodeModelRef {
   providerId: string;
   modelId: string;
 }
-
 /** 获取 OpenCode 当前运行时可用模型（包含 OAuth 与 Zen 免费模型）。 */
 export async function getOpenCodeModels(): Promise<OpenCodeModelRef[]> {
   return invoke("get_opencode_models");
 }
-
 /**
  * 获取 Codex OAuth (ChatGPT Plus/Pro 反代) 可用模型列表
  *
@@ -110,7 +110,6 @@ export async function fetchCodexOauthModels(
     accountId: accountId || null,
   });
 }
-
 /** 获取当前 xAI OAuth 账号可访问的模型列表。 */
 export async function fetchXaiOauthModels(
   accountId?: string | null,
@@ -119,14 +118,16 @@ export async function fetchXaiOauthModels(
     accountId: accountId || null,
   });
 }
-
 /**
  * 根据错误类型显示对应的 toast 提示
  */
 export function showFetchModelsError(
   err: unknown,
   t: TFunction,
-  opts?: { hasApiKey: boolean; hasBaseUrl: boolean },
+  opts?: {
+    hasApiKey: boolean;
+    hasBaseUrl: boolean;
+  },
 ): void {
   // 前端预检：缺少必填字段
   if (opts && !opts.hasBaseUrl && !opts.hasApiKey) {
@@ -141,10 +142,8 @@ export function showFetchModelsError(
     toast.error(t("providerForm.fetchModelsNeedEndpoint"));
     return;
   }
-
   // 解析后端错误字符串
   const msg = String(err);
-
   // Google 对无效的 AI Studio Key 回 400 + reason API_KEY_INVALID，而不是 401
   if (
     msg.includes("HTTP 401") ||
@@ -171,7 +170,6 @@ export function showFetchModelsError(
     toast.error(t("providerForm.fetchModelsNotSupported"));
     return;
   }
-
   // 通用兜底
   toast.error(t("providerForm.fetchModelsFailed"));
 }

@@ -24,7 +24,39 @@ fn symlink_dir(src: &std::path::Path, dest: &std::path::Path) {
 
 #[cfg(windows)]
 fn symlink_dir(src: &std::path::Path, dest: &std::path::Path) {
-    std::os::windows::fs::symlink_dir(src, dest).expect("create symlink");
+    use base64::Engine;
+    use std::os::windows::process::CommandExt;
+
+    match std::os::windows::fs::symlink_dir(src, dest) {
+        Ok(()) => return,
+        Err(error) if error.raw_os_error() == Some(1314) => {}
+        Err(error) => panic!("create symlink: {error}"),
+    }
+    // Directory junctions exercise the same read_link/symlink_metadata cleanup
+    // path without requiring Developer Mode or SeCreateSymbolicLinkPrivilege.
+    let literal = |path: &std::path::Path| path.to_string_lossy().replace('\'', "''");
+    let script = format!(
+        "New-Item -ItemType Junction -Path '{}' -Target '{}' -ErrorAction Stop | Out-Null",
+        literal(dest),
+        literal(src)
+    );
+    let encoded = base64::engine::general_purpose::STANDARD.encode(
+        script
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<_>>(),
+    );
+    let output = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-EncodedCommand", &encoded])
+        .creation_flags(0x08000000) // CREATE_NO_WINDOW
+        .output()
+        .expect("create test directory junction");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(fs::symlink_metadata(dest).unwrap().file_type().is_symlink());
 }
 
 #[test]
@@ -67,7 +99,7 @@ fn import_from_apps_respects_explicit_app_selection() {
         "explicitly selected OpenCode app should remain enabled"
     );
     assert!(
-        !skill.apps.claude && !skill.apps.codex && !skill.apps.gemini,
+        skill.apps.enabled_apps() == vec![AppType::OpenCode],
         "import should no longer infer apps from every matching source path"
     );
 }
@@ -285,7 +317,7 @@ fn restore_skill_backup_restores_files_to_ssot_and_current_app() {
     assert_eq!(restored.directory, "restore-skill");
     assert!(restored.apps.claude, "restored skill should enable Claude");
     assert!(
-        !restored.apps.codex && !restored.apps.gemini && !restored.apps.opencode,
+        restored.apps.enabled_apps() == vec![AppType::Claude],
         "restore should only enable the selected app"
     );
     assert!(

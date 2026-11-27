@@ -1,21 +1,19 @@
 /**
  * Codex 预设供应商配置模板
  */
-import { ProviderCategory } from "../types";
 import type {
   CodexApiFormat,
   CodexCatalogModel,
   CodexChatReasoning,
   PromptCacheRoutingMode,
 } from "../types";
+import { ProviderCategory } from "../types";
 import type { PresetTheme } from "./claudeProviderPresets";
 import type { PresetFamilyFields } from "./presetFamilies";
-
 // MiMo 官方 Codex 目录的系统提示词。
 // https://mimo.mi.com/docs/tokenplan/integration/codex-configuration
 const MIMO_CODEX_BASE_INSTRUCTIONS =
   "You are MiMo, an AI assistant developed by Xiaomi. Today's date: {date} {week}. Your knowledge cutoff date is December 2024.";
-
 export interface CodexProviderPreset extends PresetFamilyFields {
   name: string;
   nameKey?: string; // i18n key for localized display name
@@ -52,7 +50,6 @@ export interface CodexProviderPreset extends PresetFamilyFields {
   // 是否在 UI 中隐藏该预设（预设仍存在，仅不在列表中显示）
   hidden?: boolean;
 }
-
 /**
  * 生成第三方供应商的 auth.json
  */
@@ -61,7 +58,6 @@ export function generateThirdPartyAuth(apiKey: string): Record<string, any> {
     OPENAI_API_KEY: apiKey || "",
   };
 }
-
 /**
  * 生成第三方供应商的 config.toml
  */
@@ -78,7 +74,6 @@ export function generateThirdPartyConfig(
 ): string {
   const tomlString = (value: string) => JSON.stringify(value);
   const requiresOpenAiAuth = options?.requiresOpenAiAuth ?? true;
-
   return `model_provider = "custom"
 model = ${tomlString(modelName)}
 model_reasoning_effort = "high"
@@ -89,7 +84,6 @@ base_url = ${tomlString(baseUrl)}
 wire_api = "responses"
 requires_openai_auth = ${requiresOpenAiAuth}`;
 }
-
 function modelCatalog(
   models: Array<
     | string
@@ -130,7 +124,6 @@ function modelCatalog(
         },
   );
 }
-
 // Model lists that several presets share, each named after the first preset
 // that uses it. Every call builds fresh objects, so presets never share state.
 const stepFunApiModels = (): CodexCatalogModel[] =>
@@ -144,7 +137,6 @@ const stepFunApiModels = (): CodexCatalogModel[] =>
       defaultReasoningLevel: "high",
     },
   ]);
-
 const stepFunModels = (): CodexCatalogModel[] =>
   modelCatalog([
     // 档位照抄官方两站模型页与 reasoning 指南（2026-08-15 盘点）：
@@ -170,7 +162,6 @@ const stepFunModels = (): CodexCatalogModel[] =>
       contextWindow: 262144,
     },
   ]);
-
 const streamLakeModels = (): CodexCatalogModel[] =>
   modelCatalog([
     {
@@ -181,7 +172,6 @@ const streamLakeModels = (): CodexCatalogModel[] =>
       reasoningLevels: ["high"],
     },
   ]);
-
 const miniMaxModels = (): CodexCatalogModel[] =>
   modelCatalog([
     {
@@ -205,7 +195,6 @@ const miniMaxModels = (): CodexCatalogModel[] =>
         "You are Codex, a coding agent based on MiniMax-M3. You and the user share the same workspace and collaborate to achieve the user's goals.",
     },
   ]);
-
 export const codexProviderPresets: CodexProviderPreset[] = [
   {
     name: "OpenAI Official",
@@ -1817,7 +1806,6 @@ requires_openai_auth = true`,
         contextWindow: 1048576,
         reasoningLevels: ["low", "high", "max"],
       },
-      // 2026-10-25 起不再列 deepseek-v4-pro：Pro 贵且效果不如 Flash
     ]),
     category: "cn_official",
     icon: "deepseek",

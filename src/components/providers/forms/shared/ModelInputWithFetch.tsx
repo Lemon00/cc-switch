@@ -1,11 +1,10 @@
-import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { Input } from "@/components/ui/input";
-import { Download, Loader2 } from "lucide-react";
 import type { FetchedModel } from "@/lib/api/model-fetch";
+import { Download, Loader2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { ModelDropdown } from "./ModelDropdown";
-
 interface ModelInputWithFetchProps {
   id: string;
   value: string;
@@ -16,7 +15,6 @@ interface ModelInputWithFetchProps {
   /** 传入时显示获取按钮；不传时只在有数据后显示下拉 */
   onFetch?: () => void;
 }
-
 export function ModelInputWithFetch({
   id,
   value,
@@ -27,7 +25,6 @@ export function ModelInputWithFetch({
   onFetch,
 }: ModelInputWithFetchProps) {
   const { t } = useTranslation();
-
   // Models available: Input + searchable dropdown
   if (fetchedModels.length > 0) {
     return (
@@ -45,7 +42,6 @@ export function ModelInputWithFetch({
       </div>
     );
   }
-
   // 加载中: Input + Spinner
   if (isLoading) {
     return (
@@ -65,7 +61,6 @@ export function ModelInputWithFetch({
       </div>
     );
   }
-
   // 有 onFetch: Input + 获取按钮
   if (onFetch) {
     return (
@@ -94,7 +89,6 @@ export function ModelInputWithFetch({
       </div>
     );
   }
-
   // 无 onFetch: 纯 Input
   return (
     <Input

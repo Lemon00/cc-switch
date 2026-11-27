@@ -3,21 +3,20 @@
  *
  * 提供获取、设置和测试全局代理的 React Query hooks。
  */
-
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { toast } from "@/lib/toast";
-import { useTranslation } from "react-i18next";
 import {
   getGlobalProxyUrl,
-  setGlobalProxyUrl,
-  testProxyUrl,
   getUpstreamProxyStatus,
   scanLocalProxies,
+  setGlobalProxyUrl,
+  testProxyUrl,
+  type DetectedProxy,
   type ProxyTestResult,
   type UpstreamProxyStatus,
-  type DetectedProxy,
 } from "@/lib/api/globalProxy";
-
+import { invalidateQueriesAfterChange } from "@/lib/query/invalidation";
+import { toast } from "@/lib/toast";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 /**
  * 获取全局代理 URL
  */
@@ -28,20 +27,24 @@ export function useGlobalProxyUrl() {
     staleTime: 30 * 1000, // 30秒内不重新获取，避免展开时闪烁
   });
 }
-
 /**
  * 设置全局代理 URL
  */
 export function useSetGlobalProxyUrl() {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
-
   return useMutation({
     mutationFn: setGlobalProxyUrl,
-    onSuccess: () => {
+    onSuccess: async () => {
+      await Promise.all([
+        invalidateQueriesAfterChange(queryClient, {
+          queryKey: ["globalProxyUrl"],
+        }),
+        invalidateQueriesAfterChange(queryClient, {
+          queryKey: ["upstreamProxyStatus"],
+        }),
+      ]);
       toast.success(t("settings.globalProxy.saved"));
-      queryClient.invalidateQueries({ queryKey: ["globalProxyUrl"] });
-      queryClient.invalidateQueries({ queryKey: ["upstreamProxyStatus"] });
     },
     onError: (error: unknown) => {
       const message =
@@ -54,13 +57,11 @@ export function useSetGlobalProxyUrl() {
     },
   });
 }
-
 /**
  * 测试代理连接
  */
 export function useTestProxy() {
   const { t } = useTranslation();
-
   return useMutation({
     mutationFn: testProxyUrl,
     onSuccess: (result: ProxyTestResult) => {
@@ -79,7 +80,6 @@ export function useTestProxy() {
     },
   });
 }
-
 /**
  * 获取当前出站代理状态
  */
@@ -89,13 +89,11 @@ export function useUpstreamProxyStatus() {
     queryFn: getUpstreamProxyStatus,
   });
 }
-
 /**
  * 扫描本地代理
  */
 export function useScanProxies() {
   const { t } = useTranslation();
-
   return useMutation({
     mutationFn: scanLocalProxies,
     onError: (error: Error) => {
@@ -105,5 +103,4 @@ export function useScanProxies() {
     },
   });
 }
-
 export type { DetectedProxy };

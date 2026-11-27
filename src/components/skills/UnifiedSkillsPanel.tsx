@@ -1,21 +1,19 @@
-import { createPortal } from "react-dom";
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useDelayedFlag } from "@/hooks/useDelayedFlag";
-import { useTranslation } from "react-i18next";
+import { SkillsIcon } from "@/components/BrandIcons";
 import {
-  ArrowUpCircle,
-  Check,
-  ChevronDown,
-  Loader2,
-  MoreHorizontal,
-  Plus,
-  RefreshCw,
-} from "lucide-react";
-import { toast } from "@/lib/toast";
+  MatrixCell,
+  MatrixColumnHeader,
+  MatrixColumnHighlight,
+  MatrixSearch,
+  NeutralBadge,
+  resolveBulkScope,
+  showUndoToast,
+} from "@/components/mcp/AppMatrix";
+import { V7ConfirmDialog } from "@/components/mcp/formBits";
+import { useVisibleAppIds } from "@/components/mcp/useVisibleAppIds";
+import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
+import { AppPageHeader } from "@/components/shell/AppPageHeader";
 import { Button } from "@/components/ui/button";
-import { HelpTip } from "@/components/ui/help-tip";
-import { Notice, NoticeSlot } from "@/components/ui/notice";
-import { PageTabs } from "@/components/ui/page-tabs";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,11 +21,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { HelpTip } from "@/components/ui/help-tip";
 import { HoverTip } from "@/components/ui/hover-tip";
-import { Checkbox } from "@/components/ui/checkbox";
-import { AppPageHeader } from "@/components/shell/AppPageHeader";
-import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
-import { SkillsIcon } from "@/components/BrandIcons";
+import { Notice, NoticeSlot } from "@/components/ui/notice";
+import { PageTabs } from "@/components/ui/page-tabs";
+import { SKILLS_APP_IDS } from "@/config/appConfig";
+import { useDelayedFlag } from "@/hooks/useDelayedFlag";
 import {
   type ImportSkillSelection,
   type InstalledSkill,
@@ -50,56 +49,58 @@ import {
   useUninstallSkill,
   useUpdateSkill,
 } from "@/hooks/useSkills";
-import type { AppId } from "@/lib/api/types";
-import { SKILLS_APP_IDS } from "@/config/appConfig";
 import { settingsApi, skillsApi } from "@/lib/api";
+import type { ZipSkippedSkill } from "@/lib/api/skills";
+import type { AppId } from "@/lib/api/types";
 import { copyText } from "@/lib/clipboard";
-import { extractErrorMessage } from "@/utils/errorUtils";
+import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
+import { extractErrorMessage } from "@/utils/errorUtils";
 import {
-  MatrixCell,
-  MatrixColumnHeader,
-  MatrixColumnHighlight,
-  MatrixSearch,
-  NeutralBadge,
-  ompDiscoveryColumnNote,
-  resolveBulkScope,
-  showUndoToast,
-} from "@/components/mcp/AppMatrix";
-import { V7ConfirmDialog } from "@/components/mcp/formBits";
-import { useVisibleAppIds } from "@/components/mcp/useVisibleAppIds";
-import { SkillsPage, useSkillRepoActions } from "./SkillsPage";
+  ArrowUpCircle,
+  Check,
+  ChevronDown,
+  Loader2,
+  MoreHorizontal,
+  Plus,
+  RefreshCw,
+} from "lucide-react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
+import { describeRepoFailures } from "./repoFailures";
 import { RepoManagerPanel } from "./RepoManagerPanel";
 import { SkillImportDialog } from "./SkillImportDialog";
 import { SkillRestoreDialog } from "./SkillRestoreDialog";
+import { SkillsPage, useSkillRepoActions } from "./SkillsPage";
 import { SkillsStorageSheet } from "./SkillsStorageSheet";
 import { useSkillInstallTargets } from "./useSkillInstallTargets";
-import { describeRepoFailures } from "./repoFailures";
-import type { ZipSkippedSkill } from "@/lib/api/skills";
-
 const BACKUP_DIR = "~/.cc-switch/skill-backups";
-
 type SkillsView = "installed" | "discover";
 type StatusFilter = "all" | "updates" | "none" | `app:${AppId}`;
-
 interface WriteFailure {
   desired: boolean;
   error: string;
 }
 const failKey = (id: string, app: AppId) => `${id}\u0000${app}`;
-
 type ConfirmState =
-  | { kind: "uninstall"; ids: string[] }
-  | { kind: "updateAll" }
-  | { kind: "deleteBackup"; backup: SkillBackupEntry };
-
+  | {
+      kind: "uninstall";
+      ids: string[];
+    }
+  | {
+      kind: "updateAll";
+    }
+  | {
+      kind: "deleteBackup";
+      backup: SkillBackupEntry;
+    };
 interface UnifiedSkillsPanelProps {
   /** 从旧的 skillsDiscovery 视图进来时直接打开「发现」段 */
   initialView?: SkillsView;
   onInteractionBlockedChange?: (blocked: boolean) => void;
   onNavigationBlockedChange?: (blocked: boolean) => void;
 }
-
 function isEditableTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false;
   if (target.isContentEditable) return true;
@@ -113,7 +114,6 @@ function isEditableTarget(target: EventTarget | null) {
   }
   return false;
 }
-
 /**
  * Skills 全局页（v7）：「已安装」矩阵 +「发现」合成一页。
  * Pi 列常驻（应用页里隐藏 Pi 时才不显示）；Pi 的状态来自后端对 ~/.pi/agent/skills 的目录检查，
@@ -127,7 +127,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const { t, i18n } = useTranslation();
   const appIds = useVisibleAppIds(SKILLS_APP_IDS);
   const { targets, setTargets, installTo } = useSkillInstallTargets(appIds);
-
   const [view, setView] = useState<SkillsView>(initialView);
   // 「发现」段第一次打开后就一直挂着（隐藏而不卸载），来回切不再重新加载仓库列表
   const [discoverMounted, setDiscoverMounted] = useState(
@@ -164,7 +163,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   } | null>(null);
   const writeLockRef = useRef(false);
   const checkUpdatesLockRef = useRef(false);
-
   const {
     data: skills,
     isLoading,
@@ -199,7 +197,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const skillUpdates = updateCheck?.updates;
   const updateRepoFailures = updateCheck?.failures ?? [];
   const updateSkillMutation = useUpdateSkill();
-
   const mutationPending =
     deleteBackupMutation.isPending ||
     toggleAppMutation.isPending ||
@@ -211,21 +208,22 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     updateSkillMutation.isPending ||
     isUpdatingMany;
   const dialogOpen =
-    importOpen || restoreOpen || confirm !== null || repoManagerOpen;
+    importOpen ||
+    restoreOpen ||
+    confirm !== null ||
+    repoManagerOpen ||
+    storageOpen;
   const navigationBlocked = writePending || mutationPending || dialogOpen;
   const interactionBlocked = navigationBlocked || isCheckingUpdates;
   // 外观上的禁用晚 300ms 才出现：点一个格子写得很快时不让整页按钮闪一下变灰。
   // 写入本身仍由写锁（writeLockRef / interactionBlocked）拦着。
   const controlsDisabled = useDelayedFlag(interactionBlocked);
-
   useEffect(() => {
     onInteractionBlockedChange?.(interactionBlocked);
   }, [interactionBlocked, onInteractionBlockedChange]);
-
   useEffect(() => {
     onNavigationBlockedChange?.(navigationBlocked);
   }, [navigationBlocked, onNavigationBlockedChange]);
-
   useEffect(
     () => () => {
       onInteractionBlockedChange?.(false);
@@ -233,7 +231,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     },
     [onInteractionBlockedChange, onNavigationBlockedChange],
   );
-
   const beginWrite = (allowOpenDialog = false) => {
     if (
       checkUpdatesLockRef.current ||
@@ -248,33 +245,28 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     setWritePending(true);
     return true;
   };
-
   const endWrite = () => {
     writeLockRef.current = false;
     setWritePending(false);
   };
-
   const listSeparator = t("mcpPage.listSeparator");
   const names = (apps: AppId[]) =>
     apps.map((app) => APP_DISPLAY_NAME[app]).join(listSeparator);
   const noun = t("skillsPage.noun");
   const installedSkills = skills ?? [];
-
   // ─── 更新 ───────────────────────────────────────────────────────────
   const applicableSkillUpdates = useMemo(() => {
     const installedIds = new Set(installedSkills.map((skill) => skill.id));
     return (skillUpdates ?? []).filter((update) => installedIds.has(update.id));
   }, [skillUpdates, installedSkills]);
-
   const updatesMap = useMemo(() => {
     const map: Record<string, SkillUpdateInfo> = {};
     for (const update of applicableSkillUpdates) map[update.id] = update;
     return map;
   }, [applicableSkillUpdates]);
-
   const lastCheckedText = useMemo(() => {
     if (!updatesCheckedAt) return "";
-    const minutes = Math.floor((Date.now() - updatesCheckedAt) / 60_000);
+    const minutes = Math.floor((Date.now() - updatesCheckedAt) / 60000);
     if (minutes < 1) return t("skillsPage.justNow");
     try {
       const rtf = new Intl.RelativeTimeFormat(i18n.language, {
@@ -287,16 +279,13 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       return "";
     }
   }, [updatesCheckedAt, i18n.language, t]);
-
   // ─── 来源 / 筛选 ────────────────────────────────────────────────────
   const sourceKey = (skill: InstalledSkill) =>
     skill.repoOwner && skill.repoName
       ? `repo:${skill.repoOwner}/${skill.repoName}`
       : "local";
-
   const sourceLabel = (key: string) =>
     key === "local" ? t("skillsPage.source.local") : key.slice(5);
-
   const sourceOptions = useMemo(() => {
     const counts = new Map<string, number>();
     for (const skill of installedSkills) {
@@ -309,10 +298,8 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       return a.localeCompare(b);
     });
   }, [installedSkills]);
-
   const enabledCount = (skill: InstalledSkill) =>
     SKILLS_APP_IDS.filter((app) => skill.apps[app]).length;
-
   const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
   const filteredSkills = useMemo(() => {
     return installedSkills.filter((skill) => {
@@ -345,7 +332,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     normalizedQuery,
     updatesMap,
   ]);
-
   // 「可更新」筛选下把最后一个也更新完：回到全部，免得停在空表上
   const nApplicableUpdates = applicableSkillUpdates.length;
   const prevUpdatesRef = useRef(nApplicableUpdates);
@@ -359,14 +345,12 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     }
     prevUpdatesRef.current = nApplicableUpdates;
   }, [nApplicableUpdates, statusFilter]);
-
   const filtersActive = statusFilter !== "all" || sourceFilter !== "all";
   const scope = resolveBulkScope(
     installedSkills,
     filteredSkills,
     normalizedQuery ? "search" : filtersActive ? "filter" : null,
   );
-
   // 已经不在列表里的勾选自动丢掉
   useEffect(() => {
     if (selected.size === 0) return;
@@ -374,7 +358,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     const next = new Set([...selected].filter((id) => ids.has(id)));
     if (next.size !== selected.size) setSelected(next);
   }, [installedSkills, selected]);
-
   // 从「发现」跳回来时定位到那一行
   useEffect(() => {
     if (!highlightId || view !== "installed") return;
@@ -382,7 +365,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     row?.scrollIntoView?.({ block: "center" });
     row?.focus?.({ preventScroll: true });
   }, [highlightId, view]);
-
   // 在「发现」段按 Escape 回到「已安装」
   useEffect(() => {
     if (view !== "discover") return;
@@ -396,7 +378,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [view]);
-
   // ─── 写入与失败记录 ────────────────────────────────────────────────
   const recordResult = (
     id: string,
@@ -411,15 +392,17 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       else next[key] = { desired, error: extractErrorMessage(error) };
       return next;
     });
-
   const recordEnableFailures = (
-    failures: Array<{ id: string; app: AppId; error: unknown }>,
+    failures: Array<{
+      id: string;
+      app: AppId;
+      error: unknown;
+    }>,
   ) => {
     for (const failure of failures) {
       recordResult(failure.id, failure.app, true, failure.error);
     }
   };
-
   const writeOne = async (id: string, app: AppId, enabled: boolean) => {
     if (!beginWrite()) return;
     try {
@@ -431,7 +414,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       endWrite();
     }
   };
-
   const writeMany = async (ids: string[], app: AppId, enabled: boolean) => {
     if (ids.length === 0) return { succeeded: [] as string[], failed: 0 };
     try {
@@ -450,12 +432,14 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       return { succeeded: [] as string[], failed: ids.length };
     }
   };
-
   const bulkToggle = async (
     ids: string[],
     app: AppId,
     enabled: boolean,
-    toastKey: { on: string; off: string },
+    toastKey: {
+      on: string;
+      off: string;
+    },
   ) => {
     if (!beginWrite()) return;
     try {
@@ -497,7 +481,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       endWrite();
     }
   };
-
   const handleColumnBulk = (app: AppId, enabled: boolean) => {
     const ids = scope.rows
       .filter((skill) => Boolean(skill.apps[app]) !== enabled)
@@ -508,7 +491,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       off: "appMatrix.toast.disabled",
     });
   };
-
   const handleSelectionToggle = (app: AppId, enabled: boolean) => {
     const chosen = installedSkills.filter((skill) => selected.has(skill.id));
     const ids = chosen
@@ -534,7 +516,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       off: "skillsPage.toast.disabledSelection",
     });
   };
-
   // ─── 卸载 / 更新 ────────────────────────────────────────────────────
   const uninstallIds = async (ids: string[]) => {
     if (!beginWrite(true)) return;
@@ -586,7 +567,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     if (piWarning) toast.warning(text, options);
     else toast.success(text, options);
   };
-
   const updateIds = async (ids: string[], allowOpenDialog = false) => {
     if (ids.length === 0 || !beginWrite(allowOpenDialog)) return;
     // 不让确认框等着整批更新跑完：点了确认就关，每行的 ⋯ 和页头按钮显示进度
@@ -622,7 +602,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       });
     }
   };
-
   const handleCheckUpdates = async () => {
     if (
       checkUpdatesLockRef.current ||
@@ -658,7 +637,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       checkUpdatesLockRef.current = false;
     }
   };
-
   // ─── 导入 / ZIP / 备份 ───────────────────────────────────────────────
   const handleOpenImport = async () => {
     if (!beginWrite()) return;
@@ -675,7 +653,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       endWrite();
     }
   };
-
   const handleImport = async (imports: ImportSkillSelection[]) => {
     if (!beginWrite(true)) return;
     try {
@@ -690,9 +667,12 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       endWrite();
     }
   };
-
   const reportEnableFailures = (
-    failures: Array<{ id: string; app: AppId; error: unknown }>,
+    failures: Array<{
+      id: string;
+      app: AppId;
+      error: unknown;
+    }>,
   ) => {
     if (failures.length === 0) return;
     recordEnableFailures(failures);
@@ -703,7 +683,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       { closeButton: true },
     );
   };
-
   const handleInstallFromZip = async () => {
     if (!beginWrite()) return;
     try {
@@ -770,7 +749,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       endWrite();
     }
   };
-
   const handleOpenRestoreFromBackup = async () => {
     if (!beginWrite()) return;
     setRestoreOpen(true);
@@ -783,7 +761,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       endWrite();
     }
   };
-
   const handleRestoreFromBackup = async (backupId: string) => {
     if (!beginWrite(true)) return;
     try {
@@ -807,7 +784,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       endWrite();
     }
   };
-
   const confirmDeleteBackup = async (backup: SkillBackupEntry) => {
     if (!beginWrite(true)) return;
     try {
@@ -819,7 +795,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       } catch (error) {
         deleteError = error;
       }
-
       // The backups query is disabled by default, so invalidation alone
       // does not fetch authoritative data. Explicitly refresh after both
       // success and failure (remove_dir_all may have made partial progress).
@@ -832,7 +807,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
         // "delete failed" report, or replace the original deletion error.
         console.error("Failed to refresh Skill backups after deletion:", error);
       }
-
       if (!deleteSucceeded) {
         if (
           refreshedBackups &&
@@ -856,7 +830,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       endWrite();
     }
   };
-
   const openDocs = async (skill: InstalledSkill) => {
     const url =
       skill.readmeUrl ||
@@ -870,7 +843,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       // ignore
     }
   };
-
   const copyName = async (skill: InstalledSkill) => {
     try {
       await copyText(skill.name);
@@ -881,7 +853,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       toast.error(t("common.error"), { description: String(error) });
     }
   };
-
   const openDirectory = async (skill: InstalledSkill) => {
     try {
       await skillsApi.openSkillDir(skill.directory);
@@ -891,7 +862,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       });
     }
   };
-
   const showInstalled = (skillId: string) => {
     setSearchQuery("");
     setStatusFilter("all");
@@ -899,7 +869,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     setView("installed");
     setHighlightId(skillId);
   };
-
   // ─── 渲染：页头 ─────────────────────────────────────────────────────
   const nInstalled = installedSkills.length;
   const nUpdates = applicableSkillUpdates.length;
@@ -914,7 +883,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     setView("installed");
     setStatusFilter("updates");
   };
-
   const header = (
     <AppPageHeader
       icon={<SkillsIcon size={20} />}
@@ -1024,7 +992,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       }
     />
   );
-
   // 「已安装 / 发现」换的是整块内容：页面级导航，用下划线页签（不是分段控件）。
   // 页签行只渲染一份（两段共用，下划线才滑得过去）；各段右侧的控件用 portal 放进 trailing 槽。
   const [tabsTrailingSlot, setTabsTrailingSlot] =
@@ -1058,7 +1025,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       trailing={<div ref={setTabsTrailingSlot} className="flex items-center" />}
     />
   );
-
   // ─── 渲染：已安装段 ─────────────────────────────────────────────────
   const statusLabel = (value: StatusFilter) => {
     if (value === "updates") return t("skillsPage.filter.updates");
@@ -1069,7 +1035,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       });
     return t("skillsPage.filter.all");
   };
-
   const renderInstalledBody = () => {
     if (isLoading) {
       return (
@@ -1129,7 +1094,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
         </div>
       );
     }
-
     const selectionActive = selected.size > 0;
     const nVisibleSelected = filteredSkills.filter((skill) =>
       selected.has(skill.id),
@@ -1283,7 +1247,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
               </div>
               <div className="flex shrink-0">
                 {appIds.map((app) => {
-                  const isPi = app === "pi";
                   const onInScope = scope.rows.filter(
                     (skill) => skill.apps[app],
                   ).length;
@@ -1307,16 +1270,8 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                       scopeKind={scope.kind}
                       noun={noun}
                       disabled={controlsDisabled}
-                      title={isPi ? t("skillsPage.piColumnTitle") : undefined}
-                      help={
-                        isPi
-                          ? {
-                              title: t("skillsPage.piHelpTitle"),
-                              body: t("skillsPage.piHelp"),
-                            }
-                          : undefined
-                      }
-                      {...ompDiscoveryColumnNote(app, t)}
+                      title={undefined}
+                      help={undefined}
                       extraAction={{
                         label:
                           statusFilter === appFilter
@@ -1447,17 +1402,14 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       </div>
     );
   };
-
   const showUnmanagedBanner =
     nUnmanaged > 0 && dismissedUnmanaged !== nUnmanaged && nInstalled > 0;
   const showUpdateRepoFailBanner =
     updateRepoFailures.length > 0 && dismissedRepoFailAt !== updatesCheckedAt;
-
   const uninstallTargets =
     confirm?.kind === "uninstall"
       ? installedSkills.filter((skill) => confirm.ids.includes(skill.id))
       : [];
-
   return (
     <>
       {header}
@@ -1481,6 +1433,8 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
               installTargets={targets}
               onInstallTargetsChange={setTargets}
               installTo={installTo}
+              tryBeginWrite={beginWrite}
+              endWrite={endWrite}
               onShowInstalled={showInstalled}
               onOpenRepoManager={() => setRepoManagerOpen(true)}
               onEnableFailures={recordEnableFailures}
@@ -1766,7 +1720,21 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
         onCancel={() => setConfirm(null)}
       />
 
-      <SkillsStorageSheet open={storageOpen} onOpenChange={setStorageOpen} />
+      <SkillsStorageSheet
+        open={storageOpen}
+        onOpenChange={setStorageOpen}
+        onMigratingChange={(migrating) => {
+          if (migrating) {
+            if (!writeLockRef.current) {
+              writeLockRef.current = true;
+              setWritePending(true);
+            }
+          } else if (writeLockRef.current) {
+            writeLockRef.current = false;
+            setWritePending(false);
+          }
+        }}
+      />
 
       {repoManagerOpen && (
         <RepoManagerContainer onClose={() => setRepoManagerOpen(false)} />
@@ -1774,9 +1742,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     </>
   );
 };
-
 UnifiedSkillsPanel.displayName = "UnifiedSkillsPanel";
-
 // ─── 已安装的一行 ────────────────────────────────────────────────────────
 interface InstalledRowProps {
   skill: InstalledSkill;
@@ -1801,7 +1767,6 @@ interface InstalledRowProps {
   onOpenDir: () => void;
   onUninstall: () => void;
 }
-
 function InstalledRow({
   skill,
   first,
@@ -1830,7 +1795,6 @@ function InstalledRow({
   const failure = failedApp ? fails[failKey(skill.id, failedApp)] : undefined;
   const failId = `sk-fail-${skill.id}`;
   const hasRepo = Boolean(skill.repoOwner && skill.repoName);
-
   return (
     <li
       id={`sk-row-${skill.id}`}
@@ -1990,7 +1954,6 @@ function InstalledRow({
     </li>
   );
 }
-
 // ─── 列头左侧的筛选按钮 ──────────────────────────────────────────────────
 function FilterMenu({
   label,
@@ -2054,7 +2017,6 @@ function FilterMenu({
     </DropdownMenu>
   );
 }
-
 // ─── 多选条的「启用到 / 停用」应用菜单 ────────────────────────────────────
 function AppMenuButton({
   label,
@@ -2098,7 +2060,6 @@ function AppMenuButton({
     </DropdownMenu>
   );
 }
-
 // ─── 仓库管理抽屉（打开时才挂载，避免进页面就去读仓库） ─────────────────────
 function RepoManagerContainer({ onClose }: { onClose: () => void }) {
   const { data: repos = [] } = useSkillRepos();
@@ -2117,5 +2078,4 @@ function RepoManagerContainer({ onClose }: { onClose: () => void }) {
     />
   );
 }
-
 export default UnifiedSkillsPanel;

@@ -12,11 +12,9 @@
 function toStandardBase64Alphabet(value: string): string {
   return value.replace(/ /g, "+").replace(/-/g, "+").replace(/_/g, "/");
 }
-
 function trimOuterLineBreaks(value: string): string {
   return value.replace(/^[\r\n]+|[\r\n]+$/g, "");
 }
-
 /**
  * Decode Base64 encoded UTF-8 string
  *
@@ -35,7 +33,6 @@ export function decodeBase64Utf8(str: string): string {
     // would discard a URL-decoded `+` at either edge and diverge from the
     // backend decoder, which trims only CR/LF characters.
     let cleaned = toStandardBase64Alphabet(trimOuterLineBreaks(str));
-
     // Try to decode with standard Base64 first
     try {
       const binString = atob(cleaned);

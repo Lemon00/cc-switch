@@ -41,14 +41,11 @@ import {
   type PresetFamilyInfo,
 } from "@/config/presetFamilies";
 import { createTestQueryClient } from "../utils/testQueryClient";
-
 const TEST_API_KEY = "sk-golden-test";
 const SUBMIT_LABEL = "save-provider";
-
 const toastMocks = vi.hoisted(() => ({
   error: vi.fn(),
 }));
-
 vi.mock("sonner", () => ({
   toast: {
     error: toastMocks.error,
@@ -57,7 +54,6 @@ vi.mock("sonner", () => ({
     warning: vi.fn(),
   },
 }));
-
 vi.mock("@/components/JsonEditor", () => ({
   default: ({
     value,
@@ -73,11 +69,9 @@ vi.mock("@/components/JsonEditor", () => ({
     />
   ),
 }));
-
 vi.mock("@/components/providers/forms/CodexOAuthSection", () => ({
   CodexOAuthSection: () => <div data-testid="codex-oauth-section" />,
 }));
-
 vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("@/components/providers/forms/hooks")>();
@@ -102,7 +96,6 @@ vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
     }),
   };
 });
-
 vi.mock("@/lib/query", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/query")>();
   return {
@@ -112,9 +105,7 @@ vi.mock("@/lib/query", async (importOriginal) => {
     }),
   };
 });
-
 type GoldenAppId = "claude" | "codex";
-
 interface GoldenCase {
   /** 预设显示名（即预设选择器里的按钮文本） */
   preset: string;
@@ -123,7 +114,6 @@ interface GoldenCase {
   /** 模板变量输入（key → 值），按表单要求填写 */
   templateValues?: Record<string, string>;
 }
-
 const CLAUDE_CASES: GoldenCase[] = [
   { preset: "Claude Official", fillApiKey: false },
   { preset: "RelaxyCode", fillApiKey: true },
@@ -136,19 +126,16 @@ const CLAUDE_CASES: GoldenCase[] = [
   { preset: "Kimi For Coding", fillApiKey: true },
   { preset: "E-FlowCode", fillApiKey: true },
 ];
-
 const CODEX_CASES: GoldenCase[] = [
   { preset: "OpenAI Official", fillApiKey: false },
   { preset: "xAI (Grok)", fillApiKey: true },
   { preset: "Nvidia", fillApiKey: true },
   { preset: "E-FlowCode", fillApiKey: true },
 ];
-
 const API_KEY_INPUT_ID: Record<GoldenAppId, string> = {
   claude: "apiKey",
   codex: "codexApiKey",
 };
-
 function presetNameAt(appId: GoldenAppId, index: number): string | undefined {
   // 与 ProviderForm 的 presetEntries 生成方式一致：先按原数组下标编号再滤掉
   // hidden，所以序号直接回查原数组（AddProviderDialog 也这样回查）
@@ -156,7 +143,6 @@ function presetNameAt(appId: GoldenAppId, index: number): string | undefined {
     ? providerPresets[index]?.name
     : codexProviderPresets[index]?.name;
 }
-
 function renderForm(
   appId: GoldenAppId,
   onSubmit: (values: ProviderFormValues) => void,
@@ -173,7 +159,6 @@ function renderForm(
     </QueryClientProvider>,
   );
 }
-
 function clickRow(rowName: string) {
   const matches = screen
     .getAllByRole("button")
@@ -184,7 +169,6 @@ function clickRow(rowName: string) {
   expect(matches, `预设按钮「${rowName}」应唯一`).toHaveLength(1);
   fireEvent.click(matches[0]);
 }
-
 function clickButtonIn(group: HTMLElement, label: string) {
   const button = Array.from(group.querySelectorAll("button")).find(
     (item) => item.textContent === label,
@@ -192,7 +176,6 @@ function clickButtonIn(group: HTMLElement, label: string) {
   expect(button, `版本按钮「${label}」应存在`).toBeDefined();
   fireEvent.click(button!);
 }
-
 /**
  * 同一家的多个版本合成一行：先点那一行，再选版本。套餐、地区都在变（完整网格）时
  * 分别点套餐和地区；只有一维在变时「版本」里的按钮只写那一维。
@@ -228,14 +211,12 @@ function clickPreset(appId: GoldenAppId, presetName: string) {
     .find((text) => text === planLabel || text === regionLabel);
   clickButtonIn(versions, label ?? planLabel);
 }
-
 function fillInputById(container: HTMLElement, id: string, value: string) {
   const input = container.querySelector<HTMLInputElement>(`#${id}`);
   expect(input, `找不到输入框 #${id}`).not.toBeNull();
   expect(input!.disabled, `输入框 #${id} 不应被禁用`).toBe(false);
   fireEvent.change(input!, { target: { value } });
 }
-
 /** 列出测试 Key 在行里出现的所有 JSON 路径（字符串内包含也算，例如 TOML 文本） */
 function findApiKeyLocations(value: unknown, path = ""): string[] {
   if (typeof value === "string") {
@@ -253,7 +234,6 @@ function findApiKeyLocations(value: unknown, path = ""): string[] {
   }
   return [];
 }
-
 function toGoldenRow(appId: GoldenAppId, values: ProviderFormValues) {
   // JSON 往返：与 invoke 序列化一致，丢掉值为 undefined 的键
   const serialized = JSON.parse(JSON.stringify(values)) as Record<
@@ -274,41 +254,31 @@ function toGoldenRow(appId: GoldenAppId, values: ProviderFormValues) {
     row,
   };
 }
-
 async function submitPresetRow(appId: GoldenAppId, testCase: GoldenCase) {
   const onSubmit = vi.fn();
   const { container } = renderForm(appId, onSubmit);
-
   clickPreset(appId, testCase.preset);
-
   for (const [key, value] of Object.entries(testCase.templateValues ?? {})) {
     fillInputById(container, `template-${key}`, value);
   }
   if (testCase.fillApiKey) {
     fillInputById(container, API_KEY_INPUT_ID[appId], TEST_API_KEY);
   }
-
   fireEvent.click(screen.getByRole("button", { name: SUBMIT_LABEL }));
-
   await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
   expect(toastMocks.error).not.toHaveBeenCalled();
   // 软校验确认框没弹出：说明预设 + Key 已满足提交条件
   expect(screen.queryByText("仍要保存")).not.toBeInTheDocument();
-
   const values = onSubmit.mock.calls[0][0] as ProviderFormValues;
-
   // presetId 必须指回被点中的预设（快照里只保留形如 claude-<index> 的格式）
   const presetIndex = Number(values.presetId?.replace(`${appId}-`, ""));
   expect(presetNameAt(appId, presetIndex)).toBe(testCase.preset);
-
   return toGoldenRow(appId, values);
 }
-
 describe("ProviderForm 预设新增行金标", () => {
   beforeEach(() => {
     toastMocks.error.mockReset();
   });
-
   describe.each<[GoldenAppId, GoldenCase[]]>([
     ["claude", CLAUDE_CASES],
     ["codex", CODEX_CASES],

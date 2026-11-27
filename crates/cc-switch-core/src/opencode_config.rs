@@ -1,8 +1,8 @@
-use crate::config::atomic_write;
+use crate::config::atomic_write_private;
 use crate::error::AppError;
 use crate::jsonc_document::JsoncDocument;
 use crate::provider::OpenCodeConfigFormat;
-use crate::settings::get_opencode_override_dir;
+use crate::settings::get_override_dir;
 use indexmap::IndexMap;
 use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
@@ -47,7 +47,7 @@ fn canonicalize_plugin_name(plugin_name: &str) -> String {
 }
 
 pub fn get_opencode_dir() -> PathBuf {
-    if let Some(override_dir) = get_opencode_override_dir() {
+    if let Some(override_dir) = get_override_dir(&crate::app_config::AppType::OpenCode) {
         return override_dir;
     }
 
@@ -142,7 +142,7 @@ impl OpenCodeDocument {
             )));
         }
         if self.previous_contents.as_deref() != Some(source.as_bytes()) {
-            atomic_write(&self.path, source.as_bytes())?;
+            atomic_write_private(&self.path, source.as_bytes())?;
         }
         Ok(())
     }
@@ -591,14 +591,31 @@ pub fn get_default_model() -> Result<Option<String>, AppError> {
 /// Only rewrites the top-level `model`; `small_model` and everything else stay as is.
 pub fn set_default_model(model: &str) -> Result<(), AppError> {
     let model = model.trim();
-    if !model
-        .split_once('/')
-        .is_some_and(|(provider, id)| !provider.is_empty() && !id.is_empty())
-    {
+    let (provider_id, model_id) = model.split_once('/').ok_or_else(|| {
+        AppError::InvalidInput(format!(
+            "OpenCode model must be \"<provider>/<model>\": {model}"
+        ))
+    })?;
+    if provider_id.is_empty() || model_id.is_empty() {
         return Err(AppError::InvalidInput(format!(
             "OpenCode model must be \"<provider>/<model>\": {model}"
         )));
     }
+
+    let providers = get_providers()?;
+    let provider = providers.get(provider_id).ok_or_else(|| {
+        AppError::InvalidInput(format!(
+            "OpenCode provider \"{provider_id}\" is not in opencode.json"
+        ))
+    })?;
+    if let Some(models) = provider.get("models").and_then(Value::as_object) {
+        if !models.contains_key(model_id) {
+            return Err(AppError::InvalidInput(format!(
+                "OpenCode model \"{model_id}\" is not declared under provider \"{provider_id}\""
+            )));
+        }
+    }
+
     edit_config(get_opencode_config_path, |config| {
         config["model"] = json!(model);
     })
@@ -674,9 +691,61 @@ fn insert_plugin(config: &mut Value, plugin_name: &str) {
 }
 
 pub fn remove_plugins_by_prefixes(prefixes: &[&str]) -> Result<bool, AppError> {
-    edit_config(get_opencode_config_path, |config| {
-        remove_plugins(config, prefixes)
-    })
+    remove_plugins_by_prefixes_with_commit(prefixes, || Ok(()))
+}
+
+pub(crate) fn remove_plugins_by_prefixes_with_commit(
+    prefixes: &[&str],
+    commit: impl FnOnce() -> Result<(), AppError>,
+) -> Result<bool, AppError> {
+    edit_plugins_with_commit(|config| remove_plugins(config, prefixes), commit)
+}
+
+pub(crate) fn add_plugin_with_commit(
+    plugin_name: &str,
+    commit: impl FnOnce() -> Result<(), AppError>,
+) -> Result<bool, AppError> {
+    edit_plugins_with_commit(|config| insert_plugin(config, plugin_name), commit)
+}
+
+fn edit_plugins_with_commit(
+    edit: impl FnOnce(&mut Value),
+    commit: impl FnOnce() -> Result<(), AppError>,
+) -> Result<bool, AppError> {
+    let _guard = opencode_config_lock().lock()?;
+    let path = get_opencode_config_path()?;
+    let mut document = OpenCodeDocument::load(&path)?;
+    let mut desired = document.document.value().clone();
+    edit(&mut desired);
+    let changed = document.document.apply(&desired)?;
+    let previous = document.previous_contents.clone();
+    let expected = document.document.validated_source()?.as_bytes().to_vec();
+    if changed {
+        document.save()?;
+    }
+    if let Err(error) = commit() {
+        if changed {
+            let rollback = (|| -> Result<(), AppError> {
+                if read_config_contents(&path)?.as_deref() != Some(expected.as_slice()) {
+                    return Err(AppError::Conflict(format!(
+                        "OpenCode config changed; refusing rollback: {}",
+                        path.display()
+                    )));
+                }
+                match previous {
+                    Some(contents) => atomic_write_private(&path, &contents),
+                    None => std::fs::remove_file(&path).map_err(|error| AppError::io(&path, error)),
+                }
+            })();
+            if let Err(rollback_error) = rollback {
+                return Err(AppError::Config(format!(
+                    "{error}; rollback failed: {rollback_error}"
+                )));
+            }
+        }
+        return Err(error);
+    }
+    Ok(changed)
 }
 
 fn remove_plugins(config: &mut Value, prefixes: &[&str]) {
@@ -1146,7 +1215,7 @@ mod tests {
 
         write_config(
             temp.path(),
-            "{\n  // keep me\n  \"model\": \"old/a\",\n  \"small_model\": \"old/b\"\n}\n",
+            "{\n  // keep me\n  \"model\": \"old/a\",\n  \"small_model\": \"old/b\",\n  \"providers\": {\n    \"old\": { \"name\": \"old\" },\n    \"relay\": { \"name\": \"relay\", \"models\": { \"vendor/model-x\": {} } }\n  }\n}\n",
         );
         assert_eq!(get_default_model().unwrap().as_deref(), Some("old/a"));
 
@@ -1162,6 +1231,10 @@ mod tests {
         for invalid in ["", "no-slash", "/model", "provider/"] {
             assert!(set_default_model(invalid).is_err(), "{invalid:?}");
         }
+        assert!(
+            set_default_model("missing/provider/model").is_err(),
+            "unknown provider must be rejected"
+        );
         assert_eq!(
             read_opencode_config().unwrap()["model"],
             "relay/vendor/model-x"
@@ -1446,6 +1519,28 @@ mod tests {
     fn path_lookup_propagates_access_errors() {
         let temp = tempfile::tempdir().unwrap();
         assert!(resolve_config_path(&temp.path().join("invalid\0directory")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn config_writes_restrict_credentials_to_the_owner() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("opencode.json");
+        for key in ["first-secret", "updated-secret"] {
+            edit_config(
+                || Ok(path.clone()),
+                |value| {
+                    value["provider"] = json!({"example": {"options": {"apiKey": key}}});
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
     }
 
     #[cfg(windows)]

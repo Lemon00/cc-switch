@@ -1,19 +1,15 @@
-import { parse as parseToml } from "smol-toml";
 import type { McpServerSpec } from "@/types";
 import { normalizeTomlText } from "@/utils/textNormalization";
-
+import { parse as parseToml } from "smol-toml";
 /**
  * MCP 抽屉的草稿：表单和 JSON 两边共用的一份数据（画板 Mcp.dc.html 的 draftOf / specOf）。
  * 纯函数，不碰界面和 i18n；出错时返回错误码，由组件翻译。
  */
-
 export type McpTransport = "stdio" | "http" | "sse";
-
 export interface KeyValueRow {
   key: string;
   value: string;
 }
-
 export interface McpDraftConnection {
   transport: McpTransport;
   command: string;
@@ -25,10 +21,8 @@ export interface McpDraftConnection {
   /** 表单不认识的字段，保存时原样保留 */
   extra: Record<string, unknown>;
 }
-
 /** JSON 里看不到真实的 env / headers 值，用这个占位 */
 export const SECRET_MASK = "••••••••";
-
 const KNOWN_FIELDS = new Set([
   "type",
   "command",
@@ -38,11 +32,9 @@ const KNOWN_FIELDS = new Set([
   "url",
   "headers",
 ]);
-
 function isObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
-
 function rowsOf(value: unknown): KeyValueRow[] {
   if (!isObject(value)) return [];
   return Object.entries(value).map(([key, v]) => ({
@@ -50,24 +42,28 @@ function rowsOf(value: unknown): KeyValueRow[] {
     value: v == null ? "" : String(v),
   }));
 }
-
 function objectOf(rows: KeyValueRow[]): Record<string, string> {
-  const out: Record<string, string> = {};
+  const out: Record<string, string> = Object.create(null);
   for (const row of rows) {
     const key = row.key.trim();
     if (key) out[key] = row.value;
   }
   return out;
 }
-
 export function transportOf(spec: McpServerSpec | undefined): McpTransport {
   if (spec?.type === "http" || spec?.type === "sse") return spec.type;
-  if (!spec?.type && typeof spec?.url === "string" && !spec?.command) {
+  const kind = String(spec?.type ?? "");
+  if (kind === "streamable-http" || kind === "streamableHttp") return "http";
+  if (
+    (!kind || kind === "stdio") &&
+    typeof spec?.url === "string" &&
+    spec.url.trim() &&
+    !(typeof spec.command === "string" && spec.command.trim())
+  ) {
     return "http";
   }
   return "stdio";
 }
-
 /** 列表第二行：stdio 显示命令 + 参数，http/sse 显示去掉协议头的 URL。永不含 env / headers。 */
 export function summaryOf(spec: McpServerSpec | undefined): string {
   if (!spec) return "";
@@ -77,12 +73,11 @@ export function summaryOf(spec: McpServerSpec | undefined): string {
   const args = Array.isArray(spec.args) ? spec.args.map(String) : [];
   return [spec.command ?? "", ...args].join(" ").trim();
 }
-
 export function connectionOf(
   spec: McpServerSpec | undefined,
 ): McpDraftConnection {
   const source = spec ?? {};
-  const extra: Record<string, unknown> = {};
+  const extra: Record<string, unknown> = Object.create(null);
   for (const [key, value] of Object.entries(source)) {
     if (!KNOWN_FIELDS.has(key)) extra[key] = value;
   }
@@ -97,14 +92,13 @@ export function connectionOf(
     extra,
   };
 }
-
 /** 草稿 → McpServerSpec。mask=true 时把 env / headers 的值换成占位符（只用于 JSON 显示）。 */
 export function specOf(conn: McpDraftConnection, mask = false): McpServerSpec {
   const spec: McpServerSpec = {};
   if (conn.transport === "stdio") {
     spec.type = "stdio";
     spec.command = conn.command.trim();
-    const args = conn.args.filter((arg) => arg !== "");
+    const args = [...conn.args];
     if (args.length) spec.args = args;
     const env = objectOf(conn.env);
     if (Object.keys(env).length) spec.env = env;
@@ -115,9 +109,7 @@ export function specOf(conn: McpDraftConnection, mask = false): McpServerSpec {
     const headers = objectOf(conn.headers);
     if (Object.keys(headers).length) spec.headers = headers;
   }
-  for (const [key, value] of Object.entries(conn.extra)) {
-    spec[key] = value;
-  }
+  Object.defineProperties(spec, Object.getOwnPropertyDescriptors(conn.extra));
   if (mask) {
     for (const field of ["env", "headers"] as const) {
       const map = spec[field];
@@ -130,23 +122,28 @@ export function specOf(conn: McpDraftConnection, mask = false): McpServerSpec {
   }
   return spec;
 }
-
 export function jsonTextOf(conn: McpDraftConnection, reveal: boolean): string {
   return JSON.stringify(specOf(conn, !reveal), null, 2);
 }
-
 export function secretCountOf(conn: McpDraftConnection): number {
   const rows = conn.transport === "stdio" ? conn.env : conn.headers;
   return rows.filter((row) => row.key.trim()).length;
 }
-
 // ─── 写法归一（OpenCode local/remote、streamable-http、http_headers） ─────────
 function fromOpenCode(value: Record<string, unknown>): McpServerSpec {
+  const {
+    type: _type,
+    command: _command,
+    environment: _environment,
+    enabled: _enabled,
+    ...extra
+  } = value;
   if (
     value.type === "remote" ||
     (typeof value.url === "string" && !value.command)
   ) {
     const spec: McpServerSpec = {
+      ...extra,
       type: "http",
       url: typeof value.url === "string" ? value.url : "",
     };
@@ -158,7 +155,11 @@ function fromOpenCode(value: Record<string, unknown>): McpServerSpec {
   const command = Array.isArray(value.command)
     ? value.command.map(String)
     : [String(value.command ?? "")];
-  const spec: McpServerSpec = { type: "stdio", command: command[0] ?? "" };
+  const spec: McpServerSpec = {
+    ...extra,
+    type: "stdio",
+    command: command[0] ?? "",
+  };
   if (command.length > 1) spec.args = command.slice(1);
   if (isObject(value.environment)) {
     spec.env = value.environment as Record<string, string>;
@@ -166,7 +167,6 @@ function fromOpenCode(value: Record<string, unknown>): McpServerSpec {
   if (isObject(value.env)) spec.env = value.env as Record<string, string>;
   return spec;
 }
-
 export function normalizeSpec(value: Record<string, unknown>): McpServerSpec {
   if (
     Array.isArray(value.command) ||
@@ -190,7 +190,6 @@ export function normalizeSpec(value: Record<string, unknown>): McpServerSpec {
   }
   return spec;
 }
-
 function looksLikeSpec(value: unknown): value is Record<string, unknown> {
   return (
     isObject(value) &&
@@ -199,7 +198,6 @@ function looksLikeSpec(value: unknown): value is Record<string, unknown> {
       typeof value.url === "string")
   );
 }
-
 function entriesOf(map: Record<string, unknown>) {
   return Object.entries(map)
     .filter(([, value]) => isObject(value))
@@ -208,7 +206,6 @@ function entriesOf(map: Record<string, unknown>) {
       spec: normalizeSpec(value as Record<string, unknown>),
     }));
 }
-
 // ─── 粘贴识别 ────────────────────────────────────────────────────────────
 export type PasteFormat =
   | "mcpServers"
@@ -217,17 +214,20 @@ export type PasteFormat =
   | "codexToml"
   | "single"
   | "named";
-
 export interface PastedServer {
   /** 单个服务器对象没有名称时为空 */
   name: string;
   spec: McpServerSpec;
 }
-
 export type PasteResult =
-  | { ok: true; format: PasteFormat; items: PastedServer[] }
-  | { ok: false };
-
+  | {
+      ok: true;
+      format: PasteFormat;
+      items: PastedServer[];
+    }
+  | {
+      ok: false;
+    };
 function recognizeObject(obj: Record<string, unknown>): PasteResult {
   let items: PastedServer[] | null = null;
   let format: PasteFormat = "single";
@@ -258,7 +258,6 @@ function recognizeObject(obj: Record<string, unknown>): PasteResult {
   if (!items || items.length === 0) return { ok: false };
   return { ok: true, format, items };
 }
-
 /**
  * 识别粘贴进来的 MCP 配置：单个服务器对象、"名称": {…}、{"mcpServers": {…}}、
  * Codex 的 [mcp_servers.名称]（TOML）或 mcp_servers（JSON）、OpenCode 的 mcp.local / remote。
@@ -267,7 +266,6 @@ function recognizeObject(obj: Record<string, unknown>): PasteResult {
 export function recognizePaste(text: string): PasteResult | null {
   const trimmed = text.trim();
   if (!trimmed) return null;
-
   if (/^\s*\[mcp_servers\./m.test(trimmed)) {
     try {
       const parsed = parseToml(normalizeTomlText(trimmed));
@@ -281,7 +279,6 @@ export function recognizePaste(text: string): PasteResult | null {
       return { ok: false };
     }
   }
-
   let parsed: unknown = null;
   try {
     parsed = JSON.parse(trimmed);
@@ -295,18 +292,30 @@ export function recognizePaste(text: string): PasteResult | null {
   if (!isObject(parsed)) return { ok: false };
   return recognizeObject(parsed);
 }
-
 // ─── JSON 页签的文字 → spec ─────────────────────────────────────────────
 export type JsonParseError =
-  | { kind: "syntax"; line: number | null }
-  | { kind: "notObject" }
+  | {
+      kind: "syntax";
+      line: number | null;
+    }
+  | {
+      kind: "notObject";
+    }
   /** 值还是占位符，但草稿里没有这个键的原值可换回（改了键名、或新加的键） */
-  | { kind: "maskedUnknown"; field: "env" | "headers"; key: string };
-
+  | {
+      kind: "maskedUnknown";
+      field: "env" | "headers";
+      key: string;
+    };
 export type JsonParseResult =
-  | { ok: true; spec: McpServerSpec }
-  | { ok: false; error: JsonParseError };
-
+  | {
+      ok: true;
+      spec: McpServerSpec;
+    }
+  | {
+      ok: false;
+      error: JsonParseError;
+    };
 function lineOfError(error: unknown, text: string): number | null {
   const message = String((error as Error)?.message ?? "");
   const lineMatch = /line (\d+)/.exec(message);
@@ -315,7 +324,6 @@ function lineOfError(error: unknown, text: string): number | null {
   if (posMatch) return text.slice(0, Number(posMatch[1])).split("\n").length;
   return null;
 }
-
 /**
  * 解析 JSON 页签；占位符的值换回草稿里的原值。原值按键名找：改了键名、或新加的键
  * 还留着占位符，就没有原值可换，不能悄悄存成空串（凭据会丢），报错让用户填真实值。
@@ -343,7 +351,9 @@ export function parseJsonText(
     if (!isObject(map)) continue;
     for (const key of Object.keys(map)) {
       if (map[key] !== SECRET_MASK) continue;
-      const original = before[field][key];
+      const original = Object.prototype.hasOwnProperty.call(before[field], key)
+        ? before[field][key]
+        : undefined;
       if (original === undefined) {
         return { ok: false, error: { kind: "maskedUnknown", field, key } };
       }
@@ -352,7 +362,6 @@ export function parseJsonText(
   }
   return { ok: true, spec: normalizeSpec(parsed) };
 }
-
 // ─── 校验 ──────────────────────────────────────────────────────────────
 export type McpFieldError =
   | "nameRequired"
@@ -361,17 +370,18 @@ export type McpFieldError =
   | "commandRequired"
   | "urlRequired"
   | "urlScheme";
-
 export interface McpDraftErrors {
   name?: McpFieldError;
   command?: McpFieldError;
   url?: McpFieldError;
 }
-
 export function validateDraft(
   name: string,
   conn: McpDraftConnection,
-  options: { checkName: boolean; existingIds: readonly string[] },
+  options: {
+    checkName: boolean;
+    existingIds: readonly string[];
+  },
 ): McpDraftErrors {
   const errors: McpDraftErrors = {};
   if (options.checkName) {
@@ -389,7 +399,6 @@ export function validateDraft(
   }
   return errors;
 }
-
 export function uniqueId(base: string, existingIds: readonly string[]): string {
   const candidate = base.trim() || "mcp-server";
   if (!existingIds.includes(candidate)) return candidate;

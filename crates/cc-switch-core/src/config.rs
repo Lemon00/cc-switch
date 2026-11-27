@@ -89,7 +89,7 @@ fn test_home_override() -> Option<PathBuf> {
 
 /// 获取 Claude Code 配置目录路径
 pub fn get_claude_config_dir() -> PathBuf {
-    if let Some(custom) = crate::settings::get_claude_override_dir() {
+    if let Some(custom) = crate::settings::get_override_dir(&crate::app_config::AppType::Claude) {
         return custom;
     }
 
@@ -284,7 +284,8 @@ fn derive_mcp_path_from_override(dir: &Path) -> PathBuf {
 
 /// 获取 Claude MCP 配置文件路径
 pub fn get_claude_mcp_path() -> PathBuf {
-    if let Some(custom_dir) = crate::settings::get_claude_override_dir() {
+    if let Some(custom_dir) = crate::settings::get_override_dir(&crate::app_config::AppType::Claude)
+    {
         if let Some(path) = default_mcp_path_for_config_dir(&custom_dir) {
             return path;
         }
@@ -599,10 +600,13 @@ impl StagedWrite {
         &self.tmp
     }
 
-    /// 用临时文件替换目标（失败时删掉临时文件）。
+    /// 用临时文件替换目标。失败时仅在目标仍存在时清理临时文件，
+    /// 避免目标丢失后再删除唯一可恢复的内容。
     pub fn commit(self) -> Result<(), AppError> {
         commit_staged(&self.tmp, &self.path).inspect_err(|_| {
-            let _ = fs::remove_file(&self.tmp);
+            if matches!(self.path.try_exists(), Ok(true)) {
+                let _ = fs::remove_file(&self.tmp);
+            }
         })
     }
 }
@@ -618,8 +622,21 @@ pub fn stage_write(
     #[cfg(not(unix))]
     let _ = unix_mode;
 
-    let resolved = resolve_symlink_target(path);
+    let resolved = resolve_symlink_target(path)?;
     let path = resolved.as_path();
+
+    #[cfg(unix)]
+    let unix_mode = {
+        use std::os::unix::fs::PermissionsExt;
+        match unix_mode {
+            Some(mode) => Some(mode),
+            None => match fs::metadata(path) {
+                Ok(meta) => Some(meta.permissions().mode()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => return Err(AppError::io(path, error)),
+            },
+        }
+    };
 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
@@ -685,9 +702,6 @@ pub fn stage_write(
                 let _ = fs::remove_file(&tmp);
                 return Err(AppError::io(&tmp, source));
             }
-        } else if let Ok(meta) = fs::metadata(path) {
-            let perm = meta.permissions().mode();
-            let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(perm));
         }
     }
 
@@ -703,20 +717,21 @@ pub fn stage_write(
 /// 不碰路径里的目录软链；除相对目标带 `..` 外不做 `canonicalize`（Windows 上会把路径
 /// 改写成 `\\?\` 形式），普通文件原样返回。
 /// 悬空链接照样返回它指向的路径，写入时会在那里新建文件、链接保留。
-fn resolve_symlink_target(path: &Path) -> PathBuf {
+fn resolve_symlink_target(path: &Path) -> Result<PathBuf, AppError> {
     // 与 Linux 的 MAXSYMLINKS 一致，防止链接成环时死循环。
     const MAX_HOPS: usize = 40;
     let mut current = path.to_path_buf();
-    for _ in 0..MAX_HOPS {
-        let is_link = fs::symlink_metadata(&current)
-            .map(|meta| meta.file_type().is_symlink())
-            .unwrap_or(false);
-        if !is_link {
-            return current;
+    for hops in 0..=MAX_HOPS {
+        match fs::symlink_metadata(&current) {
+            Ok(meta) if !meta.file_type().is_symlink() => return Ok(current),
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(current),
+            Err(error) => return Err(AppError::io(&current, error)),
         }
-        let Ok(target) = fs::read_link(&current) else {
-            return current;
-        };
+        if hops == MAX_HOPS {
+            break;
+        }
+        let target = fs::read_link(&current).map_err(|error| AppError::io(&current, error))?;
         current = if target.is_absolute() {
             target
         } else {
@@ -726,8 +741,10 @@ fn resolve_symlink_target(path: &Path) -> PathBuf {
             }
         };
     }
-    log::warn!("软链接层数过多，按原路径写入: {}", path.display());
-    path.to_path_buf()
+    Err(AppError::Config(format!(
+        "Too many symbolic links or a symbolic link cycle: {}",
+        path.display()
+    )))
 }
 
 /// 把相对链接目标接到链接所在目录上。目标里有 `..` 时先把目录解析成真实路径再逐段
@@ -763,15 +780,34 @@ fn join_link_target(parent: &Path, target: &Path) -> PathBuf {
 /// `path` 是软链接时替换它指向的文件，链接本身保留。
 ///
 /// 失败时临时文件留在原处：写入引擎的 pending 指着它，下次恢复要靠它前滚（目标文件被
-/// 占用、只读这类失败，过后多半能补完）。只做一次性原子写的调用方自己删。
+/// 占用、只读这类失败，过后多半能补完）。一次性原子写由调用方在目标仍存在时清理。
 pub fn commit_staged(tmp: &Path, path: &Path) -> Result<(), AppError> {
-    let resolved = resolve_symlink_target(path);
+    let resolved = resolve_symlink_target(path)?;
     let path = resolved.as_path();
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
         use windows_sys::Win32::{
-            Foundation::ERROR_NOT_SUPPORTED, Storage::FileSystem::ReplaceFileW,
+            Foundation::{
+                ERROR_ACCESS_DENIED, ERROR_LOCK_VIOLATION, ERROR_NOT_SUPPORTED,
+                ERROR_SHARING_VIOLATION, ERROR_UNABLE_TO_REMOVE_REPLACED,
+            },
+            Storage::FileSystem::ReplaceFileW,
+        };
+
+        // A reader or scanner can briefly hold a handle without delete sharing.
+        // Retry only errors that leave both filenames intact; errors that may
+        // have moved/deleted either file must remain available for recovery.
+        let retryable = |error: &std::io::Error| {
+            matches!(
+                error.raw_os_error().map(|code| code as u32),
+                Some(
+                    ERROR_ACCESS_DENIED
+                        | ERROR_SHARING_VIOLATION
+                        | ERROR_LOCK_VIOLATION
+                        | ERROR_UNABLE_TO_REMOVE_REPLACED
+                )
+            )
         };
 
         // WSL UNC paths reject ReplaceFileW with ERROR_NOT_SUPPORTED (50) on
@@ -793,7 +829,11 @@ pub fn commit_staged(tmp: &Path, path: &Path) -> Result<(), AppError> {
         let mut completed = false;
         let mut last_error = None;
 
-        for _ in 0..3 {
+        // Bound the total wait to 340 ms, including permanent permission errors.
+        for delay_ms in [0, 20, 40, 80, 100, 100] {
+            if delay_ms != 0 {
+                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+            }
             // SAFETY: both path buffers are NUL-terminated UTF-16 and remain alive for the
             // duration of the call. Backup, exclusion, and reserved pointers are intentionally null.
             let replaced_ok = if skip_replace {
@@ -821,7 +861,11 @@ pub fn commit_staged(tmp: &Path, path: &Path) -> Result<(), AppError> {
             let replace_not_supported =
                 skip_replace || replace_error.raw_os_error() == Some(ERROR_NOT_SUPPORTED as i32);
             if replace_error.kind() != std::io::ErrorKind::NotFound && !replace_not_supported {
+                let retry = retryable(&replace_error);
                 last_error = Some(replace_error);
+                if retry {
+                    continue;
+                }
                 break;
             }
 
@@ -831,10 +875,7 @@ pub fn commit_staged(tmp: &Path, path: &Path) -> Result<(), AppError> {
                     break;
                 }
                 Err(source)
-                    if matches!(
-                        source.kind(),
-                        std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::PermissionDenied
-                    ) =>
+                    if source.kind() == std::io::ErrorKind::AlreadyExists || retryable(&source) =>
                 {
                     last_error = Some(source);
                 }
@@ -1001,7 +1042,10 @@ mod tests {
         std::os::unix::fs::symlink(&real_dir, home.join(".claude")).unwrap();
         let link = home.join(".claude").join("settings.json");
 
-        assert_eq!(resolve_symlink_target(&link), real.canonicalize().unwrap());
+        assert_eq!(
+            resolve_symlink_target(&link).unwrap(),
+            real.canonicalize().unwrap()
+        );
         atomic_write(&link, b"new").unwrap();
         assert_eq!(std::fs::read(&real).unwrap(), b"new");
 
@@ -1012,7 +1056,7 @@ mod tests {
         let link2 = home.join("other.json");
         std::os::unix::fs::symlink("sub/../other.json", &link2).unwrap();
         assert_eq!(
-            resolve_symlink_target(&link2),
+            resolve_symlink_target(&link2).unwrap(),
             other.canonicalize().unwrap()
         );
     }
@@ -1032,6 +1076,122 @@ mod tests {
             .file_type()
             .is_symlink());
         assert_eq!(std::fs::read(&real).unwrap(), b"contents");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_refuses_symlink_cycles_without_replacing_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("first");
+        let second = dir.path().join("second");
+        std::os::unix::fs::symlink("second", &first).unwrap();
+        std::os::unix::fs::symlink("first", &second).unwrap();
+
+        assert!(atomic_write(&first, b"must not replace the link").is_err());
+        let staged = dir.path().join("staged");
+        fs::write(&staged, b"recovery data").unwrap();
+        assert!(commit_staged(&staged, &first).is_err());
+        assert_eq!(fs::read_link(&first).unwrap(), PathBuf::from("second"));
+        assert_eq!(fs::read_link(&second).unwrap(), PathBuf::from("first"));
+        assert_eq!(fs::read(&staged).unwrap(), b"recovery data");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 3);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_resolution_accepts_the_hop_limit_and_rejects_longer_chains() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("target");
+        fs::write(&destination, b"original").unwrap();
+        let mut target = destination.clone();
+        for index in 0..40 {
+            let link = dir.path().join(format!("link-{index}"));
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+            target = link;
+        }
+        assert_eq!(resolve_symlink_target(&target).unwrap(), destination);
+        let too_long = dir.path().join("too-long");
+        std::os::unix::fs::symlink(&target, &too_long).unwrap();
+        assert!(atomic_write(&too_long, b"replacement").is_err());
+        assert_eq!(fs::read(&destination).unwrap(), b"original");
+        assert_eq!(fs::read_link(&too_long).unwrap(), target);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_write_inherits_private_permissions_before_commit() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("private.json");
+        fs::write(&path, b"old secret").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let staged = stage_write(&path, b"new secret", None, false).unwrap();
+        assert_eq!(
+            fs::metadata(staged.tmp_path())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        staged.commit().unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(fs::read(&path).unwrap(), b"new secret");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn atomic_write_recovers_after_windows_file_lock_is_released() {
+        use std::os::windows::fs::OpenOptionsExt;
+        use std::sync::mpsc;
+        use std::time::Duration;
+        use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("live-state.json");
+        fs::write(&path, b"old state").unwrap();
+        let held_file = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(&path)
+            .unwrap();
+        std::thread::scope(|scope| {
+            let (send, receive) = mpsc::channel();
+            let path = &path;
+            scope.spawn(move || {
+                send.send(atomic_write(path, b"new state")).unwrap();
+            });
+            // Hold a real Windows handle without delete sharing while the
+            // first replacement runs, then release it within the retry budget.
+            let early = receive.recv_timeout(Duration::from_millis(60));
+            drop(held_file);
+            let result = match early {
+                Ok(result) => result,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    receive.recv_timeout(Duration::from_secs(5)).unwrap()
+                }
+                Err(error) => panic!("writer disconnected: {error}"),
+            };
+            result.expect("a transient file lock must not abort the config change");
+        });
+        assert_eq!(fs::read(&path).unwrap(), b"new state");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn failed_staged_commit_retains_the_only_copy_when_destination_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let tmp = dir.path().join("staged.json");
+        fs::write(&tmp, b"recoverable contents").unwrap();
+        let staged = StagedWrite {
+            tmp: tmp.clone(),
+            path: dir.path().join("missing-parent").join("config.json"),
+        };
+        assert!(staged.commit().is_err());
+        assert_eq!(fs::read(&tmp).unwrap(), b"recoverable contents");
     }
 
     #[cfg(windows)]

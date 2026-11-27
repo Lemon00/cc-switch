@@ -9,7 +9,6 @@ import {
 } from "@/components/usage/UsageDashboard";
 import type { UsageRangeSelection } from "@/types/usage";
 import { setSettings } from "../msw/state";
-
 const useProviderStatsMock = vi.hoisted(() => vi.fn());
 const useModelStatsMock = vi.hoisted(() => vi.fn());
 const useSummaryByAppMock = vi.hoisted(() => vi.fn());
@@ -22,7 +21,6 @@ const usageApiMock = vi.hoisted(() => ({
   getSessionUsageLastSync: vi.fn(),
   rebuildCodexUsage: vi.fn(),
 }));
-
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: (key: string, options?: unknown) => {
@@ -41,17 +39,13 @@ vi.mock("react-i18next", () => ({
     },
   }),
 }));
-
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
 }));
-
 vi.mock("@/hooks/useUsageEventBridge", () => ({
   useUsageEventBridge: () => {},
 }));
-
 vi.mock("@/lib/api/usage", () => ({ usageApi: usageApiMock }));
-
 vi.mock("@/lib/query/usage", async () => {
   const actual =
     await vi.importActual<typeof import("@/lib/query/usage")>(
@@ -64,22 +58,18 @@ vi.mock("@/lib/query/usage", async () => {
     useUsageSummaryByApp: (...args: unknown[]) => useSummaryByAppMock(...args),
   };
 });
-
 vi.mock("@/components/usage/UsageHero", () => ({
   UsageHero: (props: unknown) => {
     usageHeroMock(props);
     return <div data-testid="usage-hero" />;
   },
 }));
-
 vi.mock("@/components/usage/UsageTrendChart", () => ({
   UsageTrendChart: () => <div data-testid="usage-trend" />,
 }));
-
 vi.mock("@/components/usage/UsageHeatmap", () => ({
   UsageHeatmap: () => <div data-testid="usage-heatmap" />,
 }));
-
 vi.mock("@/components/usage/RequestLogTable", () => ({
   RequestLogTable: (props: { onOpenDetail?: (id: string) => void }) => {
     requestLogTableMock(props);
@@ -90,7 +80,6 @@ vi.mock("@/components/usage/RequestLogTable", () => ({
     );
   },
 }));
-
 vi.mock("@/components/usage/RequestDetailPanel", () => ({
   RequestDetailPanel: (props: { requestId: string | null }) => {
     detailPanelMock(props);
@@ -99,19 +88,15 @@ vi.mock("@/components/usage/RequestDetailPanel", () => ({
     ) : null;
   },
 }));
-
 vi.mock("@/components/usage/ProviderStatsTable", () => ({
   ProviderStatsTable: () => <div data-testid="provider-stats-table" />,
 }));
-
 vi.mock("@/components/usage/ModelStatsTable", () => ({
   ModelStatsTable: () => <div data-testid="model-stats-table" />,
 }));
-
 vi.mock("@/components/usage/PricingConfigPanel", () => ({
   PricingConfigPanel: () => <div data-testid="pricing-config-panel" />,
 }));
-
 vi.mock("@/components/usage/UsageDateRangePicker", () => ({
   UsageDateRangePicker: ({
     triggerLabel,
@@ -130,8 +115,8 @@ vi.mock("@/components/usage/UsageDateRangePicker", () => ({
         onClick={() =>
           onApply({
             preset: "custom",
-            customStartDate: 1_700_000_000,
-            customEndDate: 1_700_086_400,
+            customStartDate: 1700000000,
+            customEndDate: 1700086400,
           })
         }
       >
@@ -140,14 +125,12 @@ vi.mock("@/components/usage/UsageDateRangePicker", () => ({
     </>
   ),
 }));
-
 vi.mock("@/lib/query/proxy", () => ({
   useGlobalProxyConfig: () => ({
     data: { enableLogging: true },
     isLoading: false,
   }),
 }));
-
 const renderDashboard = (props: ComponentProps<typeof UsageDashboard> = {}) => {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -160,13 +143,11 @@ const renderDashboard = (props: ComponentProps<typeof UsageDashboard> = {}) => {
     </QueryClientProvider>,
   );
 };
-
 const openSettings = async (user: ReturnType<typeof userEvent.setup>) => {
   await user.click(
     screen.getByRole("button", { name: "usage.settings.title" }),
   );
 };
-
 const pickInterval = async (
   user: ReturnType<typeof userEvent.setup>,
   label: string,
@@ -178,11 +159,9 @@ const pickInterval = async (
   );
   await user.click(await screen.findByRole("option", { name: label }));
 };
-
 // 页头同步按钮：文字是上次同步的时间（没同步过时是「立即同步」）
 const syncButton = () =>
   screen.getByRole("button", { name: /^usage\.(syncStatus|sessionSync)\./ });
-
 describe("UsageDashboard", () => {
   beforeEach(() => {
     resetUsageSyncClockForTests();
@@ -219,37 +198,29 @@ describe("UsageDashboard", () => {
       errors: [],
     });
   });
-
   it("swaps the trend chart for the heatmap on the all-time range", async () => {
     const user = userEvent.setup();
     renderDashboard();
-
     expect(await screen.findByTestId("usage-trend")).toBeInTheDocument();
     expect(screen.queryByTestId("usage-heatmap")).not.toBeInTheDocument();
-
     await user.click(screen.getByRole("button", { name: "pick-all" }));
-
     expect(await screen.findByTestId("usage-heatmap")).toBeInTheDocument();
     expect(screen.queryByTestId("usage-trend")).not.toBeInTheDocument();
     expect(usageHeroMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ range: { preset: "all" } }),
     );
   });
-
   it("reopens on the last tab and preset range, but not on a custom range", async () => {
     const user = userEvent.setup();
     const first = renderDashboard();
-
     await user.click(screen.getByRole("button", { name: "pick-all" }));
     await user.click(screen.getByRole("tab", { name: /^usage\.tabs\.models/ }));
     first.unmount();
-
     const second = renderDashboard();
     expect(await screen.findByTestId("usage-heatmap")).toBeInTheDocument();
     expect(
       screen.getByRole("tab", { name: /^usage\.tabs\.models/ }),
     ).toHaveAttribute("aria-selected", "true");
-
     // 自定义范围不记：下次还是上一个预设
     await user.click(screen.getByRole("button", { name: "pick-custom" }));
     expect(usageHeroMock).toHaveBeenLastCalledWith(
@@ -258,19 +229,16 @@ describe("UsageDashboard", () => {
       }),
     );
     second.unmount();
-
     renderDashboard();
     expect(usageHeroMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ range: { preset: "all" } }),
     );
   });
-
   it("ignores a remembered tab or range it does not recognise", () => {
     // 「设置」页签已经并进用量设置抽屉
     localStorage.setItem("cc-switch.usage.tab", "settings");
     localStorage.setItem("cc-switch.usage.rangePreset", "custom");
     renderDashboard();
-
     expect(
       screen.getByRole("tab", { name: /^usage\.requestLogs/ }),
     ).toHaveAttribute("aria-selected", "true");
@@ -278,30 +246,24 @@ describe("UsageDashboard", () => {
       expect.objectContaining({ range: { preset: "today" } }),
     );
   });
-
   it("shows the saved refresh interval in the settings drawer", async () => {
     const user = userEvent.setup();
     renderDashboard({ refreshIntervalMs: 5000 });
-
     await openSettings(user);
     expect(
       await screen.findByRole("combobox", { name: "usage.refreshInterval" }),
     ).toHaveTextContent("usage.refreshMenu.label:5");
   });
-
   it("treats a legacy 'off' interval as the 60 second default", async () => {
     const user = userEvent.setup();
     renderDashboard({ refreshIntervalMs: 0 });
-
     await openSettings(user);
     expect(
       await screen.findByRole("combobox", { name: "usage.refreshInterval" }),
     ).toHaveTextContent("usage.refreshMenu.label:60");
   });
-
   it("defaults to today", () => {
     renderDashboard();
-
     expect(usageHeroMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ metric: "tokens" }),
     );
@@ -312,61 +274,55 @@ describe("UsageDashboard", () => {
       expect.objectContaining({ range: { preset: "today" } }),
     );
   });
-
   it("filters usage queries to an app from its icon chip", async () => {
     const user = userEvent.setup();
     renderDashboard();
-
-    await user.click(screen.getByRole("button", { name: "Pi" }));
-
+    await user.click(screen.getByRole("button", { name: "DeepSeek Harness" }));
     await waitFor(() =>
       expect(useProviderStatsMock).toHaveBeenLastCalledWith(
         expect.anything(),
-        { appType: "pi" },
+        { appType: "dsh" },
         expect.anything(),
       ),
     );
     expect(useModelStatsMock).toHaveBeenLastCalledWith(
       expect.anything(),
-      { appType: "pi", providerName: undefined },
+      { appType: "dsh", providerName: undefined },
       expect.anything(),
     );
     expect(usageHeroMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({ appType: "pi" }),
+      expect.objectContaining({ appType: "dsh" }),
     );
     // 芯片只有图标，名字由 aria-label 提供
     expect(
-      screen.getByRole("button", { name: "Pi", pressed: true }),
+      screen.getByRole("button", { name: "DeepSeek Harness", pressed: true }),
     ).toBeInTheDocument();
   });
-
-  it("filters to Oh My Pi separately from Pi", async () => {
+  it("filters to Antigravity separately from DeepSeek Harness", async () => {
     const user = userEvent.setup();
     renderDashboard();
-
-    // Two products, two filters: the chip must query appType "omp" and must
+    // Two products, two filters: the chip must query appType "agy" and must
     // not be confused with Pi's.
-    await user.click(screen.getByRole("button", { name: "Oh My Pi" }));
-
+    await user.click(screen.getByRole("button", { name: "Antigravity" }));
     await waitFor(() =>
       expect(useProviderStatsMock).toHaveBeenLastCalledWith(
         expect.anything(),
-        { appType: "omp" },
+        { appType: "agy" },
         expect.anything(),
       ),
     );
     expect(usageHeroMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({ appType: "omp" }),
+      expect.objectContaining({ appType: "agy" }),
     );
-    expect(screen.getByRole("button", { name: "Pi" })).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Oh My Pi", pressed: true }),
+      screen.getByRole("button", { name: "DeepSeek Harness" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Antigravity", pressed: true }),
     ).toBeInTheDocument();
   });
-
   it("starts with the app filter passed in from an app page", () => {
     renderDashboard({ initialAppType: "codex" });
-
     expect(
       screen.getByRole("button", { name: /Codex/, pressed: true }),
     ).toBeInTheDocument();
@@ -374,59 +330,45 @@ describe("UsageDashboard", () => {
       expect.objectContaining({ appType: "codex" }),
     );
   });
-
   it("lists only the apps shown on the Apps page, keeping the selected one", async () => {
     setSettings({
       visibleApps: {
         claude: false,
-        "claude-desktop": true,
         codex: true,
-        gemini: false,
-        grokbuild: false,
         opencode: false,
-        openclaw: true,
-        hermes: true,
-        pi: false,
-        mcode: false,
-        kimi: false,
+        dsh: false,
         agy: false,
-        omp: false,
       },
     });
-    renderDashboard({ initialAppType: "gemini" });
-
+    renderDashboard({ initialAppType: "opencode" });
     await waitFor(() =>
       expect(
-        screen.queryByRole("button", { name: "Pi" }),
+        screen.queryByRole("button", { name: "DeepSeek Harness" }),
       ).not.toBeInTheDocument(),
     );
-    // Claude Desktop 显示时 Claude Code 的用量也列；选中的 Gemini 虽被隐藏也留着
+    // Retired app flags do not expose chips; the selected supported app stays visible.
     expect(
-      screen.getByRole("button", { name: "Claude Code" }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: "Claude Code" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Codex/ })).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Gemini/, pressed: true }),
+      screen.getByRole("button", { name: /OpenCode/, pressed: true }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Grok/ }),
     ).not.toBeInTheDocument();
   });
-
   const scopeTrigger = () =>
     screen.getByRole("button", {
       name: /^(usage\.providerFilter\.label|DeepSeek) \/ /,
     });
-
   it("filters by provider and lists request counts", async () => {
     const user = userEvent.setup();
     renderDashboard();
-
     await user.click(scopeTrigger());
     const item = await screen.findByRole("menuitem", { name: /DeepSeek/ });
     expect(item).toHaveTextContent("12");
     await user.click(item);
-
     await waitFor(() =>
       expect(usageHeroMock).toHaveBeenLastCalledWith(
         expect.objectContaining({ providerName: "DeepSeek", model: undefined }),
@@ -436,11 +378,15 @@ describe("UsageDashboard", () => {
       "DeepSeek / usage.modelFilter.label",
     );
   });
-
   it("picks a model from the provider's submenu", async () => {
     const user = userEvent.setup();
     useModelStatsMock.mockImplementation(
-      (_range: unknown, filters: { providerName?: string }) => ({
+      (
+        _range: unknown,
+        filters: {
+          providerName?: string;
+        },
+      ) => ({
         data:
           filters.providerName === "DeepSeek"
             ? [{ model: "deepseek-chat", requestCount: 7 }]
@@ -448,7 +394,6 @@ describe("UsageDashboard", () => {
       }),
     );
     renderDashboard();
-
     await user.click(scopeTrigger());
     const provider = await screen.findByRole("menuitem", { name: /DeepSeek/ });
     provider.focus();
@@ -456,7 +401,6 @@ describe("UsageDashboard", () => {
     await user.click(
       await screen.findByRole("menuitem", { name: /deepseek-chat/ }),
     );
-
     await waitFor(() =>
       expect(usageHeroMock).toHaveBeenLastCalledWith(
         expect.objectContaining({
@@ -467,15 +411,12 @@ describe("UsageDashboard", () => {
     );
     expect(scopeTrigger()).toHaveTextContent("DeepSeek / deepseek-chat");
   });
-
   it("persists refresh interval changes", async () => {
     const user = userEvent.setup();
     const onRefreshIntervalChange = vi.fn().mockResolvedValue(true);
     renderDashboard({ onRefreshIntervalChange });
-
     await openSettings(user);
     await pickInterval(user, "usage.refreshMenu.label:5");
-
     await waitFor(() =>
       expect(onRefreshIntervalChange).toHaveBeenCalledWith(5000),
     );
@@ -483,15 +424,12 @@ describe("UsageDashboard", () => {
       screen.getByRole("combobox", { name: "usage.refreshInterval" }),
     ).toHaveTextContent("usage.refreshMenu.label:5");
   });
-
   it("rolls back optimistic interval changes when persistence fails", async () => {
     const user = userEvent.setup();
     const onRefreshIntervalChange = vi.fn().mockResolvedValue(false);
     renderDashboard({ onRefreshIntervalChange });
-
     await openSettings(user);
     await pickInterval(user, "usage.refreshMenu.label:5");
-
     await waitFor(() =>
       expect(onRefreshIntervalChange).toHaveBeenCalledWith(5000),
     );
@@ -501,11 +439,9 @@ describe("UsageDashboard", () => {
       ).toHaveTextContent("usage.refreshMenu.label:60"),
     );
   });
-
   it("syncs session logs from the header and shows when it last synced", async () => {
     const user = userEvent.setup();
     renderDashboard();
-
     // 还没同步过时按钮写「立即同步」
     expect(syncButton()).toHaveTextContent("usage.sessionSync.syncNow");
     // 打开页面会先自动扫一次，等它结束后再手动同步
@@ -513,7 +449,6 @@ describe("UsageDashboard", () => {
       expect(usageApiMock.syncSessionUsage).toHaveBeenCalledTimes(1),
     );
     await user.click(syncButton());
-
     await waitFor(() =>
       expect(usageApiMock.syncSessionUsage).toHaveBeenCalledTimes(2),
     );
@@ -521,35 +456,29 @@ describe("UsageDashboard", () => {
       expect(syncButton()).toHaveTextContent("usage.syncStatus.justNow"),
     );
   });
-
   it("shows when the background scan last finished", async () => {
     usageApiMock.getSessionUsageLastSync.mockResolvedValue(
-      Date.now() - 5 * 60_000 - 1_000,
+      Date.now() - 5 * 60000 - 1000,
     );
     renderDashboard();
-
     await waitFor(() =>
       expect(syncButton()).toHaveTextContent("usage.syncStatus.minutesAgo:5"),
     );
   });
-
   it("prefers a manual sync that is newer than the last background scan", async () => {
     const user = userEvent.setup();
     usageApiMock.getSessionUsageLastSync.mockResolvedValue(
-      Date.now() - 30 * 60_000,
+      Date.now() - 30 * 60000,
     );
     renderDashboard();
     await waitFor(() =>
       expect(syncButton()).toHaveTextContent("usage.syncStatus.minutesAgo:30"),
     );
-
     await user.click(syncButton());
-
     await waitFor(() =>
       expect(syncButton()).toHaveTextContent("usage.syncStatus.justNow"),
     );
   });
-
   it("does not scan until settings load, and never once they say scanning is off", async () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -569,11 +498,9 @@ describe("UsageDashboard", () => {
     await act(async () => {});
     expect(usageApiMock.syncSessionUsage).not.toHaveBeenCalled();
   });
-
   it("keeps the sync button about sync time when scanning is off, and hides the scan interval", async () => {
     const user = userEvent.setup();
     renderDashboard({ sessionAutoSyncEnabled: false });
-
     // 自动扫描开没开不写在同步按钮上
     expect(syncButton()).toHaveTextContent("usage.sessionSync.syncNow");
     expect(syncButton()).not.toHaveTextContent(/usage\.syncStatus\.off/);
@@ -584,22 +511,17 @@ describe("UsageDashboard", () => {
     ).not.toBeInTheDocument();
     expect(usageApiMock.syncSessionUsage).not.toHaveBeenCalled();
   });
-
   it("opens the request detail drawer from a log row", async () => {
     const user = userEvent.setup();
     renderDashboard();
-
     await user.click(screen.getByRole("button", { name: "open-row" }));
-
     expect(await screen.findByTestId("request-detail")).toHaveTextContent(
       "req-1",
     );
   });
-
   it("switches tabs and filters logs by status code", async () => {
     const user = userEvent.setup();
     renderDashboard({ onUsageDisplayChange: vi.fn() });
-
     await user.click(
       screen.getByRole("button", {
         name: "usage.statusCode: usage.statusFilter.all",
@@ -611,7 +533,6 @@ describe("UsageDashboard", () => {
         expect.objectContaining({ statusCode: 429 }),
       ),
     );
-
     // 状态筛选和「显示的列」只在请求日志页签的工具栏里
     expect(
       screen.getByRole("button", { name: "usage.display.logColumns" }),
@@ -627,26 +548,22 @@ describe("UsageDashboard", () => {
       screen.queryByRole("tab", { name: "usage.tabs.settings" }),
     ).not.toBeInTheDocument();
   });
-
   it("draws the request log with the columns picked in settings", () => {
     renderDashboard({
       usageDisplay: { currency: "CNY", requestLogColumns: { app: false } },
     });
-
     // 改过的列按设置走，没改过的按默认（新列默认不显示），时间列总在
     const columns = requestLogTableMock.mock.lastCall?.[0].columns;
     expect(columns).toContain("time");
     expect(columns).not.toContain("app");
     expect(columns).not.toContain("statusCode");
   });
-
   it("puts display settings above the pricing entry in the settings drawer", async () => {
     const user = userEvent.setup();
     renderDashboard({
       usageDisplay: { currency: "CNY" },
       onUsageDisplayChange: vi.fn(),
     });
-
     await openSettings(user);
     const display = await screen.findByRole("heading", {
       name: "usage.display.title",
@@ -657,7 +574,6 @@ describe("UsageDashboard", () => {
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(screen.getByRole("textbox")).toHaveValue("6.8");
-
     // 定价表是单独的二级页，打开时抽屉先关
     expect(
       screen.queryByTestId("pricing-config-panel"),
@@ -673,11 +589,9 @@ describe("UsageDashboard", () => {
       expect(document.body.style.pointerEvents).not.toBe("none"),
     );
   });
-
   it("wires the tabs to the tabpanel and supports arrow / Home / End keys", async () => {
     const user = userEvent.setup();
     renderDashboard();
-
     const logsTab = screen.getByRole("tab", { name: /^usage\.requestLogs/ });
     expect(logsTab).toHaveAttribute("id", "usage-tab-logs");
     expect(logsTab).toHaveAttribute("aria-controls", "usage-tabpanel");
@@ -685,7 +599,6 @@ describe("UsageDashboard", () => {
       "aria-labelledby",
       "usage-tab-logs",
     );
-
     logsTab.focus();
     await user.keyboard("{ArrowRight}");
     const providersTab = screen.getByRole("tab", {
@@ -697,7 +610,6 @@ describe("UsageDashboard", () => {
       "aria-labelledby",
       "usage-tab-providers",
     );
-
     await user.keyboard("{End}");
     expect(
       screen.getByRole("tab", { name: /^usage\.tabs\.models/ }),
@@ -711,38 +623,31 @@ describe("UsageDashboard", () => {
     await user.keyboard("{Home}");
     expect(logsTab).toHaveFocus();
   });
-
   it("toggles session scanning and links to routing settings from the settings drawer", async () => {
     const user = userEvent.setup();
     const onSessionAutoSyncEnabledChange = vi.fn();
     const onOpenRoutingSettings = vi.fn();
     renderDashboard({ onSessionAutoSyncEnabledChange, onOpenRoutingSettings });
-
     await openSettings(user);
     await user.click(
       await screen.findByRole("switch", { name: "usage.sources.scanTitle" }),
     );
     expect(onSessionAutoSyncEnabledChange).toHaveBeenCalledWith(false);
-
     await user.click(
       screen.getByRole("button", { name: /usage.sources.editLogging/ }),
     );
     expect(onOpenRoutingSettings).toHaveBeenCalledTimes(1);
   });
-
   it("shows the empty state when there is no usage at all", async () => {
     usageApiMock.getUsageSummary.mockResolvedValue({ totalRequests: 0 });
     renderDashboard();
-
     expect(await screen.findByText("usage.empty.title")).toBeInTheDocument();
     expect(screen.queryByTestId("usage-hero")).not.toBeInTheDocument();
   });
-
   it("still lets pricing be opened from the empty state", async () => {
     usageApiMock.getUsageSummary.mockResolvedValue({ totalRequests: 0 });
     const user = userEvent.setup();
     renderDashboard();
-
     await screen.findByText("usage.empty.title");
     expect(
       screen.queryByTestId("pricing-config-panel"),

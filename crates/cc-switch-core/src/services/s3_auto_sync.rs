@@ -38,7 +38,7 @@ impl AutoSyncBackend for S3AutoSync {
         db: &'a Database,
         settings: &'a mut S3SyncSettings,
     ) -> impl Future<Output = Result<Value, AppError>> + Send + 'a {
-        s3_sync::upload(db, settings)
+        s3_sync::auto_upload(db, settings)
     }
 }
 

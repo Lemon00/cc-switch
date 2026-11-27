@@ -1,13 +1,11 @@
-import * as React from "react";
 import { Input, type InputProps } from "@/components/ui/input";
-
+import * as React from "react";
 export interface ImeSafeInputProps
   extends Omit<InputProps, "defaultValue" | "onChange" | "value"> {
   value: string;
   onValueChange: (value: string) => void;
   normalize?: (value: string) => string;
 }
-
 /**
  * Keeps IME marked text local until composition finishes so parent renders
  * cannot overwrite the browser-managed composition range mid-input.
@@ -28,19 +26,16 @@ const ImeSafeInput = React.forwardRef<HTMLInputElement, ImeSafeInputProps>(
     const composingRef = React.useRef(false);
     const externalValueRef = React.useRef(value);
     const [draft, setDraft] = React.useState(value);
-
     React.useEffect(() => {
       externalValueRef.current = value;
       if (!composingRef.current) {
         setDraft(value);
       }
     }, [value]);
-
     const commit = React.useCallback(
       (rawValue: string) => {
         const nextValue = normalize ? normalize(rawValue) : rawValue;
         setDraft(nextValue);
-
         // Optimistically track the committed value. This also suppresses the
         // duplicate input event that some engines emit after compositionend.
         if (nextValue !== externalValueRef.current) {
@@ -50,7 +45,6 @@ const ImeSafeInput = React.forwardRef<HTMLInputElement, ImeSafeInputProps>(
       },
       [normalize, onValueChange],
     );
-
     return (
       <Input
         {...props}
@@ -96,7 +90,5 @@ const ImeSafeInput = React.forwardRef<HTMLInputElement, ImeSafeInputProps>(
     );
   },
 );
-
 ImeSafeInput.displayName = "ImeSafeInput";
-
 export { ImeSafeInput };

@@ -1,7 +1,11 @@
-import { useState } from "react";
-import { useTranslation } from "react-i18next";
-import { ExternalLink, Plus, Trash2 } from "lucide-react";
+import {
+  CHECKBOX_CLASS,
+  FieldError,
+  LABEL_CLASS,
+  MONO_FIELD_CLASS,
+} from "@/components/mcp/formBits";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import {
   Sheet,
   SheetBody,
@@ -9,7 +13,6 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { HoverTip } from "@/components/ui/hover-tip";
 import { settingsApi } from "@/lib/api";
 import type {
   DiscoverableSkill,
@@ -18,14 +21,10 @@ import type {
 } from "@/lib/api/skills";
 import { skillErrorReason } from "@/lib/errors/skillErrorParser";
 import { cn } from "@/lib/utils";
-import {
-  CHECKBOX_CLASS,
-  FieldError,
-  LABEL_CLASS,
-  MONO_FIELD_CLASS,
-} from "@/components/mcp/formBits";
+import { ExternalLink, Plus, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { repoFailureKey } from "./repoFailures";
-
 interface RepoManagerPanelProps {
   repos: SkillRepo[];
   skills: DiscoverableSkill[];
@@ -37,10 +36,10 @@ interface RepoManagerPanelProps {
   onToggle?: (repo: SkillRepo, enabled: boolean) => Promise<void>;
   onClose: () => void;
 }
-
-export function parseRepoUrl(
-  url: string,
-): { owner: string; name: string } | null {
+export function parseRepoUrl(url: string): {
+  owner: string;
+  name: string;
+} | null {
   let cleaned = url.trim();
   cleaned = cleaned.replace(/^https?:\/\/github\.com\//, "");
   cleaned = cleaned.replace(/\.git$/, "").replace(/\/+$/, "");
@@ -50,7 +49,6 @@ export function parseRepoUrl(
   }
   return null;
 }
-
 /**
  * 发现结果里的 `repoBranch` 是实际下载成功的分支，不一定等于配置的分支：
  * 后端依次试「配置分支 → main → master」（`HEAD` / 空串表示默认分支，直接从
@@ -66,7 +64,6 @@ function resolvableBranches(branch: string | undefined): string[] {
   }
   return branches;
 }
-
 export function countRepoSkills(skills: DiscoverableSkill[], repo: SkillRepo) {
   const branches = resolvableBranches(repo.branch);
   return skills.filter(
@@ -76,7 +73,6 @@ export function countRepoSkills(skills: DiscoverableSkill[], repo: SkillRepo) {
       branches.includes(skill.repoBranch || "main"),
   ).length;
 }
-
 /** 仓库管理（右侧抽屉，宽 420）：添加、停用、删除 Skill 仓库。 */
 export function RepoManagerPanel({
   repos,
@@ -95,8 +91,8 @@ export function RepoManagerPanel({
   const [branch, setBranch] = useState("");
   const [error, setError] = useState("");
   const [adding, setAdding] = useState(false);
-
   const handleAdd = async () => {
+    if (adding) return;
     setError("");
     const parsed = parseRepoUrl(repoUrl);
     if (!parsed) {
@@ -119,7 +115,6 @@ export function RepoManagerPanel({
       setAdding(false);
     }
   };
-
   const handleOpenRepo = async (owner: string, name: string) => {
     try {
       await settingsApi.openExternal(`https://github.com/${owner}/${name}`);
@@ -127,7 +122,6 @@ export function RepoManagerPanel({
       console.error("Failed to open URL:", err);
     }
   };
-
   return (
     <Sheet open onOpenChange={(open) => !open && onClose()}>
       <SheetContent

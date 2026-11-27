@@ -47,10 +47,7 @@ fn get_keywords_for_app(app: &str) -> Vec<EnvKeyword> {
     match app.to_lowercase().as_str() {
         "claude" => vec![EnvKeyword::Prefix("ANTHROPIC")],
         "codex" => vec![EnvKeyword::Prefix("OPENAI")],
-        "gemini" => vec![
-            EnvKeyword::Prefix("GEMINI"),
-            EnvKeyword::Prefix("GOOGLE_GEMINI"),
-        ],
+
         "grokbuild" | "grok" => vec![
             EnvKeyword::Exact("XAI_API_KEY"),
             EnvKeyword::Exact("GROK_DEFAULT_MODEL"),
@@ -78,7 +75,8 @@ fn check_system_env(keywords: &[EnvKeyword]) -> Result<Vec<EnvConflict>, String>
             if matches_env_keyword(&name, keywords) {
                 conflicts.push(EnvConflict {
                     var_name: name.clone(),
-                    var_value: value.to_string(),
+                    var_value: registry_env_value(&value)
+                        .map_err(|error| format!("无法读取环境变量 {name}: {error}"))?,
                     source_type: "system".to_string(),
                     source_path: "HKEY_CURRENT_USER\\Environment".to_string(),
                 });
@@ -94,7 +92,8 @@ fn check_system_env(keywords: &[EnvKeyword]) -> Result<Vec<EnvConflict>, String>
             if matches_env_keyword(&name, keywords) {
                 conflicts.push(EnvConflict {
                     var_name: name.clone(),
-                    var_value: value.to_string(),
+                    var_value: registry_env_value(&value)
+                        .map_err(|error| format!("无法读取环境变量 {name}: {error}"))?,
                     source_type: "system".to_string(),
                     source_path: "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment".to_string(),
                 });
@@ -103,6 +102,28 @@ fn check_system_env(keywords: &[EnvKeyword]) -> Result<Vec<EnvConflict>, String>
     }
 
     Ok(conflicts)
+}
+
+#[cfg(target_os = "windows")]
+pub(super) fn registry_env_value(value: &winreg::RegValue) -> Result<String, String> {
+    if !matches!(value.vtype, REG_SZ | REG_EXPAND_SZ) {
+        return Err("不支持的环境变量注册表类型，请手动检查".into());
+    }
+    if value.bytes.len() % 2 != 0 {
+        return Err("环境变量包含不完整的 UTF-16 数据，请手动检查".into());
+    }
+    let mut words: Vec<u16> = value
+        .bytes
+        .chunks_exact(2)
+        .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
+        .collect();
+    while words.last() == Some(&0) {
+        words.pop();
+    }
+    if words.contains(&0) {
+        return Err("环境变量包含内嵌空字符，请手动检查".into());
+    }
+    String::from_utf16(&words).map_err(|_| "环境变量包含无效的 UTF-16 数据，请手动检查".into())
 }
 
 /// Check shell configuration files for environment variable exports (Unix only)
@@ -161,6 +182,46 @@ fn check_shell_configs(keywords: &[EnvKeyword]) -> Result<Vec<EnvConflict>, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn registry_values_require_valid_string_types_and_encoding() {
+        use winreg::{types::ToRegValue, RegValue};
+        for value_type in [REG_SZ, REG_EXPAND_SZ] {
+            let mut value = "%USERPROFILE%\\密钥".to_reg_value();
+            value.vtype = value_type;
+            assert_eq!(registry_env_value(&value).unwrap(), "%USERPROFILE%\\密钥");
+        }
+        for value in [
+            RegValue {
+                bytes: vec![1],
+                vtype: REG_DWORD,
+            },
+            RegValue {
+                bytes: vec![],
+                vtype: REG_QWORD,
+            },
+            RegValue {
+                bytes: vec![65],
+                vtype: REG_SZ,
+            },
+            RegValue {
+                bytes: vec![0, 0xd8],
+                vtype: REG_EXPAND_SZ,
+            },
+            RegValue {
+                bytes: vec![65, 0, 0, 0, 66, 0],
+                vtype: REG_SZ,
+            },
+            RegValue {
+                bytes: vec![65, 0, 0, 0],
+                vtype: REG_MULTI_SZ,
+            },
+        ] {
+            assert!(registry_env_value(&value).is_err());
+        }
+        assert_eq!(registry_env_value(&"".to_reg_value()).unwrap(), "");
+    }
 
     #[test]
     fn test_get_keywords() {

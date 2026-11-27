@@ -1,7 +1,6 @@
-import * as React from "react";
 import { cn } from "@/lib/utils";
+import * as React from "react";
 import { SegmentThumb, useSlidingIndicator } from "./sliding-indicator";
-
 /**
  * 分段控件（v7 AUTHORING「分段控件」+ R1）：按钮组 + aria-pressed，不是 tablist。
  * 轨道 --bg-subtle，内衬 3px；选中项 --bg-card + 小阴影。内圆角 = 外圆角 − 内衬。
@@ -20,7 +19,6 @@ export interface SegmentedItem<T extends string> {
   className?: string;
   disabled?: boolean;
 }
-
 export interface SegmentedControlProps<T extends string> {
   items: SegmentedItem<T>[];
   value: T;
@@ -30,7 +28,6 @@ export interface SegmentedControlProps<T extends string> {
   size?: "md" | "sm";
   className?: string;
 }
-
 export function SegmentedControl<T extends string>({
   items,
   value,

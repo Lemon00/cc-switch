@@ -12,6 +12,19 @@ use crate::claude_mcp;
 use crate::services::McpService;
 use crate::store::AppState;
 
+async fn run_mcp_mutation<T, F>(state: &State<'_, AppState>, task: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&AppState) -> Result<T, String> + Send + 'static,
+{
+    let guards = McpService::lock_live_sync_apps(state.inner()).await;
+    run_db_task(state, move |state| {
+        let _guards = guards;
+        task(state)
+    })
+    .await
+}
+
 /// Start a bounded, one-shot batch only while the MCP page is mounted.
 #[tauri::command]
 pub async fn start_mcp_connectivity_checks(
@@ -23,16 +36,32 @@ pub async fn start_mcp_connectivity_checks(
         McpService::get_all_servers(state).map_err(|e| e.to_string())
     })
     .await?;
+    let selected = select_connectivity_servers(&servers, server_ids)?;
     Ok(crate::services::mcp_connectivity::start_checks(
-        // Use the page's enabled selection: app toggles update it optimistically,
-        // so the database's enablement flags can still lag behind the UI.
-        servers
-            .into_iter()
-            .filter(|(id, _)| server_ids.contains(id))
-            .map(|(_, server)| server)
-            .collect(),
+        selected,
         move |result| on_result.send(result).is_ok(),
     ))
+}
+
+fn select_connectivity_servers(
+    servers: &IndexMap<String, McpServer>,
+    ids: Vec<String>,
+) -> Result<Vec<McpServer>, String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut selected = Vec::new();
+    for id in ids {
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        // Never silently omit a requested row: the page would wait forever for its result.
+        selected.push(
+            servers
+                .get(&id)
+                .cloned()
+                .ok_or_else(|| format!("MCP 服务器 '{id}' 不存在或无法读取，请刷新后重试"))?,
+        );
+    }
+    Ok(selected)
 }
 
 #[tauri::command]
@@ -51,15 +80,56 @@ pub async fn read_claude_mcp_config() -> Result<Option<String>, String> {
     claude_mcp::read_mcp_json().map_err(|e| e.to_string())
 }
 
-/// 新增或更新一个 MCP 服务器条目
+/// 新增或更新一个 MCP 服务器条目（旧 Claude-only IPC：转发到 SSOT upsert）
 #[tauri::command]
-pub async fn upsert_claude_mcp_server(id: String, spec: serde_json::Value) -> Result<bool, String> {
-    claude_mcp::upsert_mcp_server(&id, spec).map_err(|e| e.to_string())
+pub async fn upsert_claude_mcp_server(
+    state: State<'_, AppState>,
+    id: String,
+    spec: serde_json::Value,
+) -> Result<bool, String> {
+    run_mcp_mutation(&state, move |state| {
+        use crate::app_config::{McpApps, McpServer};
+
+        let existing = state
+            .db
+            .get_all_mcp_servers()
+            .map_err(|e| e.to_string())?
+            .get(&id)
+            .cloned();
+        let server = if let Some(mut existing) = existing {
+            existing.server = spec;
+            existing.apps.claude = true;
+            existing
+        } else {
+            McpServer {
+                id: id.clone(),
+                name: id.clone(),
+                server: spec,
+                apps: McpApps::only(&AppType::Claude),
+                description: None,
+                homepage: None,
+                docs: None,
+                tags: Vec::new(),
+            }
+        };
+        McpService::upsert_server(state, server)
+            .map(|_| true)
+            .map_err(|e| e.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn delete_claude_mcp_server(id: String) -> Result<bool, String> {
-    claude_mcp::delete_mcp_server(&id).map_err(|e| e.to_string())
+pub async fn delete_claude_mcp_server(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<bool, String> {
+    let guard = state.operations.lock_for_app("claude").await;
+    run_db_task(&state, move |_| {
+        let _guard = guard;
+        claude_mcp::delete_mcp_server(&id).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// 校验命令是否在 PATH 中可用（不执行）
@@ -99,6 +169,19 @@ pub async fn get_mcp_config(
 #[tauri::command]
 pub async fn upsert_mcp_server_in_config(
     state: State<'_, AppState>,
+    app: String,
+    id: String,
+    spec: serde_json::Value,
+    sync_other_side: Option<bool>,
+) -> Result<bool, String> {
+    run_mcp_mutation(&state, move |state| {
+        upsert_legacy_mcp_server(state, app, id, spec, sync_other_side)
+    })
+    .await
+}
+
+fn upsert_legacy_mcp_server(
+    state: &AppState,
     app: String,
     id: String,
     spec: serde_json::Value,
@@ -144,15 +227,20 @@ pub async fn upsert_mcp_server_in_config(
         }
     };
 
-    // 如果 sync_other_side 为 true，也启用其他应用
+    // 如果 sync_other_side 为 true，启用全部受管 MCP 应用（不含 OpenClaw / Desktop）
     if sync_other_side.unwrap_or(false) {
-        new_server.apps.claude = true;
-        new_server.apps.codex = true;
-        new_server.apps.gemini = true;
-        new_server.apps.opencode = true;
+        for app in [
+            AppType::Claude,
+            AppType::Codex,
+            AppType::OpenCode,
+            AppType::Agy,
+            AppType::Dsh,
+        ] {
+            new_server.apps.set_enabled_for(&app, true);
+        }
     }
 
-    McpService::upsert_server(&state, new_server)
+    McpService::upsert_server(state, new_server)
         .map(|_| true)
         .map_err(|e| e.to_string())
 }
@@ -164,7 +252,10 @@ pub async fn delete_mcp_server_in_config(
     _app: String, // 参数保留用于向后兼容，但在统一结构中不再需要
     id: String,
 ) -> Result<bool, String> {
-    McpService::delete_server(&state, &id).map_err(|e| e.to_string())
+    run_mcp_mutation(&state, move |state| {
+        McpService::delete_server(state, &id).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// 设置启用状态并同步到客户端配置（兼容层命令，同 `toggle_mcp_app`）
@@ -196,17 +287,32 @@ pub async fn get_mcp_servers(
     McpService::get_all_servers(&state).map_err(|e| e.to_string())
 }
 
+/// 库里读不出来的 MCP 服务器（只给界面展示、删除）。
+#[tauri::command]
+pub async fn get_unreadable_mcp_servers(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::database::UnreadableEntry>, String> {
+    McpService::list_unreadable(&state).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn upsert_mcp_server(
     state: State<'_, AppState>,
     server: McpServer,
 ) -> Result<(), String> {
-    McpService::upsert_server(&state, server).map_err(|e| e.to_string())
+    // 与 toggle/resync 共用逐应用切换锁，避免整文件读改写互相覆盖。
+    run_mcp_mutation(&state, move |state| {
+        McpService::upsert_server(state, server).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn delete_mcp_server(state: State<'_, AppState>, id: String) -> Result<bool, String> {
-    McpService::delete_server(&state, &id).map_err(|e| e.to_string())
+    run_mcp_mutation(&state, move |state| {
+        McpService::delete_server(state, &id).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// 切换 MCP 服务器在指定应用的启用状态
@@ -226,7 +332,10 @@ pub async fn toggle_mcp_app(
 /// 从所有应用导入 MCP 服务器（复用已有的导入逻辑）
 #[tauri::command]
 pub async fn import_mcp_from_apps(state: State<'_, AppState>) -> Result<usize, String> {
-    McpService::import_from_all_apps(&state).map_err(|e| e.to_string())
+    run_mcp_mutation(&state, |state| {
+        McpService::import_from_all_apps(state).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// 按数据库里的开关把 MCP 重新写进各应用的 live 配置，逐应用返回结果。
@@ -241,8 +350,113 @@ pub async fn resync_mcp_to_apps(
     let targets = McpService::resync_targets(apps.as_deref()).map_err(|e| e.to_string())?;
     let mut outcomes = Vec::with_capacity(targets.len());
     for app in targets {
-        let _guard = state.proxy_service.lock_switch_for_app(app.as_str()).await;
+        let _guard = state.operations.lock_for_app(app.as_str()).await;
         outcomes.push(McpService::resync_app(&state, &app));
     }
     Ok(outcomes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::future::Future;
+    use std::sync::Arc;
+    use std::task::Context;
+    use std::time::Duration;
+    use tauri::Manager;
+
+    #[test]
+    fn connectivity_selection_rejects_missing_rows_and_deduplicates() {
+        let server: McpServer = serde_json::from_value(serde_json::json!({"id":"fixture", "name":"fixture", "server":{"command":"echo"}, "apps":{}})).unwrap();
+        let servers = IndexMap::from([("fixture".into(), server)]);
+        assert_eq!(
+            select_connectivity_servers(&servers, vec!["fixture".into(), "fixture".into()])
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            select_connectivity_servers(&servers, vec!["fixture".into(), "missing".into()])
+                .is_err()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn legacy_mcp_upsert_waits_before_reading_existing_server() {
+        let _home = crate::commands::startup_tests::TestHome::new();
+        let db = Arc::new(crate::database::Database::memory().unwrap());
+        let app = tauri::test::mock_builder()
+            .manage(AppState::new(db.clone()))
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let mut server = McpServer {
+            id: "fixture".into(),
+            name: "original".into(),
+            server: serde_json::json!({"command": "echo"}),
+            apps: Default::default(),
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: vec![],
+        };
+        db.save_mcp_server(&server).unwrap();
+        let state = app.state::<AppState>();
+        let guard = tauri::async_runtime::block_on(state.operations.lock_for_app("codex"));
+        let mut update = std::pin::pin!(upsert_mcp_server_in_config(
+            app.state(),
+            "codex".into(),
+            "fixture".into(),
+            serde_json::json!({"command": "echo", "args": ["new"]}),
+            None,
+        ));
+        let first_poll = update
+            .as_mut()
+            .poll(&mut Context::from_waker(futures::task::noop_waker_ref()));
+        server.name = "concurrent edit".into();
+
+        db.save_mcp_server(&server).unwrap();
+        drop(guard);
+        assert!(first_poll.is_pending());
+        tauri::async_runtime::block_on(async {
+            tokio::time::timeout(Duration::from_secs(5), update)
+                .await
+                .unwrap()
+                .unwrap();
+        });
+        let saved = db.get_all_mcp_servers().unwrap()["fixture"].clone();
+        assert_eq!(saved.name, "concurrent edit");
+        assert!(false && saved.apps.codex);
+        assert_eq!(saved.server["args"][0], "new");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn legacy_mcp_delete_waits_for_switch_lock() {
+        let _home = crate::commands::startup_tests::TestHome::new();
+        let db = Arc::new(crate::database::Database::memory().unwrap());
+        let app = tauri::test::mock_builder()
+            .manage(AppState::new(db))
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let state = app.state::<AppState>();
+        let guard = tauri::async_runtime::block_on(state.operations.lock_for_app("codex"));
+        let mut deletion = std::pin::pin!(delete_mcp_server_in_config(
+            app.state(),
+            "codex".into(),
+            "missing".into(),
+        ));
+        let first_poll = deletion
+            .as_mut()
+            .poll(&mut Context::from_waker(futures::task::noop_waker_ref()));
+        drop(guard);
+        assert!(first_poll.is_pending());
+        let deleted = tauri::async_runtime::block_on(async {
+            tokio::time::timeout(Duration::from_secs(5), deletion)
+                .await
+                .unwrap()
+                .unwrap()
+        });
+        assert!(!deleted);
+    }
 }

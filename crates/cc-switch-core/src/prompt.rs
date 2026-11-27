@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Prompt {
     pub id: String,
     pub name: String,
@@ -13,4 +13,11 @@ pub struct Prompt {
     pub created_at: Option<i64>,
     #[serde(rename = "updatedAt", skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptWriteExpectation {
+    pub prompt: Option<Prompt>,
+    pub file_content: Option<String>,
 }

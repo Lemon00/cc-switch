@@ -1,28 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "@/lib/toast";
-import {
-  Check,
-  ChartColumn,
-  ChevronDown,
-  ChevronRight,
-  ListFilter,
-  Loader2,
-  RefreshCw,
-  ListTree,
-  Settings2,
-} from "lucide-react";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { FullScreenPanel } from "@/components/common/FullScreenPanel";
+import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
-import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
-import { HelpTip } from "@/components/ui/help-tip";
-import { PageTabs } from "@/components/ui/page-tabs";
 import { Button } from "@/components/ui/button";
-import { HoverTip } from "@/components/ui/hover-tip";
-import {
-  SegmentThumb,
-  useSlidingIndicator,
-} from "@/components/ui/sliding-indicator";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,41 +13,63 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { FullScreenPanel } from "@/components/common/FullScreenPanel";
+import { HelpTip } from "@/components/ui/help-tip";
+import { HoverTip } from "@/components/ui/hover-tip";
+import { PageTabs } from "@/components/ui/page-tabs";
 import {
-  KNOWN_APP_TYPES,
-  type AppTypeFilter,
-  type UsageRangePreset,
-  type UsageRangeSelection,
-} from "@/types/usage";
+  SegmentThumb,
+  useSlidingIndicator,
+} from "@/components/ui/sliding-indicator";
+import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
+import { useUsageAutoRefresh } from "@/hooks/useUsageAutoRefresh";
+import { useUsageEventBridge } from "@/hooks/useUsageEventBridge";
+import { usageApi } from "@/lib/api/usage";
+import { useSettingsQuery } from "@/lib/query";
 import {
+  localUsageQueryFilters,
   usageKeys,
   useModelStats,
   useProviderStats,
   useRequestLogs,
   useSessionUsageLastSync,
 } from "@/lib/query/usage";
-import { useSettingsQuery } from "@/lib/query";
-import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
-import { useUsageEventBridge } from "@/hooks/useUsageEventBridge";
-import { useUsageAutoRefresh } from "@/hooks/useUsageAutoRefresh";
-import { usageApi } from "@/lib/api/usage";
+import { toast } from "@/lib/toast";
 import { getUsageRangePresetLabel, resolveUsageRange } from "@/lib/usageRange";
 import { cn } from "@/lib/utils";
-import { UsageHero } from "./UsageHero";
-import { UsageTrendChart } from "./UsageTrendChart";
-import { RequestLogTable } from "./RequestLogTable";
-import { ProviderStatsTable } from "./ProviderStatsTable";
+import type { UsageDisplaySettings } from "@/types";
+import {
+  type AppTypeFilter,
+  KNOWN_APP_TYPES,
+  type UsageRangePreset,
+  type UsageRangeSelection,
+} from "@/types/usage";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  ChartColumn,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  ListFilter,
+  ListTree,
+  Loader2,
+  RefreshCw,
+  Settings2,
+} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ModelStatsTable } from "./ModelStatsTable";
 import { PricingConfigPanel } from "./PricingConfigPanel";
+import { ProviderStatsTable } from "./ProviderStatsTable";
 import { RequestDetailPanel } from "./RequestDetailPanel";
-import { UsageSettingsSheet } from "./UsageSettingsSheet";
 import { RequestLogColumnsMenu } from "./RequestLogColumnsMenu";
-import { resolveRequestLogColumns } from "./requestLogColumns";
-import type { UsageDisplaySettings } from "@/types";
+import { RequestLogTable } from "./RequestLogTable";
 import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import { UsageHeatmap } from "./UsageHeatmap";
+import { UsageHero } from "./UsageHero";
+import { UsageSettingsSheet } from "./UsageSettingsSheet";
+import { UsageTrendChart } from "./UsageTrendChart";
+import { fmtInt, formatRelativeTime, getLocaleFromLanguage } from "./format";
+import { getUsageProviderLabel, usageProviderTitle } from "./providerLabel";
 import {
   LOG_PAGE_SIZES,
   type LogPageSize,
@@ -78,25 +80,19 @@ import {
   useRememberedChoice,
   writeRememberedChoice,
 } from "./rememberedChoice";
-import { fmtInt, formatRelativeTime, getLocaleFromLanguage } from "./format";
-import { getUsageProviderLabel, usageProviderTitle } from "./providerLabel";
+import { resolveRequestLogColumns } from "./requestLogColumns";
 import { useElementWidth } from "./usageTable";
-
 // 用量页打开时扫描会话日志的间隔；旧版存过的「关」(0) 等无效值回落到默认
 const DEFAULT_REFRESH_INTERVAL_MS = 60000;
 const REFRESH_INTERVAL_OPTIONS_MS = [5000, 10000, 30000, 60000] as const;
 type RefreshIntervalOption = (typeof REFRESH_INTERVAL_OPTIONS_MS)[number];
-
 const isRefreshIntervalOption = (
   value: number | undefined,
 ): value is RefreshIntervalOption =>
   REFRESH_INTERVAL_OPTIONS_MS.includes(value as RefreshIntervalOption);
-
 const normalizeRefreshInterval = (value: number | undefined) =>
   isRefreshIntervalOption(value) ? value : DEFAULT_REFRESH_INTERVAL_MS;
-
 const STATUS_CODE_OPTIONS = [200, 400, 401, 429, 500] as const;
-
 // 页签只放数据视图；显示和定价设置在「用量设置」抽屉里
 type UsageTab = "logs" | "providers" | "models";
 const TABS: UsageTab[] = ["logs", "providers", "models"];
@@ -109,34 +105,28 @@ const REMEMBERED_RANGE_PRESETS: UsageRangePreset[] = [
   "30d",
   "all",
 ];
-
 /**
  * 手动「立即同步」的时间，离开页面再回来也还在。后端也会记下最近一次扫描（后台定时和
  * 手动都算）完成的时间，页头取两者中较新的；这里留着是为了点完同步立刻显示「刚刚」。
  */
 let lastManualSessionSyncAt: number | null = null;
-
 /** 测试用：重置模块级的上次同步时间。 */
 export function resetUsageSyncClockForTests() {
   lastManualSessionSyncAt = null;
 }
-
 /** 每 30 秒重渲染一次，让「N 分钟前同步」跟着走。 */
 function useMinuteTicker() {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    const timer = window.setInterval(() => setNow(Date.now()), 30000);
     return () => window.clearInterval(timer);
   }, []);
   return now;
 }
-
 const LOG_PAGE_SIZE_OPTIONS = LOG_PAGE_SIZES.map(Number);
-
 const menuContentClass =
   "min-w-[200px] max-w-[320px] rounded-panel border-border bg-surface p-1 shadow-v7-md";
 const menuItemClass = "h-[30px] gap-2 rounded-control px-2 text-body";
-
 function MenuCheck({ checked }: { checked: boolean }) {
   return (
     <Check
@@ -146,7 +136,6 @@ function MenuCheck({ checked }: { checked: boolean }) {
     />
   );
 }
-
 function MenuMeta({ children }: { children: React.ReactNode }) {
   return (
     <span className="ms-auto ps-3 text-caption tabular-nums text-fg-3">
@@ -154,7 +143,6 @@ function MenuMeta({ children }: { children: React.ReactNode }) {
     </span>
   );
 }
-
 /** 级联菜单第二级：某个供应商（或全部供应商）名下的模型，展开时才查 */
 function ScopeModelItems({
   range,
@@ -195,7 +183,6 @@ function ScopeModelItems({
       (a, b) => b.count - a.count,
     );
   }, [data, selectedModel]);
-
   return (
     <>
       <DropdownMenuItem
@@ -223,7 +210,6 @@ function ScopeModelItems({
     </>
   );
 }
-
 interface UsageDashboardProps {
   refreshIntervalMs?: number;
   onRefreshIntervalChange?: (next: number) => Promise<boolean> | boolean | void;
@@ -243,7 +229,6 @@ interface UsageDashboardProps {
     next: UsageDisplaySettings,
   ) => Promise<boolean> | boolean | void;
 }
-
 /**
  * 用量统计全局页：页头 → 范围栏 → 概览面板（指标条 + 趋势图 / 热力图）→ 明细面板（请求日志 / 供应商 / 模型）。
  */
@@ -273,13 +258,17 @@ export function UsageDashboard({
       writeRememberedChoice(USAGE_CHOICE_KEYS.range, next.preset);
     }
   };
-  const [appType, setAppType] = useState<AppTypeFilter>(initialAppType);
+  const supportedInitialApp = KNOWN_APP_TYPES.includes(
+    initialAppType as (typeof KNOWN_APP_TYPES)[number],
+  )
+    ? initialAppType
+    : "all";
+  const [appType, setAppType] = useState<AppTypeFilter>(supportedInitialApp);
   const [providerName, setProviderName] = useState<string | undefined>(
     undefined,
   );
   const [model, setModel] = useState<string | undefined>(undefined);
   const [statusCode, setStatusCode] = useState<number | undefined>(undefined);
-
   // 请求日志显示哪些列在「设置」页签里改，这里只按设置画
   const logColumns = resolveRequestLogColumns(usageDisplay?.requestLogColumns);
   const [tab, setTab] = useRememberedChoice<UsageTab>(
@@ -327,21 +316,17 @@ export function UsageDashboard({
   const lastSyncAt = Math.max(lastManualSyncAt ?? 0, lastScanAt ?? 0) || null;
   const [containerRef, measuredWidth] = useElementWidth<HTMLDivElement>();
   const now = useMinuteTicker();
-
   // 测量不到（测试环境）按宽窗口排
   const width = measuredWidth || 1000;
   const compact = width < 720;
-
   useEffect(() => {
     setRefreshIntervalMs(normalizeRefreshInterval(savedRefreshIntervalMs));
   }, [savedRefreshIntervalMs]);
-
   useEffect(() => {
-    setAppType(initialAppType);
+    setAppType(supportedInitialApp);
     setProviderName(undefined);
     setModel(undefined);
-  }, [initialAppType]);
-
+  }, [supportedInitialApp]);
   // 切应用时清掉下游筛选，避免留下一个在新范围内查无数据的"幽灵"组合；
   // 切供应商同理清掉模型（模型选项随供应商级联）。
   const changeAppType = (next: AppTypeFilter) => {
@@ -361,10 +346,8 @@ export function UsageDashboard({
     setModel(nextModel);
     setScopeMenuOpen(false);
   };
-
   // 后端写入新日志时 emit `usage-log-recorded`，立刻 invalidate 所有 usage 查询
   useUsageEventBridge();
-
   const changeRefreshInterval = async (next: number) => {
     const normalized = normalizeRefreshInterval(next);
     const previous = refreshIntervalMs;
@@ -382,13 +365,12 @@ export function UsageDashboard({
       setRefreshIntervalMs(previous);
     }
   };
-
   const rebuildCodexUsage = async () => {
     setShowRebuildConfirm(false);
     setRebuildingCodex(true);
     try {
       const result = await usageApi.rebuildCodexUsage();
-      await queryClient.invalidateQueries({ queryKey: usageKeys.all });
+      await queryClient.invalidateQueries(localUsageQueryFilters);
       const message = t("usage.rebuildCodex.completed", {
         imported: result.imported,
         errors: result.errors.length,
@@ -406,12 +388,11 @@ export function UsageDashboard({
       setRebuildingCodex(false);
     }
   };
-
   const runManualSessionSync = async () => {
     setSyncingSession(true);
     try {
       const result = await syncSessionUsage();
-      await queryClient.invalidateQueries({ queryKey: usageKeys.all });
+      await queryClient.invalidateQueries(localUsageQueryFilters);
       lastManualSessionSyncAt = Date.now();
       setLastManualSyncAt(lastManualSessionSyncAt);
       const message = t("usage.sessionSync.syncCompleted", {
@@ -430,7 +411,6 @@ export function UsageDashboard({
       setSyncingSession(false);
     }
   };
-
   const language = i18n.resolvedLanguage || i18n.language || "en";
   const locale = getLocaleFromLanguage(language);
   const resolvedRange = useMemo(() => resolveUsageRange(range), [range]);
@@ -449,7 +429,6 @@ export function UsageDashboard({
     );
     return `${startStr} - ${endStr}`;
   }, [locale, range, resolvedRange.endDate, resolvedRange.startDate, t]);
-
   // 筛选下拉的选项池：供应商列表只跟应用/时间范围走（不受自身选中值影响），
   // 模型列表随所选供应商级联。所有查询（含子组件）都不轮询：会话用量由
   // useUsageAutoRefresh 按间隔导入，导入或路由写入后由 useUsageEventBridge 刷新。
@@ -468,7 +447,6 @@ export function UsageDashboard({
     refetchInterval: refetch.refetchInterval,
   });
   const isEmpty = allTimeSummary != null && allTimeSummary.totalRequests === 0;
-
   const providerOptions = useMemo(() => {
     const counts = new Map<string, number>();
     for (const stat of providerOptionsData ?? []) {
@@ -483,7 +461,6 @@ export function UsageDashboard({
       (a, b) => b.count - a.count,
     );
   }, [providerOptionsData, providerName]);
-
   const providerTotal = providerOptions.reduce((sum, p) => sum + p.count, 0);
   // 触发器：「供应商 / 模型」，哪一级选了就换成选中的名字
   const providerText = providerName
@@ -495,12 +472,11 @@ export function UsageDashboard({
       ? usageProviderTitle(getUsageProviderLabel(providerName, t))
       : t("usage.providerFilter.all")
   } / ${model ?? t("usage.allModels")}`;
-
   // ── 页头 ─────────────────────────────────────────────────────────────
   // 同步按钮只说一件事：最近一次同步是什么时候；自动扫描关着时悬停提示里说明
   const syncedLabel = useMemo(() => {
     if (lastSyncAt == null) return undefined;
-    const minutes = Math.max(0, Math.floor((now - lastSyncAt) / 60_000));
+    const minutes = Math.max(0, Math.floor((now - lastSyncAt) / 60000));
     return minutes < 1
       ? t("usage.syncStatus.justNow")
       : t("usage.syncStatus.minutesAgo", { count: minutes });
@@ -514,7 +490,6 @@ export function UsageDashboard({
       : t("usage.sources.lastSynced", {
           time: formatRelativeTime(lastSyncAt, t, now),
         });
-
   const headerActions = (
     <div className="flex h-8 shrink-0 items-stretch overflow-hidden rounded-control border border-border-strong bg-surface">
       <HoverTip
@@ -553,7 +528,6 @@ export function UsageDashboard({
       </HoverTip>
     </div>
   );
-
   // ── 筛选行 ───────────────────────────────────────────────────────────
   // 选中块是单独的滑块（SegmentThumb），切换应用时滑过去
   // 只列「应用」页设为显示的应用；Claude Code 的用量在 Claude Desktop 显示时也算，
@@ -562,12 +536,7 @@ export function UsageDashboard({
   const { data: settings } = useSettingsQuery();
   const filterApps = useMemo(() => {
     const visible = { ...DEFAULT_VISIBLE_APPS, ...settings?.visibleApps };
-    return KNOWN_APP_TYPES.filter(
-      (app) =>
-        visible[app] ||
-        (app === "claude" && visible["claude-desktop"]) ||
-        app === appType,
-    );
+    return KNOWN_APP_TYPES.filter((app) => visible[app] || app === appType);
   }, [settings?.visibleApps, appType]);
   const appFilterIndicator = useSlidingIndicator<HTMLDivElement>(
     '[aria-pressed="true"]',
@@ -580,7 +549,6 @@ export function UsageDashboard({
         ? "font-semibold text-fg-1"
         : "font-medium text-fg-2 hover:text-fg-1",
     );
-
   // 范围栏：决定下面所有数据的四个条件放一组、左对齐；时间排第一，图表和指标都跟着它
   const filterRow = (
     <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 px-6 py-2">
@@ -634,7 +602,7 @@ export function UsageDashboard({
         ))}
       </div>
       {/* 供应商 / 模型是上下级：级联菜单，悬停供应商展开它名下的模型；
-          点供应商本身＝只按供应商筛（全部模型） */}
+                    点供应商本身＝只按供应商筛（全部模型） */}
       <DropdownMenu open={scopeMenuOpen} onOpenChange={setScopeMenuOpen}>
         <DropdownMenuTrigger asChild>
           <Button
@@ -711,10 +679,8 @@ export function UsageDashboard({
       </DropdownMenu>
     </div>
   );
-
   // ── 明细面板 ─────────────────────────────────────────────────────────
   const scopedAppType = appType === "all" ? undefined : appType;
-
   // 页签上的计数：和各表格同样的查询参数，react-query 会合并成一次请求。
   // 三个页签都查（只查当前页签时，没点过的页签一直没有数字）；换筛选时沿用上一份
   // 数据直到新数到达，三个数字原地更新，不会先整体消失再冒出来把页签栏挤得抖一下
@@ -749,7 +715,6 @@ export function UsageDashboard({
     statusCode == null
       ? t("usage.statusFilter.all")
       : `${t("usage.statusCode")} ${statusCode}`;
-
   // 工具栏两类入口：左边「筛选」（漏斗图标 + 当前条件，生效时实心底）改的是看哪些行；
   // 竖线右边「显示的列」（纯图标）改的是表怎么显示，是存下来的偏好
   const tabTrailing =
@@ -810,7 +775,6 @@ export function UsageDashboard({
         )}
       </div>
     ) : null;
-
   const detailPanel = (
     <section
       aria-label={t("usage.tabs.label")}
@@ -881,7 +845,6 @@ export function UsageDashboard({
       </div>
     </section>
   );
-
   // 概览面板：指标条和图表是同一块面，点指标换图表画的指标
   const overviewPanel = (
     <section className="shrink-0 overflow-hidden rounded-panel border border-border bg-surface">
@@ -916,7 +879,6 @@ export function UsageDashboard({
       )}
     </section>
   );
-
   const body = isEmpty ? (
     <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto scroll-stable px-6 pb-6">
       <div className="mt-16 flex max-w-[440px] flex-col items-center gap-3 text-center">
@@ -959,7 +921,6 @@ export function UsageDashboard({
       {detailPanel}
     </div>
   );
-
   return (
     <div ref={containerRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
       <AppPageHeader
@@ -998,7 +959,7 @@ export function UsageDashboard({
         onOpenPricing={() => setPricingOpen(true)}
       />
       {/* 定价是二级页不是模态框：新增 / 编辑定价的编辑页也是 FullScreenPanel，
-          放进模态框会被压在遮罩下、点不到 */}
+                    放进模态框会被压在遮罩下、点不到 */}
       <FullScreenPanel
         isOpen={pricingOpen}
         title={t("usage.tabs.pricing")}

@@ -3,9 +3,7 @@
  *
  * 提供获取、设置和测试全局代理的功能。
  */
-
 import { invoke } from "@tauri-apps/api/core";
-
 /**
  * 代理测试结果
  */
@@ -14,7 +12,6 @@ export interface ProxyTestResult {
   latencyMs: number;
   error: string | null;
 }
-
 /**
  * 出站代理状态
  */
@@ -22,7 +19,6 @@ export interface UpstreamProxyStatus {
   enabled: boolean;
   proxyUrl: string | null;
 }
-
 /**
  * 检测到的代理
  */
@@ -31,7 +27,6 @@ export interface DetectedProxy {
   proxyType: string;
   port: number;
 }
-
 /**
  * 获取全局代理 URL
  *
@@ -40,7 +35,6 @@ export interface DetectedProxy {
 export async function getGlobalProxyUrl(): Promise<string | null> {
   return invoke<string | null>("get_global_proxy_url");
 }
-
 /**
  * 设置全局代理 URL
  *
@@ -48,14 +42,8 @@ export async function getGlobalProxyUrl(): Promise<string | null> {
  *              空字符串表示清除代理（直连）
  */
 export async function setGlobalProxyUrl(url: string): Promise<void> {
-  try {
-    return await invoke("set_global_proxy_url", { url });
-  } catch (error) {
-    // Tauri invoke 错误可能是字符串
-    throw new Error(typeof error === "string" ? error : String(error));
-  }
+  return invoke("set_global_proxy_url", { url });
 }
-
 /**
  * 测试代理连接
  *
@@ -65,7 +53,6 @@ export async function setGlobalProxyUrl(url: string): Promise<void> {
 export async function testProxyUrl(url: string): Promise<ProxyTestResult> {
   return invoke<ProxyTestResult>("test_proxy_url", { url });
 }
-
 /**
  * 获取当前出站代理状态
  *
@@ -74,7 +61,6 @@ export async function testProxyUrl(url: string): Promise<ProxyTestResult> {
 export async function getUpstreamProxyStatus(): Promise<UpstreamProxyStatus> {
   return invoke<UpstreamProxyStatus>("get_upstream_proxy_status");
 }
-
 /**
  * 扫描本地代理
  *

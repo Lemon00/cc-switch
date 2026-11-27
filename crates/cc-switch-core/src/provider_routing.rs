@@ -77,19 +77,16 @@ pub fn provider_needs_routing(app: &AppType, provider: &Provider) -> bool {
         .and_then(|meta| meta.api_format.as_deref())
         .filter(|fmt| !fmt.is_empty());
     match app {
-        AppType::ClaudeDesktop => {
-            managed_oauth
-                || meta
-                    .and_then(|meta| meta.claude_desktop_mode.as_ref())
-                    .is_some_and(|mode| *mode == crate::provider::ClaudeDesktopMode::Proxy)
-        }
         AppType::Claude => {
             managed_oauth || full_url || api_format.is_some_and(|f| f != "anthropic")
         }
-        AppType::Codex | AppType::GrokBuild => {
+        AppType::Codex => {
             managed_oauth
                 || full_url
-                || matches!(api_format, Some("openai_chat" | "anthropic"))
+                || matches!(
+                    api_format,
+                    Some("openai_chat" | "anthropic" | "gemini_native")
+                )
                 || provider
                     .settings_config
                     .get("config")

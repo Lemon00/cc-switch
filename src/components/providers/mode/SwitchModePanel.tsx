@@ -1,19 +1,29 @@
-import { createPortal } from "react-dom";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { CodexStaleClientsNotice } from "@/components/providers/CodexStaleClientsNotice";
+import {
+  blockedFromRouting,
+  queueMoveSortUpdates,
+} from "@/components/providers/presentation";
+import { ProviderList } from "@/components/providers/ProviderList";
+import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { badgeVariants } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { HoverTip } from "@/components/ui/hover-tip";
-import { cn } from "@/lib/utils";
-import { useEffect, useMemo, useState, type RefObject } from "react";
-import { useTranslation } from "react-i18next";
-import { useQueryClient } from "@tanstack/react-query";
-import { toast } from "@/lib/toast";
-import type { Provider } from "@/types";
-import type { AppMode, StartupAttachFailure } from "@/types/proxy";
+import { Notice } from "@/components/ui/notice";
 import type { ModeAppId } from "@/config/appConfig";
 import { isProxyAppId, isStackAppId } from "@/config/appConfig";
+import { useModeActions } from "@/hooks/useModeActions";
 import { settingsApi } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
 import { proxyApi } from "@/lib/api/proxy";
 import { useSettingsQuery } from "@/lib/query";
+import {
+  useAddToFailoverQueue,
+  useAutoFailoverEnabled,
+  useFailoverQueue,
+  useRemoveFromFailoverQueue,
+  useSetAutoFailoverEnabled,
+} from "@/lib/query/failover";
 import {
   proxyKeys,
   useAdoptCodexStackCatalog,
@@ -22,40 +32,28 @@ import {
   useProxyStatusQuery,
   useSetProxyStackMember,
 } from "@/lib/query/proxy";
-import {
-  useAddToFailoverQueue,
-  useAutoFailoverEnabled,
-  useFailoverQueue,
-  useRemoveFromFailoverQueue,
-  useSetAutoFailoverEnabled,
-} from "@/lib/query/failover";
-import { useModeActions } from "@/hooks/useModeActions";
-import { getRoutingReason } from "@/utils/routingReason";
+import { toast } from "@/lib/toast";
+import { cn } from "@/lib/utils";
+import type { Provider } from "@/types";
+import type { AppMode, StartupAttachFailure } from "@/types/proxy";
+import { extractErrorMessage } from "@/utils/errorUtils";
 import { CODEX_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import { routeSwitchNotification } from "@/utils/routeSwitchNotification";
-import { extractErrorMessage } from "@/utils/errorUtils";
-import { Button } from "@/components/ui/button";
-import { Notice } from "@/components/ui/notice";
-import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { ProviderList } from "@/components/providers/ProviderList";
-import { CodexStaleClientsNotice } from "@/components/providers/CodexStaleClientsNotice";
-import {
-  blockedFromRouting,
-  queueMoveSortUpdates,
-} from "@/components/providers/presentation";
-import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
-import { ModeTabs, MODE_TONE } from "./ModeTabs";
+import { getRoutingReason } from "@/utils/routingReason";
+import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useState, type RefObject } from "react";
+import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 import { ModeDialog, type ModeDialogState } from "./ModeDialog";
+import { MODE_TONE, ModeTabs } from "./ModeTabs";
+import { RouteSettingsSheet } from "./RouteSettingsSheet";
+import { StackSettingsSheet } from "./StackSettingsSheet";
 import {
   sameStackSubagent,
   stackSubagentSettings,
   stackSubagentValue,
   type StackSubagentValue,
 } from "./StackSubagentFields";
-import { RouteSettingsSheet } from "./RouteSettingsSheet";
-import { StackSettingsSheet } from "./StackSettingsSheet";
-import { useDesktopConfigMessages } from "./useDesktopConfigMessages";
-
 type ListCallbacks = Pick<
   React.ComponentProps<typeof ProviderList>,
   | "onEdit"
@@ -68,7 +66,6 @@ type ListCallbacks = Pick<
   | "searchOpen"
   | "onSearchOpenChange"
 >;
-
 interface SwitchModePanelProps extends ListCallbacks {
   app: ModeAppId;
   statusSlot?: HTMLDivElement | null;
@@ -78,22 +75,25 @@ interface SwitchModePanelProps extends ListCallbacks {
   scrollRef?: RefObject<HTMLDivElement>;
   onSwitch: (
     provider: Provider,
-    options?: { acknowledgedRouting?: boolean },
+    options?: {
+      acknowledgedRouting?: boolean;
+    },
   ) => unknown;
   onOpenRoutingSettings: () => void;
   startupFailure?: StartupAttachFailure;
   onDismissStartupFailure?: () => void;
   /** 托盘里点了直连下需要路由的那家：到这页后弹同一个「需要路由」对话框 */
-  needsRouteRequest?: { providerId: string; nonce: number };
+  needsRouteRequest?: {
+    providerId: string;
+    nonce: number;
+  };
   onNeedsRouteHandled?: () => void;
   /** 正在看的那格变了：新增 / 编辑供应商按它选表单布局。需要是稳定的回调 */
   onViewChange?: (app: ModeAppId, view: AppMode) => void;
 }
-
 /** Gemini CLI、Grok Build、Claude Desktop 没有聚合模式（Q6）：那一格隐藏，前两格位置不变。 */
 const modesFor = (app: ModeAppId): AppMode[] =>
   isStackAppId(app) ? ["direct", "route", "stack"] : ["direct", "route"];
-
 /**
  * 切换式应用的供应商页（v7 S1–S3）：模式行 → 通知槽 → 按查看的模式分区的列表。
  * tab 只负责查看；要生效必须点写明后果的按钮（确认框），回到直连也一样。
@@ -118,13 +118,11 @@ export function SwitchModePanel({
   const queryClient = useQueryClient();
   const appName = APP_DISPLAY_NAME[app];
   const modes = modesFor(app);
-
   const { data: modeView } = useAppMode(app);
   const active: AppMode =
     modeView && modes.includes(modeView.mode) ? modeView.mode : "direct";
   const directId = modeView?.directProviderId ?? null;
   const routeId = modeView?.routeProviderId ?? null;
-
   // 离开页面再回来、或生效的模式变了，一律落在生效的那格（「查看中」不持久化）
   const [view, setView] = useState<AppMode>(active);
   const [searchSlot, setSearchSlot] = useState<HTMLDivElement | null>(null);
@@ -134,13 +132,16 @@ export function SwitchModePanel({
   useEffect(() => {
     onViewChange?.(app, view);
   }, [app, view, onViewChange]);
-
   const { data: proxyStatus } = useProxyStatusQuery();
   const serviceRunning = proxyStatus?.running ?? false;
   const { data: settings } = useSettingsQuery();
   // Claude Desktop 没有故障转移和路由设置（没有 proxy_config 行）
   const hasFailover = isProxyAppId(app);
-  const { data: failoverOn = false } = useAutoFailoverEnabled(app, hasFailover);
+  const {
+    data: failoverOn = false,
+    isSuccess: failoverEnabledReady,
+    isError: failoverEnabledError,
+  } = useAutoFailoverEnabled(app, hasFailover);
   const { data: queue } = useFailoverQueue(app, hasFailover);
   const setFailover = useSetAutoFailoverEnabled();
   const addToQueue = useAddToFailoverQueue();
@@ -149,19 +150,17 @@ export function SwitchModePanel({
   const setStackMember = useSetProxyStackMember();
   const adoptCatalog = useAdoptCodexStackCatalog();
   const modeActions = useModeActions(app);
-  const desktopMessages = useDesktopConfigMessages(app === "claude-desktop");
-
   const [dialog, setDialog] = useState<ModeDialogState | null>(null);
   const [routeSettingsOpen, setRouteSettingsOpen] = useState(false);
   const [stackSettingsOpen, setStackSettingsOpen] = useState(false);
   const [confirmFailover, setConfirmFailover] = useState(false);
+  const [confirmFailoverPending, setConfirmFailoverPending] = useState(false);
   // 关掉的是哪一份提示（后端的 staleRevision）：目录或登录又变了就是新的一份，重新显示。
   const [staleDismissed, setStaleDismissed] = useState<string | null>(null);
   useEffect(() => {
     setStaleDismissed(null);
   }, [app, active, directId, routeId, stack?.staleClients?.auth]);
   const staleRevision = stack?.staleRevision ?? "";
-
   // 供应商还没加载完时先等着，到了再弹
   useEffect(() => {
     if (!needsRouteRequest) return;
@@ -175,11 +174,9 @@ export function SwitchModePanel({
     onNeedsRouteHandled?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [needsRouteRequest?.nonce, providers]);
-
   const providerList = useMemo(() => Object.values(providers), [providers]);
   const nameOf = (id: string | null) =>
     (id && providers[id]?.name) || t("mode.noProvider");
-
   const stackMembers = useMemo(() => {
     const members = new Map<string, number>();
     for (const member of stack?.members ?? []) {
@@ -187,16 +184,21 @@ export function SwitchModePanel({
     }
     return members;
   }, [stack?.members]);
-
   const queueIds = useMemo(
     () => (queue ?? []).map((item) => item.providerId),
     [queue],
   );
-
   const exitAndUse = (provider: Provider) =>
     setDialog({ kind: "exit", useProviderId: provider.id });
-
+  const modeBusy =
+    modeActions.pending ||
+    setFailover.isPending ||
+    confirmFailoverPending ||
+    addToQueue.isPending ||
+    removeFromQueue.isPending ||
+    setStackMember.isPending;
   const queueMove = async (provider: Provider, delta: -1 | 1) => {
+    if (modeBusy) return;
     const updates = queueMoveSortUpdates(
       queue ?? [],
       providers,
@@ -218,8 +220,8 @@ export function SwitchModePanel({
       toast.error(extractErrorMessage(error) || t("provider.sortUpdateFailed"));
     }
   };
-
   const rememberDefault = async (provider: Provider) => {
+    if (modeBusy) return;
     try {
       const result = await proxyApi.setProxyRoute(app, provider.id);
       await queryClient.invalidateQueries({ queryKey: ["providers", app] });
@@ -234,7 +236,6 @@ export function SwitchModePanel({
       );
     }
   };
-
   const switchMode = {
     active,
     view,
@@ -247,22 +248,36 @@ export function SwitchModePanel({
     routingReason: (provider: Provider) =>
       getRoutingReason(app, provider, t) ?? "",
     actions: {
-      switchDirect: (provider: Provider) => void onSwitch(provider),
+      switchDirect: (provider: Provider) => {
+        if (modeBusy) return;
+        void onSwitch(provider);
+      },
       needsRouteDialog: (provider: Provider) =>
         setDialog({
           kind: "needsRoute",
           providerId: provider.id,
           reason: getRoutingReason(app, provider, t) ?? "",
         }),
-      exitAndUse,
-      routeTo: (provider: Provider) => void onSwitch(provider),
-      queueAdd: (provider: Provider) =>
-        addToQueue.mutate({ appType: app, providerId: provider.id }),
-      queueRemove: (provider: Provider) =>
-        removeFromQueue.mutate({ appType: app, providerId: provider.id }),
+      exitAndUse: (provider: Provider) => {
+        if (modeBusy) return;
+        exitAndUse(provider);
+      },
+      routeTo: (provider: Provider) => {
+        if (modeBusy) return;
+        void onSwitch(provider);
+      },
+      queueAdd: (provider: Provider) => {
+        if (modeBusy) return;
+        addToQueue.mutate({ appType: app, providerId: provider.id });
+      },
+      queueRemove: (provider: Provider) => {
+        if (modeBusy) return;
+        removeFromQueue.mutate({ appType: app, providerId: provider.id });
+      },
       queueMove: (provider: Provider, delta: -1 | 1) =>
         void queueMove(provider, delta),
       stackAdd: (provider: Provider) => {
+        if (modeBusy) return;
         setStackMember.mutate({
           appType: app,
           providerId: provider.id,
@@ -270,6 +285,7 @@ export function SwitchModePanel({
         });
       },
       stackRemove: (provider: Provider) => {
+        if (modeBusy) return;
         setStackMember.mutate({
           appType: app,
           providerId: provider.id,
@@ -277,22 +293,24 @@ export function SwitchModePanel({
         });
       },
       // 聚合生效时换默认当场生效（同切换供应商）；没生效时只记下选择，切换时的确认框预选它
-      stackSetDefault: (provider: Provider) =>
-        active === "stack"
-          ? void onSwitch(provider)
-          : void rememberDefault(provider),
+      stackSetDefault: (provider: Provider) => {
+        if (modeBusy) return;
+        if (active === "stack") {
+          void onSwitch(provider);
+        } else {
+          void rememberDefault(provider);
+        }
+      },
     },
   };
-
   // 页头始终显示实际生效的连接，不跟随正在浏览的模式页签。
   const routeTarget = failoverOn ? t("mode.status.byQueue") : nameOf(routeId);
   const otherMembers = (stack?.members ?? []).filter(
     (member) => member.providerId !== routeId,
   );
-  const otherModels = otherMembers.reduce(
-    (sum, member) => sum + member.modelIds.length,
-    0,
-  );
+  const otherModels = new Set(
+    (stack?.members ?? []).flatMap((member) => member.modelIds),
+  ).size;
   const status =
     active === "direct"
       ? { lead: t("mode.status.directLead"), value: nameOf(directId) }
@@ -309,57 +327,65 @@ export function SwitchModePanel({
               models: otherModels,
             }),
           };
-
   const handleFailoverChange = (enabled: boolean) => {
+    // 未拿到真实状态或读失败时不切换，避免 placeholder / 未知态下误操作
+    if (!failoverEnabledReady || failoverEnabledError || modeBusy) return;
     if (enabled && !settings?.failoverConfirmed) {
       setConfirmFailover(true);
       return;
     }
     setFailover.mutate({ appType: app, enabled });
   };
-
   const confirmFailoverOn = async () => {
-    setConfirmFailover(false);
+    if (
+      confirmFailoverPending ||
+      modeActions.pending ||
+      setFailover.isPending
+    ) {
+      return;
+    }
+    setConfirmFailoverPending(true);
     try {
-      const current = await settingsApi.get();
       await settingsApi.save({
-        ...current,
         failoverConfirmed: true,
       });
       await queryClient.invalidateQueries({ queryKey: ["settings"] });
+      setConfirmFailover(false);
+      setFailover.mutate({ appType: app, enabled: true });
     } catch (error) {
       console.error(
         "[SwitchModePanel] Failed to save failover confirmation",
         error,
       );
+      toast.error(
+        t("mode.failoverConfirmSaveFailed", {
+          defaultValue: "未能保存确认状态，故障转移未开启",
+        }),
+        { closeButton: true },
+      );
+    } finally {
+      setConfirmFailoverPending(false);
     }
-    setFailover.mutate({ appType: app, enabled: true });
   };
-
   const enterMode = async (
     target: Exclude<AppMode, "direct">,
     pick: string,
     subagent?: StackSubagentValue,
   ) => {
+    if (modeBusy) return;
     // 框里改了子代理设置就先存（聚合还没生效时后端只存不写），进入聚合时随契约一起写进去
     if (
       subagent &&
       !sameStackSubagent(subagent, stackSubagentValue(settings))
     ) {
-      const current = await settingsApi.get();
-      await settingsApi.save({
-        ...current,
-        ...stackSubagentSettings(subagent),
-      });
+      await settingsApi.save(stackSubagentSettings(subagent));
       await queryClient.invalidateQueries({ queryKey: ["settings"] });
     }
     await modeActions.enter(target, pick, providers[pick]?.name);
   };
-
   const eligibleIds = providerList
     .filter((provider) => !blockedFromRouting(app, provider))
     .map((provider) => provider.id);
-
   const startService = async () => {
     try {
       await proxyApi.startProxyServer();
@@ -372,7 +398,6 @@ export function SwitchModePanel({
       );
     }
   };
-
   const notices: React.ReactNode[] = [];
   if (active !== "direct" && proxyStatus !== undefined && !serviceRunning) {
     notices.push(
@@ -395,28 +420,17 @@ export function SwitchModePanel({
             <Button
               variant="neutral"
               size="compact"
-              onClick={() => setDialog({ kind: "exit" })}
+              disabled={modeBusy}
+              onClick={() => {
+                if (modeBusy) return;
+                setDialog({ kind: "exit" });
+              }}
             >
               {t("mode.notice.backToDirect")}
             </Button>
           </>
         }
       />,
-    );
-  }
-  if (desktopMessages.length > 0) {
-    notices.push(
-      <Notice
-        key="desktopConfig"
-        tone="warning"
-        title={t("claudeDesktop.statusTitle")}
-      >
-        {desktopMessages.map((message) => (
-          <span key={message} className="block">
-            {message}
-          </span>
-        ))}
-      </Notice>,
     );
   }
   if (startupFailure) {
@@ -434,7 +448,9 @@ export function SwitchModePanel({
           <Button
             variant="neutral"
             size="compact"
-            onClick={() =>
+            disabled={modeBusy}
+            onClick={() => {
+              if (modeBusy) return;
               void modeActions
                 .enter(
                   startupFailure.stack ? "stack" : "route",
@@ -448,8 +464,8 @@ export function SwitchModePanel({
                       detail: extractErrorMessage(error) || t("common.unknown"),
                     }),
                   ),
-                )
-            }
+                );
+            }}
           >
             {t("common.retry")}
           </Button>
@@ -522,14 +538,15 @@ export function SwitchModePanel({
           <Button
             variant={view}
             size="regular"
-            disabled={modeActions.pending}
-            onClick={() =>
+            disabled={modeBusy}
+            onClick={() => {
+              if (modeBusy) return;
               setDialog(
                 view === "direct"
                   ? { kind: "exit" }
                   : { kind: "enter", target: view },
-              )
-            }
+              );
+            }}
           >
             {cta}
           </Button>
@@ -537,7 +554,6 @@ export function SwitchModePanel({
       />,
     );
   }
-
   return (
     <>
       {statusSlot &&
@@ -588,7 +604,8 @@ export function SwitchModePanel({
           hasFailover && view === "route" && active === "route"
             ? {
                 enabled: failoverOn,
-                disabled: setFailover.isPending,
+                disabled:
+                  modeBusy || !failoverEnabledReady || failoverEnabledError,
                 onChange: handleFailoverChange,
               }
             : undefined
@@ -599,7 +616,9 @@ export function SwitchModePanel({
             : undefined
         }
         onOpenStackSettings={
-          app === "codex" && view === "stack" && active === "stack"
+          (app === "codex" || app === "claude") &&
+          view === "stack" &&
+          active === "stack"
             ? () => setStackSettingsOpen(true)
             : undefined
         }
@@ -621,7 +640,10 @@ export function SwitchModePanel({
           currentProviderId={currentProviderId}
           appId={app}
           isLoading={isLoading}
-          onSwitch={(provider) => void onSwitch(provider)}
+          onSwitch={(provider) => {
+            if (modeBusy) return;
+            void onSwitch(provider);
+          }}
           switchMode={switchMode}
           searchSlot={searchSlot}
         />
@@ -672,14 +694,12 @@ export function SwitchModePanel({
         />
       )}
 
-      {app === "codex" && (
+      {(app === "codex" || app === "claude") && (
         <StackSettingsSheet
+          app={app}
           open={stackSettingsOpen}
           onOpenChange={setStackSettingsOpen}
-          // 默认那家不发布 `ccs-*` 模型
-          models={(stack?.subagentModels ?? []).filter(
-            (model) => model.providerId !== routeId,
-          )}
+          models={stack?.subagentModels ?? []}
           // 官方做默认那家时，合并目录里有官方的 codex-auto-review，自动审批默认用它
           routeOfficial={
             !!routeId &&
@@ -695,8 +715,12 @@ export function SwitchModePanel({
         title={t("confirm.failover.title")}
         message={t("confirm.failover.message")}
         confirmText={t("confirm.failover.confirm")}
+        pending={confirmFailoverPending}
         onConfirm={() => void confirmFailoverOn()}
-        onCancel={() => setConfirmFailover(false)}
+        onCancel={() => {
+          if (confirmFailoverPending) return;
+          setConfirmFailover(false);
+        }}
       />
     </>
   );

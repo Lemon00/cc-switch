@@ -4,7 +4,6 @@ import {
   type ModelsDevModel,
   type ModelsDevResponse,
 } from "./modelsDev";
-
 export interface ModelsDevEntry {
   key: string;
   providerId: string;
@@ -18,7 +17,6 @@ export interface ModelsDevEntry {
   cacheRead: number;
   cacheWrite: number;
 }
-
 const NON_TEXT_MODEL_MARKERS = [
   "audio",
   "deprecated",
@@ -31,13 +29,17 @@ const NON_TEXT_MODEL_MARKERS = [
   "video",
 ];
 const NON_TEXT_OUTPUT_MODALITIES = new Set(["audio", "image", "video"]);
-
 const isTextPricingModel = (modelId: string, model?: ModelsDevModel) => {
-  if (model?.status?.toLowerCase() === "deprecated") return false;
-
-  const outputModalities = model?.modalities?.output
-    ?.filter((modality): modality is string => typeof modality === "string")
-    .map((modality) => modality.toLowerCase());
+  if (
+    typeof model?.status === "string" &&
+    model.status.toLowerCase() === "deprecated"
+  )
+    return false;
+  const outputModalities = Array.isArray(model?.modalities?.output)
+    ? model.modalities.output
+        .filter((modality): modality is string => typeof modality === "string")
+        .map((modality) => modality.toLowerCase())
+    : undefined;
   if (
     outputModalities?.length &&
     (!outputModalities.includes("text") ||
@@ -47,28 +49,40 @@ const isTextPricingModel = (modelId: string, model?: ModelsDevModel) => {
   ) {
     return false;
   }
-
   const searchableName = `${modelId} ${model?.name ?? ""}`.toLowerCase();
   return !NON_TEXT_MODEL_MARKERS.some((marker) =>
     searchableName.includes(marker),
   );
 };
-
 export function formatPrice(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return "0";
   if (value >= 1e12) return "0";
   const trimmed = value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
   return trimmed || "0";
 }
-
 export function flattenModels(data: ModelsDevResponse): ModelsDevEntry[] {
   const entries: ModelsDevEntry[] = [];
   for (const [providerId, provider] of Object.entries(data)) {
     if (!provider || typeof provider !== "object") continue;
-    const providerName = provider.name || providerId;
+    const providerName =
+      typeof provider.name === "string" && provider.name
+        ? provider.name
+        : providerId;
     for (const [modelId, model] of Object.entries(provider.models ?? {})) {
       if (!isTextPricingModel(modelId, model)) continue;
       const cost = model?.cost;
+      // Invalid remote prices must never overwrite a valid local price with 0.
+      if (
+        [cost?.input, cost?.output, cost?.cache_read, cost?.cache_write].some(
+          (value) =>
+            value != null &&
+            (typeof value !== "number" ||
+              !Number.isFinite(value) ||
+              value < 0 ||
+              value >= 1e12),
+        )
+      )
+        continue;
       const input = typeof cost?.input === "number" ? cost.input : null;
       const output = typeof cost?.output === "number" ? cost.output : null;
       if (input === null && output === null) continue;
@@ -80,7 +94,8 @@ export function flattenModels(data: ModelsDevResponse): ModelsDevEntry[] {
         providerName,
         modelId,
         normalizedId,
-        modelName: model?.name || modelId,
+        modelName:
+          typeof model?.name === "string" && model.name ? model.name : modelId,
         releaseDate:
           typeof model?.release_date === "string" ? model.release_date : "",
         input: input ?? 0,
@@ -98,15 +113,12 @@ export function flattenModels(data: ModelsDevResponse): ModelsDevEntry[] {
   );
   return entries;
 }
-
 const COMMON_MODEL_LIMIT_PER_FAMILY = 6;
-
 interface CommonFamilyRule {
   id: string;
   providers: ReadonlySet<string>;
   matches: (modelId: string) => boolean;
 }
-
 const COMMON_FAMILY_RULES: CommonFamilyRule[] = [
   {
     id: "claude",
@@ -168,7 +180,6 @@ const COMMON_FAMILY_RULES: CommonFamilyRule[] = [
     matches: (modelId) => modelId.startsWith("glm-"),
   },
 ];
-
 /** Pick a bounded, canonical set of recent chat/coding models per family. */
 export function getCommonModelKeys(entries: ModelsDevEntry[]): Set<string> {
   const keys = new Set<string>();
@@ -187,7 +198,6 @@ export function getCommonModelKeys(entries: ModelsDevEntry[]): Set<string> {
   }
   return keys;
 }
-
 export function resolveModelsDevSelection(
   entries: ModelsDevEntry[],
   config: ModelsDevSyncConfig,
@@ -203,7 +213,6 @@ export function resolveModelsDevSelection(
       (common.has(entry.key) && !excluded.has(entry.key)),
   );
 }
-
 export function toModelPricing(entries: ModelsDevEntry[]): ModelPricing[] {
   const byModelId = new Map<string, ModelPricing>();
   for (const entry of entries) {

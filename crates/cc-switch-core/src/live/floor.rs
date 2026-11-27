@@ -162,28 +162,6 @@ pub const CODEX_EXCLUSIVE_TOP: &[&str] = &[
     "model_verbosity",
 ];
 
-/// Gemini CLI `.env` 里，这个键是否是关键字段。
-///
-/// `GOOGLE_*` 整个前缀都是连接和鉴权（Gemini CLI 0.61.0 读取的全部如此）。
-/// `GEMINI_*` 不能按前缀：同一前缀下有 `GEMINI_CLI_HOME`、`GEMINI_SANDBOX`、
-/// `GEMINI_SYSTEM_MD`、遥测开关等与供应商无关的设置。
-pub fn gemini_floor_env(key: &str) -> bool {
-    key.starts_with("GOOGLE_")
-        || matches!(
-            key,
-            "GEMINI_API_KEY"
-                | "GEMINI_MODEL"
-                // Key 放 x-goog-api-key 头还是 Authorization: Bearer。
-                | "GEMINI_API_KEY_AUTH_MECHANISM"
-                | "GEMINI_CLI_CUSTOM_HEADERS"
-                | "GEMINI_DEFAULT_AUTH_TYPE"
-                | "GEMINI_CLI_USE_COMPUTE_ADC"
-                // Google 登录走的服务地址。
-                | "CODE_ASSIST_ENDPOINT"
-                | "CODE_ASSIST_API_VERSION"
-        )
-}
-
 /// Gemini CLI `settings.json` 里的关键字段：按键路径只清这两个键。
 pub const GEMINI_FLOOR_SETTINGS: &[&[&str]] =
     &[&["security", "auth", "selectedType"], &["model", "name"]];
@@ -198,10 +176,6 @@ pub const DESKTOP_PROFILE_FLOOR: &[&str] = &[
     // 路由 / 聚合模式写 true（只为让本地 /v1/models 补上模型说明），直连模式清掉
     "modelDiscoveryEnabled",
 ];
-
-pub fn desktop_profile_floor(key: &str) -> bool {
-    DESKTOP_PROFILE_FLOOR.contains(&key)
-}
 
 /// Claude Desktop profile 里的策略键：缺失时写入，存在时不动，用户可以自己收紧
 /// 出站白名单、打开部署模式选择器。
@@ -270,29 +244,6 @@ mod tests {
         }
         for key in CODEX_EXCLUSIVE_TOP {
             assert!(!CODEX_FLOOR_TOP.contains(key), "{key} is listed twice");
-        }
-    }
-
-    #[test]
-    fn gemini_floor_keeps_cli_settings() {
-        for key in [
-            "GOOGLE_API_KEY",
-            "GOOGLE_GEMINI_BASE_URL",
-            "GOOGLE_GENAI_USE_VERTEXAI",
-            "GOOGLE_CLOUD_PROJECT",
-            "GEMINI_API_KEY",
-            "GEMINI_MODEL",
-            "GEMINI_CLI_CUSTOM_HEADERS",
-        ] {
-            assert!(gemini_floor_env(key), "{key} should be a key field");
-        }
-        for key in [
-            "GEMINI_SANDBOX",
-            "GEMINI_CLI_HOME",
-            "GEMINI_SYSTEM_MD",
-            "DEBUG",
-        ] {
-            assert!(!gemini_floor_env(key), "{key} must stay a user key");
         }
     }
 

@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { CustomIconNameDialog } from "@/components/CustomIconNameDialog";
 import { pngDataUri } from "../fixtures/customIcon";
-
 describe("CustomIconNameDialog", () => {
   // 选择器渲染在供应商表单里：起名框的提交事件会沿 React 组件树穿过 Portal 冒泡，
   // 不拦住就会顺带提交外层表单，提前保存供应商
@@ -21,7 +20,6 @@ describe("CustomIconNameDialog", () => {
         />
       </form>,
     );
-
     fireEvent.click(screen.getByText("confirm"));
     expect(onConfirm).toHaveBeenCalledWith("Relay");
     expect(onOuterSubmit).not.toHaveBeenCalled();

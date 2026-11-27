@@ -9,6 +9,8 @@ use std::panic;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
+use cc_switch_core::error_for_log;
+
 /// 应用版本号（从 Cargo.toml 读取）
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const CRASH_LOG_MAX_SIZE: u64 = 5 * 1024 * 1024;
@@ -159,7 +161,7 @@ pub fn setup_panic_hook() {
             .unwrap_or_else(|_| "Failed to get system info".to_string());
 
         // 获取 panic 消息（尝试多种方式提取）
-        let message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+        let raw_message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
             s.to_string()
         } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
             s.clone()
@@ -167,6 +169,7 @@ pub fn setup_panic_hook() {
             // 尝试使用 Display trait
             format!("{panic_info}")
         };
+        let message = error_for_log(&raw_message);
 
         // 获取位置信息
         let location = if let Some(loc) = panic_info.location() {
@@ -182,7 +185,7 @@ pub fn setup_panic_hook() {
 
         // 捕获 backtrace（完整调用栈）
         let backtrace = std::backtrace::Backtrace::force_capture();
-        let backtrace_str = format!("{backtrace}");
+        let backtrace_str = error_for_log(&format!("{backtrace}"));
 
         // 格式化日志条目
         let separator = "=".repeat(80);
@@ -220,18 +223,28 @@ Stack Trace (Backtrace)
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let _ = rotate_crash_log_if_needed(&log_path);
-        let saved =
-            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
-                let _ = file.write_all(crash_entry.as_bytes());
-                let _ = file.flush();
-                true
-            } else {
-                false
-            };
+        let saved = if let Ok(mut file) =
+            OpenOptions::new().create(true).append(true).open(&log_path)
+        {
+            match file
+                .write_all(crash_entry.as_bytes())
+                .and_then(|_| file.flush())
+            {
+                Ok(()) => true,
+                Err(e) => {
+                    eprintln!("[CC-Switch] Failed to write crash log: {e}");
+                    false
+                }
+            }
+        } else {
+            false
+        };
         drop(crash_log_guard);
 
         if saved {
             eprintln!("\n[CC-Switch] Crash log saved to: {}", log_path.display());
+        } else {
+            eprintln!("\n[CC-Switch] Crash log was not saved (see stderr output above).");
         }
 
         // 同时输出到 stderr（便于开发调试）

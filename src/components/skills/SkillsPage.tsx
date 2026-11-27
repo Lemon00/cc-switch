@@ -1,23 +1,12 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { useTranslation } from "react-i18next";
-import {
-  ChevronDown,
-  ChevronRight,
-  Download,
-  ExternalLink,
-  Loader2,
-  RefreshCw,
-} from "lucide-react";
-import { toast } from "@/lib/toast";
-import { settingsApi } from "@/lib/api";
-import * as PopoverPrimitive from "@radix-ui/react-popover";
+import { MatrixSearch } from "@/components/mcp/AppMatrix";
+import { CHECKBOX_CLASS } from "@/components/mcp/formBits";
+import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { Notice } from "@/components/ui/notice";
 import { SegmentedControl } from "@/components/ui/segmented-control";
-import { HoverTip } from "@/components/ui/hover-tip";
-import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
+import { SKILLS_APP_IDS } from "@/config/appConfig";
 import {
   useAddSkillRepo,
   useDiscoverableSkills,
@@ -29,7 +18,7 @@ import {
   useSearchSkillsSh,
   useSkillRepos,
 } from "@/hooks/useSkills";
-import type { AppId } from "@/lib/api/types";
+import { settingsApi } from "@/lib/api";
 import type {
   DiscoverableSkill,
   InstalledSkill,
@@ -37,51 +26,90 @@ import type {
   SkillRepoFailure,
   SkillsShDiscoverableSkill,
 } from "@/lib/api/skills";
-import { SKILLS_APP_IDS } from "@/config/appConfig";
+import type { AppId } from "@/lib/api/types";
 import {
   formatSkillError,
   skillErrorReason,
 } from "@/lib/errors/skillErrorParser";
+import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
-import { MatrixSearch } from "@/components/mcp/AppMatrix";
-import { CHECKBOX_CLASS } from "@/components/mcp/formBits";
+import * as PopoverPrimitive from "@radix-ui/react-popover";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import {
+  ChevronDown,
+  ChevronRight,
+  Download,
+  ExternalLink,
+  Loader2,
+  RefreshCw,
+} from "lucide-react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { countRepoSkills } from "./RepoManagerPanel";
 import { describeRepoFailures, repoFailureKey } from "./repoFailures";
-
 /** 发现列表每行高度（h-14），虚拟化按这个算 */
 const ROW_HEIGHT = 56;
 export type SkillsPageSource = "repos" | "skillssh";
-
-type InstallRunner = <T extends { id: string }>(
+type InstallRunner = <
+  T extends {
+    id: string;
+  },
+>(
   install: (firstApp: AppId) => Promise<T[]>,
   apps?: AppId[],
 ) => Promise<{
   installed: T[];
-  failures: Array<{ id: string; app: AppId; error: unknown }>;
+  failures: Array<{
+    id: string;
+    app: AppId;
+    error: unknown;
+  }>;
 }>;
-
 const SKILLSSH_PAGE_SIZE = 20;
 const POPOVER_CLASS =
   "z-[110] rounded-panel border border-border bg-surface p-1 text-fg-1 shadow-v7-md outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2";
-
 /** 仓库的增删和停用（发现段的「仓库」弹层和仓库管理抽屉共用） */
 export function useSkillRepoActions() {
   const { t } = useTranslation();
   const addRepoMutation = useAddSkillRepo();
   const removeRepoMutation = useRemoveSkillRepo();
-
   const addRepo = async (repo: SkillRepo) => {
     const discovery = await addRepoMutation.mutateAsync(repo);
+    if (discovery === null) {
+      toast.warning(
+        t("skills.repo.addDiscoverFailed", {
+          owner: repo.owner,
+          name: repo.name,
+        }),
+        { closeButton: true },
+      );
+      return;
+    }
+    const count = countRepoSkills(discovery.skills, repo);
+    if (discovery.failures.length > 0) {
+      toast.warning(
+        t("skills.repo.addDiscoverPartial", {
+          owner: repo.owner,
+          name: repo.name,
+          count,
+          failures: discovery.failures.length,
+        }),
+        {
+          description: describeRepoFailures(discovery.failures, t),
+          closeButton: true,
+        },
+      );
+      return;
+    }
     toast.success(
       t("skills.repo.addSuccess", {
         owner: repo.owner,
         name: repo.name,
-        count: countRepoSkills(discovery?.skills ?? [], repo),
+        count,
       }),
       { closeButton: true },
     );
   };
-
   const removeRepo = async (owner: string, name: string) => {
     try {
       await removeRepoMutation.mutateAsync({ owner, name });
@@ -92,7 +120,6 @@ export function useSkillRepoActions() {
       toast.error(t("common.error"), { description: String(error) });
     }
   };
-
   /** 勾掉 = 停用：add_skill_repo 是 INSERT OR REPLACE，带 enabled=false 写回即可 */
   const setRepoEnabled = async (repo: SkillRepo, enabled: boolean) => {
     try {
@@ -101,10 +128,8 @@ export function useSkillRepoActions() {
       toast.error(t("common.error"), { description: String(error) });
     }
   };
-
   return { addRepo, removeRepo, setRepoEnabled };
 }
-
 interface SkillsPageProps {
   /**
    * 「已安装 / 发现」页签（由外层渲染，两段共用一条页签行）；
@@ -115,16 +140,22 @@ interface SkillsPageProps {
   installTargets: AppId[];
   onInstallTargetsChange: (apps: AppId[]) => void;
   installTo: InstallRunner;
+  /** 与已安装段共用写锁：发现安装期间拦住矩阵写入与导航 */
+  tryBeginWrite: () => boolean;
+  endWrite: () => void;
   /** 「已安装 · 3 个应用 ›」：切到已安装段并定位到那一行 */
   onShowInstalled: (skillId: string) => void;
   onOpenRepoManager: () => void;
   /** 安装后有应用没能启用：交给已安装段标 ⚠ */
   onEnableFailures: (
-    failures: Array<{ id: string; app: AppId; error: unknown }>,
+    failures: Array<{
+      id: string;
+      app: AppId;
+      error: unknown;
+    }>,
   ) => void;
   initialQuery?: string;
 }
-
 interface DiscoverRow {
   key: string;
   name: string;
@@ -135,7 +166,6 @@ interface DiscoverRow {
   installs?: number;
   skill: DiscoverableSkill;
 }
-
 /** 发现行的文档地址：优先 SKILL.md 所在目录，缺省回落到仓库首页 */
 function discoverDocsUrl(row: DiscoverRow): string | undefined {
   if (row.skill.readmeUrl) return row.skill.readmeUrl;
@@ -144,12 +174,10 @@ function discoverDocsUrl(row: DiscoverRow): string | undefined {
   }
   return undefined;
 }
-
 function installedKey(directory: string, owner?: string, name?: string) {
   const dir = directory.split(/[/\\]/).pop()?.toLowerCase() ?? "";
   return `${dir}:${(owner ?? "").toLowerCase()}:${(name ?? "").toLowerCase()}`;
 }
-
 function formatInstalls(count: number, locale: string): string {
   try {
     return new Intl.NumberFormat(locale, {
@@ -160,7 +188,6 @@ function formatInstalls(count: number, locale: string): string {
     return String(count);
   }
 }
-
 /**
  * Skills 的「发现」段：仓库 / skills.sh 两个来源，结果是行列表；显式「安装到」哪些应用。
  */
@@ -170,6 +197,8 @@ export function SkillsPage({
   installTargets,
   onInstallTargetsChange,
   installTo,
+  tryBeginWrite,
+  endWrite,
   onShowInstalled,
   onOpenRepoManager,
   onEnableFailures,
@@ -188,7 +217,6 @@ export function SkillsPage({
   );
   const [installing, setInstalling] = useState<Set<string>>(new Set());
   const [failed, setFailed] = useState<Record<string, string>>({});
-
   const {
     data: discoverable,
     isLoading: loadingDiscoverable,
@@ -214,17 +242,22 @@ export function SkillsPage({
   } = useSearchSkillsSh(skillsShQuery, SKILLSSH_PAGE_SIZE, skillsShOffset);
   const installMutation = useInstallSkill();
   const { setRepoEnabled } = useSkillRepoActions();
-
   useEffect(() => {
     if (skillsShResult && !placeholderSkillsSh) {
       setAccumulated((prev) =>
         skillsShOffset === 0
           ? skillsShResult.skills
-          : [...prev, ...skillsShResult.skills],
+          : Array.from(
+              new Map(
+                [...prev, ...skillsShResult.skills].map((skill) => [
+                  skill.key,
+                  skill,
+                ]),
+              ).values(),
+            ),
       );
     }
   }, [skillsShResult, skillsShOffset, placeholderSkillsSh]);
-
   // 没配置任何仓库时直接看 skills.sh；仓库读出来是空的仍留在仓库，方便重试
   const effectiveSource: SkillsPageSource =
     source === "repos" && !loadingRepos && repos.length === 0
@@ -232,7 +265,6 @@ export function SkillsPage({
       : source;
   const isSkillsSh = effectiveSource === "skillssh";
   const enabledRepos = repos.filter((repo) => repo.enabled);
-
   const submitSkillsSh = () => {
     const trimmed = query.trim();
     if (trimmed.length < 2) return;
@@ -241,7 +273,6 @@ export function SkillsPage({
     setAccumulated([]);
     setSkillsShQuery(trimmed);
   };
-
   // 第一页失败时 query key 没变，光把 offset 设回 0 什么都不会发生，要显式重新请求
   const retrySkillsSh = () => {
     setAccumulated([]);
@@ -251,7 +282,6 @@ export function SkillsPage({
       setSkillsShOffset(0);
     }
   };
-
   // ─── 已安装 / 目录名占用 ────────────────────────────────────────────
   const installedByKey = useMemo(() => {
     const map = new Map<string, InstalledSkill>();
@@ -263,7 +293,6 @@ export function SkillsPage({
     }
     return map;
   }, [installedSkills]);
-
   const installedByDir = useMemo(() => {
     const map = new Map<string, InstalledSkill>();
     for (const skill of installedSkills) {
@@ -271,15 +300,12 @@ export function SkillsPage({
     }
     return map;
   }, [installedSkills]);
-
   const enabledAppCount = (skill: InstalledSkill) =>
     SKILLS_APP_IDS.filter((app) => skill.apps[app]).length;
-
   const sourceLabel = (skill: InstalledSkill) =>
     skill.repoOwner && skill.repoName
       ? `${skill.repoOwner}/${skill.repoName}`
       : t("skillsPage.source.local");
-
   // ─── 行数据 ─────────────────────────────────────────────────────────
   const repoRows: DiscoverRow[] = useMemo(
     () =>
@@ -294,7 +320,6 @@ export function SkillsPage({
       })),
     [discoverable],
   );
-
   const skillsShRows: DiscoverRow[] = useMemo(
     () =>
       accumulated.map((item) => ({
@@ -318,7 +343,6 @@ export function SkillsPage({
       })),
     [accumulated],
   );
-
   const statusOf = (row: DiscoverRow) => {
     const installed = installedByKey.get(
       installedKey(row.directory, row.repoOwner, row.repoName),
@@ -329,7 +353,6 @@ export function SkillsPage({
     if (owner) return { kind: "conflict" as const, skill: owner };
     return { kind: "available" as const };
   };
-
   const normalizedQuery = query.trim().toLowerCase();
   const visibleRows = isSkillsSh
     ? skillsShRows
@@ -347,7 +370,6 @@ export function SkillsPage({
           `${row.repoOwner}/${row.repoName}`,
         ].some((value) => value?.toLowerCase().includes(normalizedQuery));
       });
-
   // 列表虚拟化：几个仓库加起来上千行，只渲染可视区域和前后各几行（每行固定 56）
   const listScrollRef = useRef<HTMLDivElement>(null);
   const rowVirtualizer = useVirtualizer({
@@ -357,13 +379,12 @@ export function SkillsPage({
     getItemKey: (index) => visibleRows[index]?.key ?? index,
     overscan: 8,
   });
-
   // ─── 安装 ───────────────────────────────────────────────────────────
   const names = (apps: AppId[]) =>
     apps.map((app) => APP_DISPLAY_NAME[app]).join(t("mcpPage.listSeparator"));
-
   const handleInstall = async (row: DiscoverRow) => {
     if (installing.has(row.key)) return;
+    if (!tryBeginWrite()) return;
     setInstalling((prev) => new Set(prev).add(row.key));
     setFailed((prev) => {
       const next = { ...prev };
@@ -377,10 +398,13 @@ export function SkillsPage({
           currentApp: firstApp,
         }),
       ]);
+      const enabledApps = installTargets.filter(
+        (app) => !failures.some((failure) => failure.app === app),
+      );
       toast.success(
         t("skillsPage.toast.installed", {
           name: row.name,
-          apps: names(installTargets),
+          apps: names(enabledApps.length ? enabledApps : [installTargets[0]]),
         }),
         { closeButton: true },
       );
@@ -402,6 +426,7 @@ export function SkillsPage({
       );
       setFailed((prev) => ({ ...prev, [row.key]: description || title }));
     } finally {
+      endWrite();
       setInstalling((prev) => {
         const next = new Set(prev);
         next.delete(row.key);
@@ -409,12 +434,10 @@ export function SkillsPage({
       });
     }
   };
-
   const reload = () => {
     void refreshDiscoverable();
     void refetchRepos();
   };
-
   // ─── 渲染 ───────────────────────────────────────────────────────────
   const installToLabel =
     installTargets.length <= 2
@@ -423,20 +446,20 @@ export function SkillsPage({
           first: APP_DISPLAY_NAME[installTargets[0]],
           count: installTargets.length,
         });
-
   const loadingList = isSkillsSh
     ? (loadingSkillsSh || fetchingSkillsSh) && accumulated.length === 0
     : loadingDiscoverable || (fetchingDiscoverable && !discoverable?.length);
-
   const hasMoreSkillsSh =
     isSkillsSh &&
     skillsShResult &&
     accumulated.length < skillsShResult.totalCount;
-
   const renderEmpty = () => {
     let title = "";
     let body = "";
-    let buttons: Array<{ label: string; onClick: () => void }> = [];
+    let buttons: Array<{
+      label: string;
+      onClick: () => void;
+    }> = [];
     if (isSkillsSh) {
       if (skillsShQuery.length < 2) {
         body = t("skillsPage.discover.skillsShHint");
@@ -522,7 +545,6 @@ export function SkillsPage({
       </div>
     );
   };
-
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* 页签行在外层（UnifiedSkillsPanel），这里只把右侧控件交出去 */}
@@ -871,7 +893,6 @@ export function SkillsPage({
     </div>
   );
 }
-
 // ─── 「安装到」弹层 ──────────────────────────────────────────────────────
 function InstallToPopover({
   label,
@@ -951,7 +972,6 @@ function InstallToPopover({
     </PopoverPrimitive.Root>
   );
 }
-
 // ─── 「仓库」弹层：勾掉即停用 ────────────────────────────────────────────
 function RepoPopover({
   repos,

@@ -1,6 +1,22 @@
-import React, { useEffect, useId, useMemo, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
+import { ProviderIcon } from "@/components/ProviderIcon";
+import { ManagedAccountUsage } from "@/components/providers/forms/ManagedAccountRemoveDialog";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { HelpTip } from "@/components/ui/help-tip";
+import { HoverTip } from "@/components/ui/hover-tip";
+import { Notice } from "@/components/ui/notice";
+import type { ManagedAuthDeviceCodeResponse } from "@/lib/api";
+import { settingsApi } from "@/lib/api";
+import { readAuthOpenBrowser } from "@/lib/authLoginLink";
+import { copyText } from "@/lib/clipboard";
+import type { ManagedAccountUser } from "@/lib/managedAccountUsage";
 import { toast } from "@/lib/toast";
+import { cn } from "@/lib/utils";
 import {
   CircleAlert,
   Copy,
@@ -11,25 +27,8 @@ import {
   Plus,
   RefreshCw,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { HelpTip } from "@/components/ui/help-tip";
-import { HoverTip } from "@/components/ui/hover-tip";
-import { Notice } from "@/components/ui/notice";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { ManagedAccountUsage } from "@/components/providers/forms/ManagedAccountRemoveDialog";
-import type { ManagedAccountUser } from "@/lib/managedAccountUsage";
-import type { ManagedAuthDeviceCodeResponse } from "@/lib/api";
-import { copyText } from "@/lib/clipboard";
-import { settingsApi } from "@/lib/api";
-import { readAuthOpenBrowser } from "@/lib/authLoginLink";
-import { cn } from "@/lib/utils";
-import { ProviderIcon } from "@/components/ProviderIcon";
-
+import React, { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 export interface GroupAccountRow {
   id: string;
   login: string;
@@ -47,7 +46,6 @@ export interface GroupAccountRow {
   /** 删除项不能点的原因（Kimi 正在用的号要先切走），照常列出、原因写在下面 */
   removeDisabledReason?: string;
 }
-
 export interface GroupLoginFlow {
   /** 正在向服务要验证码（还没拿到） */
   starting: boolean;
@@ -64,7 +62,6 @@ export interface GroupLoginFlow {
   /** 等待块里浏览器说明下面的附加内容（Claude 官方账号：浏览器回不到本机时粘贴代码） */
   extra?: React.ReactNode;
 }
-
 interface ManagedAccountsGroupProps {
   /** DOM id 前缀 */
   slug: string;
@@ -106,10 +103,8 @@ interface ManagedAccountsGroupProps {
   /** 确认框等 */
   children?: React.ReactNode;
 }
-
 const PILL =
   "inline-flex h-[18px] shrink-0 items-center rounded-full px-1.5 text-badge";
-
 /**
  * 授权中心的一个服务（v7 Auth 画板）：标题行（图标、名字、「?」、添加账号），
  * 每个账号一行（头像、名字 + 默认 / 需要重新登录、第二行、额度、⋯），空状态，
@@ -150,11 +145,9 @@ export function ManagedAccountsGroup({
   const busy = login.starting || login.polling;
   const blockedId = `auth-blocked-${slug}`;
   const loginBlocked = Boolean(loginDisabledReason);
-
   const targetAccount = reauthTarget
     ? accounts.find((account) => account.id === reauthTarget)
     : undefined;
-
   // 登录成功的 toast：pollingState 走到 success 时报一次
   const prevPolling = useRef(login.pollingState);
   useEffect(() => {
@@ -174,19 +167,16 @@ export function ManagedAccountsGroup({
     );
     setReauthTarget(null);
   }, [login.pollingState, name, t, targetAccount]);
-
   const add = () => {
     if (busy || loginBlocked) return;
     setReauthTarget(null);
     onAdd();
   };
-
   const reauth = (accountId: string) => {
     if (busy || loginBlocked) return;
     setReauthTarget(accountId);
     onReauth(accountId);
   };
-
   const pendingTitle = targetAccount
     ? t("authCenter.pending.reauth", {
         defaultValue: "重新登录 {{login}} · 等待授权中…",
@@ -196,7 +186,6 @@ export function ManagedAccountsGroup({
         defaultValue: "添加 {{service}} 账号 · 等待授权中…",
         service: name,
       });
-
   const copyCode = async () => {
     if (!login.deviceCode?.user_code) return;
     try {
@@ -208,7 +197,6 @@ export function ManagedAccountsGroup({
       console.debug("[AuthCenter] Failed to copy user code:", e);
     }
   };
-
   // 这次登录开始时有没有打开浏览器（授权中心的开关），换一次登录链接才重新读：
   // 中途拨开关不改这次的说明
   const verificationUri = login.deviceCode?.verification_uri;
@@ -216,7 +204,6 @@ export function ManagedAccountsGroup({
     () => Boolean(verificationUri) && !readAuthOpenBrowser(),
     [verificationUri],
   );
-
   const copyLink = async () => {
     const uri = login.deviceCode?.verification_uri;
     if (!uri) return;
@@ -231,15 +218,12 @@ export function ManagedAccountsGroup({
       console.debug("[AuthCenter] Failed to copy login link:", e);
     }
   };
-
   const openPage = () => {
     const uri = login.deviceCode?.verification_uri;
     if (uri) void settingsApi.openExternal(uri);
   };
-
   const ready = status === "ready";
   const showEmpty = ready && accounts.length === 0 && !busy && !chooser;
-
   return (
     <section
       aria-label={name}
@@ -540,7 +524,6 @@ export function ManagedAccountsGroup({
     </section>
   );
 }
-
 function AccountAvatar({
   login,
   avatarUrl,
@@ -569,7 +552,6 @@ function AccountAvatar({
     </span>
   );
 }
-
 interface AccountRowProps {
   account: GroupAccountRow;
   defaultLabel?: string;
@@ -585,7 +567,6 @@ interface AccountRowProps {
   onSetDefault?: (accountId: string) => void;
   onRemove: (accountId: string, login: string) => void;
 }
-
 function AccountRow({
   account,
   defaultLabel,
@@ -605,7 +586,6 @@ function AccountRow({
   const canSetDefault =
     onSetDefault !== undefined && !account.isDefault && !account.needsReauth;
   const separator = " · ";
-
   return (
     <div className="flex min-h-[56px] items-center gap-3 border-t border-border py-2 pe-2.5 ps-4">
       <AccountAvatar login={account.login} avatarUrl={account.avatarUrl} />

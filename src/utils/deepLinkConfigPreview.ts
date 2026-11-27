@@ -1,8 +1,7 @@
-import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import type { DeepLinkImportRequest } from "@/lib/api/deeplink";
 import { decodeBase64Utf8 } from "@/lib/utils/base64";
 import { isSensitiveConfigKey, maskSensitiveValue } from "@/utils/deeplinkRisk";
-
+import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 export interface ParsedDeepLinkConfig {
   type: "claude" | "codex" | "gemini" | "grokbuild" | "agy";
   env?: Record<string, string>;
@@ -10,7 +9,6 @@ export interface ParsedDeepLinkConfig {
   auth?: Record<string, string>;
   tomlConfig?: string;
 }
-
 const maskStructuredSecrets = (
   value: unknown,
   key = "",
@@ -35,28 +33,16 @@ const maskStructuredSecrets = (
   }
   return value;
 };
-
 const sanitizeTomlForPreview = (configToml: string): string => {
   const parsed = parseToml(configToml) as Record<string, unknown>;
   return `${stringifyToml(maskStructuredSecrets(parsed) as Record<string, unknown>).trim()}\n`;
 };
-
 export function parseDeepLinkConfigPreview(
   request: Pick<DeepLinkImportRequest, "app" | "config" | "configFormat">,
 ): ParsedDeepLinkConfig | null {
   if (!request.config) return null;
-
   try {
     const decoded = decodeBase64Utf8(request.config);
-    const format = request.configFormat?.trim().toLowerCase();
-
-    if (request.app === "grokbuild" && format === "toml") {
-      return {
-        type: "grokbuild",
-        tomlConfig: sanitizeTomlForPreview(decoded),
-      };
-    }
-
     const parsed = JSON.parse(decoded) as Record<string, unknown>;
     if (request.app === "claude") {
       return {
@@ -77,7 +63,11 @@ export function parseDeepLinkConfigPreview(
       if (!env || typeof env !== "object" || Array.isArray(env)) return null;
       const values = env as Record<string, unknown>;
       const config = parsed.config as
-        | { model?: { name?: unknown } }
+        | {
+            model?: {
+              name?: unknown;
+            };
+          }
         | undefined;
       const model = config?.model?.name ?? values.GEMINI_MODEL;
       return {
@@ -88,22 +78,6 @@ export function parseDeepLinkConfigPreview(
             .map((key) => [key, values[key] as string]),
         ),
         model: typeof model === "string" ? model : undefined,
-      };
-    }
-    if (request.app === "gemini") {
-      return {
-        type: "gemini",
-        env: parsed as Record<string, string>,
-      };
-    }
-    if (request.app === "grokbuild") {
-      const config =
-        typeof parsed.config === "string"
-          ? parsed.config
-          : stringifyToml(parsed);
-      return {
-        type: "grokbuild",
-        tomlConfig: sanitizeTomlForPreview(config),
       };
     }
     return null;

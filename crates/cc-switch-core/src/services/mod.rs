@@ -4,11 +4,12 @@ pub mod auto_sync;
 pub mod claude_account;
 pub mod codex_oauth_models;
 pub mod exchange_rates;
-pub mod kimi_oauth;
+pub mod failover;
 pub mod mcp;
 pub mod model_pricing;
+pub mod models_dev;
 pub mod omo;
-pub mod pi_prompt_files;
+pub mod profile;
 pub mod prompt;
 pub mod provider;
 pub mod proxy;
@@ -16,13 +17,14 @@ pub mod s3_auto_sync;
 pub mod session_common;
 #[cfg(feature = "session-monitor")]
 pub mod session_usage;
+#[cfg(feature = "session-monitor")]
 pub mod session_usage_codex;
 pub mod skill;
 pub mod sql_helpers;
 pub mod subscription;
 pub mod subscription_agy;
-pub mod subscription_grok;
 pub mod usage_cache;
+pub mod usage_http;
 pub mod usage_stats;
 pub mod webdav_auto_sync;
 
@@ -46,19 +48,9 @@ pub mod session_usage_agy;
 #[cfg(feature = "session-monitor")]
 pub mod session_usage_dsh;
 #[cfg(feature = "session-monitor")]
-pub mod session_usage_gemini;
-#[cfg(feature = "session-monitor")]
-pub mod session_usage_grokbuild;
-#[cfg(feature = "session-monitor")]
-pub mod session_usage_kimi;
-#[cfg(feature = "session-monitor")]
-pub mod session_usage_mcode;
-#[cfg(feature = "session-monitor")]
-pub mod session_usage_omp;
-#[cfg(feature = "session-monitor")]
 pub mod session_usage_opencode;
-#[cfg(feature = "session-monitor")]
-pub mod session_usage_pi;
 pub mod sync_protocol;
 pub mod webdav;
 pub mod webdav_sync;
+
+pub mod subscription_xai;

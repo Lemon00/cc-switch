@@ -1,3 +1,9 @@
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
+import { useSettingsQuery } from "@/lib/query";
+import { useUsageTrends } from "@/lib/query/usage";
+import { resolveUsageRange } from "@/lib/usageRange";
+import type { UsageRangeSelection } from "@/types/usage";
+import { Loader2 } from "lucide-react";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { useTranslation } from "react-i18next";
@@ -11,8 +17,6 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { useUsageTrends } from "@/lib/query/usage";
-import { Loader2 } from "lucide-react";
 import {
   fmtInt,
   formatHitRatePercent,
@@ -20,12 +24,7 @@ import {
   parseFiniteNumber,
   resolveTrendChartType,
 } from "./format";
-import { resolveUsageRange } from "@/lib/usageRange";
-import type { UsageRangeSelection } from "@/types/usage";
-import { useMoneyFormat } from "@/hooks/useMoneyFormat";
-import { useSettingsQuery } from "@/lib/query";
 import type { UsageMetric } from "./rememberedChoice";
-
 interface UsageTrendChartProps {
   range: UsageRangeSelection;
   /** 画哪个指标：由上方指标条选 */
@@ -35,7 +34,6 @@ interface UsageTrendChartProps {
   model?: string;
   refreshIntervalMs: number;
 }
-
 export interface UsageTrendStatLike {
   date: string;
   requestCount?: number;
@@ -45,7 +43,6 @@ export interface UsageTrendStatLike {
   totalCacheReadTokens: number;
   totalCost: string | number;
 }
-
 export interface UsageTrendChartPoint {
   /** Unique category key for Recharts — must not collide across years. */
   xKey: string;
@@ -67,7 +64,6 @@ export interface UsageTrendChartPoint {
   /** 缓存命中率（0–1）= 缓存命中 ÷（新增输入 + 缓存写入 + 缓存命中），和指标条同口径；没有输入时为 null */
   hitRate: number | null;
 }
-
 /** 缓存命中率（0–1）；分母（新增输入 + 缓存写入 + 缓存命中）为 0 时没有意义，返回 null */
 export function hitRateOf(stat: UsageTrendStatLike): number | null {
   const cacheable =
@@ -76,7 +72,6 @@ export function hitRateOf(stat: UsageTrendStatLike): number | null {
     stat.totalCacheReadTokens;
   return cacheable > 0 ? stat.totalCacheReadTokens / cacheable : null;
 }
-
 /**
  * 命中率 Y 轴的下限：命中率通常都在 90% 以上，从 0 画起柱子几乎一样高。
  * 取这批数据的最低值，往下再留半个「最低值到 100%」的距离（至少 2 个百分点）当余量，
@@ -92,7 +87,6 @@ export function hitRateAxisFloor(rates: (number | null)[]): number {
   // 数据本身跨度很大（最低值远低于 50%）时截断已无意义，照常从 0 画
   return floor < 0.5 ? 0 : floor;
 }
-
 /** Build chart rows from backend trend stats. Exported for unit tests. */
 export function buildUsageTrendChartData(
   trends: UsageTrendStatLike[] | undefined,
@@ -112,10 +106,14 @@ export function buildUsageTrendChartData(
   const spansMultipleDays =
     new Date(startDate * 1000).toDateString() !==
     new Date(endDate * 1000).toDateString();
-
   return (
     trends?.map((stat) => {
-      const pointDate = new Date(stat.date);
+      // Daily buckets are local calendar dates; Date("YYYY-MM-DD") uses UTC.
+      const pointDate = new Date(
+        /^\d{4}-\d{2}-\d{2}$/.test(stat.date)
+          ? `${stat.date}T00:00:00`
+          : stat.date,
+      );
       const cost = parseFiniteNumber(stat.totalCost);
       // Prefer a stable unique key from the source timestamp / date string.
       // Falling back to ISO keeps categories unique even if the backend
@@ -155,7 +153,6 @@ export function buildUsageTrendChartData(
               month: "2-digit",
               day: "2-digit",
             });
-
       return {
         xKey,
         rawDate: stat.date,
@@ -178,7 +175,6 @@ export function buildUsageTrendChartData(
     }) || []
   );
 }
-
 /** Resolve a tick label by the unique category key (not by filtered tick index). */
 export function formatUsageTrendTickLabel(
   xKey: string,
@@ -187,11 +183,9 @@ export function formatUsageTrendTickLabel(
   const point = chartData.find((row) => row.xKey === xKey);
   return point?.label ?? xKey;
 }
-
 export interface UsageTrendTokenTickFormatter {
   format(value: number): string;
 }
-
 /**
  * 中日文的「万」「亿」各管四位数，5000万、2000亿 比英文的 50M、200B 宽一截，
  * 会把纵轴撑宽；这两段改写成 5千万、2千亿。
@@ -217,7 +211,6 @@ function cjkThousandUnits(locale: string): Array<[number, string]> | null {
   }
   return null;
 }
-
 export function createUsageTrendTokenTickFormatter(
   locale: string,
 ): UsageTrendTokenTickFormatter {
@@ -244,19 +237,15 @@ export function createUsageTrendTokenTickFormatter(
     },
   };
 }
-
 export function formatUsageTrendTokenTickLabel(
   value: unknown,
   formatter: UsageTrendTokenTickFormatter,
 ): string {
   const num = parseFiniteNumber(value);
   if (num == null) return "--";
-
   return formatter.format(num);
 }
-
 const AXIS_TICK = { fill: "var(--text-3)", fontSize: 11 };
-
 /**
  * 量容器宽度给图表用，不用 Recharts 的 ResponsiveContainer / responsive：它们在 ResizeObserver 回调里排一次异步渲染，
  * 侧栏开合时图表会按旧宽度多画一帧，右边缘先错位再跳回来。ResizeObserver 回调在绘制前执行，
@@ -278,7 +267,6 @@ function useContainerWidth() {
   }, []);
   return [ref, width] as const;
 }
-
 export function UsageTrendChart({
   range,
   metric,
@@ -300,7 +288,6 @@ export function UsageTrendChart({
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },
   );
-
   const durationSeconds = Math.max(endDate - startDate, 0);
   const isHourly = durationSeconds <= 24 * 60 * 60;
   const language = i18n.resolvedLanguage || i18n.language || "en";
@@ -309,7 +296,6 @@ export function UsageTrendChart({
     () => createUsageTrendTokenTickFormatter(dateLocale),
     [dateLocale],
   );
-
   const chartData = useMemo(
     () =>
       buildUsageTrendChartData(trends, {
@@ -320,7 +306,6 @@ export function UsageTrendChart({
       }),
     [trends, isHourly, dateLocale, startDate, endDate],
   );
-
   // 单指标：图只画指标条选中的那一个，单 Y 轴，标题和 tooltip 跟着走。
   const metricLabel = {
     cost: t("usage.trend.cost"),
@@ -328,7 +313,6 @@ export function UsageTrendChart({
     tokens: t("usage.trend.tokens"),
     hitRate: t("usage.cacheHitRate"),
   }[metric];
-
   const formatMetric = (value: unknown) => {
     if (metric === "cost") return money(value, 4);
     if (metric === "hitRate") {
@@ -344,12 +328,10 @@ export function UsageTrendChart({
       return `${+((Number(value) || 0) * 100).toFixed(1)}%`;
     return formatUsageTrendTokenTickLabel(value, tokenTickFormatter);
   };
-
   const hitRateFloor = useMemo(
     () => hitRateAxisFloor(chartData.map((point) => point.hitRate)),
     [chartData],
   );
-
   const Chart = chartType === "bar" ? BarChart : AreaChart;
   const [chartBoxRef, chartWidth] = useContainerWidth();
   // 成本先换算成显示币种再画，Y 轴才会按这个币种挑整齐的刻度。
@@ -358,7 +340,6 @@ export function UsageTrendChart({
       ? (point: UsageTrendChartPoint) =>
           point.cost == null ? null : point.cost * rate
       : metric;
-
   const renderTooltip = ({ active, payload }: any) => {
     if (!active || !payload || payload.length === 0) return null;
     const point = payload[0]?.payload as UsageTrendChartPoint | undefined;
@@ -379,7 +360,6 @@ export function UsageTrendChart({
       </div>
     );
   };
-
   return (
     <section aria-labelledby="usage-trend-title" className="px-4 pb-2.5 pt-5">
       <h2

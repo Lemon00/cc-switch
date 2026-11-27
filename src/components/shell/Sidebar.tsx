@@ -1,5 +1,27 @@
-import { useRef, type ComponentType } from "react";
-import { useTranslation } from "react-i18next";
+import ccswitchLogo from "@/assets/icons/logo.svg";
+import { SkillsIcon } from "@/components/BrandIcons";
+import { HoverTip } from "@/components/ui/hover-tip";
+import {
+  fmtInt,
+  formatHitRatePercent,
+  formatTokensCompact,
+  getLocaleFromLanguage,
+  getResolvedLang,
+  resolveSidebarToday,
+  type SidebarTodayItem,
+} from "@/components/usage/format";
+import { orderAppIds } from "@/config/appConfig";
+import { useUpdate } from "@/contexts/UpdateContext";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
+import { sidebarWidth, useSidebarCollapsed } from "@/hooks/useSidebarCollapsed";
+import { useSidebarStatus, type AppNavStatus } from "@/hooks/useSidebarStatus";
+import type { AppId } from "@/lib/api";
+import type { GlobalPage, SettingsSection, View } from "@/lib/navigation";
+import { isAppPage } from "@/lib/navigation";
+import { DRAG_REGION_ATTR, DRAG_REGION_STYLE, isMac } from "@/lib/platform";
+import { useSettingsQuery } from "@/lib/query";
+import { cn } from "@/lib/utils";
+import type { VisibleApps } from "@/types";
 import { useQuery } from "@tanstack/react-query";
 import { getVersion } from "@tauri-apps/api/app";
 import {
@@ -21,36 +43,13 @@ import {
   Settings,
   SlidersHorizontal,
 } from "lucide-react";
-import type { AppId } from "@/lib/api";
-import type { VisibleApps } from "@/types";
-import { orderAppIds } from "@/config/appConfig";
-import type { GlobalPage, SettingsSection, View } from "@/lib/navigation";
-import { isAppPage } from "@/lib/navigation";
-import { SkillsIcon } from "@/components/BrandIcons";
-import { useUpdate } from "@/contexts/UpdateContext";
-import { sidebarWidth, useSidebarCollapsed } from "@/hooks/useSidebarCollapsed";
-import { useMoneyFormat } from "@/hooks/useMoneyFormat";
-import { useSettingsQuery } from "@/lib/query";
-import {
-  fmtInt,
-  formatHitRatePercent,
-  formatTokensCompact,
-  getLocaleFromLanguage,
-  getResolvedLang,
-  resolveSidebarToday,
-  type SidebarTodayItem,
-} from "@/components/usage/format";
-import { useSidebarStatus, type AppNavStatus } from "@/hooks/useSidebarStatus";
-import { HoverTip } from "@/components/ui/hover-tip";
-import { DRAG_REGION_ATTR, DRAG_REGION_STYLE, isMac } from "@/lib/platform";
-import { cn } from "@/lib/utils";
-import ccswitchLogo from "@/assets/icons/logo.svg";
+import { useRef, type ComponentType } from "react";
+import { useTranslation } from "react-i18next";
 import { APP_DISPLAY_NAME, AppGlyph } from "./AppGlyph";
-
 const NO_DRAG = { WebkitAppRegion: "no-drag" } as React.CSSProperties;
-
-type IconComponent = ComponentType<{ className?: string }>;
-
+type IconComponent = ComponentType<{
+  className?: string;
+}>;
 interface SidebarProps {
   activeApp: AppId;
   view: View;
@@ -63,9 +62,9 @@ interface SidebarProps {
   /** 打开了「启动时检查应用更新」并且查到了新版本 */
   appsUpdateAvailable?: boolean;
 }
-
-type DirectoryProps = SidebarProps & { collapsed: boolean };
-
+type DirectoryProps = SidebarProps & {
+  collapsed: boolean;
+};
 /**
  * 主导航（v7）：顶条 44 → 应用列表（唯一滚动的区域）→ 全局 6 项（贴底）→ 底栏「应用 · 设置」。
  * 进入设置后整条侧栏换成设置目录。收起时是 72px 的图标轨；
@@ -78,7 +77,6 @@ export function Sidebar(props: SidebarProps) {
   const { collapsed, toggle } = useSidebarCollapsed(navRef);
   const { view } = props;
   const inSettings = view === "settings";
-
   return (
     <nav
       ref={navRef}
@@ -103,7 +101,6 @@ export function Sidebar(props: SidebarProps) {
     </nav>
   );
 }
-
 function SidebarTopBar({
   collapsed,
   onToggle,
@@ -128,7 +125,6 @@ function SidebarTopBar({
       </button>
     </HoverTip>
   );
-
   // macOS 展开：顶条只放红绿灯；下面一行贴近红绿灯放 logo + 名字，收起箭头放在这一行最右边
   if (!collapsed && isMac()) {
     return (
@@ -158,7 +154,6 @@ function SidebarTopBar({
       </>
     );
   }
-
   // macOS 的红绿灯占着顶条左边约 70px：图标轨只有 72 宽，按钮挪到顶条下面一行
   if (collapsed && isMac()) {
     return (
@@ -175,7 +170,6 @@ function SidebarTopBar({
       </>
     );
   }
-
   return (
     <div
       className={cn(
@@ -204,9 +198,7 @@ function SidebarTopBar({
     </div>
   );
 }
-
 // ─── 主目录 ────────────────────────────────────────────────────────────────
-
 function MainDirectory({
   collapsed,
   activeApp,
@@ -233,7 +225,6 @@ function MainDirectory({
     (app) => visibleApps[app],
   );
   const onAppPage = isAppPage(view);
-
   // 选了的项里是 0 的不写（没配定价时金额总是 0）；命中率在今天还没有请求时不写；
   // 全都没有就整个不显示。两项都有时只写数、上下两行（「今日」放进悬停和读屏）：
   // 带上「今日」，换成新台币这类长币种后一行放不下，会把「用量统计」挤成省略号
@@ -264,7 +255,6 @@ function MainDirectory({
       ? t("nav.today", { value: todayValues.join(" · ") })
       : undefined;
   const todayTrailing = todayValues.length > 1 ? todayValues : todayText;
-
   const globals: {
     page: GlobalPage;
     label: string;
@@ -291,10 +281,8 @@ function MainDirectory({
       trailingLabel: todayText,
     },
   ];
-
   const isGlobalSelected = (page: GlobalPage) =>
     view === page || (page === "skills" && view === "skillsDiscovery");
-
   return (
     <>
       <div
@@ -387,11 +375,13 @@ function MainDirectory({
     </>
   );
 }
-
 function modeTag(
   status: AppNavStatus,
   t: (key: string) => string,
-): { label: string; className: string } | null {
+): {
+  label: string;
+  className: string;
+} | null {
   if (status.mode === "route") {
     return {
       label: t("nav.mode.route"),
@@ -406,7 +396,6 @@ function modeTag(
   }
   return null;
 }
-
 function AppNavItem({
   app,
   collapsed,
@@ -435,7 +424,6 @@ function AppNavItem({
       ? `${name} · ${modeName}`
       : name;
   const badgeBg = selected ? "bg-selected" : "bg-sidebar";
-
   if (collapsed) {
     const marker = status.alert
       ? { className: "bg-danger text-action-fg", icon: AlertGlyph }
@@ -475,7 +463,6 @@ function AppNavItem({
       </HoverTip>
     );
   }
-
   return (
     <button
       type="button"
@@ -511,7 +498,6 @@ function AppNavItem({
     </button>
   );
 }
-
 function AlertGlyph({ className }: { className?: string }) {
   return (
     <svg
@@ -527,7 +513,6 @@ function AlertGlyph({ className }: { className?: string }) {
     </svg>
   );
 }
-
 function NavItem({
   collapsed,
   compact = false,
@@ -599,7 +584,6 @@ function NavItem({
       )}
     </span>
   );
-
   if (collapsed) {
     return (
       <HoverTip
@@ -622,7 +606,6 @@ function NavItem({
       </HoverTip>
     );
   }
-
   // 展开时名字可见；只有 title 比名字多说了点什么（如「有可用更新」），
   // 或行尾只写了数（完整说法在 trailingLabel）时才挂提示
   const hoverContent =
@@ -643,7 +626,7 @@ function NavItem({
         aria-label={trailingLabel ? accessibleName : undefined}
         aria-current={selected ? "page" : undefined}
         className={cn(
-"flex h-7 shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
+          "flex h-7 shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
           // 底栏两项按各自文字分宽度：「Apps」这类短词不必占满一半，长词（Optionen、Настройки）才放得下
           compact ? "min-w-0 flex-auto shrink" : "mx-2 w-[184px]",
           selected && "bg-selected font-medium hover:bg-selected",
@@ -691,10 +674,11 @@ function NavItem({
     </HoverTip>
   );
 }
-
 // ─── 设置目录 ──────────────────────────────────────────────────────────────
-
-const SETTINGS_ITEMS: { section: SettingsSection; icon: IconComponent }[] = [
+const SETTINGS_ITEMS: {
+  section: SettingsSection;
+  icon: IconComponent;
+}[] = [
   { section: "general", icon: SlidersHorizontal },
   { section: "appConfig", icon: Folder },
   { section: "routing", icon: Route },
@@ -702,7 +686,6 @@ const SETTINGS_ITEMS: { section: SettingsSection; icon: IconComponent }[] = [
   { section: "data", icon: Database },
   { section: "about", icon: Info },
 ];
-
 function SettingsDirectory({
   collapsed,
   settingsSection,
@@ -716,7 +699,6 @@ function SettingsDirectory({
     queryFn: () => getVersion(),
     staleTime: Infinity,
   });
-
   return (
     <>
       {collapsed ? (
@@ -774,5 +756,4 @@ function SettingsDirectory({
     </>
   );
 }
-
 export type { SidebarProps };

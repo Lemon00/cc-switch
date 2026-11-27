@@ -1,59 +1,12 @@
-# Support / 获取帮助
-
-> [中文版本](#获取帮助)
-
-## How to Get Help
-
-CC Switch is an open-source project maintained by volunteers. We're happy to help, but please use the right channel so we can respond efficiently.
-
-### Before Asking
-
-1. **Read the [FAQ](https://github.com/farion1231/cc-switch#faq)** — most common questions are answered there.
-2. **Search [existing issues](https://github.com/farion1231/cc-switch/issues)** (including closed ones) — someone may have had the same question.
-
-### Asking a Question
-
-- **Usage or configuration questions**: [Open a Question issue](https://github.com/farion1231/cc-switch/issues/new?template=question.yml)
-- **General discussion**: [GitHub Discussions](https://github.com/farion1231/cc-switch/discussions)
-
-### Reporting Problems
-
-- **Bug reports**: [Open a Bug Report](https://github.com/farion1231/cc-switch/issues/new?template=bug_report.yml)
-- **Documentation issues**: [Open a Doc Issue](https://github.com/farion1231/cc-switch/issues/new?template=doc_issue.yml)
-- **Security vulnerabilities**: Please do NOT use public issues. See our [Security Policy](./SECURITY.md).
-
-### Feature Requests
-
-- [Submit a Feature Request](https://github.com/farion1231/cc-switch/issues/new?template=feature_request.yml)
-- Please open an issue for discussion before submitting a PR for new features.
-
----
-
 # 获取帮助
 
-> [English Version](#support--获取帮助)
+先查阅[用户手册](docs/user-manual/zh/README.md)和[常见问题](docs/user-manual/zh/5-faq/5.2-questions.md)，再搜索本仓库已有问题。
 
-## 如何获取帮助
+- [报告 Bug](https://github.com/Lemon00/cc-switch/issues/new?template=bug_report.yml)
+- [使用问题](https://github.com/Lemon00/cc-switch/issues/new?template=question.yml)
+- [文档问题](https://github.com/Lemon00/cc-switch/issues/new?template=doc_issue.yml)
+- [功能建议](https://github.com/Lemon00/cc-switch/issues/new?template=feature_request.yml)
 
-CC Switch 是一个由志愿者维护的开源项目。我们很乐意提供帮助，但请使用合适的渠道，以便我们高效响应。
+请注明独立版版本、系统、复现步骤、预期与实际结果，并附上去敏后的相关日志。不要公开 API Key、账号令牌或包含凭据的导出文件。安全问题见[安全报告说明](SECURITY.md)。
 
-### 提问之前
-
-1. **阅读 [常见问题](https://github.com/farion1231/cc-switch/blob/main/README_ZH.md#常见问题)** — 大多数常见问题都已在其中解答。
-2. **搜索 [已有的 Issue](https://github.com/farion1231/cc-switch/issues)**（包括已关闭的） — 可能已经有人问过相同的问题。
-
-### 提问
-
-- **使用或配置问题**：[提交问题 Issue](https://github.com/farion1231/cc-switch/issues/new?template=question.yml)
-- **一般讨论**：[GitHub 讨论区](https://github.com/farion1231/cc-switch/discussions)
-
-### 报告问题
-
-- **Bug 报告**：[提交 Bug 报告](https://github.com/farion1231/cc-switch/issues/new?template=bug_report.yml)
-- **文档问题**：[提交文档问题](https://github.com/farion1231/cc-switch/issues/new?template=doc_issue.yml)
-- **安全漏洞**：请不要使用公开 Issue。请参阅我们的[安全策略](./SECURITY.md)。
-
-### 功能请求
-
-- [提交功能请求](https://github.com/farion1231/cc-switch/issues/new?template=feature_request.yml)
-- 提交新功能的 PR 之前，请先开 Issue 讨论。
+本仓库独立维护，问题反馈和下载均使用 `Lemon00/cc-switch`。

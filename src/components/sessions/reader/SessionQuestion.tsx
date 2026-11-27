@@ -1,29 +1,24 @@
-import { memo, useState } from "react";
-import { Copy } from "lucide-react";
-import { useTranslation } from "react-i18next";
-
 import { HoverTip } from "@/components/ui/hover-tip";
 import { cn } from "@/lib/utils";
+import { Copy } from "lucide-react";
+import { memo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { formatMessageTime } from "../utils";
 import { useReaderContext } from "./context";
 import { useReaderT } from "./i18n";
+import { SessionImageGrid } from "./SessionImage";
 import {
   createCollapsedMarkdownPreview,
   SessionPlainText,
 } from "./SessionMarkdown";
-import { SessionImageGrid } from "./SessionImage";
 import type { TurnQuestion } from "./turns";
-
 /** 超过 3000 字折叠到 1500 字（§6.4 提问 / 规则 11） */
 export const COLLAPSE_THRESHOLD = 3000;
 export const COLLAPSED_LENGTH = 1500;
-
 export const formatCharCount = (count: number) =>
   count >= 1000 ? `${(count / 1000).toFixed(1)}k` : String(count);
-
 export const rowIconButton =
   "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-control text-fg-3 opacity-0 transition-[opacity,color,background-color] hover:bg-selected hover:text-fg-1 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
-
 /** 长内容的「展开完整内容 / 收起」 */
 export const CollapseToggle = ({
   expanded,
@@ -55,13 +50,11 @@ export const CollapseToggle = ({
     </button>
   );
 };
-
 export interface SessionQuestionProps {
   question: TurnQuestion;
   /** 查找命中：长提问自动展开 */
   forceExpanded: boolean;
 }
-
 /**
  * 提问气泡：靠右显示（左右对话布局），时间和复制按钮在气泡外上方；气泡只放正文，
  * 底色是 Agent 主题色的浅色，右上角收小做出尖角。纯文本 + 围栏代码（决策 D7）、贴图缩略图。
@@ -80,7 +73,6 @@ export const SessionQuestion = memo(function SessionQuestion({
     long && !open
       ? createCollapsedMarkdownPreview(text, COLLAPSED_LENGTH)
       : text;
-
   return (
     <div className="group/question flex min-w-0 flex-col items-end gap-1">
       {/* 时间与复制放在气泡外：气泡里只放正文；靠右本身就表示「你」，读屏另给文字 */}

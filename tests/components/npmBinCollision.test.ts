@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { npmBinCollisionPath } from "@/components/apps/useToolManagement";
-
 describe("npmBinCollisionPath", () => {
   it("extracts the conflicting path from npm's EEXIST output", () => {
     const detail = [
@@ -13,7 +12,6 @@ describe("npmBinCollisionPath", () => {
     ].join("\n");
     expect(npmBinCollisionPath(detail)).toBe("/home/me/.local/bin/pi");
   });
-
   it("handles Windows paths and CRLF output", () => {
     const detail =
       "npm error code EEXIST\r\nnpm error File exists: C:\\Users\\me\\AppData\\Roaming\\npm\\pi.cmd\r\n";
@@ -21,7 +19,6 @@ describe("npmBinCollisionPath", () => {
       "C:\\Users\\me\\AppData\\Roaming\\npm\\pi.cmd",
     );
   });
-
   it("ignores failures that are not a bin collision", () => {
     expect(npmBinCollisionPath("npm error code E404")).toBeNull();
     expect(npmBinCollisionPath("EEXIST without a path")).toBeNull();

@@ -1,5 +1,4 @@
 import { useEffect, useLayoutEffect, useState } from "react";
-
 /**
  * 用量统计里几张表（请求日志、供应商、模型、定价）共用的样式：
  * 列头 12px --text-2，行高 36，分隔线 --border；表格区自己横向滚动，页面不溢出。
@@ -31,7 +30,6 @@ export const usageTable = {
   empty: "py-10 text-center text-body text-fg-3",
   skeleton: "h-[240px] animate-pulse rounded-panel bg-subtle",
 } as const;
-
 /**
  * 横向滚动时固定在左侧的列。固定格子要有自己的底色（不然滚过去的内容会透出来），
  * 表体格子悬停时跟着整行变色；内容真的滚到它下面时，右侧才画分隔线和淡阴影。
@@ -44,7 +42,6 @@ export const stickyCol = {
   startEdge:
     "shadow-[inset_-1px_0_0_hsl(var(--border)),8px_0_8px_-8px_rgb(0_0_0/0.14)]",
 } as const;
-
 /**
  * 滚动容器是否已经往右滚过、左边有内容藏到固定列底下（决定固定列要不要画分隔线和阴影）。
  * 返回回调 ref：加载中先画骨架、表格后挂上时也能接上监听。
@@ -61,7 +58,6 @@ export function useScrolledFromStart<T extends HTMLElement>() {
   }, [element]);
   return [setElement, scrolled] as const;
 }
-
 /** 元素宽度（ResizeObserver）；用回调 ref，元素晚挂上也能量到；测量不到（jsdom）时返回 0 */
 export function useElementWidth<T extends HTMLElement>() {
   const [element, setElement] = useState<T | null>(null);

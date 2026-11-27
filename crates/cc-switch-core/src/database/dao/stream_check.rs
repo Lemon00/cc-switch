@@ -9,7 +9,11 @@ impl Database {
     /// Delete stream check logs older than `retain_days` days.
     /// Returns the number of deleted rows.
     pub fn cleanup_old_stream_check_logs(&self, retain_days: i64) -> Result<u64, AppError> {
-        let cutoff = chrono::Utc::now().timestamp() - retain_days * 86400;
+        let cutoff = retain_days
+            .checked_mul(86400)
+            .filter(|_| retain_days >= 0)
+            .and_then(|seconds| chrono::Utc::now().timestamp().checked_sub(seconds))
+            .ok_or_else(|| AppError::InvalidInput("Invalid stream log retention days".into()))?;
         let conn = lock_conn!(self.conn);
         let deleted = conn
             .execute(

@@ -1,23 +1,19 @@
-import { memo } from "react";
-
 import { cn } from "@/lib/utils";
+import { memo } from "react";
 import { useReaderContext } from "./context";
 import { useReaderT } from "./i18n";
 import { GlyphCell, ROW_BUTTON, ROW_STATIC, stripBold } from "./rowStyles";
 import { BlockText } from "./SessionStepDetails";
 import { formatDuration, summarizeThinking } from "./toolSummary";
 import type { ThinkingStep } from "./turns";
-
 /** 字数显示：860 / 1.2k */
 const formatChars = (count: number) =>
   count >= 1000 ? `${Number((count / 1000).toFixed(1))}k` : String(count);
-
 export interface SessionThinkingRowProps {
   step: ThinkingStep;
   expanded: boolean;
   onToggle: (id: string, expanded: boolean) => void;
 }
-
 /**
  * 思考行（规则 8、决策 D6）：默认一行「✻ 思考中… · 1.2k 字 · 8s」，有 summary 直接显示；
  * 点开斜体全文，预览之外按需取全文。redacted 只显示「思考内容不可见」，不可展开。
@@ -37,7 +33,6 @@ export const SessionThinkingRow = memo(function SessionThinkingRow({
       ? formatDuration(info.durationMs)
       : null;
   const glyph = <GlyphCell glyph={style.thinkingGlyph} className="text-fg-3" />;
-
   if (info.redacted || (!step.block.text && !step.block.full)) {
     return (
       <div className={ROW_STATIC}>
@@ -54,13 +49,11 @@ export const SessionThinkingRow = memo(function SessionThinkingRow({
       </div>
     );
   }
-
   const chars = formatChars(info.chars);
   const meta = duration
     ? rt("thinkingMeta", { chars, duration })
     : rt("thinkingChars", { chars });
   const regionId = `reader-thinking-${step.id}`;
-
   return (
     <div className="min-w-0">
       <button

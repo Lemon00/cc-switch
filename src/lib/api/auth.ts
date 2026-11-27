@@ -1,26 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
-
 export type ManagedAuthProvider =
   | "github_copilot"
   | "codex_oauth"
   | "xai_oauth"
   | "agy_oauth"
   | "claude_official";
-
 export type CodexLoginMethod = "browser" | "device_code";
 /**
  * 传给 `auth_start_login` 的登录方式（不传＝各服务的默认方式）。`copy_link` 只给 Claude 官方账号：
  * 授权中心关了「自动打开浏览器」时，让 Windows 上的 Claude Code 也别自己开浏览器。
  */
 export type ManagedLoginMethod = CodexLoginMethod | "copy_link";
-export type AuthCenterTarget =
-  | ManagedAuthProvider
-  | "kimi_oauth"
-  | "dsh_account";
-
+export type AuthCenterTarget = ManagedAuthProvider | "dsh_account";
 export const CODEX_OAUTH_DUPLICATE_ACCOUNT_ERROR =
   "codex_oauth_duplicate_account";
-
 export interface ManagedAuthAccount {
   id: string;
   provider: ManagedAuthProvider;
@@ -40,7 +33,6 @@ export interface ManagedAuthAccount {
   /** Claude official only: `rateLimitTier` (e.g. `default_claude_max_20x`), tells Max 5x from 20x. */
   rate_limit_tier?: string | null;
 }
-
 export interface ManagedAuthStatus {
   provider: ManagedAuthProvider;
   authenticated: boolean;
@@ -48,7 +40,6 @@ export interface ManagedAuthStatus {
   migration_error?: string | null;
   accounts: ManagedAuthAccount[];
 }
-
 export interface ManagedAuthDeviceCodeResponse {
   provider: ManagedAuthProvider;
   device_code: string;
@@ -59,7 +50,6 @@ export interface ManagedAuthDeviceCodeResponse {
   /** 后端已经把登录页交给系统浏览器了（Claude 官方账号在 Windows 上由 Claude Code 自己打开），前端不要再开一次 */
   browser_opened?: boolean;
 }
-
 export async function authStartLogin(
   authProvider: ManagedAuthProvider,
   githubDomain?: string,
@@ -73,7 +63,6 @@ export async function authStartLogin(
     ...(loginMethod ? { loginMethod } : {}),
   });
 }
-
 export async function authPollForAccount(
   authProvider: ManagedAuthProvider,
   deviceCode: string,
@@ -85,7 +74,6 @@ export async function authPollForAccount(
     githubDomain: githubDomain || null,
   });
 }
-
 export async function authCancelLogin(
   authProvider: ManagedAuthProvider,
   deviceCode: string,
@@ -95,7 +83,6 @@ export async function authCancelLogin(
     deviceCode,
   });
 }
-
 export async function authListAccounts(
   authProvider: ManagedAuthProvider,
 ): Promise<ManagedAuthAccount[]> {
@@ -103,7 +90,6 @@ export async function authListAccounts(
     authProvider,
   });
 }
-
 export async function authGetStatus(
   authProvider: ManagedAuthProvider,
 ): Promise<ManagedAuthStatus> {
@@ -111,7 +97,6 @@ export async function authGetStatus(
     authProvider,
   });
 }
-
 export async function authRemoveAccount(
   authProvider: ManagedAuthProvider,
   accountId: string,
@@ -121,7 +106,6 @@ export async function authRemoveAccount(
     accountId,
   });
 }
-
 export async function authSetDefaultAccount(
   authProvider: ManagedAuthProvider,
   accountId: string,
@@ -131,7 +115,6 @@ export async function authSetDefaultAccount(
     accountId,
   });
 }
-
 export async function authLogout(
   authProvider: ManagedAuthProvider,
 ): Promise<void> {
@@ -139,12 +122,10 @@ export async function authLogout(
     authProvider,
   });
 }
-
 /** 有没有正在运行的 agy：在跑的 agy 还用切换前的账号，续期时可能把旧登录写回去。 */
 export async function agyAccountIsRunning(): Promise<boolean> {
   return invoke<boolean>("agy_account_is_running");
 }
-
 /** Claude 官方账号登录：浏览器回不到本机时，把落地页地址或页面上的代码交给正在等待的登录。 */
 export async function claudeAccountSubmitPaste(
   flowId: string,
@@ -152,7 +133,6 @@ export async function claudeAccountSubmitPaste(
 ): Promise<void> {
   return invoke("claude_account_submit_paste", { flowId, pasted });
 }
-
 /** 切卡时切换 Claude Code 登录的状态。 */
 export interface ClaudeLoginSwitchStatus {
   /** 切到选了账号的官方卡时会切换登录（没被挡住） */
@@ -162,11 +142,9 @@ export interface ClaudeLoginSwitchStatus {
   /** Claude Code 现在登录的账号 key */
   live: string | null;
 }
-
 export async function getClaudeLoginSwitch(): Promise<ClaudeLoginSwitchStatus> {
   return invoke<ClaudeLoginSwitchStatus>("get_claude_login_switch");
 }
-
 export const authApi = {
   authStartLogin,
   authPollForAccount,

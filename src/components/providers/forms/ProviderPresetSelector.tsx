@@ -1,31 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { useTranslation } from "react-i18next";
-import type { TFunction } from "i18next";
-import { Search, SlidersHorizontal, X, Zap } from "lucide-react";
+import { ClaudeIcon, CodexIcon, GeminiIcon } from "@/components/BrandIcons";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { ProviderIconBox } from "@/components/ProviderIconBox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ClaudeIcon, CodexIcon, GeminiIcon } from "@/components/BrandIcons";
-import { ProviderIconBox } from "@/components/ProviderIconBox";
-import type { ProviderPreset } from "@/config/claudeProviderPresets";
-import type { CodexProviderPreset } from "@/config/codexProviderPresets";
-import type { GeminiProviderPreset } from "@/config/geminiProviderPresets";
-import type { ClaudeDesktopProviderPreset } from "@/config/claudeDesktopProviderPresets";
-import type { OpenCodeProviderPreset } from "@/config/opencodeProviderPresets";
-import type { OpenClawProviderPreset } from "@/config/openclawProviderPresets";
-import type { HermesProviderPreset } from "@/config/hermesProviderPresets";
-import type { McodeProviderPreset } from "@/config/mcodeProviderPresets";
-import type { KimiProviderPreset } from "@/config/kimiProviderPresets";
-import type { PiProviderPreset } from "@/config/piProviderPresets";
-import type { OmpProviderPreset } from "@/config/ompProviderPresets";
-import type { ProviderCategory } from "@/types";
-import type { AppId } from "@/lib/api";
-import {
-  universalProviderPresets,
-  type UniversalProviderPreset,
-} from "@/config/universalProviderPresets";
-import { cn } from "@/lib/utils";
-import { usePresetStep } from "./presetStep";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
   Select,
@@ -34,7 +11,23 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ConfirmDialog } from "@/components/ConfirmDialog";
+import type { AgyProviderPreset } from "@/config/agyProviderPresets";
+import type { ProviderPreset } from "@/config/claudeProviderPresets";
+import type { CodexProviderPreset } from "@/config/codexProviderPresets";
+import type { DshProviderPreset } from "@/config/dshProviderPresets";
+import type { OpenCodeProviderPreset } from "@/config/opencodeProviderPresets";
+import {
+  universalProviderPresets,
+  type UniversalProviderPreset,
+} from "@/config/universalProviderPresets";
+import type { AppId } from "@/lib/api";
+import { cn } from "@/lib/utils";
+import type { ProviderCategory } from "@/types";
+import type { TFunction } from "i18next";
+import { Search, SlidersHorizontal, X, Zap } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 import {
   PRESET_GROUP_ORDER,
   familyDisplayName,
@@ -61,34 +54,24 @@ import {
   type PresetGroup,
   type PresetRowItem,
 } from "./presetGroups";
-
+import { usePresetStep } from "./presetStep";
 type PresetTranslator = (key: string) => unknown;
-
 export type AnyPreset =
+  | DshProviderPreset
   | ProviderPreset
   | CodexProviderPreset
-  | GeminiProviderPreset
-  | ClaudeDesktopProviderPreset
-  | OpenCodeProviderPreset
-  | OpenClawProviderPreset
-  | HermesProviderPreset
-  | PiProviderPreset
-  | McodeProviderPreset
-  | KimiProviderPreset
-  | OmpProviderPreset;
-
+  | AgyProviderPreset
+  | OpenCodeProviderPreset;
 export type PresetEntry = {
   id: string;
   preset: AnyPreset;
 };
-
 export function getPresetDisplayName(
   preset: AnyPreset,
   t: PresetTranslator,
 ): string {
   return presetDisplayName(preset, t);
 }
-
 /** 搜索：名称、显示名、域名主体、别名（中文名、公司名） */
 export function filterPresetEntries(
   entries: PresetEntry[],
@@ -98,25 +81,34 @@ export function filterPresetEntries(
   if (!query.trim()) return entries;
   return entries.filter((entry) => presetMatches(entry, query, t));
 }
-
 /** 一律按名称排（中文名按拼音插进字母序），不再有官方 / 赞助商置顶 */
 export function getVisiblePresetEntries(
   entries: PresetEntry[],
-  { query, t }: { query: string; t: PresetTranslator },
+  {
+    query,
+    t,
+  }: {
+    query: string;
+    t: PresetTranslator;
+  },
 ): PresetEntry[] {
   return sortPresetsByName(filterPresetEntries(entries, query, t), t);
 }
-
 /** 第 1 步的一行和搜索命中的版本下标（空 = 整家命中） */
 export interface VisiblePresetRow {
   row: PresetRowItem;
   hits: number[];
 }
-
 /** 同一家的多个版本合成一行，再按名称排 */
 export function getVisiblePresetRows(
   entries: PresetEntry[],
-  { query, t }: { query: string; t: PresetTranslator },
+  {
+    query,
+    t,
+  }: {
+    query: string;
+    t: PresetTranslator;
+  },
 ): VisiblePresetRow[] {
   const found = groupPresetRows(entries).flatMap((row) => {
     const match = matchPresetRow(row, query, t);
@@ -124,9 +116,7 @@ export function getVisiblePresetRows(
   });
   return sortPresetRowsByName(found, t);
 }
-
 type PickerCategory = "all" | PresetGroup | "universal";
-
 interface ProviderPresetSelectorProps {
   selectedPresetId: string | null;
   presetEntries: PresetEntry[];
@@ -138,7 +128,6 @@ interface ProviderPresetSelectorProps {
   category?: ProviderCategory;
   barAction?: React.ReactNode;
 }
-
 /**
  * 添加供应商的预设（v7 两步）：第 1 步在添加页的内容区里选（常驻搜索 + 左侧分类 + 两列列表），
  * 第 2 步在表单最上面只剩一条「预设条」，点「更换」回到第 1 步。
@@ -154,12 +143,10 @@ export function ProviderPresetSelector({
   const step = usePresetStep();
   const registerSelector = step?.registerSelector;
   useEffect(() => registerSelector?.(), [registerSelector]);
-
   const pick = (id: string) => {
     onPresetChange(id);
     step?.setStep("form");
   };
-
   if (step?.step === "pick" && step.host) {
     return createPortal(
       <PresetPicker
@@ -172,12 +159,10 @@ export function ProviderPresetSelector({
       step.host,
     );
   }
-
   const entry =
     selectedPresetId && selectedPresetId !== "custom"
       ? presetEntries.find((item) => item.id === selectedPresetId)
       : undefined;
-
   if (!step) {
     // 没有两步外壳（单独渲染的表单）：就地显示选择列表，选中多版本的那一家时下面跟版本切换
     const versions = entry ? presetVersions(presetEntries, entry) : [];
@@ -202,7 +187,6 @@ export function ProviderPresetSelector({
       </div>
     );
   }
-
   return (
     <PresetBar
       action={barAction}
@@ -215,9 +199,7 @@ export function ProviderPresetSelector({
     />
   );
 }
-
 // ─── 图标块 ─────────────────────────────────────────────────────────────────
-
 function PresetIconBox({ preset }: { preset?: AnyPreset }) {
   const { t } = useTranslation();
   if (preset?.icon) {
@@ -260,9 +242,7 @@ function PresetIconBox({ preset }: { preset?: AnyPreset }) {
     </span>
   );
 }
-
 // ─── 第 2 步：预设条 ────────────────────────────────────────────────────────
-
 function PresetBar({
   appId,
   entry,
@@ -334,7 +314,6 @@ function PresetBar({
     </div>
   );
 }
-
 /**
  * 用户在表单里手动改过东西没有：只认表单里的 input / change 事件。预设填充是程序改值，
  * 不发这些事件；Radix Select / Checkbox / Switch 跟着值同步的隐藏控件（aria-hidden）会发，
@@ -368,7 +347,6 @@ function useFormEditedSince(
   }, [anchor]);
   return edited;
 }
-
 /**
  * 选版本（换版本 = 选同一家的另一个预设，表单按它重填）。版本按「套餐 × 地区」两个维度摆：
  * 只有一维在变 → 一个分段控件；两维都变且成完整网格 → 套餐、地区各一个分段控件
@@ -389,7 +367,6 @@ function VersionSwitch({
   const edited = useFormEditedSince(ref, entry.id);
   const [pending, setPending] = useState<PresetEntry | null>(null);
   const layout = presetVersionLayout(versions);
-
   const request = (id: string) => {
     if (id === entry.id) return;
     const next = versions.find((version) => version.id === id);
@@ -400,7 +377,6 @@ function VersionSwitch({
       onVersionChange(id);
     }
   };
-
   // 网格里切一维：另一维保持当前值
   const requestCell = (
     plan = entry.preset.planKey,
@@ -412,10 +388,8 @@ function VersionSwitch({
     );
     if (next) request(next.id);
   };
-
   const segmentClass =
     "h-auto min-w-0 flex-wrap gap-0.5 border border-border-strong bg-transparent p-0.5";
-
   return (
     <div
       ref={ref}
@@ -508,7 +482,6 @@ function VersionSwitch({
     </div>
   );
 }
-
 /** 版本区左侧的小标签（版本 / 套餐 / 地区），和控件第一行垂直居中 */
 function DimensionLabel({ children }: { children: React.ReactNode }) {
   return (
@@ -520,7 +493,6 @@ function DimensionLabel({ children }: { children: React.ReactNode }) {
     </span>
   );
 }
-
 function NeedsRouteBadge() {
   const { t } = useTranslation();
   return (
@@ -529,9 +501,7 @@ function NeedsRouteBadge() {
     </span>
   );
 }
-
 // ─── 第 1 步：选预设 ────────────────────────────────────────────────────────
-
 interface PresetPickerProps {
   appId?: AppId;
   entries: PresetEntry[];
@@ -540,7 +510,6 @@ interface PresetPickerProps {
   onUniversalPresetSelect?: (preset: UniversalProviderPreset) => void;
   onManageUniversalProviders?: () => void;
 }
-
 function PresetPicker({
   appId,
   entries,
@@ -553,12 +522,10 @@ function PresetPicker({
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<PickerCategory>("all");
   const searchRef = useRef<HTMLInputElement>(null);
-
   useEffect(() => {
     const frame = requestAnimationFrame(() => searchRef.current?.focus());
     return () => cancelAnimationFrame(frame);
   }, []);
-
   // ⌘F / Ctrl+F 回到搜索框（捕获阶段，别让后面供应商列表的同名快捷键接到）
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -571,7 +538,6 @@ function PresetPicker({
     globalThis.addEventListener("keydown", onKeyDown, true);
     return () => globalThis.removeEventListener("keydown", onKeyDown, true);
   }, []);
-
   const groups = useMemo(() => {
     const byGroup = new Map<PresetGroup, PresetEntry[]>();
     for (const entry of entries) {
@@ -580,7 +546,6 @@ function PresetPicker({
     }
     return byGroup;
   }, [entries]);
-
   // 同一家的多个版本合成一行，数量也按行数算
   const matching = useMemo(
     () => getVisiblePresetRows(entries, { query, t }),
@@ -595,27 +560,23 @@ function PresetPicker({
         : [],
     [onUniversalPresetSelect, query],
   );
-
   const countFor = (key: PickerCategory) => {
     if (key === "universal") return matchingUniversal.length;
     // 「自定义配置」固定在第一行，不计入数量
     if (key === "all") return matching.length;
     return matching.filter((item) => presetRowGroup(item.row) === key).length;
   };
-
   const shown =
     category === "all"
       ? matching
       : category === "universal"
         ? []
         : matching.filter((item) => presetRowGroup(item.row) === category);
-
   const navItems: PickerCategory[] = [
     "all",
     ...PRESET_GROUP_ORDER.filter((group) => groups.has(group)),
   ];
   const searching = query.trim().length > 0;
-
   const customRow = (
     <PresetRow
       icon={<PresetIconBox />}
@@ -641,12 +602,10 @@ function PresetPicker({
       />
     );
   };
-
   const nothing =
     searching &&
     matching.length === 0 &&
     (category !== "universal" || matchingUniversal.length === 0);
-
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="shrink-0 px-6 pb-3 pt-4">
@@ -804,7 +763,6 @@ function PresetPicker({
     </div>
   );
 }
-
 /**
  * 副行：搜索命中某个版本时写「匹配：火山 Coding Plan」；账号登录类写登录说明；
  * 有多个版本的写「kimi.com · 4 个版本」；其余写域名。
@@ -839,7 +797,6 @@ function presetRowDetail(
   }
   return presetDomain(first.preset);
 }
-
 function CategoryButton({
   label,
   count,
@@ -871,7 +828,6 @@ function CategoryButton({
     </button>
   );
 }
-
 function PresetRow({
   icon,
   name,

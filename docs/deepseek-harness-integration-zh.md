@@ -37,16 +37,16 @@ API Key 写入原生 `.credentials.yaml` 的 `refs`，profile 仅保存 `apiKeyE
 
 ## 数据位置
 
-| 能力 | 原生位置与行为 |
-| --- | --- |
-| 数据目录 | `$DSH_HOME`，未设置时为 `~/.dsh` |
-| 供应商、模型 | `profiles/{web,desktop}/cordis.patch.yml`，以及已有的 `headless`、`acp` 补丁中的 `llm-pi-ai` 插件 override |
-| API Key | `.credentials.yaml` 的 `refs`；保留其他 refs 与 records |
-| MCP | 同一组 profile 的 `insert` 列表中每个服务器一个 `@deepseek-ai/dsh-mcp-client` 插件条目 |
-| DeepSeek 账号（OAuth） | `.credentials.yaml` 的 `records["deepseek-account-platform/default"]`，Web 与 Desktop 共用 |
-| Skills | `skills/<目录>/SKILL.md` |
-| 全局提示词 | `AGENTS.md` |
-| 会话 | `sessions/<项目>/<会话>/session.vN.jsonl` 或 `.jsonl.zstd` |
+| 能力                   | 原生位置与行为                                                                                             |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------- |
+| 数据目录               | `$DSH_HOME`，未设置时为 `~/.dsh`                                                                           |
+| 供应商、模型           | `profiles/{web,desktop}/cordis.patch.yml`，以及已有的 `headless`、`acp` 补丁中的 `llm-pi-ai` 插件 override |
+| API Key                | `.credentials.yaml` 的 `refs`；保留其他 refs 与 records                                                    |
+| MCP                    | 同一组 profile 的 `insert` 列表中每个服务器一个 `@deepseek-ai/dsh-mcp-client` 插件条目                     |
+| DeepSeek 账号（OAuth） | `.credentials.yaml` 的 `records["deepseek-account-platform/default"]`，Web 与 Desktop 共用                 |
+| Skills                 | `skills/<目录>/SKILL.md`                                                                                   |
+| 全局提示词             | `AGENTS.md`                                                                                                |
+| 会话                   | `sessions/<项目>/<会话>/session.vN.jsonl` 或 `.jsonl.zstd`                                                 |
 
 `DSH_HOME` 需要由 CC Switch 进程继承。Web/CLI、Desktop 共用 `$DSH_HOME` 下的凭据、会话、Skills 和 `AGENTS.md`，只有 profile 各自独立。
 
@@ -66,7 +66,7 @@ Web 和 Desktop 共用 `$DSH_HOME/sessions`，会话里没有记录是哪一端�
 
 MCP 支持 stdio 和 Streamable HTTP，SSE 会提示改用 HTTP。新增使用 DSH 的 `insert` 补丁创建插件，读取、修改和移除支持同一插入列表中的多个插件；移除最后一个补丁时写回 `[]` 并保留文件头注释。修改保留原生超时、重连等扩展字段；更换传输类型时移除旧的启动或连接参数。发生数据库保存失败时恢复原生文件。
 
-Skills 复用现有应用同步、导入、更新和迁移机制，并沿用 Kimi 的副本归属保护：不会在普通重新同步或卸载未启用的技能时删除用户自行安装的同名目录。
+Skills 复用现有应用同步、导入、更新和迁移机制，并启用副本归属保护：不会在普通重新同步或卸载未启用的技能时删除用户自行安装的同名目录。
 
 会话页支持阅读正文、思考、工具调用、工具结果及模型与 token 元数据。阅读器保留原始对话和完整工具输出，跳过只修改模型历史的 `surfaceOp: { op: 'replace', ... }` 替换副本，因此自动压缩摘要和工具输出裁剪不会覆盖用户看到的记录。压缩日志按完整的独立 zstd 帧读取，尚未写完的最后一帧或 JSONL 行留待下次刷新；同一会话目录只选择最高版本的日志。恢复和删除在 DeepSeek Harness 原生界面完成。
 
@@ -76,7 +76,7 @@ Skills 复用现有应用同步、导入、更新和迁移机制，并沿用 Kim
 
 修改保留其他顶层补丁的原始文本（含注释与 `!!js`），并保留目标插件中的其他供应商、配置项及未编辑的扩展字段。被修改的顶层补丁（含其 `insert` 列表）及凭据文档会重新序列化，其中的 YAML 注释和排版不保证保留。无法解析的 YAML、重复插件 ID、无法安全定位的 MCP 条目会报错并保留原文件。供应商本身含动态 YAML 时请在原生配置中编辑。
 
-原生写入在一次修改中同时提交所有目标 profile 与凭据文件：每个文件各自持有 DSH 原生的 `<文件>.lock`，先算出全部新内容再写盘，任一文件或数据库提交失败时全部还原。改写后的 profile 写盘前重新解析一次，删除条目会让别处的别名失去锚点时拒绝写入。PR #8771 的合并注意事项见 [兼容性分析](deepseek-harness-pr8771-compatibility.md)。
+原生写入在一次修改中同时提交所有目标 profile 与凭据文件：每个文件各自持有 DSH 原生的 `<文件>.lock`，先算出全部新内容再写盘，任一文件或数据库提交失败时全部还原。改写后的 profile 写盘前重新解析一次，删除条目会让别处的别名失去锚点时拒绝写入。
 
 残留的 `<文件>.lock`（上一个写入进程崩溃留下）不会被当成永久占用：锁里记录的 PID 已经不存在的直接接管，两个平台再用修改时间兜底；写入方还活着时仍然按冲突处理，不会两个进程同时改一个文件。
 
@@ -84,27 +84,21 @@ Skills 复用现有应用同步、导入、更新和迁移机制，并沿用 Kim
 
 `headless` profile 的默认组合把 `credentials` 插件关掉了（`dsh --profile headless --dump-config` 里是 `disabled: true`），所以 `apiKeyEnv` 引用在 headless 里解析不到，用 CC Switch 添加的供应商在 headless 里会报 `MISSING_CREDENTIAL`；`web`、`acp` 和 Desktop 正常。需要在 headless 里用同一个 Key 时，把 `CC_SWITCH_DSH_<供应商>` 导出到环境变量，或在那个 profile 里启用 `credentials` 插件。
 
-## 验证记录
+## 实现与回归入口
 
-在 Windows 本机完成以下检查：
+原生配置位于 `crates/cc-switch-core/src/dsh_config.rs`，MCP 适配在 `mcp/dsh.rs`，会话用量导入在 `services/session_usage_dsh.rs`。桌面账号逻辑在 `src-tauri/src/services/dsh_account.rs`。
 
-- `pnpm typecheck`、`pnpm format:check`、`pnpm build:renderer`、`cargo fmt --check`、`cargo clippy --lib -- -D warnings` 通过。
-- `cargo test --lib dsh -- --test-threads=1`：21 项通过（其中 1 项为名称匹配到的既有 WebSocket 测试）；覆盖出厂 `[]` 模板首次添加供应商和 MCP、`insert` 条目的读写与移除、空 profile 往返、登录凭据缺少 `refs`、原生工具结果及错误状态，以及保留压缩前原始对话和完整工具输出。
-- `cargo test --test dsh_commands`：2 项通过，覆盖完整供应商操作、原生配置保留、MCP 写入失败时的文件与数据库一致性。
-- `cargo test --test mcp_commands -- --test-threads=1`：36 项通过，默认 MCP 同步目标包含 `dsh`。
-- 将实际 MCP 新增、修改和移除流程生成的补丁交给 DSH 发布包中的 `applyEntryPatches`：三阶段均无警告，新增后确实出现在插件列表中，修改和移除结果符合预期。
-- DeepSeek 预设 6 项前端测试通过；使用 `@deepseek-ai/dsh-llm-pi-ai@0.2.1-rc.2` 发布包中的推理档位和兼容字段校验函数，验证全部 113 个预设、387 个模型通过。
-- 前端全量首轮共 3269 项，3263 项通过、6 项失败。更新新增应用涉及的来源数量、隐藏应用 fixture、Skills 导入字段和图标文字定位断言后，涉及的 80 项用例分别复测全部通过；其中应用集成测试单独运行通过。
-- Rust 全量库测试首轮 3944 项通过、11 项忽略，1 项既有测试 `proxy::error::tests::describe_reqwest_error_keeps_cause_and_drops_url` 在本机失败：它要求连接被拒绝，环境返回了 HTTP 502；单独重跑仍失败。该测试及其实现未被本次修改。
-- 与 PR #8771 解决冲突后的隔离合并树：前端类型检查通过，用量面板和预设 6 项测试通过，PR 的用量导入 9 项测试通过。
+先按[测试指南](testing.md)设置隔离目录，再按修改范围选择：
 
+```bash
+cargo test --manifest-path crates/cc-switch-core/Cargo.toml --lib dsh -- --test-threads=1
+cargo test --locked --manifest-path src-tauri/Cargo.toml --lib dsh -- --test-threads=1
+cargo test --locked --manifest-path src-tauri/Cargo.toml --test dsh_commands -- --test-threads=1
+```
 
-在 macOS（Apple silicon）上用真实安装的 DSH 复验了与 profile 读写、用量导入相关的行为：
+回归关注出厂 profile 首次写入、多 profile 冲突、凭据保留、MCP 写入失败补偿，以及 JSONL / zstd 会话增量导入和重复计量。集成测试见 [dsh_commands.rs](../src-tauri/tests/dsh_commands.rs)；这些命令不是当前工作树已经通过全量测试的声明。
 
-- `npm i -g --prefix <dir>` 安装 `@deepseek-ai/dsh@0.2.1-rc.2`，用 `dsh web/headless/acp` 真机生成 `web`、`headless`、`acp` 三个 profile，`desktop` 按 Electron 模板等价物铺好。
-- 多 profile 读取与冲突保护：只在 `headless` 里存在的原生供应商会出现在列表里；添加同名 key、以及编辑/移除与优先 profile 不一致的副本时都报错并指名 profile，原生节点一个字节不变（`dsh --profile headless --dump-config` 确认 DSH 侧仍能应用该节点）。
-- 用量导入：用本地 OpenAI 兼容 mock 端点跑出 25 回合真实会话（`session.v4.jsonl.zstd`，111 帧 / 200646 B / 解压后 605382 B），`inputTokens=334`、`outputTokens=56`、`cacheReadTokens=900`、`latency≈695ms`、`first_token≈290ms` 与写入端一致。
-- 增量读取：同一份真实内容按 1×/4×/16× 复制帧后，首次全量 19/72/281 ms，此后每次追加一帧的同步为 198/431/514 µs，与日志总长无关（修复前每次都是 21/74/298 ms 的全量重扫）。
+原生 DSH 版本变化时，需要另外核对其配置补丁、模型字段及真实会话格式。历史机器上的耗时和通过数量不作为当前验收结果。
 
 ## 原生格式依据
 

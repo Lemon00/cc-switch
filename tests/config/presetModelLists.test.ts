@@ -1,12 +1,9 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { dshProviderPresets } from "@/config/dshProviderPresets";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
-import { hermesProviderPresets } from "@/config/hermesProviderPresets";
-import { openclawProviderPresets } from "@/config/openclawProviderPresets";
 import { opencodeProviderPresets } from "@/config/opencodeProviderPresets";
-import { piProviderPresets } from "@/config/piProviderPresets";
-
 // A model list pasted into several presets drifts: the next model refresh
 // updates some copies and misses the rest. Each list is written once as a
 // `const <preset>Models = () => [...]` and every preset that offers the same
@@ -14,12 +11,10 @@ import { piProviderPresets } from "@/config/piProviderPresets";
 const CONFIG_DIR = path.resolve(__dirname, "../../src/config");
 const PRESET_FILES = [
   "codexProviderPresets.ts",
-  "hermesProviderPresets.ts",
-  "openclawProviderPresets.ts",
   "opencodeProviderPresets.ts",
-  "piProviderPresets.ts",
+  "dshProviderPresets.ts",
+  "agyProviderPresets.ts",
 ];
-
 /** Literal values of `models:` / `modelCatalog:` keys spanning 3+ lines. */
 function modelListLiterals(source: string): string[] {
   const literals: string[] = [];
@@ -51,7 +46,6 @@ function modelListLiterals(source: string): string[] {
   }
   return literals;
 }
-
 describe("preset model lists", () => {
   it.each(PRESET_FILES)("%s writes each model list once", (file) => {
     const source = readFileSync(path.join(CONFIG_DIR, file), "utf8");
@@ -65,14 +59,11 @@ describe("preset model lists", () => {
         "`const <preset>Models = (): ... => [...]` and call it from each preset",
     ).toEqual([]);
   });
-
   it("gives every preset its own model objects", () => {
     const lists: unknown[] = [
+      ...dshProviderPresets.map((preset) => preset.settingsConfig.models),
       ...codexProviderPresets.map((preset) => preset.modelCatalog),
-      ...hermesProviderPresets.map((preset) => preset.settingsConfig.models),
-      ...openclawProviderPresets.map((preset) => preset.settingsConfig.models),
       ...opencodeProviderPresets.map((preset) => preset.settingsConfig.models),
-      ...piProviderPresets.map((preset) => preset.settingsConfig.models),
     ];
     const seen = new Set<object>();
     for (const list of lists.filter(Boolean) as object[]) {

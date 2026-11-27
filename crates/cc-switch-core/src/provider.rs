@@ -43,7 +43,17 @@ pub struct Provider {
     pub in_failover_queue: bool,
 }
 
+/// `category` 是否标着官方卡。这是唯一比较 `"official"` 的地方；各应用的
+/// `is_official*` 在此之外还各有自己的认法。
+pub fn is_official_category(category: Option<&str>) -> bool {
+    category == Some("official")
+}
+
 impl Provider {
+    pub fn has_official_category(&self) -> bool {
+        is_official_category(self.category.as_deref())
+    }
+
     /// 从现有ID创建供应商
     pub fn with_id(
         id: String,
@@ -189,7 +199,7 @@ impl Provider {
                 (base_url, api_key)
             }
             // Gemini uses Google-specific env keys (with a legacy GOOGLE_API_KEY fallback).
-            AppType::Gemini | AppType::Agy => {
+            AppType::Agy => {
                 let env = settings.get("env");
                 let base_url = str_at(env.and_then(|e| e.get("GOOGLE_GEMINI_BASE_URL")));
                 let api_key = first_non_empty(env, &["GEMINI_API_KEY", "GOOGLE_API_KEY"]);
@@ -201,43 +211,20 @@ impl Provider {
             // GUI 进程里读不到），端点不该被连坐——否则用量脚本的 {{baseUrl}} 变成
             // 相对路径、余额查询只报「API key is empty」掩盖真因。
             // 与上面 Codex 分支的写法保持一致。
-            AppType::GrokBuild => {
-                let config_text = settings.get("config").and_then(Value::as_str);
-                let base_url = config_text
-                    .and_then(crate::grok_config::extract_base_url)
-                    .unwrap_or_default();
-                let api_key = config_text
-                    .and_then(crate::grok_config::extract_credentials)
-                    .map(|(_, api_key)| api_key)
-                    .unwrap_or_default();
-                (base_url, api_key)
-            }
+
             // Hermes (config.yaml) flattens credentials at the top level, snake_case.
             AppType::Dsh => (
                 str_at(settings.pointer("/options/baseURL")),
                 str_at(settings.pointer("/options/apiKey")),
             ),
-            AppType::Kimi => (
-                str_at(settings.pointer("/provider/base_url")),
-                str_at(settings.pointer("/provider/api_key")),
-            ),
-            AppType::Hermes => (
-                str_at(settings.get("base_url")),
-                str_at(settings.get("api_key")),
-            ),
+
             // OpenClaw (openclaw.json) flattens credentials at the top level, camelCase.
-            AppType::OpenClaw => (
-                str_at(settings.get("baseUrl")),
-                str_at(settings.get("apiKey")),
-            ),
+
             // Pi custom providers use the native models.json field names. Pi expands
             // `$NAME` references in `apiKey`, so resolve them before sending (#8822).
-            AppType::Pi => (
-                crate::pi_config::provider_base_url(settings).unwrap_or_default(),
-                crate::pi_config::resolve_usage_api_key(&str_at(settings.get("apiKey"))),
-            ),
+
             // OpenCode (OMO) nests credentials under `options` (the SDK options object).
-            AppType::OpenCode | AppType::Mcode => {
+            AppType::OpenCode => {
                 let options = settings.get("options");
                 (
                     str_at(options.and_then(|o| o.get("baseURL"))),
@@ -247,7 +234,7 @@ impl Provider {
             // Claude and Claude Desktop both use the Anthropic-style env map, keeping
             // the OpenRouter/Google key fallbacks the JS-script path relies on.
             // Listed explicitly (not `_`) so a new AppType fails to compile here.
-            AppType::Claude | AppType::ClaudeDesktop => {
+            AppType::Claude => {
                 let env = settings.get("env");
                 let base_url = str_at(env.and_then(|e| e.get("ANTHROPIC_BASE_URL")));
                 let api_key = first_non_empty(
@@ -260,13 +247,8 @@ impl Provider {
                     ],
                 );
                 (base_url, api_key)
-            }
-            // Oh My Pi custom providers use the models.yml field names. omp reads `apiKey` as
-            // an environment variable name first, so resolve it before sending.
-            AppType::Omp => (
-                crate::omp_config::provider_base_url(settings).unwrap_or_default(),
-                crate::omp_config::resolve_usage_api_key(&str_at(settings.get("apiKey"))),
-            ),
+            } // Oh My Pi custom providers use the models.yml field names. omp reads `apiKey` as
+              // an environment variable name first, so resolve it before sending.
         };
 
         // Normalize like the JS-script path (extract_base_url_from_provider) so a
@@ -932,17 +914,15 @@ impl UniversalProvider {
         };
 
         // 生成 Codex 的 config.toml 内容
-        let config_toml = format!(
-            r#"model_provider = "custom"
-model = "{model}"
-model_reasoning_effort = "{reasoning_effort}"
-
-[model_providers.custom]
-name = "NewAPI"
-base_url = "{codex_base_url}"
-wire_api = "responses"
-requires_openai_auth = true"#
-        );
+        let mut config = toml_edit::DocumentMut::new();
+        config["model_provider"] = toml_edit::value("custom");
+        config["model"] = toml_edit::value(model);
+        config["model_reasoning_effort"] = toml_edit::value(reasoning_effort);
+        config["model_providers"]["custom"]["name"] = toml_edit::value("NewAPI");
+        config["model_providers"]["custom"]["base_url"] = toml_edit::value(codex_base_url);
+        config["model_providers"]["custom"]["wire_api"] = toml_edit::value("responses");
+        config["model_providers"]["custom"]["requires_openai_auth"] = toml_edit::value(true);
+        let config_toml = config.to_string();
 
         let settings_config = serde_json::json!({
             "auth": {
@@ -953,41 +933,6 @@ requires_openai_auth = true"#
 
         Some(Provider {
             id: format!("universal-codex-{}", self.id),
-            name: self.name.clone(),
-            settings_config,
-            website_url: self.website_url.clone(),
-            category: Some("aggregator".to_string()),
-            created_at: self.created_at,
-            sort_index: self.sort_index,
-            notes: self.notes.clone(),
-            meta: self.meta.clone(),
-            icon: self.icon.clone(),
-            icon_color: self.icon_color.clone(),
-            in_failover_queue: false,
-        })
-    }
-
-    /// 生成 Gemini 供应商配置
-    pub fn to_gemini_provider(&self) -> Option<Provider> {
-        if !self.apps.gemini {
-            return None;
-        }
-
-        let models = self.models.gemini.as_ref();
-        let model = models
-            .and_then(|m| m.model.clone())
-            .unwrap_or_else(|| "gemini-2.5-pro".to_string());
-
-        let settings_config = serde_json::json!({
-            "env": {
-                "GOOGLE_GEMINI_BASE_URL": self.base_url,
-                "GEMINI_API_KEY": self.api_key,
-                "GEMINI_MODEL": model,
-            }
-        });
-
-        Some(Provider {
-            id: format!("universal-gemini-{}", self.id),
             name: self.name.clone(),
             settings_config,
             website_url: self.website_url.clone(),
@@ -1487,6 +1432,36 @@ mod tests {
     }
 
     #[test]
+    fn universal_codex_config_escapes_user_strings() {
+        let mut universal = UniversalProvider::new(
+            "escape".into(),
+            "Name".into(),
+            "newapi".into(),
+            "https://example.test/custom/\"quoted\"".into(),
+            "key".into(),
+        );
+        universal.apps.codex = true;
+        let model = "model\"\nmodel_provider = \"injected";
+        universal.models.codex = Some(CodexModelConfig {
+            model: Some(model.into()),
+            reasoning_effort: Some("high\\low".into()),
+        });
+        let provider = universal.to_codex_provider().unwrap();
+        let config: toml::Value = provider.settings_config["config"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert_eq!(config["model"].as_str(), Some(model));
+        assert_eq!(config["model_provider"].as_str(), Some("custom"));
+        assert_eq!(config["model_reasoning_effort"].as_str(), Some("high\\low"));
+        assert_eq!(
+            config["model_providers"]["custom"]["base_url"].as_str(),
+            Some(universal.base_url.as_str())
+        );
+    }
+
+    #[test]
     fn universal_provider_to_codex_provider_disabled_returns_none() {
         let universal = UniversalProvider::new(
             "u1".to_string(),
@@ -1497,53 +1472,6 @@ mod tests {
         );
 
         assert!(universal.to_codex_provider().is_none());
-    }
-
-    #[test]
-    fn universal_provider_to_gemini_provider_defaults_model() {
-        let mut universal = UniversalProvider::new(
-            "u1".to_string(),
-            "Universal".to_string(),
-            "newapi".to_string(),
-            "https://api.example.com".to_string(),
-            "api-key".to_string(),
-        );
-        universal.apps.gemini = true;
-
-        let provider = universal.to_gemini_provider().expect("gemini provider");
-
-        assert_eq!(
-            provider
-                .settings_config
-                .pointer("/env/GEMINI_MODEL")
-                .and_then(|item| item.as_str()),
-            Some("gemini-2.5-pro")
-        );
-    }
-
-    #[test]
-    fn universal_provider_to_gemini_provider_uses_model() {
-        let mut universal = UniversalProvider::new(
-            "u1".to_string(),
-            "Universal".to_string(),
-            "newapi".to_string(),
-            "https://api.example.com".to_string(),
-            "api-key".to_string(),
-        );
-        universal.apps.gemini = true;
-        universal.models.gemini = Some(GeminiModelConfig {
-            model: Some("gemini-custom".to_string()),
-        });
-
-        let provider = universal.to_gemini_provider().expect("gemini provider");
-
-        assert_eq!(
-            provider
-                .settings_config
-                .pointer("/env/GEMINI_MODEL")
-                .and_then(|item| item.as_str()),
-            Some("gemini-custom")
-        );
     }
 
     #[test]
@@ -1659,19 +1587,6 @@ mod tests {
     }
 
     #[test]
-    fn resolve_credentials_gemini_env_with_google_fallback() {
-        let p = provider_with(json!({
-            "env": {
-                "GOOGLE_GEMINI_BASE_URL": "https://generativelanguage.googleapis.com",
-                "GOOGLE_API_KEY": "g-legacy",
-            }
-        }));
-        let (base_url, api_key) = p.resolve_usage_credentials(&AppType::Gemini);
-        assert_eq!(base_url, "https://generativelanguage.googleapis.com");
-        assert_eq!(api_key, "g-legacy");
-    }
-
-    #[test]
     fn resolve_credentials_claude_skips_empty_primary_key() {
         // Presets seed ANTHROPIC_AUTH_TOKEN as a present-but-empty placeholder.
         // The fallback chain must skip empty values (matching the frontend's
@@ -1686,79 +1601,6 @@ mod tests {
         }));
         let (_, api_key) = p.resolve_usage_credentials(&AppType::Claude);
         assert_eq!(api_key, "sk-or");
-    }
-
-    #[test]
-    fn resolve_credentials_gemini_skips_empty_primary_key() {
-        let p = provider_with(json!({
-            "env": {
-                "GOOGLE_GEMINI_BASE_URL": "https://generativelanguage.googleapis.com",
-                "GEMINI_API_KEY": "",
-                "GOOGLE_API_KEY": "g-real",
-            }
-        }));
-        let (_, api_key) = p.resolve_usage_credentials(&AppType::Gemini);
-        assert_eq!(api_key, "g-real");
-    }
-
-    #[test]
-    fn resolve_credentials_hermes_snake_case() {
-        let p = provider_with(json!({
-            "base_url": "https://api.deepseek.com",
-            "api_key": "sk-hermes",
-        }));
-        assert_eq!(
-            p.resolve_usage_credentials(&AppType::Hermes),
-            (
-                "https://api.deepseek.com".to_string(),
-                "sk-hermes".to_string()
-            )
-        );
-    }
-
-    #[test]
-    fn resolve_credentials_openclaw_camel_case() {
-        let p = provider_with(json!({
-            "baseUrl": "https://api.deepseek.com",
-            "apiKey": "sk-openclaw",
-        }));
-        assert_eq!(
-            p.resolve_usage_credentials(&AppType::OpenClaw),
-            (
-                "https://api.deepseek.com".to_string(),
-                "sk-openclaw".to_string()
-            )
-        );
-    }
-
-    #[test]
-    fn resolve_credentials_pi_uses_native_model_level_base_url() {
-        let p = provider_with(json!({
-            "apiKey": "sk-pi",
-            "models": [{
-                "id": "model-a",
-                "api": "openai-completions",
-                "baseUrl": "https://api.example.com/v1/"
-            }]
-        }));
-        assert_eq!(
-            p.resolve_usage_credentials(&AppType::Pi),
-            (
-                "https://api.example.com/v1".to_string(),
-                "sk-pi".to_string()
-            )
-        );
-    }
-
-    #[test]
-    fn resolve_credentials_pi_never_sends_key_references_literally() {
-        for reference in ["$CC_SWITCH_TEST_UNSET_8822", "!echo sk-from-command"] {
-            let p = provider_with(json!({
-                "baseUrl": "https://api.example.com/v1",
-                "apiKey": reference,
-            }));
-            assert_eq!(p.resolve_usage_credentials(&AppType::Pi).1, "");
-        }
     }
 
     #[test]
@@ -1778,26 +1620,6 @@ mod tests {
             (
                 "https://api.deepseek.com/v1".to_string(),
                 "sk-opencode".to_string()
-            )
-        );
-    }
-
-    #[test]
-    fn resolve_credentials_claude_desktop_uses_env() {
-        // ClaudeDesktop persists the Anthropic env shape (ClaudeDesktopProviderForm
-        // reads env.ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN), so it resolves via
-        // the default env branch — it is NOT unsupported.
-        let p = provider_with(json!({
-            "env": {
-                "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
-                "ANTHROPIC_AUTH_TOKEN": "sk-desktop",
-            }
-        }));
-        assert_eq!(
-            p.resolve_usage_credentials(&AppType::ClaudeDesktop),
-            (
-                "https://api.deepseek.com/anthropic".to_string(),
-                "sk-desktop".to_string()
             )
         );
     }

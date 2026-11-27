@@ -4,18 +4,76 @@ use serde_json::Value;
 
 use crate::error::AppError;
 
-/// 基础校验：允许 stdio/http/sse；或省略 type（视为 stdio）。对应必填字段存在
+/// Normalize only transport fields when comparing imported MCP definitions.
+pub fn transport_spec(spec: &Value) -> Value {
+    let mut spec = spec.clone();
+    if spec.is_object() && spec_transport_type(&spec) == "http" {
+        spec["type"] = serde_json::json!("http");
+    } else if spec.is_object() && spec.get("type").is_none() && spec.get("command").is_some() {
+        spec["type"] = serde_json::json!("stdio");
+    }
+    if let Some(object) = spec.as_object_mut() {
+        object.retain(|key, _| {
+            ["command", "args", "env", "cwd", "url", "headers", "type"].contains(&key.as_str())
+        });
+    }
+    spec
+}
+
+/// Validate the shared connection schema before writing any native configuration.
 pub fn validate_server_spec(spec: &Value) -> Result<(), AppError> {
     if !spec.is_object() {
         return Err(AppError::McpValidation(
             "MCP 服务器连接定义必须为 JSON 对象".into(),
         ));
     }
-    let t_opt = spec.get("type").and_then(|x| x.as_str());
-    // 支持三种：stdio/http/sse；若缺省 type 则按 stdio 处理（与社区常见 .mcp.json 一致）
-    let is_stdio = t_opt.map(|t| t == "stdio").unwrap_or(true);
-    let is_http = t_opt.map(|t| t == "http").unwrap_or(false);
-    let is_sse = t_opt.map(|t| t == "sse").unwrap_or(false);
+    for field in ["type", "command", "cwd", "url"] {
+        if let Some(value) = spec.get(field) {
+            if !value.as_str().is_some_and(|text| !text.contains('\0')) {
+                return Err(AppError::McpValidation(format!(
+                    "MCP {field} 必须是无 NUL 字符的字符串"
+                )));
+            }
+        }
+    }
+    if let Some(args) = spec.get("args") {
+        if !args.as_array().is_some_and(|args| {
+            args.iter()
+                .all(|arg| arg.as_str().is_some_and(|arg| !arg.contains('\0')))
+        }) {
+            return Err(AppError::McpValidation("MCP args 必须是字符串数组".into()));
+        }
+    }
+    for field in ["env", "headers"] {
+        if let Some(value) = spec.get(field) {
+            let Some(map) = value.as_object() else {
+                return Err(AppError::McpValidation(format!(
+                    "MCP {field} 必须是字符串映射"
+                )));
+            };
+            for (key, value) in map {
+                let valid = value.as_str().is_some_and(|value| {
+                    if field == "env" {
+                        !key.is_empty() && !key.contains(['=', '\0']) && !value.contains('\0')
+                    } else {
+                        reqwest::header::HeaderName::from_bytes(key.as_bytes()).is_ok()
+                            && reqwest::header::HeaderValue::from_str(value).is_ok()
+                    }
+                });
+                if !valid {
+                    return Err(AppError::McpValidation(format!(
+                        "MCP {field} 包含无效键或值"
+                    )));
+                }
+            }
+        }
+    }
+    // 与写出侧 `spec_transport_type` 对齐：缺 type 但有 url 视为 http，
+    // 不能一律当 stdio（否则 `{"url":…}` 会被这里拒、却被 Claude/Codex 写出）。
+    let transport = spec_transport_type(spec);
+    let is_stdio = transport == "stdio";
+    let is_http = transport == "http";
+    let is_sse = transport == "sse";
 
     if !(is_stdio || is_http || is_sse) {
         return Err(AppError::McpValidation(
@@ -31,19 +89,19 @@ pub fn validate_server_spec(spec: &Value) -> Result<(), AppError> {
             ));
         }
     }
-    if is_http {
+    if is_http || is_sse {
         let url = spec.get("url").and_then(|x| x.as_str()).unwrap_or("");
         if url.trim().is_empty() {
-            return Err(AppError::McpValidation(
-                "http 类型的 MCP 服务器缺少 url 字段".into(),
-            ));
+            return Err(AppError::McpValidation(format!(
+                "{transport} 类型的 MCP 服务器缺少 url 字段"
+            )));
         }
-    }
-    if is_sse {
-        let url = spec.get("url").and_then(|x| x.as_str()).unwrap_or("");
-        if url.trim().is_empty() {
+        if !url::Url::parse(url)
+            .ok()
+            .is_some_and(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
+        {
             return Err(AppError::McpValidation(
-                "sse 类型的 MCP 服务器缺少 url 字段".into(),
+                "MCP url 必须是有效的 HTTP 或 HTTPS 地址".into(),
             ));
         }
     }
@@ -62,27 +120,56 @@ pub fn spec_transport_type(spec: &Value) -> &str {
             .and_then(|v| v.as_str())
             .is_some_and(|s| !s.trim().is_empty())
     };
-    let explicit = spec.get("type").and_then(|v| v.as_str());
+    // Pi/AGY 等端使用 streamable-http；统一成 http 再校验与投影。
+    let explicit = match spec.get("type").and_then(|v| v.as_str()) {
+        Some("streamable-http" | "streamableHttp") => Some("http"),
+        other => other,
+    };
     if matches!(explicit, None | Some("stdio")) && !has("command") && has("url") {
         return "http";
     }
     explicit.unwrap_or("stdio")
 }
 
-/// 从 MCP 条目中提取服务器规范
-pub fn extract_server_spec(entry: &Value) -> Result<Value, AppError> {
-    let obj = entry
-        .as_object()
-        .ok_or_else(|| AppError::McpValidation("MCP 服务器条目必须为 JSON 对象".into()))?;
-    let server = obj
-        .get("server")
-        .ok_or_else(|| AppError::McpValidation("MCP 服务器条目缺少 server 字段".into()))?;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
-    if !server.is_object() {
-        return Err(AppError::McpValidation(
-            "MCP 服务器 server 字段必须为 JSON 对象".into(),
-        ));
+    #[test]
+    fn rejects_malformed_fields_without_echoing_secrets() {
+        for patch in [
+            json!({"type": 1}),
+            json!({"args": "secret-value"}),
+            json!({"args": [1]}),
+            json!({"env": {"TOKEN": 123}}),
+            json!({"env": {"BAD=KEY": "secret-value"}}),
+            json!({"headers": {"Authorization": "secret-value\nInjected: yes"}}),
+            json!({"cwd": []}),
+            json!({"command": "bad\u{0000}command"}),
+        ] {
+            let mut spec = json!({"command": "echo"});
+            spec.as_object_mut()
+                .unwrap()
+                .extend(patch.as_object().unwrap().clone());
+            let error = validate_server_spec(&spec).unwrap_err().to_string();
+            assert!(!error.contains("secret-value"));
+        }
+        for url in ["file:///secret-value", "https://", "not-a-url"] {
+            assert!(validate_server_spec(&json!({"url": url})).is_err());
+        }
     }
 
-    Ok(server.clone())
+    #[test]
+    fn accepts_empty_arguments_and_supported_http_aliases() {
+        validate_server_spec(
+            &json!({"command": "echo", "args": ["", "--flag"], "env": {"EMPTY": ""}}),
+        )
+        .unwrap();
+        for kind in ["http", "streamable-http", "streamableHttp", "stdio"] {
+            let spec = json!({"type": kind, "command": " ", "url": "https://example.com/mcp"});
+            validate_server_spec(&spec).unwrap();
+            assert_eq!(spec_transport_type(&spec), "http");
+        }
+    }
 }

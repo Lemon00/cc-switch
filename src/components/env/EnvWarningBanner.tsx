@@ -1,12 +1,5 @@
-import { useState } from "react";
-import { useTranslation } from "react-i18next";
-import { AlertTriangle, ChevronDown, ChevronUp, X, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { HoverTip } from "@/components/ui/hover-tip";
 import { Checkbox } from "@/components/ui/checkbox";
-import type { EnvConflict } from "@/types/env";
-import { deleteEnvVars } from "@/lib/api/env";
-import { toast } from "@/lib/toast";
 import {
   Dialog,
   DialogContent,
@@ -15,13 +8,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-
+import { HoverTip } from "@/components/ui/hover-tip";
+import { deleteEnvVars } from "@/lib/api/env";
+import { toast } from "@/lib/toast";
+import type { EnvConflict } from "@/types/env";
+import { AlertTriangle, ChevronDown, ChevronUp, Trash2, X } from "lucide-react";
+import { useState } from "react";
+import { useTranslation } from "react-i18next";
 interface EnvWarningBannerProps {
   conflicts: EnvConflict[];
   onDismiss: () => void;
   onDeleted: () => void;
 }
-
 export function EnvWarningBanner({
   conflicts,
   onDismiss,
@@ -34,11 +32,9 @@ export function EnvWarningBanner({
   );
   const [isDeleting, setIsDeleting] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
-
   if (conflicts.length === 0) {
     return null;
   }
-
   const toggleSelection = (key: string) => {
     const newSelection = new Set(selectedConflicts);
     if (newSelection.has(key)) {
@@ -48,7 +44,6 @@ export function EnvWarningBanner({
     }
     setSelectedConflicts(newSelection);
   };
-
   const toggleSelectAll = () => {
     if (selectedConflicts.size === conflicts.length) {
       setSelectedConflicts(new Set());
@@ -58,23 +53,18 @@ export function EnvWarningBanner({
       );
     }
   };
-
   const handleDelete = async () => {
     setShowConfirmDialog(false);
     setIsDeleting(true);
-
     try {
       const conflictsToDelete = conflicts.filter((c) =>
         selectedConflicts.has(`${c.varName}:${c.sourcePath}`),
       );
-
       if (conflictsToDelete.length === 0) {
         toast.warning(t("env.error.noSelection"));
         return;
       }
-
       const backupInfo = await deleteEnvVars(conflictsToDelete);
-
       toast.success(t("env.delete.success"), {
         description: t("env.backup.location", {
           path: backupInfo.backupPath,
@@ -82,7 +72,6 @@ export function EnvWarningBanner({
         duration: 5000,
         closeButton: true,
       });
-
       // 清空选择并通知父组件
       setSelectedConflicts(new Set());
       onDeleted();
@@ -95,7 +84,6 @@ export function EnvWarningBanner({
       setIsDeleting(false);
     }
   };
-
   const getSourceDescription = (conflict: EnvConflict): string => {
     if (conflict.sourceType === "system") {
       if (conflict.sourcePath.includes("HKEY_CURRENT_USER")) {
@@ -109,7 +97,6 @@ export function EnvWarningBanner({
       return conflict.sourcePath;
     }
   };
-
   return (
     <>
       <div className="shrink-0 bg-warning-soft border-b border-transparent">

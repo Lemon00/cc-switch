@@ -49,7 +49,7 @@ impl Fixture {
     fn imported(&self) -> Provider {
         self.state
             .db
-            .get_provider_by_id("opencode-go", "opencode")
+            .get_provider_by_id("opencode-go", &AppType::OpenCode)
             .unwrap()
             .unwrap()
     }
@@ -161,7 +161,7 @@ fn opencode_builtin_incomplete_copies_cannot_be_added_to_live() {
         let saved = fixture
             .state
             .db
-            .get_provider_by_id(&id, "opencode")
+            .get_provider_by_id(&id, &AppType::OpenCode)
             .unwrap()
             .unwrap();
         assert_eq!(saved.meta.unwrap().live_config_managed, Some(false));
@@ -198,7 +198,7 @@ fn additive_add_rolls_back_row_when_live_config_cannot_be_parsed() {
     assert!(fixture
         .state
         .db
-        .get_provider_by_id("custom-new", "opencode")
+        .get_provider_by_id("custom-new", &AppType::OpenCode)
         .unwrap()
         .is_none());
     assert_eq!(fs::read_to_string(&fixture.config_path).unwrap(), broken);
@@ -244,7 +244,7 @@ fn opencode_builtin_credential_only_import_does_not_create_config() {
     assert!(fixture
         .state
         .db
-        .get_all_providers("opencode")
+        .get_all_providers(&AppType::OpenCode)
         .unwrap()
         .is_empty());
     assert_eq!(fs::read(&db_path).unwrap(), original_db);
@@ -327,7 +327,7 @@ fn opencode_jsonc_provider_and_mcp_workflows_preserve_comments() {
             json!({"type":"http","url":"https://example.com/mcp"}),
         ),
     ] {
-        crate::mcp::sync_single_server_to_opencode(&config, id, &spec).unwrap();
+        crate::mcp::sync_single_server_to_opencode(id, &spec).unwrap();
     }
     let servers = opencode_config::get_mcp_servers().unwrap();
     assert_eq!(servers["existing"]["command"], json!(["npx", "updated"]));
@@ -390,4 +390,106 @@ fn opencode_jsonc_omo_registration_removal_and_failure_rollback() {
         assert_eq!(fs::read_to_string(&path).unwrap(), "{broken");
     }
     assert_eq!(fs::read_to_string(&fixture.config_path).unwrap(), other);
+}
+
+#[test]
+#[serial]
+fn omo_remove_keeps_current_marker_when_native_cleanup_fails() {
+    let fixture = Fixture::new();
+    let mut provider = Provider::with_id(
+        "omo-active".into(),
+        "OMO".into(),
+        json!({"agents": {}}),
+        None,
+    );
+    provider.category = Some("omo".into());
+    fixture
+        .state
+        .db
+        .save_provider(&AppType::OpenCode, &provider)
+        .unwrap();
+    fixture
+        .state
+        .db
+        .set_omo_provider_current(&AppType::OpenCode, &provider.id, "omo")
+        .unwrap();
+    fs::write(&fixture.config_path, "{broken").unwrap();
+    assert!(ProviderService::remove_from_live_config(
+        &fixture.state,
+        AppType::OpenCode,
+        &provider.id
+    )
+    .is_err());
+    assert!(fixture
+        .state
+        .db
+        .is_omo_provider_current(&AppType::OpenCode, &provider.id, "omo")
+        .unwrap());
+    assert_eq!(fs::read_to_string(&fixture.config_path).unwrap(), "{broken");
+}
+
+#[test]
+#[serial]
+fn omo_import_failure_keeps_previous_selection_and_removes_new_card() {
+    use crate::services::omo::{OmoService, STANDARD};
+    let fixture = Fixture::new();
+    let mut provider = Provider::with_id(
+        "omo-previous".into(),
+        "Previous".into(),
+        json!({"agents": {}}),
+        None,
+    );
+    provider.category = Some("omo".into());
+    fixture
+        .state
+        .db
+        .save_provider(&AppType::OpenCode, &provider)
+        .unwrap();
+    fixture
+        .state
+        .db
+        .set_omo_provider_current(&AppType::OpenCode, &provider.id, "omo")
+        .unwrap();
+    let original_ids = fixture
+        .state
+        .db
+        .get_provider_ids(&AppType::OpenCode)
+        .unwrap();
+    let unified = fixture._dir.path().join(".omo/omo.jsonc");
+    fs::create_dir_all(unified.parent().unwrap()).unwrap();
+    let contents = "{\"[opencode]\":{\"agents\":{}}}";
+    fs::write(&unified, contents).unwrap();
+    fs::write(&fixture.config_path, "{broken").unwrap();
+    assert!(OmoService::import_from_local(&fixture.state, &STANDARD).is_err());
+    assert_eq!(
+        fixture
+            .state
+            .db
+            .get_provider_ids(&AppType::OpenCode)
+            .unwrap(),
+        original_ids
+    );
+    assert!(fixture
+        .state
+        .db
+        .is_omo_provider_current(&AppType::OpenCode, &provider.id, "omo")
+        .unwrap());
+    assert_eq!(fs::read_to_string(&unified).unwrap(), contents);
+}
+
+#[test]
+#[serial]
+fn opencode_duplicate_add_cannot_replace_existing_card_or_native_configuration() {
+    let fixture = Fixture::new();
+    fs::write(&fixture.config_path, KEY_ONLY_CONFIG).unwrap();
+    import_opencode_providers_from_live(&fixture.state).unwrap();
+    let mut duplicate = fixture.imported();
+    duplicate.name = "Replacement".into();
+    duplicate.settings_config["options"]["apiKey"] = json!("replacement");
+    assert!(ProviderService::add(&fixture.state, AppType::OpenCode, duplicate, true).is_err());
+    assert_ne!(fixture.imported().name, "Replacement");
+    assert_eq!(
+        fs::read_to_string(&fixture.config_path).unwrap(),
+        KEY_ONLY_CONFIG
+    );
 }

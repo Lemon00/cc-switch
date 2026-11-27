@@ -1,7 +1,4 @@
-import { useMemo } from "react";
-import { useTranslation } from "react-i18next";
-import { DeepLinkImportRequest } from "../../lib/api/deeplink";
-import { decodeBase64Utf8 } from "../../lib/utils/base64";
+import { useAllMcpServers } from "@/hooks/useMcp";
 import {
   classifyCommand,
   classifyEndpoint,
@@ -10,29 +7,47 @@ import {
   riskI18nKey,
   type RiskKind,
 } from "@/utils/deeplinkRisk";
-
+import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
+import { DeepLinkImportRequest } from "../../lib/api/deeplink";
+import { decodeBase64Utf8 } from "../../lib/utils/base64";
+/** 解析 deeplink 里的 mcpServers；给确认框与导入按钮共用。 */
+export function parseMcpDeepLinkConfig(config?: string | null): {
+  servers: Record<string, unknown> | null;
+  error: string | null;
+} {
+  if (!config) {
+    return { servers: null, error: "missing" };
+  }
+  try {
+    const decoded = decodeBase64Utf8(config);
+    const parsed = JSON.parse(decoded);
+    const servers =
+      parsed?.mcpServers &&
+      typeof parsed.mcpServers === "object" &&
+      !Array.isArray(parsed.mcpServers)
+        ? (parsed.mcpServers as Record<string, unknown>)
+        : null;
+    if (!servers) return { servers: null, error: "parse" };
+    return { servers, error: null };
+  } catch {
+    return { servers: null, error: "parse" };
+  }
+}
 export function McpConfirmation({
   request,
 }: {
   request: DeepLinkImportRequest;
 }) {
   const { t } = useTranslation();
-
-  const mcpServers = useMemo(() => {
-    if (!request.config) return null;
-    try {
-      const decoded = decodeBase64Utf8(request.config);
-      const parsed = JSON.parse(decoded);
-      return parsed.mcpServers || {};
-    } catch (e) {
-      console.error("Failed to parse MCP config:", e);
-      return null;
-    }
-  }, [request.config]);
-
+  const { data: existingServers } = useAllMcpServers();
+  const parsed = useMemo(
+    () => parseMcpDeepLinkConfig(request.config),
+    [request.config],
+  );
+  const mcpServers = parsed.servers;
   const targetApps = request.apps?.split(",") || [];
   const serverCount = Object.keys(mcpServers || {}).length;
-
   // 汇总所有条目命中的风险，在底部给一句总的提示——逐行的 ⚠ 容易被划过去。
   const risks = useMemo(() => {
     const found = new Set<RiskKind>();
@@ -47,10 +62,13 @@ export function McpConfirmation({
         const envRisk = classifyEnvKey(key);
         if (envRisk) found.add(envRisk);
       }
+      for (const key of Object.keys(spec?.headers || {})) {
+        const headerRisk = classifyEnvKey(key);
+        if (headerRisk) found.add(headerRisk);
+      }
     }
     return [...found];
   }, [mcpServers]);
-
   /** 一行 key/value。`break-all` 而非 `truncate`：payload 不得被 CSS 藏起来。 */
   const Row = ({
     label,
@@ -64,16 +82,13 @@ export function McpConfirmation({
     <div className="grid grid-cols-[4rem_1fr] gap-2 text-xs">
       <span className="text-fg-2 shrink-0">{label}</span>
       <span
-        className={`font-mono break-all ${
-          risk ? "text-warning-text font-semibold" : ""
-        }`}
+        className={`font-mono break-all ${risk ? "text-warning-text font-semibold" : ""}`}
       >
         {risk && <span aria-hidden="true">⚠ </span>}
         {value}
       </span>
     </div>
   );
-
   return (
     <div className="space-y-4">
       <h3 className="text-lg font-semibold">{t("deeplink.mcp.title")}</h3>
@@ -98,18 +113,42 @@ export function McpConfirmation({
         <label className="block text-sm font-medium text-fg-2">
           {t("deeplink.mcp.serverCount", { count: serverCount })}
         </label>
+        {parsed.error && (
+          <p role="alert" className="mt-1 text-sm text-danger-text">
+            {t("deeplink.mcp.parseError")}
+          </p>
+        )}
+        {!parsed.error && serverCount === 0 && (
+          <p role="alert" className="mt-1 text-sm text-danger-text">
+            {t("deeplink.mcp.emptyServers")}
+          </p>
+        )}
         <div className="mt-1 space-y-2 max-h-64 overflow-auto border rounded p-2 bg-subtle">
           {mcpServers &&
-            Object.entries(mcpServers).map(([id, spec]: [string, any]) => {
+            Object.entries(mcpServers).map(([id, raw]: [string, any]) => {
+              const spec = raw || {};
               const commandRisk = classifyCommand(spec?.command, spec?.args);
               const argv: string[] = Array.isArray(spec?.args)
                 ? spec.args.map(String)
                 : [];
               const env: Record<string, unknown> = spec?.env || {};
-
+              const headers: Record<string, unknown> = spec?.headers || {};
+              const alreadyExists = Boolean(existingServers?.[id]);
               return (
                 <div key={id} className="p-2 bg-surface rounded border">
-                  <div className="font-semibold text-sm mb-1">{id}</div>
+                  <div className="font-semibold text-sm mb-1 flex flex-wrap items-center gap-2">
+                    <span>{id}</span>
+                    {alreadyExists && (
+                      <span className="rounded bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium text-warning-text">
+                        {t("deeplink.mcp.existingKeepConfig")}
+                      </span>
+                    )}
+                  </div>
+                  {alreadyExists && (
+                    <p className="mb-2 text-xs text-fg-2">
+                      {t("deeplink.mcp.existingKeepConfigDetail")}
+                    </p>
+                  )}
                   <div className="space-y-1">
                     {spec?.command && (
                       <Row
@@ -137,8 +176,16 @@ export function McpConfirmation({
                     )}
                     {Object.entries(env).map(([key, value], index) => (
                       <Row
-                        key={key}
+                        key={`env-${key}`}
                         label={index === 0 ? t("deeplink.mcp.env") : ""}
+                        value={`${key}=${maskValue(key, String(value))}`}
+                        risk={classifyEnvKey(key)}
+                      />
+                    ))}
+                    {Object.entries(headers).map(([key, value], index) => (
+                      <Row
+                        key={`header-${key}`}
+                        label={index === 0 ? t("deeplink.mcp.headers") : ""}
                         value={`${key}=${maskValue(key, String(value))}`}
                         risk={classifyEnvKey(key)}
                       />
@@ -165,14 +212,14 @@ export function McpConfirmation({
       )}
 
       {/*
-        无条件显示，不看 `request.enabled`。
-        MCP 导入路径**根本不读这个字段**——`deeplink/mcp.rs` 里全文没有它，
-        而 `:196` 是无条件的 `merged.set_enabled_for(&app, true)`。
-        （prompt.rs / skill.rs / provider.rs 各自读了 `request.enabled`，唯独 MCP 没有，
-        所以很容易误以为这里也生效。）
-        挂条件的后果是：恶意链接省略 `enabled` 就能让这条警告消失，而写入行为
-        一模一样——把提示变成了可被攻击者关掉的开关。
-      */}
+                    无条件显示，不看 `request.enabled`。
+                    MCP 导入路径**根本不读这个字段**——`deeplink/mcp.rs` 里全文没有它，
+                    而写入是无条件的 `merged.set_enabled_for(&app, true)`。
+                    （prompt.rs / skill.rs / provider.rs 各自读了 `request.enabled`，唯独 MCP 没有，
+                    所以很容易误以为这里也生效。）
+                    挂条件的后果是：恶意链接省略 `enabled` 就能让这条警告消失，而写入行为
+                    一模一样——把提示变成了可被攻击者关掉的开关。
+                  */}
       <div className="text-warning-text text-sm flex items-center gap-2">
         <span>⚠️</span>
         <span>{t("deeplink.mcp.enabledWarning")}</span>

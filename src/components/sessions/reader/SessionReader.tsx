@@ -1,3 +1,16 @@
+import { Button } from "@/components/ui/button";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
+import { sessionsApi } from "@/lib/api";
+import {
+  clearSessionImageCache,
+  type SessionTranscriptResult,
+} from "@/lib/query/sessions";
+import { toast } from "@/lib/toast";
+import { cn } from "@/lib/utils";
+import type { SessionMessage, SessionMeta, TurnIndex } from "@/types";
+import { extractErrorMessage } from "@/utils/errorUtils";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { ArrowDown } from "lucide-react";
 import {
   useCallback,
   useDeferredValue,
@@ -9,29 +22,17 @@ import {
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowDown } from "lucide-react";
-
-import { Button } from "@/components/ui/button";
-import type { SessionTranscriptResult } from "@/lib/query/sessions";
-import { toast } from "@/lib/toast";
-
-import { sessionsApi } from "@/lib/api";
-import { useMoneyFormat } from "@/hooks/useMoneyFormat";
-import { cn } from "@/lib/utils";
-import type { SessionMessage, SessionMeta, TurnIndex } from "@/types";
-import { extractErrorMessage } from "@/utils/errorUtils";
 import { getBaseName } from "../utils";
 import { getAgentReaderStyle } from "./agentStyles";
 import { ReaderContext, type ReaderContextValue } from "./context";
 import { transcriptToMarkdown, turnToMarkdown } from "./exportMarkdown";
 import { useReaderT } from "./i18n";
-import { SessionEventRow, SessionInjectedRow } from "./SessionEventRow";
 import {
   SessionAgentAvatar,
   SessionAgentHeader,
   agentTurnTs,
 } from "./SessionAgentAvatar";
+import { SessionEventRow, SessionInjectedRow } from "./SessionEventRow";
 import { SessionFinalReply } from "./SessionFinalReply";
 import { SessionOutline } from "./SessionOutline";
 import { SessionQuestion } from "./SessionQuestion";
@@ -55,10 +56,8 @@ import {
   type SearchMatch,
   type SessionTurn,
 } from "./turns";
-
 /** 「展开全部过程」偏好（与会话列表的分组方式一样存在 localStorage） */
 const EXPAND_ALL_STORAGE_KEY = "cc-switch.sessionReader.expandTimelines";
-
 const readExpandAll = () => {
   try {
     return window.localStorage.getItem(EXPAND_ALL_STORAGE_KEY) === "1";
@@ -66,16 +65,13 @@ const readExpandAll = () => {
     return false;
   }
 };
-
 const EMPTY_OVERRIDES: ReadonlyMap<string, boolean> = new Map();
-
 /** 会话标题：会话自带标题 → 第一条提问 → 项目目录名 → 会话 ID 前 8 位 */
 export const readerTitle = (session: SessionMeta, turns: TurnIndex[]) =>
   session.title?.trim() ||
   turns[0]?.questionPreview ||
   getBaseName(session.projectDir) ||
   session.sessionId.slice(0, 8);
-
 /** 最近一条带模型名的消息 */
 const latestModel = (messages: SessionMessage[]) => {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -84,10 +80,8 @@ const latestModel = (messages: SessionMessage[]) => {
   }
   return undefined;
 };
-
 /** 该轮的执行过程有没有摘要行（规则 5：只有 1 步且没失败时没有） */
 const OUTLINE_STORAGE_KEY = "cc-switch.sessionReader.outline";
-
 /** 会话标题转成文件名：去掉各系统不允许的字符，压掉空白，限制长度 */
 const toFileName = (title: string) =>
   title
@@ -95,7 +89,6 @@ const toFileName = (title: string) =>
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 60);
-
 /** 属于 Agent 一侧（靠左、带头像列）的行；提问靠右，事件和分隔线居中 */
 const AGENT_ROW_KINDS: ReadonlySet<ReaderRow["kind"]> = new Set([
   "timeline",
@@ -103,11 +96,9 @@ const AGENT_ROW_KINDS: ReadonlySet<ReaderRow["kind"]> = new Set([
   "final",
   "injected",
 ]);
-
 const hasTimelineRow = (turn: SessionTurn) =>
   turn.steps.length > 1 ||
   (turn.steps.length === 1 && isFailureStep(turn.steps[0]));
-
 /** 第 n 处命中（从 1 计）落在哪个 SearchMatch 上 */
 const matchAt = (matches: SearchMatch[], position: number) => {
   let remaining = position;
@@ -117,7 +108,6 @@ const matchAt = (matches: SearchMatch[], position: number) => {
   }
   return undefined;
 };
-
 const isEditableTarget = (target: EventTarget | null) => {
   const element = target as HTMLElement | null;
   if (!element || typeof element.closest !== "function") return false;
@@ -127,7 +117,6 @@ const isEditableTarget = (target: EventTarget | null) => {
     ),
   );
 };
-
 export interface SessionReaderProps {
   session: SessionMeta;
   appName: string;
@@ -147,7 +136,6 @@ export interface SessionReaderProps {
   onReload: () => void;
   onDelete: () => void;
 }
-
 /**
  * 会话阅读页：只做编排——页头、信息栏、阅读工具、
  * 流式加载状态、虚拟列表、查找与跳转。turn 结构与折叠规则在 turns.ts，各行由独立组件渲染。
@@ -175,7 +163,8 @@ export function SessionReader({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const findInputRef = useRef<HTMLInputElement>(null);
   const findButtonRef = useRef<HTMLButtonElement>(null);
-
+  // 离开阅读页时立即释放缓存的会话图片 Blob URL，避免常驻 WebView 内存
+  useEffect(() => () => clearSessionImageCache(), []);
   const [filter, setFilter] = useState<ReaderFilter>("all");
   const [expandAll, setExpandAll] = useState(readExpandAll);
   const [showInjected, setShowInjected] = useState(false);
@@ -205,13 +194,11 @@ export function SessionReader({
       return !open;
     });
   }, []);
-
   const style = useMemo(
     () => getAgentReaderStyle(session.providerId),
     [session.providerId],
   );
   const failed = transcript.isError;
-
   // 流式数据每到一批就重建 turn；交给低优先级渲染，滚动和点击不被打断
   const messages = useDeferredValue(transcript.messages);
   const turns = useMemo(
@@ -224,7 +211,6 @@ export function SessionReader({
     headerTurns && headerTurns.length > 0 ? headerTurns : localIndex;
   const model = useMemo(() => latestModel(messages), [messages]);
   const title = readerTitle(session, turnIndex);
-
   const deferredFind = useDeferredValue(findOpen ? findQuery.trim() : "");
   const search = useMemo(
     () => findSearchHits(turns, deferredFind),
@@ -250,7 +236,6 @@ export function SessionReader({
       turns,
     ],
   );
-
   // 左右布局：每轮 Agent 输出的第一行（折叠摘要 / 首个步骤 / 最终回复）左侧挂一次头像
   const agentStartKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -262,7 +247,6 @@ export function SessionReader({
     }
     return keys;
   }, [rows]);
-
   const findTotal = search?.total ?? 0;
   const findCurrent = findTotal ? Math.min(findIndex, findTotal) : 0;
   const activeMatch =
@@ -273,7 +257,6 @@ export function SessionReader({
   const activeKey = activeRowIndex >= 0 ? rows[activeRowIndex].key : null;
   // 高亮词跟命中计算用同一个低优先级值：长会话里每次按键都整页重新解析 Markdown 会卡输入
   const highlightQuery = deferredFind || listQuery;
-
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
@@ -284,14 +267,12 @@ export function SessionReader({
     paddingStart: 16,
     paddingEnd: 64,
   });
-
   // 查找：跳到当前命中所在行
   useEffect(() => {
     if (activeRowIndex < 0) return;
     virtualizer.scrollToIndex(activeRowIndex, { align: "center" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [findCurrent, deferredFind, activeRowIndex]);
-
   const flash = useCallback((key: string) => {
     setFlashKey(key);
     window.setTimeout(
@@ -299,7 +280,6 @@ export function SessionReader({
       2000,
     );
   }, []);
-
   const scrollToRow = useCallback(
     (index: number) => {
       if (index < 0) return;
@@ -308,7 +288,6 @@ export function SessionReader({
     },
     [flash, rows, virtualizer],
   );
-
   const jumpToQuestion = useCallback(
     (turn: SessionTurn) => {
       const index = rows.findIndex(
@@ -318,7 +297,6 @@ export function SessionReader({
     },
     [rows, scrollToRow, turns],
   );
-
   /** 目录里点 Agent：优先跳到最终回复，没有回复时跳到这一轮 Agent 输出的第一行 */
   const jumpToReply = useCallback(
     (turn: SessionTurn) => {
@@ -334,7 +312,6 @@ export function SessionReader({
     },
     [rows, scrollToRow, turns],
   );
-
   // j / k 在轮之间跳（‹ › 是会话之间）
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -372,14 +349,12 @@ export function SessionReader({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [rows, scrollToRow, virtualizer]);
-
   const toggleTurn = useCallback((key: string, expanded: boolean) => {
     setTurnOverrides((current) => new Map(current).set(key, !expanded));
   }, []);
   const toggleStep = useCallback((id: string, expanded: boolean) => {
     setStepOverrides((current) => new Map(current).set(id, !expanded));
   }, []);
-
   const handleExpandAll = useCallback((value: boolean) => {
     setExpandAll(value);
     // 切换「展开全部」时清掉逐轮的手动开合，免得部分轮不跟随
@@ -390,7 +365,6 @@ export function SessionReader({
       // 隐私模式等写不了 localStorage：只在本次生效
     }
   }, []);
-
   const exportOptions = useMemo(
     () => ({
       style,
@@ -403,7 +377,6 @@ export function SessionReader({
     }),
     [appName, includeThinking, moneyCompact, rt, session.projectDir, style, t],
   );
-
   const copyTurn = useCallback(
     (turnKey: string) => {
       const turn = turns.find((item) => item.key === turnKey);
@@ -412,7 +385,6 @@ export function SessionReader({
     },
     [exportOptions, onCopy, rt, turns],
   );
-
   const copyMarkdown = useCallback(() => {
     onCopy(
       transcriptToMarkdown(title, turns, exportOptions),
@@ -421,7 +393,6 @@ export function SessionReader({
       }),
     );
   }, [exportOptions, onCopy, t, title, turns]);
-
   const exportMarkdownFile = useCallback(async () => {
     const name = `${toFileName(title) || session.sessionId}.md`;
     try {
@@ -434,7 +405,6 @@ export function SessionReader({
       toast.error(rt("exportFailed", { error: extractErrorMessage(error) }));
     }
   }, [exportOptions, rt, session.sessionId, title, turns]);
-
   const openFind = () => {
     setFindOpen(true);
     setFindIndex(1);
@@ -454,13 +424,11 @@ export function SessionReader({
       return next;
     });
   };
-
   const scrollToLatest = () => {
     if (rows.length === 0) return;
     virtualizer.scrollToIndex(rows.length - 1, { align: "end" });
     setAtBottom(true);
   };
-
   const context = useMemo<ReaderContextValue>(
     () => ({
       providerId: session.providerId,
@@ -481,7 +449,6 @@ export function SessionReader({
       style,
     ],
   );
-
   const noResumeReason = !session.resumeCommand
     ? session.providerId === "openclaw"
       ? t("sessionManager.noResumeOpenclaw", {
@@ -495,7 +462,6 @@ export function SessionReader({
             defaultValue: "此会话无法恢复",
           })
     : null;
-
   const loadingFirst =
     !failed &&
     messages.length === 0 &&
@@ -516,12 +482,10 @@ export function SessionReader({
       : firstVisible
         ? (rows[firstVisible.index]?.turn ?? 0)
         : 0;
-
   const showLatest =
     !failed &&
     rows.length > 0 &&
     (atBottom === null ? rows.length >= 8 : !atBottom);
-
   /** Agent 输出一侧：左边 40px 头像列，右边留白和人的气泡错开 */
   const renderAgentRow = (row: ReaderRow, content: ReactNode): ReactNode => {
     const start = agentStartKeys.has(row.key);
@@ -544,14 +508,12 @@ export function SessionReader({
       </div>
     );
   };
-
   const renderRow = (row: ReaderRow): ReactNode => {
     const content = renderRowContent(row);
     return AGENT_ROW_KINDS.has(row.kind) && content
       ? renderAgentRow(row, content)
       : content;
   };
-
   const renderRowContent = (row: ReaderRow): ReactNode => {
     const turn = turns[row.turn];
     switch (row.kind) {
@@ -623,7 +585,6 @@ export function SessionReader({
         );
     }
   };
-
   let body: ReactNode;
   if (failed) {
     body = (
@@ -725,7 +686,6 @@ export function SessionReader({
       </div>
     );
   }
-
   return (
     <ReaderContext.Provider value={context}>
       <div

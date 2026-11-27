@@ -1,12 +1,10 @@
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { useApiKeyState } from "@/components/providers/forms/hooks/useApiKeyState";
-
 describe("useApiKeyState", () => {
   it("shows and creates Claude API key for uncategorized edit providers", () => {
     const onConfigChange = vi.fn();
     const initialConfig = JSON.stringify({ env: {} }, null, 2);
-
     const { result } = renderHook(() =>
       useApiKeyState({
         initialConfig,
@@ -16,21 +14,16 @@ describe("useApiKeyState", () => {
         appType: "claude",
       }),
     );
-
     expect(result.current.showApiKey(initialConfig, true)).toBe(true);
-
     act(() => {
       result.current.handleApiKeyChange("sk-test");
     });
-
     const updated = JSON.parse(onConfigChange.mock.calls.at(-1)?.[0]);
     expect(updated.env.ANTHROPIC_AUTH_TOKEN).toBe("sk-test");
   });
-
   it("keeps official and cloud provider edit behavior conservative", () => {
     const initialConfig = JSON.stringify({ env: {} }, null, 2);
     const officialConfigChange = vi.fn();
-
     const official = renderHook(() =>
       useApiKeyState({
         initialConfig,
@@ -45,7 +38,6 @@ describe("useApiKeyState", () => {
       official.result.current.handleApiKeyChange("sk-official");
     });
     expect(officialConfigChange).toHaveBeenLastCalledWith(initialConfig);
-
     const cloudProviderConfigChange = vi.fn();
     const cloudProvider = renderHook(() =>
       useApiKeyState({

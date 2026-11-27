@@ -1,12 +1,9 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import { useTranslation } from "react-i18next";
+import { Button } from "@/components/ui/button";
 import { FormLabel } from "@/components/ui/form";
+import { HoverTip } from "@/components/ui/hover-tip";
+import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import { ImeSafeInput } from "@/components/ui/ime-safe-input";
-import { Button } from "@/components/ui/button";
-import { HoverTip } from "@/components/ui/hover-tip";
 import {
   Select,
   SelectContent,
@@ -14,17 +11,30 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { toast } from "@/lib/toast";
-import { Plus, Trash2, ChevronDown, ChevronRight } from "lucide-react";
-import { ApiKeySection, GptContextWindowHint, ModelDropdown } from "./shared";
+import { Switch } from "@/components/ui/switch";
+import { opencodeNpmPackages } from "@/config/opencodeProviderPresets";
+import { opencodePresetModelSources } from "@/config/presetModelMetadata";
+import { REASONING_LEVELS } from "@/config/reasoningLevels";
+import { useCommittableRef } from "@/hooks/useLatestRef";
+import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
+  upstreamModelFetchApiFormat,
   type FetchedModel,
 } from "@/lib/api/model-fetch";
-import { opencodeNpmPackages } from "@/config/opencodeProviderPresets";
-import { cn } from "@/lib/utils";
+import type { PresetModelSource } from "@/lib/modelMetadata";
 import { isPlainObject } from "@/lib/requestOverrides";
+import { toast } from "@/lib/toast";
+import { cn } from "@/lib/utils";
+import type { OpenCodeModel, ProviderCategory } from "@/types";
+import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import {
+  FetchedModelPicker,
+  type FetchedModelSelection,
+} from "./FetchedModelPicker";
 import {
   getModelExtraFields,
   isKnownModelKey,
@@ -36,24 +46,14 @@ import {
   withModelReasoning,
   type OpenCodeModelDialect,
 } from "./helpers/opencodeFormUtils";
-import { StructuredOptionsEditor } from "./StructuredOptionsEditor";
-import { PI_THINKING_LEVELS } from "@/config/piThinkingProfiles";
-import { RequestHeadersEditor } from "./RequestHeadersEditor";
 import {
   findRequestHeaderValue,
   normalizeRequestHeaders,
 } from "./helpers/requestHeaders";
-import {
-  FetchedModelPicker,
-  type FetchedModelSelection,
-} from "./FetchedModelPicker";
-import type { ProviderCategory, OpenCodeModel } from "@/types";
-import { useCommittableRef } from "@/hooks/useLatestRef";
-import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
-import type { PresetModelSource } from "@/lib/modelMetadata";
-import { opencodePresetModelSources } from "@/config/presetModelMetadata";
 import { fillOpenCodeModel, metadataFilledAnything } from "./modelMetadataFill";
-
+import { RequestHeadersEditor } from "./RequestHeadersEditor";
+import { ApiKeySection, GptContextWindowHint, ModelDropdown } from "./shared";
+import { StructuredOptionsEditor } from "./StructuredOptionsEditor";
 /**
  * Model ID input with local state to prevent focus loss.
  * The key prop issue: when Model ID changes, React sees it as a new element
@@ -70,12 +70,10 @@ function ModelIdInput({
   placeholder?: string;
 }) {
   const [localValue, setLocalValue] = useState(modelId);
-
   // Sync when external modelId changes (e.g., undo operation)
   useEffect(() => {
     setLocalValue(modelId);
   }, [modelId]);
-
   return (
     <ImeSafeInput
       value={localValue}
@@ -91,7 +89,6 @@ function ModelIdInput({
     />
   );
 }
-
 /**
  * Extra option key input with local state to prevent focus loss.
  * Same pattern as ModelIdInput - use local state during editing,
@@ -113,12 +110,10 @@ function ExtraOptionKeyInput({
   );
   const displayValue = isPlaceholderKey ? "" : optionKey;
   const [localValue, setLocalValue] = useState(displayValue);
-
   // Sync when external key changes
   useEffect(() => {
     setLocalValue(isPlaceholderKey ? "" : optionKey);
   }, [isPlaceholderKey, optionKey]);
-
   return (
     <ImeSafeInput
       value={localValue}
@@ -137,7 +132,6 @@ function ExtraOptionKeyInput({
     />
   );
 }
-
 /**
  * Model option key input with local state to prevent focus loss.
  * Reuses the same pattern as ExtraOptionKeyInput.
@@ -153,11 +147,9 @@ function ModelOptionKeyInput({
 }) {
   const displayValue = optionKey.startsWith("option-") ? "" : optionKey;
   const [localValue, setLocalValue] = useState(displayValue);
-
   useEffect(() => {
     setLocalValue(optionKey.startsWith("option-") ? "" : optionKey);
   }, [optionKey]);
-
   return (
     <ImeSafeInput
       value={localValue}
@@ -177,10 +169,9 @@ function ModelOptionKeyInput({
     />
   );
 }
-
 /**
  * DeepSeek Harness 的思考档位：列出的档位才提供，值是发给上游的档位名（null 表示不带）。
- * 新打开的档位按同名透传；不在 Pi 档位表里的键原样保留。
+ * 新打开的档位按同名透传；只管理 Pi 档位表中的键，不静默写回未知非法键。
  */
 function ReasoningEffortsField({
   modelKey,
@@ -193,11 +184,12 @@ function ReasoningEffortsField({
 }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
-  const offeredCount = Object.keys(efforts).length;
-
+  const offeredCount = REASONING_LEVELS.filter(
+    (level) => level in efforts,
+  ).length;
   const toggle = (level: string, offered: boolean) => {
     const next: Record<string, string | null> = {};
-    for (const known of PI_THINKING_LEVELS) {
+    for (const known of REASONING_LEVELS) {
       if (known === level) {
         if (offered)
           next[known] =
@@ -206,12 +198,8 @@ function ReasoningEffortsField({
         next[known] = efforts[known];
       }
     }
-    for (const [other, value] of Object.entries(efforts)) {
-      if (!(other in next) && other !== level) next[other] = value;
-    }
     onChange(next);
   };
-
   return (
     <div className="w-full space-y-2 sm:col-span-2">
       <div className="flex min-h-9 items-center">
@@ -223,17 +211,15 @@ function ReasoningEffortsField({
           aria-expanded={expanded}
           className="-ml-2 h-8 gap-1.5 px-2 text-fg-1"
         >
-          <span>{t("pi.form.thinkingLevelsLabel")}</span>
+          <span>{t("opencode.modelFields.thinkingLevelsLabel")}</span>
           <ChevronDown
-            className={`h-4 w-4 transition-transform motion-reduce:transition-none ${
-              expanded ? "rotate-180" : ""
-            }`}
+            className={`h-4 w-4 transition-transform motion-reduce:transition-none ${expanded ? "rotate-180" : ""}`}
           />
         </Button>
       </div>
       {expanded && (
         <div className="overflow-hidden rounded-lg border border-border/70 bg-surface">
-          {PI_THINKING_LEVELS.map((level) => {
+          {REASONING_LEVELS.map((level) => {
             const offered = level in efforts;
             const value = efforts[level];
             const id = `opencode-${modelKey}-effort-${level}`;
@@ -243,7 +229,7 @@ function ReasoningEffortsField({
                 className="flex h-[42px] items-center gap-3 border-b border-border/40 px-4 text-sm last:border-b-0"
               >
                 <Label htmlFor={id} className="flex-1 cursor-pointer">
-                  {t(`pi.form.thinkingLevels.${level}`)}
+                  {t(`opencode.modelFields.thinkingLevels.${level}`)}
                 </Label>
                 <span
                   className={
@@ -254,7 +240,7 @@ function ReasoningEffortsField({
                 >
                   {offered
                     ? (value ?? "")
-                    : t("pi.form.thinkingLevelUnsupported")}
+                    : t("opencode.modelFields.thinkingLevelUnsupported")}
                 </span>
                 <Switch
                   id={id}
@@ -271,18 +257,19 @@ function ReasoningEffortsField({
     </div>
   );
 }
-
 interface OpenCodeFormFieldsProps {
   allowBuiltinDefaults?: boolean;
   /** 模型字段方言：DeepSeek Harness 多出思考档位和接口兼容性。 */
   modelDialect?: OpenCodeModelDialect;
   /** 选中拉取到的模型时补参数所查的预设（MiniMax Code 传自己的）。 */
   presetModelSources?: () => readonly PresetModelSource[];
-  apiFormats?: ReadonlyArray<{ value: string; label: string }>;
+  apiFormats?: ReadonlyArray<{
+    value: string;
+    label: string;
+  }>;
   // NPM Package
   npm: string;
   onNpmChange: (value: string) => void;
-
   // API Key
   apiKey: string;
   onApiKeyChange: (value: string) => void;
@@ -291,24 +278,19 @@ interface OpenCodeFormFieldsProps {
   websiteUrl: string;
   isPartner?: boolean;
   partnerPromotionKey?: string;
-
   // Base URL
   baseUrl: string;
   onBaseUrlChange: (value: string) => void;
-
   // Headers
   headers: Record<string, string>;
   onHeadersChange: (headers: Record<string, string>) => void;
-
   // Models
   models: Record<string, OpenCodeModel>;
   onModelsChange: (models: Record<string, OpenCodeModel>) => void;
-
   // Extra Options
   extraOptions: Record<string, string>;
   onExtraOptionsChange: (options: Record<string, string>) => void;
 }
-
 export function OpenCodeFormFields({
   allowBuiltinDefaults = false,
   modelDialect = "opencode",
@@ -333,11 +315,9 @@ export function OpenCodeFormFields({
   onExtraOptionsChange,
 }: OpenCodeFormFieldsProps) {
   const { t } = useTranslation();
-
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const modelFetchGeneration = useRef(0);
-
   // Callers without custom headers may pass a fresh {} on every render; compare by content.
   const headersKey = JSON.stringify(headers);
   useEffect(() => {
@@ -347,8 +327,7 @@ export function OpenCodeFormFields({
       // Ignore responses for a previous endpoint/key or an unmounted form.
       modelFetchGeneration.current += 1;
     };
-  }, [baseUrl, apiKey, headersKey]);
-
+  }, [baseUrl, apiKey, headersKey, npm]);
   const handleFetchModels = useCallback(() => {
     const requestHeaders = normalizeRequestHeaders(headers);
     const hasCredentials =
@@ -360,12 +339,10 @@ export function OpenCodeFormFields({
       });
       return;
     }
-
     const customUserAgent = findRequestHeaderValue(
       requestHeaders,
       "user-agent",
     );
-
     const generation = ++modelFetchGeneration.current;
     setFetchedModels([]);
     setIsFetchingModels(true);
@@ -375,7 +352,7 @@ export function OpenCodeFormFields({
       undefined,
       undefined,
       customUserAgent,
-      { requestHeaders },
+      { apiFormat: upstreamModelFetchApiFormat(npm), requestHeaders },
     )
       .then((result) => {
         if (generation !== modelFetchGeneration.current) return;
@@ -398,11 +375,9 @@ export function OpenCodeFormFields({
           setIsFetchingModels(false);
         }
       });
-  }, [baseUrl, apiKey, headers, t]);
-
+  }, [baseUrl, apiKey, headers, npm, t]);
   // Track which models have expanded options panel
   const [expandedModels, setExpandedModels] = useState<Set<string>>(new Set());
-
   // Toggle model expand state
   const toggleModelExpand = (key: string) => {
     setExpandedModels((prev) => {
@@ -412,7 +387,6 @@ export function OpenCodeFormFields({
       return next;
     });
   };
-
   // Add a new model entry
   const handleAddModel = () => {
     const newKey = `model-${Date.now()}`;
@@ -421,7 +395,6 @@ export function OpenCodeFormFields({
       [newKey]: { name: "" },
     });
   };
-
   // 选中拉取到的模型时补上它已知的 limit 和模态（只补空着的）。
   // 补全可能晚到，要用最新的列表和回调提交。
   const [modelsRef, commitModels] = useCommittableRef(models, onModelsChange);
@@ -443,7 +416,6 @@ export function OpenCodeFormFields({
       },
       { silent },
     );
-
   const handleApplyFetchedModels = ({ add, remove }: FetchedModelSelection) => {
     const next = { ...models };
     for (const id of remove) delete next[id];
@@ -463,7 +435,6 @@ export function OpenCodeFormFields({
     // 弹窗里已经显示过这些参数，补完不再提示。
     for (const id of Object.keys(additions)) fillModelMetadataFor(id, true);
   };
-
   // Remove a model entry
   const handleRemoveModel = (key: string) => {
     const newModels = { ...models };
@@ -476,7 +447,6 @@ export function OpenCodeFormFields({
       return next;
     });
   };
-
   // Update model ID (key)
   const handleModelIdChange = (oldKey: string, newKey: string) => {
     if (oldKey === newKey || !newKey.trim()) return;
@@ -499,7 +469,6 @@ export function OpenCodeFormFields({
       });
     }
   };
-
   // Update model name
   const handleModelNameChange = (key: string, name: string) => {
     onModelsChange({
@@ -507,10 +476,8 @@ export function OpenCodeFormFields({
       [key]: { ...models[key], name },
     });
   };
-
   const updateModel = (modelKey: string, model: OpenCodeModel) =>
     onModelsChange({ ...models, [modelKey]: model });
-
   const handleModelLimitChange = (
     modelKey: string,
     limitKey: "context" | "output",
@@ -519,7 +486,6 @@ export function OpenCodeFormFields({
     const model = models[modelKey];
     const nextLimit = { ...(model.limit || {}) };
     const trimmedValue = value.trim();
-
     if (trimmedValue === "") {
       delete nextLimit[limitKey];
     } else {
@@ -527,20 +493,17 @@ export function OpenCodeFormFields({
       if (!Number.isFinite(parsed) || parsed < 0) return;
       nextLimit[limitKey] = Math.trunc(parsed);
     }
-
     const nextModel = { ...model };
     if (Object.keys(nextLimit).length > 0) {
       nextModel.limit = nextLimit;
     } else {
       delete nextModel.limit;
     }
-
     onModelsChange({
       ...models,
       [modelKey]: nextModel,
     });
   };
-
   // Model options handlers
   const handleAddModelOption = (modelKey: string) => {
     const model = models[modelKey];
@@ -553,7 +516,6 @@ export function OpenCodeFormFields({
       },
     });
   };
-
   const handleRemoveModelOption = (modelKey: string, optionKey: string) => {
     const model = models[modelKey];
     const newOptions = { ...model.options };
@@ -566,7 +528,6 @@ export function OpenCodeFormFields({
       },
     });
   };
-
   const handleModelOptionKeyChange = (
     modelKey: string,
     oldKey: string,
@@ -584,7 +545,6 @@ export function OpenCodeFormFields({
       [modelKey]: { ...model, options: newOptions },
     });
   };
-
   const handleModelOptionValueChange = (
     modelKey: string,
     optionKey: string,
@@ -605,7 +565,6 @@ export function OpenCodeFormFields({
       },
     });
   };
-
   // Model extra field handlers (top-level properties like variants, cost)
   const handleAddModelExtraField = (modelKey: string) => {
     const model = models[modelKey];
@@ -615,7 +574,6 @@ export function OpenCodeFormFields({
       [modelKey]: { ...model, [newFieldKey]: "" },
     });
   };
-
   const handleRemoveModelExtraField = (modelKey: string, fieldKey: string) => {
     const model = models[modelKey];
     const newModel = { ...model };
@@ -625,7 +583,6 @@ export function OpenCodeFormFields({
       [modelKey]: newModel,
     });
   };
-
   const handleModelExtraFieldKeyChange = (
     modelKey: string,
     oldKey: string,
@@ -646,7 +603,6 @@ export function OpenCodeFormFields({
       [modelKey]: newModel as OpenCodeModel,
     });
   };
-
   const handleModelExtraFieldValueChange = (
     modelKey: string,
     fieldKey: string,
@@ -664,7 +620,6 @@ export function OpenCodeFormFields({
       [modelKey]: { ...model, [fieldKey]: parsedValue },
     });
   };
-
   // Extra Options handlers
   const handleAddExtraOption = () => {
     const newKey = `${OPENCODE_EXTRA_OPTION_DRAFT_PREFIX}${Date.now()}`;
@@ -673,13 +628,11 @@ export function OpenCodeFormFields({
       [newKey]: "",
     });
   };
-
   const handleRemoveExtraOption = (key: string) => {
     const newOptions = { ...extraOptions };
     delete newOptions[key];
     onExtraOptionsChange(newOptions);
   };
-
   const handleExtraOptionKeyChange = (oldKey: string, newKey: string) => {
     if (oldKey === newKey) return;
     const trimmed = newKey.trim();
@@ -704,14 +657,12 @@ export function OpenCodeFormFields({
     }
     onExtraOptionsChange(newOptions);
   };
-
   const handleExtraOptionValueChange = (key: string, value: string) => {
     onExtraOptionsChange({
       ...extraOptions,
       [key]: value,
     });
   };
-
   return (
     <>
       {/* NPM Package Selector */}
@@ -974,7 +925,7 @@ export function OpenCodeFormFields({
                           htmlFor={`opencode-${key}-reasoning`}
                           className="cursor-pointer"
                         >
-                          {t("pi.form.reasoning")}
+                          {t("opencode.modelFields.reasoning")}
                         </Label>
                         <Switch
                           id={`opencode-${key}-reasoning`}
@@ -992,7 +943,7 @@ export function OpenCodeFormFields({
                           htmlFor={`opencode-${key}-image-input`}
                           className="cursor-pointer"
                         >
-                          {t("pi.form.imageInput")}
+                          {t("opencode.modelFields.imageInput")}
                         </Label>
                         <Switch
                           id={`opencode-${key}-image-input`}
@@ -1008,7 +959,7 @@ export function OpenCodeFormFields({
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor={`opencode-${key}-limit-context`}>
-                        {t("pi.form.contextWindow")}
+                        {t("opencode.modelFields.contextWindow")}
                       </Label>
                       <Input
                         id={`opencode-${key}-limit-context`}
@@ -1028,7 +979,7 @@ export function OpenCodeFormFields({
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor={`opencode-${key}-limit-output`}>
-                        {t("pi.form.maxTokens")}
+                        {t("opencode.modelFields.maxTokens")}
                       </Label>
                       <Input
                         id={`opencode-${key}-limit-output`}
@@ -1059,15 +1010,21 @@ export function OpenCodeFormFields({
                         isPlainObject(model.compat)) && (
                         <StructuredOptionsEditor
                           id={`opencode-${key}-compat`}
-                          title={t("pi.form.compatibility")}
-                          hint={t("pi.form.compatibilityHint")}
-                          addLabel={t("pi.form.addCompatibilityOption")}
-                          emptyLabel={t("pi.form.noCompatibilityOptions")}
-                          keyLabel={t("pi.form.optionKey")}
-                          valueLabel={t("pi.form.optionValue")}
+                          title={t("opencode.modelFields.compatibility")}
+                          hint={t("opencode.modelFields.compatibilityHint")}
+                          addLabel={t(
+                            "opencode.modelFields.addCompatibilityOption",
+                          )}
+                          emptyLabel={t(
+                            "opencode.modelFields.noCompatibilityOptions",
+                          )}
+                          keyLabel={t("opencode.modelFields.optionKey")}
+                          valueLabel={t("opencode.modelFields.optionValue")}
                           keyPlaceholder="supportsDeveloperRole"
                           valuePlaceholder="false"
-                          removeLabel={t("pi.form.removeCompatibilityOption")}
+                          removeLabel={t(
+                            "opencode.modelFields.removeCompatibilityOption",
+                          )}
                           options={model.compat ?? {}}
                           onOptionsChange={(compat) => {
                             const { compat: _previous, ...rest } = model;

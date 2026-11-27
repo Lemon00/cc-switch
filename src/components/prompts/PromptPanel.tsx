@@ -1,21 +1,20 @@
+import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
+import { useDelayedFlag } from "@/hooks/useDelayedFlag";
+import { usePromptActions } from "@/hooks/usePromptActions";
+import { useTauriEvent } from "@/hooks/useTauriEvent";
+import { promptsApi, type AppId, type Prompt } from "@/lib/api";
+import type { PromptWriteExpectation } from "@/lib/api/prompts";
+import { toast } from "@/lib/toast";
 import React, { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "@/lib/toast";
-import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
-import { promptsApi, type AppId, type Prompt } from "@/lib/api";
-import { usePromptActions } from "@/hooks/usePromptActions";
-import { useDelayedFlag } from "@/hooks/useDelayedFlag";
-import { useTauriEvent } from "@/hooks/useTauriEvent";
-import PiPromptPanel from "./PiPromptPanel";
+import { PromptCopyDialog } from "./PromptCopyDialog";
 import PromptFormPanel from "./PromptFormPanel";
 import {
   PromptEmptyState,
   PromptLibrary,
   filterPromptEntries,
 } from "./PromptLibrary";
-import { PromptCopyDialog } from "./PromptCopyDialog";
 import { PromptPageFrame } from "./PromptPageFrame";
-import { toggleEffectText, usePromptPageCommon } from "./usePromptPageCommon";
 import {
   copyText,
   formatSize,
@@ -23,7 +22,7 @@ import {
   showPromptToast,
   utf8Bytes,
 } from "./promptUtils";
-
+import { toggleEffectText, usePromptPageCommon } from "./usePromptPageCommon";
 export interface PromptPanelProps {
   appId: AppId;
   /** 应用下拉里的应用（只列「应用」页里设为显示、且支持提示词的） */
@@ -33,7 +32,6 @@ export interface PromptPanelProps {
   onInteractionBlockedChange?: (blocked: boolean) => void;
   onNavigationBlockedChange?: (blocked: boolean) => void;
 }
-
 const StandardPromptPanel: React.FC<PromptPanelProps> = ({
   open = true,
   appId,
@@ -56,7 +54,6 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
   const externalReloadQueuedRef = React.useRef(false);
   const appIdRef = React.useRef(appId);
   appIdRef.current = appId;
-
   const {
     prompts,
     loading,
@@ -72,7 +69,6 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
   reloadRef.current = reload;
   const { displayPath, location, fileName, invalidate, moreItems } =
     usePromptPageCommon(appId);
-
   const dialogOpen = copyingId !== null;
   const interactionBlocked =
     loading || reloadPending || writePending || isFormOpen || dialogOpen;
@@ -84,15 +80,12 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
     useDelayedFlag(loading || reloadPending || writePending) ||
     isFormOpen ||
     dialogOpen;
-
   useEffect(() => {
     onInteractionBlockedChange?.(interactionBlocked);
   }, [interactionBlocked, onInteractionBlockedChange]);
-
   useEffect(() => {
     onNavigationBlockedChange?.(navigationBlocked);
   }, [navigationBlocked, onNavigationBlockedChange]);
-
   useEffect(
     () => () => {
       onInteractionBlockedChange?.(false);
@@ -100,13 +93,11 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
     },
     [onInteractionBlockedChange, onNavigationBlockedChange],
   );
-
   const runExternalReload = React.useCallback(async () => {
     if (writeLockRef.current || overlayOpenRef.current) {
       externalReloadQueuedRef.current = true;
       return;
     }
-
     const runGeneration = ++reloadRunGenerationRef.current;
     externalReloadQueuedRef.current = false;
     reloadLockRef.current = true;
@@ -120,14 +111,12 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
       }
     }
   }, []);
-
   const beginWrite = () => {
     if (loading || reloadLockRef.current || writeLockRef.current) return false;
     writeLockRef.current = true;
     setWritePending(true);
     return true;
   };
-
   const endWrite = () => {
     writeLockRef.current = false;
     setWritePending(false);
@@ -136,24 +125,20 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
       void runExternalReload();
     }
   };
-
   /** 撤销等页外写入之后：刷新缓存；还停在同一个应用就重读列表。 */
   const afterUndo = (app: AppId) => {
     invalidate();
     if (appIdRef.current === app) void runExternalReload();
   };
-
   useEffect(() => {
     if (open) void runExternalReload();
   }, [appId, open, runExternalReload]);
-
   useEffect(() => {
     if (!open) return;
     const handleFocus = () => void runExternalReload();
     window.addEventListener("focus", handleFocus);
     return () => window.removeEventListener("focus", handleFocus);
   }, [open, runExternalReload]);
-
   useEffect(() => {
     setSearchQuery("");
     overlayOpenRef.current = false;
@@ -164,7 +149,6 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
       void runExternalReload();
     }
   }, [appId, runExternalReload]);
-
   useEffect(() => {
     const handlePromptImported = (event: Event) => {
       const customEvent = event as CustomEvent;
@@ -172,15 +156,12 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
         void runExternalReload();
       }
     };
-
     window.addEventListener("prompt-imported", handlePromptImported);
     return () => {
       window.removeEventListener("prompt-imported", handlePromptImported);
     };
   }, [appId, runExternalReload]);
-
   useTauriEvent("profile-applied", runExternalReload);
-
   const handleAdd = () => {
     if (reloadLockRef.current || writeLockRef.current || interactionBlocked) {
       return;
@@ -189,7 +170,6 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
     setEditingId(null);
     setIsFormOpen(true);
   };
-
   const handleEdit = (id: string) => {
     if (reloadLockRef.current || writeLockRef.current || interactionBlocked) {
       return;
@@ -198,14 +178,12 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
     setEditingId(id);
     setIsFormOpen(true);
   };
-
   const closeOverlay = () => {
     overlayOpenRef.current = false;
     setIsFormOpen(false);
     setEditingId(null);
     setCopyingId(null);
   };
-
   // 删除不弹确认框：只删库、不碰文件，toast 给「撤销」（原 id、原位置、原更新时间写回）
   const performDelete = async (id: string) => {
     const original = prompts[id];
@@ -232,14 +210,12 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
       endWrite();
     }
   };
-
   const handleDelete = (id: string) => {
     if (reloadLockRef.current || writeLockRef.current || interactionBlocked) {
       return;
     }
     void performDelete(id);
   };
-
   const handleToggle = async (id: string, enabled: boolean) => {
     const before = prompts;
     const target = before[id];
@@ -311,12 +287,15 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
       endWrite();
     }
   };
-
-  const handleSave = async (id: string, prompt: Prompt) => {
+  const handleSave = async (
+    id: string,
+    prompt: Prompt,
+    expected?: PromptWriteExpectation,
+  ) => {
     if (!beginWrite()) return false;
     const isNew = !(id in prompts);
     try {
-      const refreshed = await savePrompt(id, prompt);
+      const refreshed = await savePrompt(id, prompt, expected);
       if (refreshed === false) {
         externalReloadQueuedRef.current = true;
       }
@@ -345,7 +324,6 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
       endWrite();
     }
   };
-
   const handleCloseForm = () => {
     if (writeLockRef.current) return;
     closeOverlay();
@@ -353,7 +331,6 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
       void runExternalReload();
     }
   };
-
   const handleImport = async () => {
     if (reloadLockRef.current || writeLockRef.current || interactionBlocked) {
       return;
@@ -375,7 +352,6 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
       endWrite();
     }
   };
-
   const handleCopyContent = (id: string) => {
     const prompt = prompts[id];
     if (!prompt) return;
@@ -389,7 +365,6 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
       }
     });
   };
-
   const handleOpenCopy = (id: string) => {
     if (reloadLockRef.current || writeLockRef.current || interactionBlocked) {
       return;
@@ -397,16 +372,18 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
     overlayOpenRef.current = true;
     setCopyingId(id);
   };
-
   const handleCopyToApps = async (targets: AppId[]) => {
     const source = copyingId ? prompts[copyingId] : undefined;
     if (!source) return;
     if (!beginWrite()) return;
     const timestamp = Math.floor(Date.now() / 1000);
-    const created: Array<{ app: AppId; id: string }> = [];
+    const created: Array<{
+      app: AppId;
+      id: string;
+    }> = [];
     const failed: AppId[] = [];
     for (const target of targets) {
-      const id = `prompt-${Date.now()}`;
+      const id = `prompt-${crypto.randomUUID()}`;
       try {
         await promptsApi.upsertPrompt(target, id, {
           id,
@@ -450,7 +427,6 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
       );
     }
   };
-
   const promptEntries = useMemo(() => Object.entries(prompts), [prompts]);
   const listEmpty = promptEntries.length === 0;
   const fileText = currentFileContent ?? null;
@@ -475,8 +451,6 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
         ? t("prompts.fileEmpty")
         : formatSize(utf8Bytes(fileText));
   const resultCount = filterPromptEntries(promptEntries, searchQuery).length;
-  const isHermes = appId === "hermes";
-
   return (
     <PromptPageFrame
       app={appId}
@@ -484,14 +458,7 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
       onAppChange={onAppChange}
       appSwitchDisabled={navigationBlocked}
       count={promptEntries.length}
-      help={
-        isHermes
-          ? {
-              title: t("prompts.helpHermesTitle"),
-              text: t("prompts.helpHermesText"),
-            }
-          : { title: t("prompts.helpTitle"), text: t("prompts.helpText") }
-      }
+      help={{ title: t("prompts.helpTitle"), text: t("prompts.helpText") }}
       primary={{
         label: t("prompts.add"),
         onClick: handleAdd,
@@ -555,7 +522,9 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
 
       {isFormOpen && (
         <PromptFormPanel
+          key={`${appId}:${editingId ?? "new"}`}
           appId={appId}
+          fileContent={currentFileContent}
           editingId={editingId || undefined}
           initialData={editingId ? prompts[editingId] : undefined}
           onSave={handleSave}
@@ -579,21 +548,7 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
     </PromptPageFrame>
   );
 };
-
 const PromptPanel: React.FC<PromptPanelProps> = (props) => {
-  if (props.appId === "pi") {
-    return (
-      <PiPromptPanel
-        open={props.open ?? true}
-        apps={props.apps}
-        onAppChange={props.onAppChange}
-        onInteractionBlockedChange={props.onInteractionBlockedChange}
-        onNavigationBlockedChange={props.onNavigationBlockedChange}
-      />
-    );
-  }
-
   return <StandardPromptPanel {...props} />;
 };
-
 export default PromptPanel;

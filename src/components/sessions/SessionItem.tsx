@@ -1,6 +1,4 @@
-import { useId, useState } from "react";
-import { Copy, Folder, MoreHorizontal, Play } from "lucide-react";
-import { useTranslation } from "react-i18next";
+import { AppGlyph } from "@/components/shell/AppGlyph";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   DropdownMenu,
@@ -10,9 +8,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { HoverTip } from "@/components/ui/hover-tip";
-import { AppGlyph } from "@/components/shell/AppGlyph";
 import { cn } from "@/lib/utils";
 import type { SessionMeta } from "@/types";
+import { Copy, Folder, MoreHorizontal, Play } from "lucide-react";
+import { useId, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   canDeleteSession,
   formatRelativeTime,
@@ -23,13 +23,11 @@ import {
   highlightText,
   isArchivedSession,
   isSessionAppId,
+  nativeDeleteHintKey,
 } from "./utils";
-
 const rowIconButton =
   "inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-selected hover:text-fg-1";
-
 export const sessionMenuItemClass = "h-8 rounded-control px-2.5 text-body";
-
 interface SessionItemProps {
   session: SessionMeta;
   /** 选了「全部应用」时行首显示应用图标 */
@@ -52,7 +50,6 @@ interface SessionItemProps {
   onCopySource: () => void;
   onDelete: () => void;
 }
-
 export function SessionItem({
   session,
   showAppIcon,
@@ -77,7 +74,6 @@ export function SessionItem({
   const whyId = useId();
   const checkboxId = useId();
   const [menuOpen, setMenuOpen] = useState(false);
-
   const title = formatSessionTitle(session);
   const untitled = !session.title && !session.projectDir;
   const lastText = getSessionLastText(session);
@@ -91,7 +87,6 @@ export function SessionItem({
     : t("sessionManager.unknownDirectory", { defaultValue: "未知目录" });
   const hasMeta = showDir || Boolean(lastText) || archived || blocked;
   const appId = isSessionAppId(session.providerId) ? session.providerId : null;
-
   const tip = [
     title,
     lastText,
@@ -103,20 +98,11 @@ export function SessionItem({
   ]
     .filter(Boolean)
     .join("\n");
-
   const deleteReason = !deletable
-    ? t(
-        session.providerId === "dsh"
-          ? "dsh.deleteSessionHint"
-          : session.providerId === "agy"
-            ? "sessionManager.agyDeleteHint"
-            : "sessionManager.mcodeDeleteHint",
-        {
-          defaultValue: "请在 MiniMax Code 中删除",
-        },
-      )
+    ? t(nativeDeleteHintKey(session) ?? "sessionManager.mcodeDeleteHint", {
+        defaultValue: "请在 MiniMax Code 中删除",
+      })
     : null;
-
   return (
     <div
       className={cn(

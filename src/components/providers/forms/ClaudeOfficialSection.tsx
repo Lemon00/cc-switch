@@ -1,9 +1,9 @@
-import React from "react";
-import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Loader2, Plus } from "lucide-react";
-import { toast } from "@/lib/toast";
-import { authApi } from "@/lib/api";
+import { signedInDate } from "@/components/settings/auth/accountDetails";
+import { ClaudeAccountQuota } from "@/components/settings/auth/AccountQuota";
+import {
+  ManagedAccountsGroup,
+  type GroupAccountRow,
+} from "@/components/settings/auth/ManagedAccountsGroup";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,27 +15,23 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useManagedAuth } from "./hooks/useManagedAuth";
+import { authApi } from "@/lib/api";
+import { claudePlanLabel } from "@/lib/claudePlan";
+import { toast } from "@/lib/toast";
+import { useQuery } from "@tanstack/react-query";
+import { AlertTriangle, Loader2, Plus } from "lucide-react";
+import React from "react";
+import { useTranslation } from "react-i18next";
 import { useManagedAccountUsers } from "./hooks/useManagedAccountUsers";
+import { useManagedAuth } from "./hooks/useManagedAuth";
 import {
   ManagedAccountRemoveDialog,
   type ManagedAccountRemoveTarget,
 } from "./ManagedAccountRemoveDialog";
-import {
-  ManagedAccountsGroup,
-  type GroupAccountRow,
-} from "@/components/settings/auth/ManagedAccountsGroup";
-import { signedInDate } from "@/components/settings/auth/accountDetails";
-import { ClaudeAccountQuota } from "@/components/settings/auth/AccountQuota";
-import { claudePlanLabel } from "@/lib/claudePlan";
-
 /** 不在默认登录里的账号，过期前多久开始提示 */
 const EXPIRY_NOTICE_MS = 7 * 24 * 60 * 60 * 1000;
-
 const SERVICE_NAME = "Claude";
-
 const LOGIN_SWITCH_KEY = ["claude-login-switch"] as const;
-
 function useClaudeLoginSwitch() {
   return useQuery({
     queryKey: LOGIN_SWITCH_KEY,
@@ -43,7 +39,6 @@ function useClaudeLoginSwitch() {
     staleTime: 30000,
   });
 }
-
 /**
  * 切卡为什么不会换 Claude Code 的登录：
  * - `"wsl"`：配置目录在 WSL 里，账号功能整体不可用（登录、终端都跑在 Windows 上）；
@@ -54,7 +49,6 @@ function useClaudeLoginBlocked(): "wsl" | "overrideDir" | null {
   if (data?.active !== false) return null;
   return data.blocked === "wsl" ? "wsl" : "overrideDir";
 }
-
 /**
  * 浏览器授权后回不到本机（远程桌面、浏览器拦了本机地址）时的退路：把浏览器地址栏里的
  * 地址，或登录页上显示的代码粘贴进来，交给正在等待的 `claude auth login`。
@@ -65,7 +59,6 @@ function ClaudePasteCode({ flowId }: { flowId: string }) {
   const [value, setValue] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
   const [submitted, setSubmitted] = React.useState(false);
-
   const submit = async () => {
     const pasted = value.trim();
     if (!pasted || submitting) return;
@@ -80,7 +73,6 @@ function ClaudePasteCode({ flowId }: { flowId: string }) {
       setSubmitting(false);
     }
   };
-
   if (submitted) {
     return (
       <span className="text-caption text-fg-2">
@@ -90,7 +82,6 @@ function ClaudePasteCode({ flowId }: { flowId: string }) {
       </span>
     );
   }
-
   if (!open) {
     return (
       <button
@@ -104,7 +95,6 @@ function ClaudePasteCode({ flowId }: { flowId: string }) {
       </button>
     );
   }
-
   return (
     <div className="flex flex-col gap-1.5">
       <span className="text-caption text-fg-2">
@@ -146,11 +136,9 @@ function ClaudePasteCode({ flowId }: { flowId: string }) {
     </div>
   );
 }
-
 interface ClaudeOfficialSectionProps {
   helpSide?: "top" | "bottom";
 }
-
 /**
  * 授权中心的 Claude 官方账号组。每个账号是 CC Switch 数据目录下的一个独立 Claude 配置目录，
  * 在里面跑 `claude auth login` 登录；用哪个号由官方卡的绑定决定，所以没有「默认」。
@@ -179,14 +167,17 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
   const accountUsers = useManagedAccountUsers("claude_official", null);
   const [removeTarget, setRemoveTarget] =
     React.useState<ManagedAccountRemoveTarget | null>(null);
-
-  const confirmRemove = () => {
+  const confirmRemove = async () => {
     const target = removeTarget;
-    setRemoveTarget(null);
     // 这组没有「删除全部」，只会是单个账号
-    if (target?.kind === "one") removeAccount(target.accountId);
+    if (target?.kind !== "one") return;
+    try {
+      await removeAccount(target.accountId);
+      setRemoveTarget(null);
+    } catch {
+      // toast 由 useManagedAuth 统一给出；保留确认框便于重试
+    }
   };
-
   const now = Date.now();
   const rows: GroupAccountRow[] = accounts.map((account) => {
     const date = signedInDate(account.authenticated_at, i18n.language);
@@ -245,7 +236,6 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
       ),
     };
   });
-
   return (
     <ManagedAccountsGroup
       slug="claude-official"
@@ -327,7 +317,7 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
         othersRemain={accounts.length > 1}
         note={t("authCenter.claude.removeNote", {
           defaultValue:
-            "只删除 CC Switch 为这个账号保存的登录，不会让它在其他地方退出；Claude Code 现在的登录（~/.claude）不受影响。绑定它的卡片会改用 Claude Code 现在的登录。",
+            "只删除本机保存的登录副本，不会吊销云端会话（令牌在过期前仍可能可用）。Claude Code 现在的登录（~/.claude）不受影响；绑定它的卡片会改用 Claude Code 现在的登录。",
         })}
         pending={isRemovingAccount}
         onConfirm={confirmRemove}
@@ -336,19 +326,15 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
     </ManagedAccountsGroup>
   );
 };
-
 export default ClaudeOfficialSection;
-
 const DEFAULT_LOGIN = "__default__";
 const MANAGE_ACCOUNTS = "__manage_accounts__";
-
 interface ClaudeAccountSelectProps {
   value: string | null;
   onChange: (accountId: string | null) => void;
   /** 打开授权中心添加或管理账号 */
   onManageAccounts?: () => void;
 }
-
 /**
  * Claude 官方卡的登录方式，和 Codex 官方卡同一套写法：托管的账号在上，「添加或管理」打开授权
  * 中心，最下面是跟随 Claude Code 登录（~/.claude，不绑号）。
@@ -380,7 +366,6 @@ export function ClaudeAccountSelect({
   });
   const itemClass =
     "min-w-0 overflow-hidden py-2 pl-6 [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1 [&>span:last-child]:overflow-hidden";
-
   return (
     <div className="space-y-2.5">
       <Label className="text-sm font-medium text-fg-1">{label}</Label>
@@ -501,7 +486,6 @@ export function ClaudeAccountSelect({
     </div>
   );
 }
-
 function useClaudeAccount(accountId: string) {
   const { data, isSuccess } = useQuery({
     queryKey: ["managed-auth-status", "claude_official"],
@@ -513,7 +497,6 @@ function useClaudeAccount(accountId: string) {
     account: data?.accounts.find((a) => a.id === accountId),
   };
 }
-
 /**
  * 绑了账号的 Claude 官方卡副标题（官网地址的位置），和 Codex 官方卡同一套写法：写账号，
  * 有备注写备注，卡名里已经有账号就写「Claude 账号」；登录失效、或切卡不会换号（设了配置

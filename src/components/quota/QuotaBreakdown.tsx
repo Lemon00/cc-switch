@@ -1,18 +1,17 @@
-import type { ReactNode } from "react";
-import { ChevronDown } from "lucide-react";
-import { cn } from "@/lib/utils";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
+import { ChevronDown } from "lucide-react";
+import type { ReactNode } from "react";
 import { TONE_TEXT } from "./QuotaLines";
 import type {
   QuotaBreakdown,
   QuotaBreakdownItem,
   QuotaLine,
 } from "./quotaRules";
-
 /**
  * 一行写不下的额度（存下了好几次重置）：整行（卡片上是那一段）是按钮，点开逐条列出明细
  * （每一次的到期日，同一天到期的并成一条）。授权中心、卡片额度列和展开的额度条共用。
@@ -75,7 +74,6 @@ export function QuotaBreakdownRow({
     </Popover>
   );
 }
-
 /** 跟在说明文字后面的 ⌄，点开时翻过来 */
 export function QuotaBreakdownChevron() {
   return (
@@ -86,7 +84,6 @@ export function QuotaBreakdownChevron() {
     />
   );
 }
-
 function BreakdownItems({
   items,
   className,

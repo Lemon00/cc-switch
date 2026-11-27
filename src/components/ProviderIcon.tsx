@@ -1,17 +1,16 @@
-import React, { useMemo, useState } from "react";
 import {
+  adaptSvgToTheme,
   getIcon,
-  hasIcon,
   getIconMetadata,
   getIconUrl,
-  isUrlIcon,
+  hasIcon,
   isDarkInk,
-  adaptSvgToTheme,
   isTileIcon,
+  isUrlIcon,
 } from "@/icons/extracted";
 import { cn } from "@/lib/utils";
 import { isCustomIcon } from "@/utils/customIcon";
-
+import React, { useMemo, useState } from "react";
 interface ProviderIconProps {
   icon?: string; // 图标名称
   name: string; // 供应商名称（用于 fallback）
@@ -21,7 +20,6 @@ interface ProviderIconProps {
   showFallback?: boolean; // 是否显示 fallback
   fallbackClassName?: string; // 覆盖首字母 fallback 的底色 / 文字色
 }
-
 /**
  * 提取供应商名称的首字母（最多 2 个字符）。
  *
@@ -40,7 +38,6 @@ export function getProviderInitials(name: string): string {
     .join("")
     .toUpperCase();
 }
-
 export const ProviderIcon: React.FC<ProviderIconProps> = ({
   icon,
   name,
@@ -60,7 +57,6 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
     }
     return { svg: "", adapted: false };
   }, [icon]);
-
   // 获取图标 URL：内置的大图（URL_ICONS 列表中的 SVG / 光栅图片），或用户上传的 PNG。
   // 自定义图标只认我们自己编码的 PNG data URI，从不把外链地址当图标加载
   const iconUrl = useMemo(() => {
@@ -72,10 +68,8 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
     }
     return "";
   }, [icon]);
-
   // 解码失败的图片（截断、损坏的自定义图标）记下来，退回首字母，不显示破图
   const [brokenUrl, setBrokenUrl] = useState<string>();
-
   // 计算尺寸样式
   const sizeStyle = useMemo(() => {
     const sizeValue = typeof size === "number" ? `${size}px` : size;
@@ -86,7 +80,6 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
       lineHeight: 1,
     };
   }, [size]);
-
   // 获取有效颜色：优先使用传入的有效 color，否则从元数据获取 defaultColor。
   // 近黑色（#000 / #111 这类）的颜色不写死，交给外层文字色，
   // 否则深色模式下是黑底上的黑图标。已经把近黑笔画换成 currentColor 的图标
@@ -104,7 +97,6 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
     }
     return isDarkInk(resolved) ? undefined : resolved;
   }, [color, icon, adapted]);
-
   // 内联 SVG 渲染（支持 CSS currentColor 着色）
   if (iconSvg) {
     return (
@@ -119,7 +111,6 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
       />
     );
   }
-
   // URL-based 图标（大型 SVG / 光栅图片）：以 <img> 渲染
   if (iconUrl && iconUrl !== brokenUrl) {
     return (
@@ -163,6 +154,5 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
       </span>
     );
   }
-
   return null;
 };

@@ -1,18 +1,5 @@
-import { useMemo, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "@/lib/toast";
-import {
-  Check,
-  FolderOpen,
-  Loader2,
-  MoreHorizontal,
-  RefreshCw,
-  Search,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { HoverTip } from "@/components/ui/hover-tip";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -21,17 +8,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
-import { HelpTip } from "@/components/ui/help-tip";
-import { Notice } from "@/components/ui/notice";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -40,33 +16,54 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { HelpTip } from "@/components/ui/help-tip";
+import { HoverTip } from "@/components/ui/hover-tip";
+import { Input } from "@/components/ui/input";
+import { Notice } from "@/components/ui/notice";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { settingsApi } from "@/lib/api/settings";
 import { usageApi } from "@/lib/api/usage";
+import { modelsDevQueryOptions } from "@/lib/modelsDev";
 import {
   MODELS_DEV_SYNC_CONFIG_QUERY_KEY,
   syncModelsDevPricing,
 } from "@/lib/modelsDevAutoSync";
-import { modelsDevQueryOptions } from "@/lib/modelsDev";
 import {
   flattenModels,
   formatPrice,
   getCommonModelKeys,
   type ModelsDevEntry,
 } from "@/lib/modelsDevPricing";
-import { usageKeys } from "@/lib/query/usage";
-import { formatRelativeTime } from "./format";
+import { localUsageQueryFilters } from "@/lib/query/usage";
+import { toast } from "@/lib/toast";
 import type { ModelsDevSyncConfig, ModelsDevSyncState } from "@/types/usage";
 import { isTextEditableTarget } from "@/utils/domUtils";
-
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Check,
+  FolderOpen,
+  Loader2,
+  MoreHorizontal,
+  RefreshCw,
+  Search,
+} from "lucide-react";
+import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { formatRelativeTime } from "./format";
 const DEFAULT_VISIBLE_ROWS = 80;
 const MAX_VISIBLE_ROWS = 300;
-
 interface AutoSyncDialogProps {
   state: ModelsDevSyncState;
   onClose: () => void;
   onSaved: (state: ModelsDevSyncState) => void;
 }
-
 function AutoSyncDialog({ state, onClose, onSaved }: AutoSyncDialogProps) {
   const { t } = useTranslation();
   const [search, setSearch] = useState("");
@@ -81,14 +78,12 @@ function AutoSyncDialog({ state, onClose, onSaved }: AutoSyncDialogProps) {
     () => new Set(state.config.excludedCommonModelKeys),
   );
   const [isSaving, setIsSaving] = useState(false);
-
   const { data, isLoading, error, refetch } = useQuery({
     ...modelsDevQueryOptions,
     retry: 1,
   });
   const entries = useMemo(() => (data ? flattenModels(data) : []), [data]);
   const commonModelKeys = useMemo(() => getCommonModelKeys(entries), [entries]);
-
   const effectiveSelectedKeys = useMemo(() => {
     const selected = new Set(selectedModelKeys);
     if (includeCommonModels) {
@@ -103,7 +98,6 @@ function AutoSyncDialog({ state, onClose, onSaved }: AutoSyncDialogProps) {
     includeCommonModels,
     selectedModelKeys,
   ]);
-
   const providers = useMemo(() => {
     const map = new Map<string, string>();
     for (const entry of entries) {
@@ -115,7 +109,6 @@ function AutoSyncDialog({ state, onClose, onSaved }: AutoSyncDialogProps) {
       a.name.localeCompare(b.name),
     );
   }, [entries]);
-
   const isFiltering = search.trim() !== "" || providerFilter !== "all";
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -134,7 +127,6 @@ function AutoSyncDialog({ state, onClose, onSaved }: AutoSyncDialogProps) {
       filtered.slice(0, isFiltering ? MAX_VISIBLE_ROWS : DEFAULT_VISIBLE_ROWS),
     [filtered, isFiltering],
   );
-
   const toggleEntry = (entry: ModelsDevEntry) => {
     const isSelected = effectiveSelectedKeys.has(entry.key);
     setSelectedModelKeys((previous) => {
@@ -153,7 +145,6 @@ function AutoSyncDialog({ state, onClose, onSaved }: AutoSyncDialogProps) {
       return next;
     });
   };
-
   const selectFiltered = () => {
     setSelectedModelKeys((previous) => {
       const next = new Set(previous);
@@ -166,7 +157,6 @@ function AutoSyncDialog({ state, onClose, onSaved }: AutoSyncDialogProps) {
       return next;
     });
   };
-
   const clearFiltered = () => {
     setSelectedModelKeys((previous) => {
       const next = new Set(previous);
@@ -183,7 +173,6 @@ function AutoSyncDialog({ state, onClose, onSaved }: AutoSyncDialogProps) {
       });
     }
   };
-
   const save = async () => {
     setIsSaving(true);
     try {
@@ -203,7 +192,6 @@ function AutoSyncDialog({ state, onClose, onSaved }: AutoSyncDialogProps) {
       setIsSaving(false);
     }
   };
-
   const priceColumns = (entry: ModelsDevEntry) =>
     [
       { label: t("usage.inputCost"), value: entry.input },
@@ -211,7 +199,6 @@ function AutoSyncDialog({ state, onClose, onSaved }: AutoSyncDialogProps) {
       { label: t("usage.cacheReadCost"), value: entry.cacheRead },
       { label: t("usage.cacheWriteCost"), value: entry.cacheWrite },
     ] as const;
-
   return (
     <Dialog open onOpenChange={(open) => !open && !isSaving && onClose()}>
       <DialogContent
@@ -342,9 +329,7 @@ function AutoSyncDialog({ state, onClose, onSaved }: AutoSyncDialogProps) {
                           type="button"
                           aria-pressed={selected}
                           onClick={() => toggleEntry(entry)}
-                          className={`flex w-full items-center gap-3 px-3 py-2 text-left ${
-                            selected ? "bg-selected" : "hover:bg-subtle"
-                          }`}
+                          className={`flex w-full items-center gap-3 px-3 py-2 text-left ${selected ? "bg-selected" : "hover:bg-subtle"}`}
                         >
                           <span
                             className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
@@ -439,7 +424,6 @@ function AutoSyncDialog({ state, onClose, onSaved }: AutoSyncDialogProps) {
     </Dialog>
   );
 }
-
 /**
  * 定价页签第一行（v7 S6）：models.dev 同步状态 + 选择模型 + 立即同步；
  * 开关、本地定价文件（打开目录 / 重新加载）收进右侧和 ⋯ 菜单。
@@ -452,17 +436,14 @@ export function ModelsDevAutoSyncPanel() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [isReloading, setIsReloading] = useState(false);
   const [showEnableConfirm, setShowEnableConfirm] = useState(false);
-
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: MODELS_DEV_SYNC_CONFIG_QUERY_KEY,
     queryFn: usageApi.getModelsDevSyncConfig,
     staleTime: Number.POSITIVE_INFINITY,
   });
-
   const updateCachedState = (state: ModelsDevSyncState) => {
     queryClient.setQueryData(MODELS_DEV_SYNC_CONFIG_QUERY_KEY, state);
   };
-
   const saveConfig = async (config: ModelsDevSyncConfig) => {
     if (!data) return;
     setIsSaving(true);
@@ -475,7 +456,6 @@ export function ModelsDevAutoSyncPanel() {
       setIsSaving(false);
     }
   };
-
   const syncNow = async () => {
     if (!data) return;
     setIsSyncing(true);
@@ -483,7 +463,7 @@ export function ModelsDevAutoSyncPanel() {
       const result = await syncModelsDevPricing(data, true);
       await Promise.all([
         refetch(),
-        queryClient.invalidateQueries({ queryKey: usageKeys.all }),
+        queryClient.invalidateQueries(localUsageQueryFilters),
       ]);
       toast.success(
         t("usage.modelsDevAutoSync.syncSuccess", {
@@ -500,14 +480,13 @@ export function ModelsDevAutoSyncPanel() {
       setIsSyncing(false);
     }
   };
-
   const reloadLocalFile = async () => {
     setIsReloading(true);
     try {
       await usageApi.getModelPricing();
       await Promise.all([
         refetch(),
-        queryClient.invalidateQueries({ queryKey: usageKeys.all }),
+        queryClient.invalidateQueries(localUsageQueryFilters),
       ]);
       toast.success(t("usage.modelsDevAutoSync.localFileReloaded"));
     } catch (reloadError) {
@@ -520,7 +499,6 @@ export function ModelsDevAutoSyncPanel() {
       setIsReloading(false);
     }
   };
-
   const openLocalFileFolder = async () => {
     try {
       await settingsApi.openAppConfigFolder();
@@ -532,7 +510,6 @@ export function ModelsDevAutoSyncPanel() {
       );
     }
   };
-
   if (isLoading) {
     return (
       <div className="flex h-[58px] items-center justify-center rounded-panel bg-subtle">
@@ -540,7 +517,6 @@ export function ModelsDevAutoSyncPanel() {
       </div>
     );
   }
-
   if (error || !data) {
     return (
       <Notice
@@ -561,7 +537,6 @@ export function ModelsDevAutoSyncPanel() {
       />
     );
   }
-
   const enabled = data.config.autoSyncEnabled;
   const lastSync = data.config.lastSyncAt
     ? t("usage.pricing.lastSync", {
@@ -571,7 +546,6 @@ export function ModelsDevAutoSyncPanel() {
   const lastSyncTitle = data.config.lastSyncAt
     ? new Date(data.config.lastSyncAt).toLocaleString(i18n.resolvedLanguage)
     : undefined;
-
   const handleAutoSyncChange = (autoSyncEnabled: boolean) => {
     if (autoSyncEnabled) {
       setShowEnableConfirm(true);
@@ -579,7 +553,6 @@ export function ModelsDevAutoSyncPanel() {
     }
     void saveConfig({ ...data.config, autoSyncEnabled: false });
   };
-
   return (
     <>
       <div className="flex flex-col gap-2">

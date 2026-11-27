@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import type { Settings } from "@/types";
 import { createTestQueryClient } from "../utils/testQueryClient";
-
 const renderWithSettings = (settings: Partial<Settings>) => {
   const client = createTestQueryClient();
   client.setQueryData(["settings"], settings);
@@ -15,7 +14,6 @@ const renderWithSettings = (settings: Partial<Settings>) => {
     ),
   }).result.current;
 };
-
 describe("useMoneyFormat", () => {
   it("shows USD with no extra hover text by default", () => {
     const fmt = renderWithSettings({});
@@ -24,7 +22,6 @@ describe("useMoneyFormat", () => {
     expect(fmt.usdHint(1.5)).toBeUndefined();
     expect(fmt.moneyTitle(1.5, 6)).toBe("$1.500000");
   });
-
   it("converts with the saved rate and keeps the USD value for hover", () => {
     const fmt = renderWithSettings({
       usageDisplay: { currency: "CNY", exchangeRates: { CNY: 7 } },

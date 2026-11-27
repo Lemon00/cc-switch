@@ -2,7 +2,7 @@
 //!
 //! Parses ccswitch:// URLs into DeepLinkImportRequest structures.
 
-use super::utils::validate_url;
+use super::utils::{validate_url, MAX_DEEPLINK_BYTES};
 use super::DeepLinkImportRequest;
 use crate::error::AppError;
 use std::collections::HashMap;
@@ -13,6 +13,11 @@ use url::Url;
 /// Expected format:
 /// ccswitch://v1/import?resource={type}&...
 pub fn parse_deeplink_url(url_str: &str) -> Result<DeepLinkImportRequest, AppError> {
+    if url_str.len() > MAX_DEEPLINK_BYTES {
+        return Err(AppError::InvalidInput(
+            "Deep link exceeds the 256 KiB limit".into(),
+        ));
+    }
     // Parse URL
     let url = Url::parse(url_str)
         .map_err(|e| AppError::InvalidInput(format!("Invalid deep link URL: {e}")))?;
@@ -23,6 +28,16 @@ pub fn parse_deeplink_url(url_str: &str) -> Result<DeepLinkImportRequest, AppErr
         return Err(AppError::InvalidInput(format!(
             "Invalid scheme: expected 'ccswitch', got '{scheme}'"
         )));
+    }
+
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(AppError::InvalidInput(
+            "Deep links cannot contain credentials, a port or a fragment".into(),
+        ));
     }
 
     // Extract version from host
@@ -47,7 +62,22 @@ pub fn parse_deeplink_url(url_str: &str) -> Result<DeepLinkImportRequest, AppErr
     }
 
     // Parse query parameters
-    let params: HashMap<String, String> = url.query_pairs().into_owned().collect();
+    let mut params = HashMap::new();
+    for (key, value) in url.query_pairs() {
+        if params
+            .insert(key.into_owned(), value.into_owned())
+            .is_some()
+        {
+            return Err(AppError::InvalidInput(
+                "Duplicate deep link parameter".into(),
+            ));
+        }
+        if params.len() > 64 {
+            return Err(AppError::InvalidInput(
+                "Too many deep link parameters".into(),
+            ));
+        }
+    }
 
     // Extract and validate resource type
     let resource = params
@@ -64,6 +94,117 @@ pub fn parse_deeplink_url(url_str: &str) -> Result<DeepLinkImportRequest, AppErr
         _ => Err(AppError::InvalidInput(format!(
             "Unsupported resource type: {resource}"
         ))),
+    }
+}
+
+fn optional_bool(params: &HashMap<String, String>, key: &str) -> Result<Option<bool>, AppError> {
+    params
+        .get(key)
+        .map(|value| {
+            value
+                .parse::<bool>()
+                .map_err(|_| AppError::InvalidInput(format!("'{key}' must be true or false")))
+        })
+        .transpose()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LINK: &str = "ccswitch://v1/import?resource=provider&app=claude&name=Example&endpoint=https://example.com&apiKey=test";
+
+    #[test]
+    fn rejects_oversized_urls_before_parsing_and_base64_before_decoding() {
+        assert!(
+            parse_deeplink_url(&format!("{LINK}&notes={}", "x".repeat(MAX_DEEPLINK_BYTES)))
+                .is_err()
+        );
+        assert!(super::super::utils::decode_base64_param(
+            "config",
+            &"A".repeat(MAX_DEEPLINK_BYTES + 1)
+        )
+        .is_err());
+        assert!(parse_deeplink_url(&format!(
+            "{LINK}&notes={}",
+            "x".repeat(MAX_DEEPLINK_BYTES - LINK.len() - 7)
+        ))
+        .is_ok());
+    }
+
+    #[test]
+    fn rejects_ambiguous_parameters_and_invalid_typed_values() {
+        for suffix in [
+            "&app=codex",
+            "&%61pp=codex",
+            "&enabled=0",
+            "&enabled=False",
+            "&usageEnabled=no",
+            "&usageAutoInterval=-1",
+            "&usageAutoInterval=1.5",
+            "&usageAutoInterval=18446744073709551616",
+        ] {
+            assert!(
+                parse_deeplink_url(&format!("{LINK}{suffix}")).is_err(),
+                "{suffix}"
+            );
+        }
+        let parsed = parse_deeplink_url(&format!(
+            "{LINK}&enabled=false&usageEnabled=true&usageAutoInterval=0"
+        ))
+        .unwrap();
+        assert_eq!(parsed.enabled, Some(false));
+        assert_eq!(parsed.usage_enabled, Some(true));
+        assert_eq!(parsed.usage_auto_interval, Some(0));
+    }
+
+    #[test]
+    fn rejects_unsupported_url_parts_and_excessive_parameters() {
+        for link in [
+            LINK.replace("v1/", "user:secret@v1/"),
+            LINK.replace("v1/", "v1:123/"),
+            format!("{LINK}#ignored"),
+        ] {
+            assert!(parse_deeplink_url(&link).is_err());
+        }
+        let params: String = (0..65).map(|i| format!("&extra{i}=x")).collect();
+        assert!(parse_deeplink_url(&format!("{LINK}{params}")).is_err());
+    }
+
+    #[test]
+    fn skill_enabled_parameter_is_preserved() {
+        let request =
+            parse_deeplink_url("ccswitch://v1/import?resource=skill&repo=owner/repo&enabled=false")
+                .unwrap();
+        assert_eq!(request.enabled, Some(false));
+    }
+
+    #[test]
+    fn validates_config_derived_and_direct_ipc_urls() {
+        use base64::Engine;
+        for app in ["claude", "gemini", "openclaw"] {
+            let config = match app {
+                "claude" => serde_json::json!({"env": {"ANTHROPIC_BASE_URL": "file:///private"}}),
+
+                _ => serde_json::json!({"baseUrl": "file://private"}),
+            };
+            let request = DeepLinkImportRequest {
+                resource: "provider".into(),
+                app: Some(app.into()),
+                config: Some(base64::prelude::BASE64_STANDARD.encode(config.to_string())),
+                ..Default::default()
+            };
+            assert!(
+                super::super::parse_and_merge_config(&request).is_err(),
+                "{app}"
+            );
+        }
+        let request = DeepLinkImportRequest {
+            resource: "provider".into(),
+            endpoint: Some("javascript:alert(1)".into()),
+            ..Default::default()
+        };
+        assert!(super::super::parse_and_merge_config(&request).is_err());
     }
 }
 
@@ -99,18 +240,7 @@ fn parse_provider_deeplink(
             "Oh My Pi providers must be added from the Oh My Pi provider page".to_string(),
         ));
     }
-    if !matches!(
-        app.as_str(),
-        "agy"
-            | "claude"
-            | "codex"
-            | "gemini"
-            | "grokbuild"
-            | "opencode"
-            | "openclaw"
-            | "hermes"
-            | "pi"
-    ) {
+    if app.parse::<crate::AppType>().is_err() {
         return Err(AppError::InvalidInput(format!(
             "Invalid provider app type: '{app}'"
         )));
@@ -145,11 +275,7 @@ fn parse_provider_deeplink(
     // Extract optional fields
     let model = params.get("model").cloned();
     // Pi 的节点没有模型就选不到任何模型（见 `provider::build_pi_settings`）
-    if app == "pi" && model.as_deref().is_none_or(|model| model.trim().is_empty()) {
-        return Err(AppError::InvalidInput(
-            "Pi providers need a model; add 'model' to the link".to_string(),
-        ));
-    }
+
     let notes = params.get("notes").cloned();
     let haiku_model = params.get("haikuModel").cloned();
     let sonnet_model = params.get("sonnetModel").cloned();
@@ -181,12 +307,10 @@ fn parse_provider_deeplink(
         ));
     }
     let config_url = None;
-    let enabled = params.get("enabled").and_then(|v| v.parse::<bool>().ok());
+    let enabled = optional_bool(params, "enabled")?;
 
     // Extract usage script fields (v3.9+)
-    let usage_enabled = params
-        .get("usageEnabled")
-        .and_then(|v| v.parse::<bool>().ok());
+    let usage_enabled = optional_bool(params, "usageEnabled")?;
     let usage_script = params.get("usageScript").cloned();
     let usage_api_key = params.get("usageApiKey").cloned();
     let usage_base_url = params.get("usageBaseUrl").cloned();
@@ -194,7 +318,12 @@ fn parse_provider_deeplink(
     let usage_user_id = params.get("usageUserId").cloned();
     let usage_auto_interval = params
         .get("usageAutoInterval")
-        .and_then(|v| v.parse::<u64>().ok());
+        .map(|v| {
+            v.parse::<u64>().map_err(|_| {
+                AppError::InvalidInput("'usageAutoInterval' must be a non-negative integer".into())
+            })
+        })
+        .transpose()?;
 
     let request = DeepLinkImportRequest {
         version,
@@ -285,7 +414,7 @@ fn parse_prompt_deeplink(
         .clone();
 
     let description = params.get("description").cloned();
-    let enabled = params.get("enabled").and_then(|v| v.parse::<bool>().ok());
+    let enabled = optional_bool(params, "enabled")?;
 
     Ok(DeepLinkImportRequest {
         version,
@@ -367,7 +496,7 @@ fn parse_mcp_deeplink(
         .ok_or_else(|| AppError::InvalidInput("Missing 'config' parameter for MCP".to_string()))?
         .clone();
 
-    let enabled = params.get("enabled").and_then(|v| v.parse::<bool>().ok());
+    let enabled = optional_bool(params, "enabled")?;
 
     Ok(DeepLinkImportRequest {
         version,
@@ -435,7 +564,7 @@ fn parse_skill_deeplink(
         icon: None,
         app: None, // Skill links add a shared repository; app installation is a separate action.
         name: None,
-        enabled: None,
+        enabled: optional_bool(params, "enabled")?,
         homepage: None,
         endpoint: None,
         api_key: None,

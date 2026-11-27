@@ -1,9 +1,8 @@
-import React from "react";
-import type { ProviderMeta } from "@/types";
-import { useCodexOauthQuota } from "@/lib/query/subscription";
 import { SubscriptionQuotaView } from "@/components/SubscriptionQuotaFooter";
 import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
-
+import { useCodexOauthQuota } from "@/lib/query/subscription";
+import type { ProviderMeta } from "@/types";
+import React from "react";
 interface CodexOauthQuotaFooterProps {
   meta?: ProviderMeta;
   inline?: boolean;
@@ -11,7 +10,6 @@ interface CodexOauthQuotaFooterProps {
   isCurrent?: boolean;
   autoQueryInterval?: number;
 }
-
 /**
  * Codex OAuth (ChatGPT Plus/Pro 反代) 订阅额度 footer
  *
@@ -34,7 +32,6 @@ const CodexOauthQuotaFooter: React.FC<CodexOauthQuotaFooterProps> = ({
     autoQuery: isCurrent && autoQueryInterval > 0,
     autoQueryIntervalMinutes: autoQueryInterval,
   });
-
   return (
     <SubscriptionQuotaView
       quota={quota}
@@ -45,5 +42,4 @@ const CodexOauthQuotaFooter: React.FC<CodexOauthQuotaFooterProps> = ({
     />
   );
 };
-
 export default CodexOauthQuotaFooter;

@@ -8,9 +8,7 @@ import type { AppId, ManagedAuthStatus } from "@/lib/api";
 import { server } from "../msw/server";
 import type { Provider } from "@/types";
 import { createTestQueryClient } from "../utils/testQueryClient";
-
 const codexQuotaFooterProps = vi.hoisted(() => vi.fn());
-
 vi.mock("@/components/providers/ProviderCardActions", () => ({
   ProviderCardActions: (props: {
     onDuplicate?: () => void;
@@ -26,11 +24,9 @@ vi.mock("@/components/providers/ProviderCardActions", () => ({
     </>
   ),
 }));
-
 vi.mock("@/components/ProviderIcon", () => ({
   ProviderIcon: () => null,
 }));
-
 vi.mock("@/components/UsageFooter", () => ({ default: () => null }));
 vi.mock("@/components/SubscriptionQuotaFooter", () => ({
   default: () => null,
@@ -43,15 +39,12 @@ vi.mock("@/components/CodexOauthQuotaFooter", () => ({
   },
 }));
 vi.mock("@/components/XaiOauthQuotaFooter", () => ({ default: () => null }));
-
 vi.mock("@/lib/query/failover", () => ({
   useProviderHealth: () => ({ data: undefined }),
 }));
-
 vi.mock("@/lib/query/queries", () => ({
   useUsageQuery: () => ({ data: undefined }),
 }));
-
 const managedProvider = (
   name: string,
   accountId = "account-long",
@@ -69,7 +62,6 @@ const managedProvider = (
     },
   },
 });
-
 const authStatus = (login: string): ManagedAuthStatus => ({
   provider: "codex_oauth",
   authenticated: true,
@@ -88,7 +80,6 @@ const authStatus = (login: string): ManagedAuthStatus => ({
     },
   ],
 });
-
 function renderCard(
   provider: Provider,
   options: {
@@ -106,7 +97,6 @@ function renderCard(
       options.status,
     );
   }
-
   return render(
     <QueryClientProvider client={queryClient}>
       <ProviderCard
@@ -123,7 +113,6 @@ function renderCard(
     </QueryClientProvider>,
   );
 }
-
 describe("ProviderCard Codex Official account identity", () => {
   const proxyProvider = (): Provider => ({
     ...managedProvider("Codex"),
@@ -133,15 +122,13 @@ describe("ProviderCard Codex Official account identity", () => {
       env: { ANTHROPIC_BASE_URL: "https://chatgpt.com/backend-api/codex" },
     },
   });
-
   const plainProvider = (): Provider => ({
     id: "plain-third-party",
     name: "Plain",
     category: "third_party",
     settingsConfig: { auth: {}, config: "" },
   });
-
-  it.each(["claude", "claude-desktop"] as const)(
+  it.each(["claude"] as const)(
     "shows the bound Codex account instead of the website in %s",
     async (appId) => {
       server.use(
@@ -150,14 +137,12 @@ describe("ProviderCard Codex Official account identity", () => {
         ),
       );
       renderCard(proxyProvider(), { appId });
-
       expect(await screen.findByText("me@example.com")).toHaveClass("truncate");
       expect(
         screen.queryByText("https://openai.com/chatgpt/pricing"),
       ).not.toBeInTheDocument();
     },
   );
-
   it("shows the default Codex account when the proxy has no explicit binding", () => {
     const provider = proxyProvider();
     delete provider.meta!.authBinding;
@@ -169,11 +154,9 @@ describe("ProviderCard Codex Official account identity", () => {
       is_default: false,
     });
     renderCard(provider, { appId: "claude", status });
-
     expect(screen.getByText("default@example.com")).toBeInTheDocument();
     expect(screen.queryByText("another@example.com")).not.toBeInTheDocument();
   });
-
   it("preserves manual notes on Codex proxy cards", () => {
     renderCard(
       { ...proxyProvider(), notes: "Work account" },
@@ -182,11 +165,9 @@ describe("ProviderCard Codex Official account identity", () => {
         status: authStatus("me@example.com"),
       },
     );
-
     expect(screen.getByText("Work account")).toBeInTheDocument();
     expect(screen.queryByText("me@example.com")).not.toBeInTheDocument();
   });
-
   it("does not query managed auth status for a plain Codex provider", async () => {
     const statusRequest = vi.fn();
     server.use(
@@ -195,15 +176,12 @@ describe("ProviderCard Codex Official account identity", () => {
         return HttpResponse.json(authStatus("me@example.com"));
       }),
     );
-
     renderCard(plainProvider(), { appId: "codex" });
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     });
-
     expect(statusRequest).not.toHaveBeenCalled();
   });
-
   it("does not replace a missing bound proxy account with the default account", () => {
     const provider = proxyProvider();
     provider.meta!.authBinding!.accountId = "deleted-account";
@@ -211,11 +189,9 @@ describe("ProviderCard Codex Official account identity", () => {
       appId: "claude",
       status: authStatus("default@example.com"),
     });
-
     expect(screen.getByText("绑定的账号不可用")).toBeInTheDocument();
     expect(screen.queryByText("default@example.com")).not.toBeInTheDocument();
   });
-
   it("lets the current provider open account selection after its account is deleted", async () => {
     const user = userEvent.setup();
     const onEdit = vi.fn();
@@ -225,28 +201,23 @@ describe("ProviderCard Codex Official account identity", () => {
       isCurrent: true,
       onEdit,
     });
-
     expect(screen.getByText("绑定的账号不可用")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "选择账号" }));
     expect(onEdit).toHaveBeenCalledOnce();
     expect(onEdit).toHaveBeenCalledWith(provider);
   });
-
   it("keeps existing managed OAuth quota enabled and exposes its configuration", async () => {
     const user = userEvent.setup();
     const onConfigureUsage = vi.fn();
     const provider = managedProvider("Work account");
     delete provider.meta!.providerType;
-
     renderCard(provider, { isCurrent: true, onConfigureUsage });
-
     expect(codexQuotaFooterProps).toHaveBeenCalledWith(
       expect.objectContaining({ autoQueryInterval: 5 }),
     );
     await user.click(screen.getByRole("button", { name: "configure-usage" }));
     expect(onConfigureUsage).toHaveBeenCalledWith(provider);
   });
-
   it("honors a saved disabled state for managed OAuth quota", () => {
     const provider = managedProvider("Work account");
     provider.meta!.usage_script = {
@@ -256,15 +227,12 @@ describe("ProviderCard Codex Official account identity", () => {
       templateType: "official_subscription",
       autoQueryInterval: 12,
     };
-
     renderCard(provider, { isCurrent: true });
-
     expect(codexQuotaFooterProps).not.toHaveBeenCalled();
     expect(
       screen.getByRole("button", { name: "configure-usage" }),
     ).toBeInTheDocument();
   });
-
   it("passes the saved polling interval to managed OAuth quota", () => {
     const provider = managedProvider("Work account");
     provider.meta!.usage_script = {
@@ -274,40 +242,33 @@ describe("ProviderCard Codex Official account identity", () => {
       templateType: "official_subscription",
       autoQueryInterval: 12,
     };
-
     renderCard(provider, { isCurrent: true });
-
     expect(codexQuotaFooterProps).toHaveBeenCalledWith(
       expect.objectContaining({ autoQueryInterval: 12 }),
     );
   });
-
   it("keeps a custom nickname and safely truncates a long account login", () => {
     const login =
       "a-very-long-personal-account-name-that-must-not-expand-the-card@example.com";
     renderCard(managedProvider("Work account"), {
       status: authStatus(login),
     });
-
     expect(
       screen.getByRole("heading", { level: 3, name: "Work account" }),
     ).toBeInTheDocument();
     expect(screen.getByTitle(login)).toHaveClass("truncate");
     expect(screen.getByTitle(login)).toHaveTextContent(login);
   });
-
   it("keeps generated and legacy generated provider names as the title", () => {
     const login = "user@example.com";
     const { rerender } = renderCard(managedProvider(login), {
       status: authStatus(login),
     });
-
     expect(screen.getByRole("heading", { name: login })).toHaveAttribute(
       "title",
       login,
     );
     expect(screen.getByText("OpenAI 账号")).toBeInTheDocument();
-
     const queryClient = createTestQueryClient();
     queryClient.setQueryData(
       ["managed-auth-status", "codex_oauth"],
@@ -328,14 +289,12 @@ describe("ProviderCard Codex Official account identity", () => {
         />
       </QueryClientProvider>,
     );
-
     expect(
       screen.getByRole("heading", {
         name: `OpenAI Official (${login})`,
       }),
     ).toHaveClass("truncate");
   });
-
   it("keeps the provider name on the native card and explains its login", () => {
     renderCard({
       id: "codex-official",
@@ -343,7 +302,6 @@ describe("ProviderCard Codex Official account identity", () => {
       category: "official",
       settingsConfig: { auth: {}, config: "" },
     });
-
     expect(
       screen.getByRole("heading", { name: "OpenAI Official" }),
     ).toBeInTheDocument();
@@ -352,7 +310,6 @@ describe("ProviderCard Codex Official account identity", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("codex-oauth-quota")).not.toBeInTheDocument();
   });
-
   it("shows the managed account when it is bound to the fixed card", () => {
     const login = "fixed@example.com";
     renderCard(
@@ -362,14 +319,12 @@ describe("ProviderCard Codex Official account identity", () => {
       },
       { status: authStatus(login) },
     );
-
     expect(screen.getByText(login)).toBeInTheDocument();
     expect(
       screen.queryByText("账号会随 Codex CLI 当前登录变化"),
     ).not.toBeInTheDocument();
     expect(screen.getByText("codex-oauth-quota")).toBeInTheDocument();
   });
-
   it("shows a manual note instead of generated account guidance", () => {
     renderCard({
       id: "codex-official",
@@ -378,13 +333,11 @@ describe("ProviderCard Codex Official account identity", () => {
       category: "official",
       settingsConfig: { auth: {}, config: "" },
     });
-
     expect(screen.getByText("Primary work provider")).toBeInTheDocument();
     expect(
       screen.queryByText("账号会随 Codex CLI 当前登录变化"),
     ).not.toBeInTheDocument();
   });
-
   it("treats a legacy unbound Official card as follow-login", () => {
     const provider: Provider = {
       id: "legacy-unbound",
@@ -394,7 +347,6 @@ describe("ProviderCard Codex Official account identity", () => {
       meta: { providerType: "codex_oauth" },
     };
     renderCard(provider, { isCurrent: true });
-
     expect(
       screen.getByText("账号会随 Codex CLI 当前登录变化"),
     ).toBeInTheDocument();
@@ -407,7 +359,6 @@ describe("ProviderCard Codex Official account identity", () => {
     expect(screen.queryByText("codex-oauth-quota")).not.toBeInTheDocument();
     expect(codexQuotaFooterProps).not.toHaveBeenCalled();
   });
-
   it("does not label a stored API-key card as follow-login", () => {
     renderCard({
       id: "legacy-api-key",
@@ -418,7 +369,6 @@ describe("ProviderCard Codex Official account identity", () => {
         config: "",
       },
     });
-
     expect(
       screen.queryByText("账号会随 Codex CLI 当前登录变化"),
     ).not.toBeInTheDocument();

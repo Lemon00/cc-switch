@@ -1,20 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { claudeDesktopProviderPresets } from "@/config/claudeDesktopProviderPresets";
 import { providerPresets } from "@/config/claudeProviderPresets";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
-import { hermesProviderPresets } from "@/config/hermesProviderPresets";
-import {
-  openclawProviderPresets,
-  rebaseOpenClawSuggestedDefaults,
-} from "@/config/openclawProviderPresets";
 import { opencodeProviderPresets } from "@/config/opencodeProviderPresets";
-import { piProviderPresets } from "@/config/piProviderPresets";
 import {
   extractCodexBaseUrl,
   extractCodexModelName,
   extractCodexWireApi,
 } from "@/utils/providerConfigUtils";
-
 // 腾讯云 Token Plan（产品线 1300/1823 订阅套餐）国内 + 国际两站预设。
 // 与 TokenHub 按量 API 市场（1823 线，Hunyuan 预设的 /v1 端点）是两条
 // 产品线：Key 不互通，端点也不互作候选（官方明示不支持跨地域、跨站调用）。
@@ -28,7 +20,6 @@ const INTL_TOKEN_PLAN_API_KEY_URL =
   "https://console.tencentcloud.com/tokenhub/tokenplan";
 const INTL_ENTERPRISE_API_KEY_URL =
   "https://console.tencentcloud.com/tokenhub/tokenplan-e";
-
 const DOMESTIC_PERSONAL_ANTHROPIC =
   "https://api.lkeap.cloud.tencent.com/plan/anthropic";
 const DOMESTIC_PERSONAL_OPENAI = "https://api.lkeap.cloud.tencent.com/plan/v3";
@@ -49,7 +40,6 @@ const INTL_OPENAI = "https://tokenhub-intl.tencentcloudmaas.com/plan/v3";
 const INTL_GUANGZHOU_ANTHROPIC =
   "https://tokenhub.tencentcloudmaas.com/plan/anthropic";
 const INTL_GUANGZHOU_OPENAI = "https://tokenhub.tencentcloudmaas.com/plan/v3";
-
 const products = [
   {
     name: "Tencent Token Plan",
@@ -179,7 +169,6 @@ const products = [
     catalogModels: ["auto"],
   },
 ] as const;
-
 describe("Tencent Token Plan provider presets", () => {
   for (const product of products) {
     it(`uses its documented Anthropic endpoint for ${product.name} in Claude`, () => {
@@ -190,7 +179,6 @@ describe("Tencent Token Plan provider presets", () => {
           env: Record<string, string>;
         }
       ).env;
-
       expect(preset).toMatchObject({
         websiteUrl:
           product.site === "domestic" ? DOMESTIC_WEBSITE_URL : INTL_WEBSITE_URL,
@@ -208,37 +196,10 @@ describe("Tencent Token Plan provider presets", () => {
         ANTHROPIC_DEFAULT_OPUS_MODEL: product.model,
       });
     });
-
-    it(`uses its documented Anthropic endpoint for ${product.name} in Claude Desktop`, () => {
-      const preset = claudeDesktopProviderPresets.find(
-        (item) => item.name === product.name,
-      );
-
-      expect(preset).toBeDefined();
-      expect(preset).toMatchObject({
-        websiteUrl:
-          product.site === "domestic" ? DOMESTIC_WEBSITE_URL : INTL_WEBSITE_URL,
-        apiKeyUrl: product.apiKeyUrl,
-        category: "cn_official",
-        baseUrl: product.anthropicBaseUrl,
-        mode: "proxy",
-        apiFormat: "anthropic",
-        endpointCandidates: product.anthropicCandidates,
-        icon: "tencent",
-      });
-      expect(preset?.modelRoutes).toEqual([
-        expect.objectContaining({
-          routeId: "claude-sonnet-5",
-          upstreamModel: product.model,
-        }),
-      ]);
-    });
-
     it(`uses Chat Completions through local routing for ${product.name} in Codex`, () => {
       const preset = codexProviderPresets.find(
         (item) => item.name === product.name,
       );
-
       expect(preset).toBeDefined();
       expect(preset).toMatchObject({
         websiteUrl:
@@ -269,12 +230,10 @@ describe("Tencent Token Plan provider presets", () => {
         outputFormat: "reasoning_content",
       });
     });
-
     it(`uses the OpenAI-compatible endpoint for ${product.name} in OpenCode`, () => {
       const preset = opencodeProviderPresets.find(
         (item) => item.name === product.name,
       );
-
       expect(preset).toBeDefined();
       expect(preset?.websiteUrl).toBe(
         product.site === "domestic" ? DOMESTIC_WEBSITE_URL : INTL_WEBSITE_URL,
@@ -284,106 +243,21 @@ describe("Tencent Token Plan provider presets", () => {
       expect(preset?.icon).toBe("tencent");
       expect(preset?.settingsConfig.npm).toBe("@ai-sdk/openai-compatible");
       expect(
-        (preset?.settingsConfig.options as { baseURL: string }).baseURL,
+        (
+          preset?.settingsConfig.options as {
+            baseURL: string;
+          }
+        ).baseURL,
       ).toBe(product.openaiBaseUrl);
       expect(Object.keys(preset?.settingsConfig.models ?? {})).toEqual(
         product.catalogModels,
       );
     });
-
-    it(`uses the OpenAI-compatible endpoint for ${product.name} in Hermes`, () => {
-      const preset = hermesProviderPresets.find(
-        (item) => item.name === product.name,
-      );
-
-      expect(preset).toBeDefined();
-      expect(preset?.websiteUrl).toBe(
-        product.site === "domestic" ? DOMESTIC_WEBSITE_URL : INTL_WEBSITE_URL,
-      );
-      expect(preset?.apiKeyUrl).toBe(product.apiKeyUrl);
-      expect(preset?.category).toBe("cn_official");
-      expect(preset?.icon).toBe("tencent");
-      expect(preset?.settingsConfig.base_url).toBe(product.openaiBaseUrl);
-      expect(preset?.settingsConfig.api_mode).toBe("chat_completions");
-      expect(
-        (preset?.settingsConfig.models ?? []).map((model) => model.id),
-      ).toEqual(product.catalogModels);
-      expect(preset?.suggestedDefaults?.model).toEqual({
-        default: product.model,
-        provider: product.configProviderName,
-      });
-    });
-
-    it(`uses the OpenAI-compatible endpoint for ${product.name} in OpenClaw`, () => {
-      const preset = openclawProviderPresets.find(
-        (item) => item.name === product.name,
-      );
-
-      expect(preset).toBeDefined();
-      expect(preset?.websiteUrl).toBe(
-        product.site === "domestic" ? DOMESTIC_WEBSITE_URL : INTL_WEBSITE_URL,
-      );
-      expect(preset?.apiKeyUrl).toBe(product.apiKeyUrl);
-      expect(preset?.category).toBe("cn_official");
-      expect(preset?.icon).toBe("tencent");
-      expect(preset?.settingsConfig.baseUrl).toBe(product.openaiBaseUrl);
-      expect(preset?.settingsConfig.api).toBe("openai-completions");
-      expect(
-        (preset?.settingsConfig.models ?? []).map((model) => model.id),
-      ).toEqual(product.catalogModels);
-      // 五字段照官方 OpenClaw 接入页（1823/130062、1300/81503）：订阅套餐
-      // cost 全零；超出接入页的模型按平台列表补 maxTokens（注释标边界）
-      for (const model of preset?.settingsConfig.models ?? []) {
-        expect(model.cost).toEqual({
-          input: 0,
-          output: 0,
-          cacheRead: 0,
-          cacheWrite: 0,
-        });
-        expect(model.contextWindow).toBeGreaterThan(0);
-        expect(model.maxTokens).toBeGreaterThan(0);
-        expect(model.reasoning).toBeDefined();
-        expect(model.input).toEqual(["text"]);
-      }
-    });
-
-    it(`uses the OpenAI-compatible endpoint for ${product.name} in Pi`, () => {
-      const preset = piProviderPresets.find(
-        (item) => item.name === product.name,
-      );
-
-      expect(preset).toBeDefined();
-      expect(preset?.websiteUrl).toBe(
-        product.site === "domestic" ? DOMESTIC_WEBSITE_URL : INTL_WEBSITE_URL,
-      );
-      expect(preset?.apiKeyUrl).toBe(product.apiKeyUrl);
-      expect(preset?.category).toBe("cn_official");
-      expect(preset?.icon).toBe("tencent");
-      // Pi 预设只携带默认地域 baseUrl（无 endpointCandidates 字段），
-      // 与 openaiBaseUrl（默认地域）对齐；第二地域需用户在 UI 手动改
-      expect(preset?.settingsConfig.baseUrl).toBe(product.openaiBaseUrl);
-      expect(preset?.settingsConfig.api).toBe("openai-completions");
-      expect(
-        (preset?.settingsConfig.models ?? []).map((model) => model.id),
-      ).toEqual(product.catalogModels);
-      // Pi 强制每个模型引用 piModelCatalog 能力条目（运行时由
-      // materializeVerifiedThinkingProfiles 补齐 thinkingLevelMap）
-      for (const model of preset?.settingsConfig.models ?? []) {
-        expect(model.contextWindow).toBeGreaterThan(0);
-        expect(model.maxTokens).toBeGreaterThan(0);
-        expect(typeof model.reasoning).toBe("boolean");
-        expect(model.input.length).toBeGreaterThan(0);
-        expect(model.id).not.toBe("");
-        expect(model.name).not.toBe("");
-      }
-    });
   }
-
   it("keeps post-paid Hunyuan (TokenHub marketplace line) separate from Token Plan products", () => {
     const preset = codexProviderPresets.find(
       (item) => item.name === "Tencent Hunyuan",
     );
-
     expect(preset).toMatchObject({
       apiFormat: "openai_responses",
       endpointCandidates: [
@@ -393,7 +267,6 @@ describe("Tencent Token Plan provider presets", () => {
     });
     expect(extractCodexModelName(preset?.config)).toBe("hy3");
   });
-
   it("keeps domestic and intl endpoints isolated from each other", () => {
     // 官方明示不支持跨站调用：两站预设绝不携带对方的 tencentcloudmaas /
     // tencentmaas(含 lkeap) 域族。同站的跨地域候选（国内新加坡
@@ -421,7 +294,6 @@ describe("Tencent Token Plan provider presets", () => {
       }
     }
   });
-
   it("keeps enterprise pro and lite separated", () => {
     const proPreset = codexProviderPresets.find(
       (item) => item.name === "Tencent Token Plan Enterprise Pro",
@@ -429,7 +301,6 @@ describe("Tencent Token Plan provider presets", () => {
     const litePreset = codexProviderPresets.find(
       (item) => item.name === "Tencent Token Plan Enterprise Lite",
     );
-
     expect(proPreset).toBeDefined();
     expect(litePreset).toBeDefined();
     expect(proPreset?.modelCatalog?.map((entry) => entry.model)).toContain(
@@ -439,7 +310,6 @@ describe("Tencent Token Plan provider presets", () => {
       "auto",
     ]);
   });
-
   it("gives intl personal plan auto routing id instead of domestic tc-code-latest", () => {
     const domestic = codexProviderPresets.find(
       (item) => item.name === "Tencent Token Plan",
@@ -447,7 +317,6 @@ describe("Tencent Token Plan provider presets", () => {
     const intl = codexProviderPresets.find(
       (item) => item.name === "Tencent Token Plan (Intl)",
     );
-
     expect(domestic?.modelCatalog?.map((e) => e.model)).toContain(
       "tc-code-latest",
     );
@@ -456,7 +325,6 @@ describe("Tencent Token Plan provider presets", () => {
     );
     expect(intl?.modelCatalog?.map((e) => e.model)).toContain("auto");
   });
-
   it("declares real-key-verified reasoning levels per model", () => {
     // 全部真 Key 实测（2026-08-31）：
     // - glm-5.3 始终思考且档位严格枚举 low/high/max（medium/xhigh 会 400）
@@ -470,7 +338,6 @@ describe("Tencent Token Plan provider presets", () => {
     );
     const levels = (name: string) =>
       epro?.modelCatalog?.find((m) => m.model === name)?.reasoningLevels;
-
     expect(levels("glm-5.3")).toEqual(["low", "high", "max"]);
     expect(levels("kimi-k2.7-code")).toEqual(["high"]);
     expect(levels("kimi-k2.7-code-highspeed")).toEqual(["high"]);
@@ -478,7 +345,6 @@ describe("Tencent Token Plan provider presets", () => {
     expect(levels("glm-5.2")).toEqual(["none", "high"]);
     expect(levels("kimi-k2.6")).toEqual(["none", "high"]);
     expect(levels("minimax-m3")).toEqual(["none", "high"]);
-
     // 国际站 auto 尊重关思考（与国内 auto 行为不同）
     const intlEpro = codexProviderPresets.find(
       (item) => item.name === "Tencent Token Plan Enterprise Pro (Intl)",
@@ -486,7 +352,6 @@ describe("Tencent Token Plan provider presets", () => {
     expect(
       intlEpro?.modelCatalog?.find((m) => m.model === "auto")?.reasoningLevels,
     ).toEqual(["none", "high"]);
-
     // 个人版：tc-code-latest 两态；minimax 双款关不掉
     const personal = codexProviderPresets.find(
       (item) => item.name === "Tencent Token Plan",
@@ -500,7 +365,6 @@ describe("Tencent Token Plan provider presets", () => {
         ?.reasoningLevels,
     ).toEqual(["high"]);
   });
-
   it("overrides modelsUrl only on the domestic personal plan preset", () => {
     // /plan/v3/models 仅国内个人版端点可用（真 Key 实测 2026-08-31），
     // 企业/国际端点 /models 404，不覆写
@@ -521,7 +385,6 @@ describe("Tencent Token Plan provider presets", () => {
       expect(preset?.modelsUrl).toBeUndefined();
     }
   });
-
   it("declares the official 196608 context window on every Auto routing row", () => {
     // Auto 是路由别名，平台模型列表无其窗口；唯一官方口径=OpenClaw 接入页
     //（1823/130062、1300/81503）的 196608。不声明则后端回落 config.toml
@@ -537,7 +400,6 @@ describe("Tencent Token Plan provider presets", () => {
       expect(row?.contextWindow).toBe(196608);
     }
   });
-
   it("keeps glm-5.3 off the max-effort default", () => {
     // glm-5.3 严格枚举 low/high/max 不含模板默认 medium → 回落最高档 max
     //（最慢最耗额度）；显式 high 兜底（真 Key 实测无厂商默认值证据）
@@ -553,172 +415,6 @@ describe("Tencent Token Plan provider presets", () => {
       expect(row?.defaultReasoningLevel).toBe("high");
     }
   });
-
-  it("rebases OpenClaw defaults to the submitted provider key", () => {
-    const preset = openclawProviderPresets.find(
-      (item) => item.name === "Tencent Token Plan",
-    );
-    expect(preset?.suggestedDefaults).toBeDefined();
-
-    const rebased = rebaseOpenClawSuggestedDefaults(
-      preset!.suggestedDefaults!,
-      "my-tencent",
-    );
-    expect(rebased.model?.primary).toBe("my-tencent/tc-code-latest");
-    expect(rebased.modelCatalog).toHaveProperty("my-tencent/tc-code-latest");
-  });
 });
-
 // OpenClaw 把 agents.defaults.models 当白名单：modelCatalog 的 key 若在
 // settingsConfig.models 里没有对应条目，导入后会被静默丢弃（openclaw#30152）。
-describe("OpenClaw suggestedDefaults.modelCatalog", () => {
-  it("only references models the preset declares", () => {
-    const orphans: string[] = [];
-
-    for (const preset of openclawProviderPresets) {
-      const catalog = preset.suggestedDefaults?.modelCatalog;
-      if (!catalog) continue;
-
-      const declared = new Set(
-        (preset.settingsConfig?.models ?? []).map((model) => model.id),
-      );
-      for (const key of Object.keys(catalog)) {
-        const modelId = key.slice(key.indexOf("/") + 1);
-        if (!declared.has(modelId)) {
-          orphans.push(`${preset.name}: ${key}`);
-        }
-      }
-    }
-
-    expect(orphans).toEqual([]);
-  });
-});
-
-describe("Tencent TokenHub (pay-as-you-go) Pi presets", () => {
-  const DOMESTIC_API_KEY_URL =
-    "https://console.cloud.tencent.com/tokenhub/apikey";
-  const INTL_API_KEY_URL = "https://console.tencentcloud.com/tokenhub/apikey";
-  const DOMESTIC_BASE_URL = "https://tokenhub.tencentmaas.com/v1";
-  const INTL_BASE_URL = "https://tokenhub-intl.tencentcloudmaas.com/v1";
-
-  const products = [
-    {
-      name: "Tencent TokenHub",
-      site: "domestic" as const,
-      apiKeyUrl: DOMESTIC_API_KEY_URL,
-      baseUrl: DOMESTIC_BASE_URL,
-      // 官方「语言模型」清单（130051），只收支持 Function Calling 的通用模型；
-      // 翻译/角色扮演不收录；已下线模型（hy3-preview、qwen3.5、minimax-m2.5）不收
-      models: [
-        "hy4-preview",
-        "hy3",
-        "deepseek-v4-flash-202605",
-        "deepseek/deepseek-v4-flash-vision-exp",
-        "deepseek-v4-flash-0731",
-        "deepseek-v4-flash",
-        "glm-5.3-flash",
-        "glm-5.3",
-        "glm-5.2",
-        "glm-5.1",
-        "glm-5v-turbo",
-        "glm-5-turbo",
-        "glm-5",
-        "kimi-k2.7-code-highspeed",
-        "kimi-k3",
-        "kimi-k2.7-code",
-        "kimi-k2.6",
-        "kimi-k2.5",
-        "minimax-m3",
-        "minimax-m2.7",
-        "mimo-v2.5-pro",
-      ],
-    },
-    {
-      name: "Tencent TokenHub (Intl)",
-      site: "intl" as const,
-      apiKeyUrl: INTL_API_KEY_URL,
-      baseUrl: INTL_BASE_URL,
-      // 官方「语言模型」清单（78934，2026-08-28）；国际站仍列 minimax-m2.5
-      // 与 deepseek-v3.2（国内站已无）。minimax-m2.5 官方已除名且平台计划
-      // 下线（2026-09-07 从全部 app 移除），不收录
-      models: [
-        "hy4-preview",
-        "hy3",
-        "deepseek-v4-flash-202605",
-        "deepseek/deepseek-v4-flash-vision-exp",
-        "deepseek-v4-flash-0731",
-        "deepseek-v4-flash",
-        "deepseek-v3.2",
-        "glm-5.3",
-        "glm-5.3-flash",
-        "glm-5.2",
-        "glm-5",
-        "glm-5-turbo",
-        "glm-5v-turbo",
-        "glm-5.1",
-        "kimi-k3",
-        "kimi-k2.7-code-highspeed",
-        "kimi-k2.7-code",
-        "kimi-k2.6",
-        "kimi-k2.5",
-        "minimax-m3",
-        "minimax-m2.7",
-        "mimo-v2.5-pro",
-      ],
-    },
-  ];
-
-  for (const product of products) {
-    it(`uses the /v1 endpoint for ${product.name} in Pi`, () => {
-      const preset = piProviderPresets.find(
-        (item) => item.name === product.name,
-      );
-
-      expect(preset).toBeDefined();
-      expect(preset?.websiteUrl).toBe(
-        product.site === "domestic" ? DOMESTIC_WEBSITE_URL : INTL_WEBSITE_URL,
-      );
-      expect(preset?.apiKeyUrl).toBe(product.apiKeyUrl);
-      expect(preset?.category).toBe("cn_official");
-      expect(preset?.icon).toBe("tencent");
-      expect(preset?.settingsConfig.baseUrl).toBe(product.baseUrl);
-      expect(preset?.settingsConfig.api).toBe("openai-completions");
-      expect(
-        (preset?.settingsConfig.models ?? []).map((model) => model.id),
-      ).toEqual(product.models);
-      for (const model of preset?.settingsConfig.models ?? []) {
-        expect(model.contextWindow).toBeGreaterThan(0);
-        expect(model.maxTokens).toBeGreaterThan(0);
-        expect(typeof model.reasoning).toBe("boolean");
-        expect(model.input.length).toBeGreaterThan(0);
-      }
-    });
-  }
-
-  it("keeps pay-as-you-go /v1 endpoints separate from Token Plan /plan endpoints", () => {
-    const hub = piProviderPresets.find(
-      (item) => item.name === "Tencent TokenHub",
-    );
-    const plan = piProviderPresets.find(
-      (item) => item.name === "Tencent Token Plan",
-    );
-
-    expect(hub?.settingsConfig.baseUrl).toContain("/v1");
-    expect(plan?.settingsConfig.baseUrl).toContain("/plan/v3");
-  });
-
-  it("does not include discontinued minimax-m2.5 on any TokenHub line", () => {
-    for (const product of products) {
-      const preset = piProviderPresets.find(
-        (item) => item.name === product.name,
-      );
-      const ids = (preset?.settingsConfig.models ?? []).map((m) => m.id);
-      expect(ids).not.toContain("minimax-m2.5");
-    }
-    const domestic = piProviderPresets.find(
-      (item) => item.name === "Tencent TokenHub",
-    );
-    const ids = (domestic?.settingsConfig.models ?? []).map((m) => m.id);
-    expect(ids).not.toContain("hy3-preview");
-  });
-});

@@ -133,24 +133,37 @@ pub async fn wait_for_code(listener: TcpListener, state: &str) -> Result<String,
             let _ = respond(&mut stream, "404 Not Found", "").await;
             continue;
         };
-        let params: std::collections::HashMap<String, String> =
-            url::form_urlencoded::parse(query.as_bytes())
-                .into_owned()
-                .collect();
-        if params.get("state").map(String::as_str) != Some(state) {
-            let _ = respond(&mut stream, "400 Bad Request", PAGE_MISMATCH).await;
-            continue;
-        }
-        if let Some(error) = params.get("error") {
-            let _ = respond(&mut stream, "200 OK", PAGE_FAILED).await;
-            return Err(AgyOAuthError::Denied(sanitize(error)));
-        }
-        let Some(code) = params.get("code").filter(|code| !code.is_empty()) else {
-            let _ = respond(&mut stream, "400 Bad Request", PAGE_FAILED).await;
-            return Err(AgyOAuthError::Denied("missing code".into()));
+        let result = match parse_callback(query, state) {
+            Some(result) => result,
+            None => {
+                let _ = respond(&mut stream, "400 Bad Request", PAGE_MISMATCH).await;
+                continue;
+            }
         };
-        let _ = respond(&mut stream, "200 OK", PAGE_DONE).await;
-        return Ok(code.clone());
+        let page = if result.is_ok() {
+            PAGE_DONE
+        } else {
+            PAGE_FAILED
+        };
+        let _ = respond(&mut stream, "200 OK", page).await;
+        return result;
+    }
+}
+
+fn parse_callback(query: &str, state: &str) -> Option<Result<String, AgyOAuthError>> {
+    let mut params = std::collections::HashMap::new();
+    for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
+        if params.insert(key, value).is_some() {
+            return None;
+        }
+    }
+    if params.get("state").map(|value| value.as_ref()) != Some(state) {
+        return None;
+    }
+    match (params.get("code"), params.get("error")) {
+        (Some(code), None) if !code.is_empty() => Some(Ok(code.to_string())),
+        (None, Some(_)) => Some(Err(AgyOAuthError::Denied("authorization denied".into()))),
+        _ => None,
     }
 }
 
@@ -328,7 +341,7 @@ pub async fn fetch_identity(access_token: &str) -> Option<IdentityClaims> {
 
 /// agy 钥匙串里那份 JSON 的过期时间：本地时区的 RFC 3339，带微秒（和 Go 的 time.Time 一致）。
 pub fn expiry_from_now(expires_in: i64) -> String {
-    (chrono::Local::now() + chrono::Duration::seconds(expires_in.max(0)))
+    (chrono::Local::now() + chrono::Duration::seconds(expires_in.clamp(0, 31_536_000)))
         .to_rfc3339_opts(chrono::SecondsFormat::Micros, false)
 }
 
@@ -379,6 +392,35 @@ pub fn usable_access_token(credential: &Value, margin: Duration) -> Option<&str>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn callback_rejects_duplicate_or_conflicting_security_parameters() {
+        for query in [
+            "state=wrong&state=expected&code=ok",
+            "state=expected&state=expected&code=ok",
+            "state=expected&code=a&code=b",
+            "state=expected&code=a&error=denied",
+            "state=expected&code=",
+            "code=ok",
+        ] {
+            assert!(parse_callback(query, "expected").is_none(), "{query}");
+        }
+        assert_eq!(
+            parse_callback("state=expected&code=ok", "expected")
+                .unwrap()
+                .unwrap(),
+            "ok"
+        );
+        assert!(parse_callback("state=expected&error=denied", "expected")
+            .unwrap()
+            .is_err());
+    }
+
+    #[test]
+    fn oversized_expiry_cannot_panic() {
+        assert!(chrono::DateTime::parse_from_rfc3339(&expiry_from_now(i64::MAX)).is_ok());
+        assert!(chrono::DateTime::parse_from_rfc3339(&expiry_from_now(i64::MIN)).is_ok());
+    }
 
     #[test]
     fn refresh_keeps_the_refresh_token_and_unknown_fields() {
@@ -496,7 +538,15 @@ mod tests {
             .unwrap();
         assert!(matches!(
             waiter.await.unwrap(),
-            Err(AgyOAuthError::Denied(reason)) if reason == "access_denied"
+            Err(AgyOAuthError::Denied(reason)) if reason == "authorization denied"
+        ));
+    }
+
+    #[test]
+    fn browser_error_details_are_not_exposed() {
+        assert!(matches!(
+            parse_callback("state=s&error=secret-token&error_description=private-account", "s"),
+            Some(Err(AgyOAuthError::Denied(reason))) if reason == "authorization denied"
         ));
     }
 

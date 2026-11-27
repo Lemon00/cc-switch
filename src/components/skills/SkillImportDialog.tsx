@@ -1,22 +1,20 @@
-import { useMemo, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { Button } from "@/components/ui/button";
-import { HelpTip } from "@/components/ui/help-tip";
-import { DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
-import type { AppId } from "@/lib/api/types";
-import type { ImportSkillSelection, UnmanagedSkill } from "@/lib/api/skills";
-import { SKILLS_APP_IDS } from "@/config/appConfig";
-import { cn } from "@/lib/utils";
 import { MatrixSearch } from "@/components/mcp/AppMatrix";
 import { CHECKBOX_CLASS, V7Dialog } from "@/components/mcp/formBits";
-
+import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
+import { Button } from "@/components/ui/button";
+import { DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { HelpTip } from "@/components/ui/help-tip";
+import { SKILLS_APP_IDS } from "@/config/appConfig";
+import type { ImportSkillSelection, UnmanagedSkill } from "@/lib/api/skills";
+import type { AppId } from "@/lib/api/types";
+import { cn } from "@/lib/utils";
+import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 /** Pi 与 Oh My Pi 的启用状态由各自原生 skills 目录里有没有这个目录决定，导入时不勾选 */
-const NATIVE_DIR_APPS: AppId[] = ["pi", "omp"];
+const NATIVE_DIR_APPS: AppId[] = [];
 const IMPORT_APP_IDS = SKILLS_APP_IDS.filter(
   (app) => !NATIVE_DIR_APPS.includes(app),
 );
-
 interface SkillImportDialogProps {
   skills: UnmanagedSkill[];
   visibleAppIds: AppId[];
@@ -24,10 +22,8 @@ interface SkillImportDialogProps {
   onImport: (imports: ImportSkillSelection[]) => void;
   onClose: () => void;
 }
-
 const isAppId = (value: string): value is AppId =>
   (SKILLS_APP_IDS as string[]).includes(value);
-
 /** 「导入本机已有…」（宽 560）：选目录 + 选导入后在哪些应用启用。 */
 export function SkillImportDialog({
   skills,
@@ -55,14 +51,12 @@ export function SkillImportDialog({
     return set;
   }, [skills]);
   const [apps, setApps] = useState<Set<AppId>>(() => new Set(defaultApps));
-
   const foundLabel = (found: string) => {
     if (isAppId(found)) return APP_DISPLAY_NAME[found];
     if (found === "agents") return "~/.agents/skills";
     if (found === "cc-switch") return t("skillsPage.import.foundCcSwitch");
     return found;
   };
-
   const normalized = query.trim().toLowerCase();
   const visible = skills.filter(
     (skill) =>
@@ -71,7 +65,6 @@ export function SkillImportDialog({
         (value) => value.toLowerCase().includes(normalized),
       ),
   );
-
   const toggle = (directory: string, checked: boolean) =>
     setSelected((prev) => {
       const next = new Set(prev);
@@ -79,7 +72,6 @@ export function SkillImportDialog({
       else next.delete(directory);
       return next;
     });
-
   const submit = () => {
     // 默认勾的应用只给在那里发现过的 Skill；另外勾的应用给全部
     const extra = [...apps].filter((app) => !defaultApps.has(app));
@@ -96,14 +88,9 @@ export function SkillImportDialog({
             apps: {
               claude: chosen.has("claude"),
               codex: chosen.has("codex"),
-              gemini: chosen.has("gemini"),
-              grokbuild: chosen.has("grokbuild"),
+
               opencode: chosen.has("opencode"),
-              openclaw: false,
-              hermes: chosen.has("hermes"),
-              pi: false,
-              mcode: chosen.has("mcode"),
-              kimi: chosen.has("kimi"),
+
               dsh: chosen.has("dsh"),
               agy: chosen.has("agy"),
             },
@@ -111,7 +98,6 @@ export function SkillImportDialog({
         }),
     );
   };
-
   return (
     <V7Dialog
       open

@@ -1,29 +1,27 @@
-import { invoke } from "@tauri-apps/api/core";
 import type { CustomEndpoint } from "@/types";
+import { invoke } from "@tauri-apps/api/core";
 import type { AppId } from "./types";
-
 export interface EndpointLatencyResult {
   url: string;
   latency: number | null;
   status?: number;
   error?: string;
 }
-
 export const vscodeApi = {
   async getLiveProviderSettings(appId: AppId) {
     return await invoke("read_live_provider_settings", { app: appId });
   },
-
   async testApiEndpoints(
     urls: string[],
-    options?: { timeoutSecs?: number },
+    options?: {
+      timeoutSecs?: number;
+    },
   ): Promise<EndpointLatencyResult[]> {
     return await invoke("test_api_endpoints", {
       urls,
       timeoutSecs: options?.timeoutSecs,
     });
   },
-
   async getCustomEndpoints(
     appId: AppId,
     providerId: string,
@@ -33,7 +31,6 @@ export const vscodeApi = {
       providerId: providerId,
     });
   },
-
   async addCustomEndpoint(
     appId: AppId,
     providerId: string,
@@ -45,7 +42,6 @@ export const vscodeApi = {
       url,
     });
   },
-
   async removeCustomEndpoint(
     appId: AppId,
     providerId: string,
@@ -57,7 +53,6 @@ export const vscodeApi = {
       url,
     });
   },
-
   async updateEndpointLastUsed(
     appId: AppId,
     providerId: string,
@@ -69,25 +64,21 @@ export const vscodeApi = {
       url,
     });
   },
-
   async exportConfigToFile(filePath: string) {
     return await invoke("export_config_to_file", {
       filePath,
     });
   },
-
   async importConfigFromFile(filePath: string) {
     return await invoke("import_config_from_file", {
       filePath,
     });
   },
-
   async saveFileDialog(defaultName: string): Promise<string | null> {
     return await invoke("save_file_dialog", {
       defaultName,
     });
   },
-
   async openFileDialog(): Promise<string | null> {
     return await invoke("open_file_dialog");
   },

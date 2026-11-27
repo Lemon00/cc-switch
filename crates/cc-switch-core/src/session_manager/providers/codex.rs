@@ -1885,17 +1885,16 @@ pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<boo
             path.display()
         )
     })?;
-    // 压缩 / 解压的瞬间两种形态可能并存，只删一份会话会从另一份复活
+    // 压缩 / 解压的瞬间两种形态可能并存，只删一份会话会从另一份复活。
+    // 主文件已删：sibling 清理失败只 warn，避免假失败且不清缓存。
     if let Some(sibling) = codex_rollout_file::sibling(path) {
         match std::fs::remove_file(&sibling) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => {
-                return Err(format!(
-                    "Failed to delete Codex session file {}: {e}",
-                    sibling.display()
-                ))
-            }
+            Err(e) => log::warn!(
+                "Codex session deleted but sibling cleanup failed for {}: {e}",
+                sibling.display()
+            ),
         }
     }
 
@@ -1943,11 +1942,8 @@ fn read_session_lines(path: &Path) -> std::io::Result<SessionLines> {
             fallback_last_active: None,
         });
     }
-    let head = codex_rollout_file::open_reader(path)?
-        .lines()
-        .take(HEAD_LINES)
-        .map_while(Result::ok)
-        .collect();
+    let head =
+        super::utils::read_metadata_lines(codex_rollout_file::open_reader(path)?, HEAD_LINES)?;
     let fallback_last_active = std::fs::metadata(path)
         .and_then(|meta| meta.modified())
         .ok()
@@ -2083,7 +2079,7 @@ fn parse_session_lines(
         created_at,
         last_active_at,
         source_path: Some(path.to_string_lossy().to_string()),
-        resume_command: Some(format!("codex resume {session_id}")),
+        resume_command: super::utils::resume_command("codex resume", &session_id),
     })
 }
 
@@ -2174,23 +2170,7 @@ fn infer_session_id_from_filename(path: &Path) -> Option<String> {
 }
 
 fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
-    if !root.exists() {
-        return;
-    }
-
-    let entries = match std::fs::read_dir(root) {
-        Ok(entries) => entries,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_jsonl_files(&path, files);
-        } else if codex_rollout_file::is_rollout_file(&path) {
-            files.push(path);
-        }
-    }
+    super::utils::collect_session_files(root, files, codex_rollout_file::is_rollout_file);
 }
 
 #[cfg(test)]
@@ -2274,6 +2254,29 @@ mod tests {
             .expect("open")
             .set_times(std::fs::FileTimes::new().set_modified(time))
             .expect("set mtime");
+    }
+
+    #[test]
+    fn compressed_metadata_skips_bad_utf8_and_bounds_decompressed_lines() {
+        let temp = tempdir().unwrap();
+        let plain = temp.path().join("rollout.jsonl");
+        std::fs::write(&plain, b"first\n\xff\nlast\n").unwrap();
+        let compressed = compress_like_codex(&plain);
+        assert_eq!(
+            read_session_lines(&compressed).unwrap().head,
+            ["first", "last"]
+        );
+
+        std::fs::write(
+            &plain,
+            vec![b'x'; crate::session_manager::content::MAX_TEXT_BYTES as usize + 1],
+        )
+        .unwrap();
+        let compressed = compress_like_codex(&plain);
+        assert_eq!(
+            read_session_lines(&compressed).err().unwrap().kind(),
+            std::io::ErrorKind::InvalidData
+        );
     }
 
     #[test]

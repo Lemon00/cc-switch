@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useRef } from "react";
 import type { SyntheticEvent } from "react";
-
+import { useCallback, useEffect, useRef } from "react";
 /**
  * 整页编辑器的「未保存改动」登记。
  *
@@ -9,12 +8,19 @@ import type { SyntheticEvent } from "react";
  * 保存成功或关闭后编辑器卸载，登记随之撤销。
  */
 const dirtyEditors = new Set<object>();
-
 export const hasUnsavedChanges = () => dirtyEditors.size > 0;
-
 /** 用户确认放弃后清空登记，随后的导航不再重复询问 */
 export const discardUnsavedChanges = () => dirtyEditors.clear();
-
+export function useUnsavedChangesState(dirty: boolean) {
+  const token = useRef({}).current;
+  useEffect(() => {
+    if (dirty) dirtyEditors.add(token);
+    else dirtyEditors.delete(token);
+    return () => {
+      dirtyEditors.delete(token);
+    };
+  }, [dirty, token]);
+}
 /**
  * 这些控件被点一下就算改了：勾选、开关、单选、下拉选项、分段按钮。
  * 只切换显示的控件（显示密钥、表单 / JSON）放在 `data-unsaved-ignore` 里排除。
@@ -29,7 +35,6 @@ const EDIT_CONTROL_SELECTOR = [
   "[aria-pressed]",
   "[data-unsaved-edit]",
 ].join(",");
-
 /**
  * 挂到编辑器内容区：文字输入、原生选择变化、以及点到上面那些控件时登记为有未保存改动。
  * React 的合成事件沿组件树冒泡，渲染到 body 的下拉选项也能收到。
@@ -43,11 +48,9 @@ export function useUnsavedChangesTracker(enabled = true) {
       dirtyEditors.delete(token);
     };
   }, [enabled, token]);
-
   const markDirty = useCallback(() => {
     if (enabled) dirtyEditors.add(token);
   }, [enabled, token]);
-
   const onInputOrChangeCapture = useCallback(
     (event: SyntheticEvent) => {
       const target = event.target as Element | null;
@@ -57,7 +60,6 @@ export function useUnsavedChangesTracker(enabled = true) {
     },
     [markDirty],
   );
-
   const onClickCapture = useCallback(
     (event: SyntheticEvent) => {
       const target = event.target as Element | null;
@@ -70,7 +72,6 @@ export function useUnsavedChangesTracker(enabled = true) {
     },
     [markDirty],
   );
-
   return {
     onInputCapture: onInputOrChangeCapture,
     onChangeCapture: onInputOrChangeCapture,

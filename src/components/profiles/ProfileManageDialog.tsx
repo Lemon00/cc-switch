@@ -1,6 +1,5 @@
-import { useState } from "react";
-import { useTranslation } from "react-i18next";
-import { Check, Pencil, Trash2, X } from "lucide-react";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -9,26 +8,24 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { Input } from "@/components/ui/input";
-import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
   useDeleteProfileMutation,
   useProfilesQuery,
   useUpdateProfileMutation,
 } from "@/lib/query/profiles";
-
+import { Check, Pencil, Trash2, X } from "lucide-react";
+import { useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 interface ProfileManageDialogProps {
   isOpen: boolean;
   onClose: () => void;
 }
-
 type PendingConfirm = {
   id: string;
   name: string;
 };
-
 /**
  * 项目管理对话框（纯快照式）
  *
@@ -43,35 +40,44 @@ export function ProfileManageDialog({
   const { data } = useProfilesQuery();
   const updateMutation = useUpdateProfileMutation();
   const deleteMutation = useDeleteProfileMutation();
-
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
+  const renameSession = useRef(0);
+  const savingSession = useRef<number | null>(null);
   const [confirm, setConfirm] = useState<PendingConfirm | null>(null);
-
   const profiles = data?.profiles ?? [];
-
   const startRename = (id: string, name: string) => {
+    ++renameSession.current;
     setEditingId(id);
     setEditingName(name);
   };
-
   const cancelRename = () => {
+    ++renameSession.current;
     setEditingId(null);
     setEditingName("");
   };
-
   const saveRename = () => {
     const name = editingName.trim();
-    if (!name || !editingId) return;
-    updateMutation.mutate({ id: editingId, name }, { onSuccess: cancelRename });
+    const session = renameSession.current;
+    if (!name || !editingId || savingSession.current === session) return;
+    savingSession.current = session;
+    updateMutation.mutate(
+      { id: editingId, name },
+      {
+        onSuccess: () => {
+          if (renameSession.current === session) cancelRename();
+        },
+        onSettled: () => {
+          if (savingSession.current === session) savingSession.current = null;
+        },
+      },
+    );
   };
-
   const handleConfirm = () => {
     if (!confirm) return;
     deleteMutation.mutate(confirm.id);
     setConfirm(null);
   };
-
   return (
     <>
       <Dialog

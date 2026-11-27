@@ -1,13 +1,26 @@
 import { describe, expect, it } from "vitest";
 import type { TFunction } from "i18next";
-import { skillErrorReason } from "@/lib/errors/skillErrorParser";
-
+import {
+  parseSkillError,
+  skillErrorReason,
+} from "@/lib/errors/skillErrorParser";
 const t = ((key: string, options?: Record<string, unknown>) =>
   options && Object.keys(options).length
     ? `${key}:${JSON.stringify(options)}`
     : key) as unknown as TFunction;
-
 describe("skillErrorReason", () => {
+  it.each([
+    null,
+    [],
+    { code: 1, context: {} },
+    { code: "FAILED", context: [] },
+    { code: "FAILED", context: { name: {} } },
+    { code: "FAILED", context: {}, suggestion: {} },
+  ])("rejects malformed error payload %j without throwing", (payload) => {
+    const raw = JSON.stringify(payload);
+    expect(parseSkillError(raw)).toBeNull();
+    expect(skillErrorReason(raw, t)).toBe(raw);
+  });
   it("uses the HTTP explanation for rate-limited downloads", () => {
     const error = JSON.stringify({
       code: "DOWNLOAD_FAILED",
@@ -16,7 +29,6 @@ describe("skillErrorReason", () => {
     });
     expect(skillErrorReason(error, t)).toBe("skills.error.http403");
   });
-
   it("uses the error code text with its context otherwise", () => {
     const error = JSON.stringify({
       code: "DOWNLOAD_TIMEOUT",
@@ -27,7 +39,6 @@ describe("skillErrorReason", () => {
       'skills.error.downloadTimeout:{"owner":"a","name":"b","timeout":"60"}',
     );
   });
-
   it("tells an oversized download apart from the extraction limit", () => {
     // #8421：下载体超限曾复用 ARCHIVE_TOO_LARGE，被说成「解压后超过上限」
     const error = JSON.stringify({
@@ -38,7 +49,6 @@ describe("skillErrorReason", () => {
       'skills.error.archiveDownloadTooLarge:{"limit_mb":"512"}',
     );
   });
-
   it("keeps the first line of an unstructured error", () => {
     expect(skillErrorReason("connection reset\nstack…", t)).toBe(
       "connection reset",

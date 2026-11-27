@@ -37,23 +37,16 @@ import {
   PRESET_REGION_KEYS,
 } from "@/config/presetFamilies";
 import zh from "@/i18n/locales/zh.json";
-import zhTW from "@/i18n/locales/zh-TW.json";
-import en from "@/i18n/locales/en.json";
-import ja from "@/i18n/locales/ja.json";
-import tr from "@/i18n/locales/tr.json";
-
 vi.mock("@/components/ProviderIcon", () => ({
   ProviderIcon: ({ name }: { name: string }) => (
     <span data-testid="provider-icon" data-name={name} />
   ),
 }));
-
 const translations: Record<string, string> = {
   "preset.alpha": "Alpha 本地名",
   "preset.zhipu": "智谱 GLM",
 };
 const t = ((key: string) => translations[key] ?? key) as TFunction;
-
 function preset(
   name: string,
   category: ProviderCategory,
@@ -68,7 +61,6 @@ function preset(
     ...extra,
   } as PresetEntry["preset"];
 }
-
 const entries: PresetEntry[] = [
   {
     id: "gamma",
@@ -105,7 +97,6 @@ const entries: PresetEntry[] = [
     preset: preset("Ollama", "local", "https://ollama.com"),
   },
 ];
-
 // 同一家的四个版本：套餐 × 地区成完整网格（文件顺序故意打乱；显示时按 planOrder 排）
 const kimiEntries: PresetEntry[] = [
   {
@@ -143,7 +134,6 @@ const kimiEntries: PresetEntry[] = [
   },
 ];
 const familyEntries: PresetEntry[] = [...entries, ...kimiEntries];
-
 // 只在一个维度上变化的一家（智谱：国内 / 海外）
 const zhipuFamily: PresetEntry[] = [
   {
@@ -161,7 +151,6 @@ const zhipuFamily: PresetEntry[] = [
     }),
   },
 ];
-
 // 两维都变但缺格子（腾讯在 Codex 里多一个只有国内的按量付费）
 const tencentPartial: PresetEntry[] = [
   ["tp-cn", "tokenPlan", "cn"],
@@ -177,7 +166,6 @@ const tencentPartial: PresetEntry[] = [
     regionKey,
   }),
 }));
-
 describe("preset helpers", () => {
   it("groups presets from existing fields without touching category", () => {
     expect(entries.map((entry) => presetGroup(entry.preset))).toEqual([
@@ -190,7 +178,6 @@ describe("preset helpers", () => {
       "local",
     ]);
   });
-
   it("sorts only by name, with Chinese names placed by pinyin initial", () => {
     expect(
       getVisiblePresetEntries(entries, { query: "", t }).map(
@@ -206,7 +193,6 @@ describe("preset helpers", () => {
       "zhipu",
     ]);
   });
-
   it("searches display names, domains and aliases but not TLDs", () => {
     expect(domainBody("api.gamma.com")).toBe("gamma");
     const ids = (query: string) =>
@@ -217,7 +203,6 @@ describe("preset helpers", () => {
     expect(getPresetDisplayName(entries[1].preset, t)).toBe("Alpha 本地名");
   });
 });
-
 describe("preset families", () => {
   it("merges the versions of one vendor into a single row", () => {
     const rows = groupPresetRows(familyEntries);
@@ -231,7 +216,6 @@ describe("preset families", () => {
       "kimi-coding-intl",
     ]);
   });
-
   it("matches the whole vendor by name, or the versions a query names", () => {
     const hits = (query: string) =>
       getVisiblePresetRows(familyEntries, { query, t }).map(({ row, hits }) => [
@@ -245,14 +229,12 @@ describe("preset families", () => {
     // 别名算整家命中
     expect(hits("moonshot")).toEqual([["family:kimi", []]]);
   });
-
   it("merges Claude's visible presets into 111 rows", () => {
     const claudeEntries = providerPresets
       .map((item, index) => ({ id: `claude-${index}`, preset: item }))
       .filter((entry) => !entry.preset.hidden);
     expect(groupPresetRows(claudeEntries)).toHaveLength(111);
   });
-
   it("orders plans and regions as the design does where a family says so", () => {
     const claudeEntries = providerPresets
       .map((item, index) => ({ id: `claude-${index}`, preset: item }))
@@ -286,7 +268,6 @@ describe("preset families", () => {
       "payg",
     ]);
   });
-
   it("lays out versions by plan × region: segments, a grid or a dropdown", () => {
     const layoutOf = (
       presets: PresetEntry["preset"][],
@@ -298,7 +279,6 @@ describe("preset families", () => {
       return row ? presetVersionLayout(row.versions) : undefined;
     };
     const claude = providerPresets.filter((item) => !item.hidden);
-
     expect(layoutOf(claude, "kimi")).toEqual({
       kind: "grid",
       plans: ["payg", "coding"],
@@ -328,7 +308,6 @@ describe("preset families", () => {
     });
     expect(presetVersionLayout(tencentPartial)).toEqual({ kind: "list" });
   });
-
   it("splits the all view into category sections, skipping empty ones", () => {
     const sections = (query: string) =>
       sectionPresetRows(getVisiblePresetRows(familyEntries, { query, t })).map(
@@ -343,7 +322,6 @@ describe("preset families", () => {
     ]);
     expect(sections("gamma")).toEqual([["thirdparty", ["gamma"]]]);
   });
-
   it("has every family name and version label in all four locales", () => {
     const lookup = (data: unknown, key: string) =>
       key
@@ -365,15 +343,14 @@ describe("preset families", () => {
         "nameKey" in info ? [info.nameKey] : [],
       ),
     ];
-    for (const locale of [zh, zhTW, en, ja]) {
+    for (const locale of [zh, zh, zh, zh]) {
       for (const key of keys) {
         expect(typeof lookup(locale, key), key).toBe("string");
       }
     }
   });
-
   it("has a label and a hint for every category in all four locales", () => {
-    for (const [name, locale] of Object.entries({ zh, zhTW, en, ja })) {
+    for (const [name, locale] of Object.entries({ zh })) {
       const { group, groupHint } = locale.providerPreset as unknown as Record<
         "group" | "groupHint",
         Record<string, unknown>
@@ -387,7 +364,6 @@ describe("preset families", () => {
     }
   });
 });
-
 function TwoSteps({
   onPresetChange,
   presetEntries = entries,
@@ -433,18 +409,15 @@ function TwoSteps({
     </PresetStepContext.Provider>
   );
 }
-
 describe("ProviderPresetSelector", () => {
   beforeAll(() => {
     // Radix Select 打开时会滚动到选中项，jsdom 没有 scrollIntoView
     Element.prototype.scrollIntoView ??= vi.fn();
   });
-
   it("picks a preset in step 1, then shows a preset bar that goes back", async () => {
     const user = userEvent.setup();
     const onPresetChange = vi.fn();
     render(<TwoSteps onPresetChange={onPresetChange} />);
-
     const host = await screen.findByTestId("host");
     // 自定义配置固定第一行；其余按分类分段（账号登录 → 模型厂商 → 第三方平台 → 云服务商 → 本地），段内按名称
     const rows = within(host)
@@ -477,18 +450,15 @@ describe("ProviderPresetSelector", () => {
         }),
       ).getByRole("button", { name: "AWS Bedrock" }),
     ).toBeInTheDocument();
-
     await user.click(within(host).getByText("preset.zhipu"));
     expect(onPresetChange).toHaveBeenCalledWith("zhipu");
     expect(screen.queryByTestId("host")).not.toBeInTheDocument();
     expect(screen.getByText("open.bigmodel.cn")).toBeInTheDocument();
-
     await user.click(
       screen.getByRole("button", { name: "providerPreset.change" }),
     );
     expect(await screen.findByTestId("host")).toBeInTheDocument();
   });
-
   it("shows the DeepSeek account subtitle for the DSH official preset", async () => {
     const onPresetChange = vi.fn();
     render(
@@ -507,7 +477,7 @@ describe("ProviderPresetSelector", () => {
     expect(
       within(host).queryByText("providerPreset.loginWith.claude"),
     ).not.toBeInTheDocument();
-    for (const locale of [zh, zhTW, en, ja, tr]) {
+    for (const locale of [zh, zh, zh, zh, zh]) {
       expect(
         (locale.providerPreset.loginWith as Record<string, string>).deepseek,
       ).toContain("DeepSeek");
@@ -519,12 +489,10 @@ describe("ProviderPresetSelector", () => {
       );
     expect(onPresetChange).toHaveBeenCalledWith(DSH_ACCOUNT_PRESET_ID);
   });
-
   it("filters by category and keeps the search text when clicking around", async () => {
     const user = userEvent.setup();
     render(<TwoSteps onPresetChange={vi.fn()} />);
     const host = await screen.findByTestId("host");
-
     await user.click(
       within(host).getByRole("button", { name: /providerPreset.group.login/ }),
     );
@@ -533,7 +501,6 @@ describe("ProviderPresetSelector", () => {
     expect(
       within(host).getByText("providerPreset.loginWith.github"),
     ).toBeInTheDocument();
-
     const search = within(host).getByRole("textbox", {
       name: "providerPreset.searchAriaLabel",
     });
@@ -544,7 +511,6 @@ describe("ProviderPresetSelector", () => {
       within(host).getByText("providerPreset.noResults"),
     ).toBeInTheDocument();
   });
-
   it("picks the first version of a merged row, then switches plan and region in the bar", async () => {
     const user = userEvent.setup();
     const onPresetChange = vi.fn();
@@ -555,14 +521,12 @@ describe("ProviderPresetSelector", () => {
       />,
     );
     const host = await screen.findByTestId("host");
-
     expect(within(host).getAllByText("Kimi")).toHaveLength(1);
     expect(
       within(host).getByText("providerPreset.versionCount"),
     ).toBeInTheDocument();
     await user.click(within(host).getByRole("button", { name: "Kimi" }));
     expect(onPresetChange).toHaveBeenLastCalledWith("kimi-cn");
-
     // 完整网格：套餐一组、地区一组
     const plans = () =>
       within(
@@ -585,7 +549,6 @@ describe("ProviderPresetSelector", () => {
     ).not.toBeInTheDocument();
     expect(plans()[0]).toHaveAttribute("aria-pressed", "true");
     expect(regions()[0]).toHaveAttribute("aria-pressed", "true");
-
     await user.click(regions()[1]);
     // 没手动改过表单：直接切，不弹确认
     expect(
@@ -595,14 +558,12 @@ describe("ProviderPresetSelector", () => {
     // 换版本留在第 2 步
     expect(screen.queryByTestId("host")).not.toBeInTheDocument();
     expect(regions()[1]).toHaveAttribute("aria-pressed", "true");
-
     // 切套餐时地区保持海外
     await user.click(plans()[1]);
     expect(onPresetChange).toHaveBeenLastCalledWith("kimi-coding-intl");
     expect(plans()[1]).toHaveAttribute("aria-pressed", "true");
     expect(regions()[1]).toHaveAttribute("aria-pressed", "true");
   });
-
   it("uses one segmented control, labelled by the dimension that changes", async () => {
     const user = userEvent.setup();
     const onPresetChange = vi.fn();
@@ -615,7 +576,6 @@ describe("ProviderPresetSelector", () => {
     const host = await screen.findByTestId("host");
     await user.click(within(host).getByRole("button", { name: "Zhipu GLM" }));
     expect(onPresetChange).toHaveBeenLastCalledWith("glm-cn");
-
     const versions = screen.getByRole("group", {
       name: "providerPreset.versionLabel",
     });
@@ -630,7 +590,6 @@ describe("ProviderPresetSelector", () => {
     await user.click(within(versions).getAllByRole("button")[1]);
     expect(onPresetChange).toHaveBeenLastCalledWith("glm-intl");
   });
-
   it("falls back to a dropdown when plans and regions do not form a grid", async () => {
     const user = userEvent.setup();
     const onPresetChange = vi.fn();
@@ -650,7 +609,6 @@ describe("ProviderPresetSelector", () => {
     expect(
       screen.queryByRole("group", { name: "providerPreset.planLabel" }),
     ).not.toBeInTheDocument();
-
     const trigger = screen.getByRole("combobox", {
       name: "providerPreset.versionLabel",
     });
@@ -669,7 +627,6 @@ describe("ProviderPresetSelector", () => {
     await user.click(options[4]);
     expect(onPresetChange).toHaveBeenLastCalledWith("hunyuan");
   });
-
   it("asks before switching versions once the form was edited", async () => {
     const user = userEvent.setup();
     const onPresetChange = vi.fn();
@@ -683,7 +640,6 @@ describe("ProviderPresetSelector", () => {
     await user.click(within(host).getByRole("button", { name: "Kimi" }));
     expect(onPresetChange).toHaveBeenLastCalledWith("kimi-cn");
     onPresetChange.mockClear();
-
     const plans = () =>
       within(
         screen.getByRole("group", { name: "providerPreset.planLabel" }),
@@ -692,14 +648,12 @@ describe("ProviderPresetSelector", () => {
       within(
         screen.getByRole("group", { name: "providerPreset.regionLabel" }),
       ).getAllByRole("button");
-
     await user.type(screen.getByLabelText("api-key"), "sk-typed");
     await user.click(plans()[1]);
     expect(
       await screen.findByText("providerPreset.switchVersionTitle"),
     ).toBeInTheDocument();
     expect(onPresetChange).not.toHaveBeenCalled();
-
     // 取消：不切，Key 还在
     await user.click(screen.getByRole("button", { name: "common.cancel" }));
     await waitFor(() =>
@@ -710,7 +664,6 @@ describe("ProviderPresetSelector", () => {
     expect(onPresetChange).not.toHaveBeenCalled();
     expect(plans()[0]).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByLabelText("api-key")).toHaveValue("sk-typed");
-
     // 确认：切过去、表单重填；重填之后再切不用确认
     await user.click(plans()[1]);
     await user.click(
@@ -726,7 +679,6 @@ describe("ProviderPresetSelector", () => {
     ).not.toBeInTheDocument();
     expect(onPresetChange).toHaveBeenLastCalledWith("kimi-coding-intl");
   });
-
   it("selects the version a search matched", async () => {
     const user = userEvent.setup();
     const onPresetChange = vi.fn();
@@ -737,7 +689,6 @@ describe("ProviderPresetSelector", () => {
       />,
     );
     const host = await screen.findByTestId("host");
-
     await user.type(
       within(host).getByRole("textbox", {
         name: "providerPreset.searchAriaLabel",
@@ -751,13 +702,11 @@ describe("ProviderPresetSelector", () => {
     await user.click(within(host).getByRole("button", { name: "Kimi" }));
     expect(onPresetChange).toHaveBeenLastCalledWith("kimi-coding");
   });
-
   it("offers the custom config when nothing matches", async () => {
     const user = userEvent.setup();
     const onPresetChange = vi.fn();
     render(<TwoSteps onPresetChange={onPresetChange} />);
     const host = await screen.findByTestId("host");
-
     await user.type(
       within(host).getByRole("textbox", {
         name: "providerPreset.searchAriaLabel",

@@ -1,10 +1,9 @@
-import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
 import { HelpTip } from "@/components/ui/help-tip";
+import { Input } from "@/components/ui/input";
 import { Zap } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { REQUIRED_LABEL } from "../BasicFormFields";
-
 interface EndpointFieldProps {
   id: string;
   label: string;
@@ -19,7 +18,6 @@ interface EndpointFieldProps {
   onManageClick?: () => void;
   manageButtonLabel?: string;
 }
-
 export function EndpointField({
   id,
   label,
@@ -34,11 +32,9 @@ export function EndpointField({
   manageButtonLabel,
 }: EndpointFieldProps) {
   const { t } = useTranslation();
-
   const defaultManageLabel = t("providerForm.manageAndTest", {
     defaultValue: "管理和测速",
   });
-
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">

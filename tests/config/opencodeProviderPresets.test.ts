@@ -1,16 +1,15 @@
 import { describe, expect, it } from "vitest";
+import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 import {
   opencodeProviderPresets,
   opencodeNpmPackages,
   OPENCODE_PRESET_MODEL_VARIANTS,
 } from "@/config/opencodeProviderPresets";
-import { openclawProviderPresets } from "@/config/openclawProviderPresets";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
 import {
   groupPresetRows,
   presetVersionLayout,
 } from "@/components/providers/forms/presetGroups";
-
 describe("AWS Bedrock OpenCode Provider Presets", () => {
   it("should include @ai-sdk/amazon-bedrock in npm packages", () => {
     const bedrockPkg = opencodeNpmPackages.find(
@@ -19,38 +18,30 @@ describe("AWS Bedrock OpenCode Provider Presets", () => {
     expect(bedrockPkg).toBeDefined();
     expect(bedrockPkg!.label).toBe("Amazon Bedrock");
   });
-
   it("should include Bedrock model variants", () => {
     const variants = OPENCODE_PRESET_MODEL_VARIANTS["@ai-sdk/amazon-bedrock"];
     expect(variants).toBeDefined();
     expect(variants.length).toBeGreaterThan(0);
-
     const opusModel = variants.find((v) =>
       v.id.includes("anthropic.claude-opus-5"),
     );
     expect(opusModel).toBeDefined();
   });
-
   const bedrockPreset = opencodeProviderPresets.find(
     (p) => p.name === "AWS Bedrock",
   );
-
   it("should include AWS Bedrock preset", () => {
     expect(bedrockPreset).toBeDefined();
   });
-
   it("Bedrock preset should use @ai-sdk/amazon-bedrock npm package", () => {
     expect(bedrockPreset!.settingsConfig.npm).toBe("@ai-sdk/amazon-bedrock");
   });
-
   it("Bedrock preset should have region in options", () => {
     expect(bedrockPreset!.settingsConfig.options).toHaveProperty("region");
   });
-
   it("Bedrock preset should have cloud_provider category", () => {
     expect(bedrockPreset!.category).toBe("cloud_provider");
   });
-
   it("Bedrock preset should have template values for AWS credentials", () => {
     expect(bedrockPreset!.templateValues).toBeDefined();
     expect(bedrockPreset!.templateValues!.region).toBeDefined();
@@ -58,19 +49,16 @@ describe("AWS Bedrock OpenCode Provider Presets", () => {
     expect(bedrockPreset!.templateValues!.accessKeyId).toBeDefined();
     expect(bedrockPreset!.templateValues!.secretAccessKey).toBeDefined();
   });
-
   it("Bedrock preset should include Claude models", () => {
     const models = bedrockPreset!.settingsConfig.models;
     expect(models).toBeDefined();
     const modelIds = Object.keys(models!);
     expect(modelIds.some((id) => id.includes("anthropic.claude"))).toBe(true);
   });
-
   it("Kimi For Coding preset should use Anthropic with the coding endpoint", () => {
     const kimiForCodingPreset = opencodeProviderPresets.find(
       (p) => p.name === "Kimi For Coding",
     );
-
     expect(kimiForCodingPreset).toBeDefined();
     expect(kimiForCodingPreset!.settingsConfig.npm).toBe("@ai-sdk/anthropic");
     expect(kimiForCodingPreset!.settingsConfig.options?.baseURL).toBe(
@@ -80,12 +68,10 @@ describe("AWS Bedrock OpenCode Provider Presets", () => {
       "https://api.kimi.com/coding/v1",
     );
   });
-
   it("Xiaomi MiMo presets should include official OpenCode model metadata", () => {
     const presets = ["Xiaomi MiMo", "Xiaomi MiMo Token Plan (China)"].map(
       (name) => opencodeProviderPresets.find((preset) => preset.name === name),
     );
-
     for (const preset of presets) {
       expect(preset).toBeDefined();
       expect(preset!.settingsConfig.models["mimo-v2.6-pro"]).toMatchObject({
@@ -98,7 +84,6 @@ describe("AWS Bedrock OpenCode Provider Presets", () => {
       });
     }
   });
-
   it("Qwen presets should declare image/video input only for qwen3.8 models", () => {
     const mediaPresets = [
       "千问AI平台",
@@ -108,7 +93,6 @@ describe("AWS Bedrock OpenCode Provider Presets", () => {
     ].map((name) =>
       opencodeProviderPresets.find((preset) => preset.name === name),
     );
-
     for (const preset of mediaPresets) {
       expect(preset).toBeDefined();
       for (const modelId of ["qwen3.8-max", "qwen3.8-flash"]) {
@@ -117,7 +101,6 @@ describe("AWS Bedrock OpenCode Provider Presets", () => {
         });
       }
     }
-
     // 显式声明会让代理停止剥离图片，因此不支持图片输入的模型必须留空。
     for (const name of ["QwenCloud", "QwenCloud Token Plan"]) {
       const preset = opencodeProviderPresets.find((p) => p.name === name);
@@ -125,7 +108,6 @@ describe("AWS Bedrock OpenCode Provider Presets", () => {
         preset!.settingsConfig.models["qwen3.7-max"]?.modalities,
       ).toBeUndefined();
     }
-
     const forCoding = opencodeProviderPresets.find(
       (p) => p.name === "QwenCloud For Coding",
     );
@@ -135,7 +117,6 @@ describe("AWS Bedrock OpenCode Provider Presets", () => {
     }
   });
 });
-
 describe("OpenCode preset reasoning flags", () => {
   // OpenCode 只给 reasoning 为真的模型生成思考档位；CC Switch 写的供应商 key
   // 对不上 models.dev，不写就一个档位都没有。
@@ -146,7 +127,6 @@ describe("OpenCode preset reasoning flags", () => {
       model,
     })),
   );
-
   it("marks Claude, GPT and DeepSeek V4 models as reasoning", () => {
     const expected = models.filter(({ id }) =>
       /claude-|gpt-[56]|deepseek-v4/.test(id),
@@ -156,18 +136,32 @@ describe("OpenCode preset reasoning flags", () => {
       expect(model.reasoning, `${preset} / ${id}`).toBe(true);
     }
   });
-
   it("never claims reasoning on a model whose thinking is turned off", () => {
     for (const { preset, id, model } of models) {
-      const thinking = (model.options as { thinking?: { type?: string } })
-        ?.thinking;
+      const thinking = (
+        model.options as {
+          thinking?: {
+            type?: string;
+          };
+        }
+      )?.thinking;
       if (thinking?.type === "disabled") {
         expect(model.reasoning, `${preset} / ${id}`).not.toBe(true);
       }
     }
   });
+  it("offers only OpenCode Go DeepSeek V4.1 Flash's low / high / max efforts", () => {
+    const goFlash = opencodeProviderPresets.find(
+      (p) => p.name === "OpenCode Go",
+    )?.settingsConfig.models?.["deepseek-v4.1-flash"];
+    expect(goFlash?.variants).toEqual({
+      low: { reasoningEffort: "low" },
+      medium: { disabled: true },
+      high: { reasoningEffort: "high" },
+      max: { reasoningEffort: "max" },
+    });
+  });
 });
-
 describe("OpenCode preset model limits", () => {
   // 预设走 V1 格式（npm），OpenCode 要求 limit 同时带 context 和 output，
   // 缺一个整份 opencode.json 报 Configuration is invalid，所有供应商一起不可用。
@@ -187,7 +181,6 @@ describe("OpenCode preset model limits", () => {
     }
   });
 });
-
 describe("SiliconFlow OpenCode provider presets", () => {
   it.each(["SiliconFlow", "SiliconFlow en"])(
     "%s includes the current Codex preset models at the matching endpoint",
@@ -195,17 +188,12 @@ describe("SiliconFlow OpenCode provider presets", () => {
       const preset = opencodeProviderPresets.find(
         (item) => item.name === name,
       )!;
-      const openclaw = openclawProviderPresets.find(
-        (item) => item.name === name,
-      )!;
       const codex = codexProviderPresets.find((item) => item.name === name)!;
-
       expect(preset).toBeDefined();
-      expect(openclaw).toBeDefined();
       expect(codex).toBeDefined();
       expect(preset.settingsConfig.npm).toBe("@ai-sdk/openai-compatible");
       expect(preset.settingsConfig.options.baseURL).toBe(
-        openclaw.settingsConfig.baseUrl,
+        extractCodexBaseUrl(codex.config),
       );
       expect(preset.settingsConfig.options.apiKey).toBe("");
       const codexModels = codex.modelCatalog ?? [];
@@ -220,11 +208,10 @@ describe("SiliconFlow OpenCode provider presets", () => {
         expect(preset.settingsConfig.models[model.model].reasoning).toBe(true);
       }
       expect(preset.category).toBe("aggregator");
-      expect(preset.partnerPromotionKey).toBe(openclaw.partnerPromotionKey);
-      expect(preset.icon).toBe(openclaw.icon);
+      expect(preset.partnerPromotionKey).toBe(codex.partnerPromotionKey);
+      expect(preset.icon).toBe(codex.icon);
     },
   );
-
   it("groups both regions into one provider with a region selector", () => {
     const entries = opencodeProviderPresets.map((preset, index) => ({
       id: `opencode-${index}`,
@@ -233,7 +220,6 @@ describe("SiliconFlow OpenCode provider presets", () => {
     const rows = groupPresetRows(entries).filter((row) =>
       row.versions.some(({ preset }) => preset.name.startsWith("SiliconFlow")),
     );
-
     expect(rows).toHaveLength(1);
     expect(rows[0].family).toBe("siliconflow");
     expect(rows[0].versions.map(({ preset }) => preset.regionKey)).toEqual([

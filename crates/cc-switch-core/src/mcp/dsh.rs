@@ -3,6 +3,17 @@ use crate::error::AppError;
 use crate::store::AppState;
 use serde_json::{json, Value};
 
+use super::validation::spec_transport_type;
+
+const TRANSPORT_COMPARE_FIELDS: [&str; 6] = ["command", "args", "env", "cwd", "url", "headers"];
+
+fn transport_matches(existing: &Value, imported: &Value) -> bool {
+    spec_transport_type(existing) == spec_transport_type(imported)
+        && TRANSPORT_COMPARE_FIELDS
+            .iter()
+            .all(|field| existing.get(*field) == imported.get(*field))
+}
+
 pub fn sync(id: &str, spec: Option<&Value>) -> Result<(), AppError> {
     sync_and_commit(id, spec, || Ok(()))
 }
@@ -16,12 +27,20 @@ pub fn sync_and_commit<T>(
 }
 
 pub fn import(state: &AppState) -> Result<usize, AppError> {
-    let mut existing = state.db.get_all_mcp_servers()?;
+    let (mut existing, unreadable) = state
+        .db
+        .get_mcp_server_rows()?
+        .into_readable_and_unreadable_ids();
     let mut count = 0;
+    let mut skipped = Vec::new();
     for entry in crate::dsh_config::mcp_entries()? {
         let Some(id) = entry["config"]["serverName"].as_str() else {
             continue;
         };
+        if unreadable.iter().any(|unreadable_id| unreadable_id == id) {
+            skipped.push(format!("'{id}': existing database row is unreadable"));
+            continue;
+        }
         let Ok(mut spec) = serde_json::to_value(&entry["config"]) else {
             continue;
         };
@@ -41,13 +60,10 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
         if super::validation::validate_server_spec(&spec).is_err() {
             continue;
         }
-        let mut server = if let Some(server) = existing.shift_remove(id) {
+        let mut server = if let Some(server) = existing.get(id).cloned() {
             // Import never overwrites a different server's transport or managed state.
-            let fields = ["type", "command", "args", "env", "cwd", "url", "headers"];
-            if fields
-                .iter()
-                .any(|field| server.server.get(*field) != spec.get(*field))
-            {
+            if !transport_matches(&server.server, &spec) {
+                skipped.push(format!("'{id}': conflicts with an existing server"));
                 continue;
             }
             server
@@ -66,6 +82,7 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
         };
         server.apps.dsh = entry["disabled"].as_bool() != Some(true);
         state.db.save_mcp_server(&server)?;
+        existing.insert(id.to_string(), server);
     }
-    Ok(count)
+    super::import_outcome(count, "DSH", skipped)
 }

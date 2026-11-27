@@ -4,17 +4,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { McpServer } from "@/types";
 import McpFormModal from "@/components/mcp/McpFormModal";
 import { MCP_APP_IDS } from "@/config/appConfig";
-
 const mocks = vi.hoisted(() => ({
   upsert: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
 }));
-
 vi.mock("sonner", () => ({
   toast: { error: mocks.toastError, success: mocks.toastSuccess },
 }));
-
 vi.mock("@/config/mcpPresets", () => ({
   mcpPresets: [
     {
@@ -30,13 +27,10 @@ vi.mock("@/config/mcpPresets", () => ({
     tags: ["preset"],
   }),
 }));
-
 vi.mock("@/hooks/useMcp", () => ({
   useUpsertMcpServer: () => ({ mutateAsync: mocks.upsert }),
 }));
-
 const ALL_ON = Object.fromEntries(MCP_APP_IDS.map((app) => [app, true]));
-
 function renderForm(
   props: Partial<React.ComponentProps<typeof McpFormModal>> = {},
 ) {
@@ -52,17 +46,13 @@ function renderForm(
   );
   return { onSave, onClose };
 }
-
 const el = (id: string) => document.getElementById(id) as HTMLInputElement;
-
 const addButton = () => screen.getByRole("button", { name: "common.add" });
-
 describe("McpFormModal (drawer)", () => {
   beforeEach(() => {
     mocks.upsert.mockReset();
     mocks.upsert.mockResolvedValue(undefined);
   });
-
   it("fills the form from a template", async () => {
     renderForm();
     await userEvent.click(screen.getByRole("button", { name: "preset-stdio" }));
@@ -70,7 +60,6 @@ describe("McpFormModal (drawer)", () => {
     expect(el("mcp-cmd")).toHaveValue("preset-cmd");
     expect(screen.getByLabelText("mcpPage.drawer.argAria")).toHaveValue("--x");
   });
-
   it("adds a stdio server with every visible app ticked by default", async () => {
     const { onSave } = renderForm();
     fireEvent.change(el("mcp-name"), {
@@ -86,7 +75,6 @@ describe("McpFormModal (drawer)", () => {
       target: { value: "mcp-server-fetch" },
     });
     await userEvent.click(addButton());
-
     await waitFor(() => expect(mocks.upsert).toHaveBeenCalledTimes(1));
     const entry = mocks.upsert.mock.calls[0][0] as McpServer;
     expect(entry).toMatchObject({
@@ -94,10 +82,9 @@ describe("McpFormModal (drawer)", () => {
       name: "my-server",
       server: { type: "stdio", command: "uvx", args: ["mcp-server-fetch"] },
     });
-    expect(entry.apps).toMatchObject({ ...ALL_ON, openclaw: false });
+    expect(entry.apps).toMatchObject({ ...ALL_ON });
     expect(onSave).toHaveBeenCalled();
   });
-
   it("shows field errors instead of saving when required fields are empty", async () => {
     renderForm();
     await userEvent.click(addButton());
@@ -110,7 +97,6 @@ describe("McpFormModal (drawer)", () => {
     expect(mocks.upsert).not.toHaveBeenCalled();
     await waitFor(() => expect(document.activeElement).toBe(el("mcp-name")));
   });
-
   it("flags a duplicate name as soon as it is typed", () => {
     renderForm({
       existingServers: {
@@ -129,7 +115,6 @@ describe("McpFormModal (drawer)", () => {
       screen.getByText("mcpPage.drawer.errors.nameExists"),
     ).toBeInTheDocument();
   });
-
   it("recognizes a pasted mcpServers block and clears the paste box", () => {
     renderForm();
     const paste = screen.getByLabelText("mcpPage.drawer.paste");
@@ -155,7 +140,6 @@ describe("McpFormModal (drawer)", () => {
       "password",
     );
   });
-
   it("adds only new servers from a batch paste and skips existing names", async () => {
     renderForm({
       existingServers: {
@@ -184,9 +168,8 @@ describe("McpFormModal (drawer)", () => {
     await waitFor(() => expect(mocks.upsert).toHaveBeenCalledTimes(1));
     expect(mocks.upsert.mock.calls[0][0]).toMatchObject({ id: "linear" });
   });
-
-  it("keeps hidden apps' flags when overwriting an existing server from a batch", async () => {
-    // Hermes 从侧栏隐藏了：覆盖 figma 时它在 Hermes 的开关要原样带回，不能被当成关掉
+  it("keeps all existing app flags when overwriting a server from a batch", async () => {
+    // 批量覆盖只换连接配置：可见列开关和隐藏应用开关都原样保留，避免误开一堆客户端
     renderForm({
       visibleAppIds: ["claude", "codex"],
       existingServers: {
@@ -194,7 +177,7 @@ describe("McpFormModal (drawer)", () => {
           id: "figma",
           name: "figma",
           server: { type: "http", url: "http://127.0.0.1:3845/mcp" },
-          apps: { claude: false, hermes: true } as McpServer["apps"],
+          apps: { claude: false } as McpServer["apps"],
         },
       },
     });
@@ -219,12 +202,44 @@ describe("McpFormModal (drawer)", () => {
       .map((call) => call[0])
       .find((entry) => entry.id === "figma");
     expect(figma.apps).toMatchObject({
-      claude: true,
-      codex: true,
-      hermes: true,
+      claude: false,
+    });
+    expect(figma.server).toMatchObject({
+      type: "http",
+      url: "http://127.0.0.1:3845/v2",
     });
   });
-
+  it("retries only the failed entries of a batch", async () => {
+    const { onSave } = renderForm();
+    mocks.upsert.mockImplementation(async (entry) => {
+      if (entry.id === "failed") throw new Error("write rejected");
+    });
+    fireEvent.change(screen.getByLabelText("mcpPage.drawer.paste"), {
+      target: {
+        value: JSON.stringify({
+          mcpServers: {
+            saved: { command: "echo" },
+            failed: { command: "echo" },
+          },
+        }),
+      },
+    });
+    await userEvent.click(
+      screen.getByRole("button", { name: "mcpPage.drawer.addMany" }),
+    );
+    await waitFor(() => expect(mocks.upsert).toHaveBeenCalledTimes(2));
+    expect(onSave).not.toHaveBeenCalled();
+    mocks.upsert.mockResolvedValue(undefined);
+    await userEvent.click(
+      screen.getByRole("button", { name: "mcpPage.drawer.addMany" }),
+    );
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(mocks.upsert.mock.calls.map(([entry]) => entry.id)).toEqual([
+      "saved",
+      "failed",
+      "failed",
+    ]);
+  });
   it("masks secrets in the JSON tab and keeps them on save", async () => {
     const server: McpServer = {
       id: "serena",
@@ -235,16 +250,14 @@ describe("McpFormModal (drawer)", () => {
         env: { TOKEN: "keep-me" },
         startup_timeout_ms: 30000,
       },
-      apps: { claude: true, codex: false, hermes: true } as McpServer["apps"],
+      apps: { claude: true, codex: false } as McpServer["apps"],
     };
     renderForm({ editingId: "serena", initialData: server });
-
     expect(el("mcp-name")).toHaveAttribute("readonly");
     await userEvent.click(screen.getByRole("button", { name: "JSON" }));
     const json = screen.getByLabelText("mcpPage.drawer.jsonLabel");
     expect((json as HTMLTextAreaElement).value).toContain("••••••••");
     expect((json as HTMLTextAreaElement).value).not.toContain("keep-me");
-
     fireEvent.change(json, {
       target: {
         value: (json as HTMLTextAreaElement).value.replace('"uvx"', '"npx"'),
@@ -260,17 +273,16 @@ describe("McpFormModal (drawer)", () => {
         env: { TOKEN: "keep-me" },
         startup_timeout_ms: 30000,
       },
-      apps: { claude: true, codex: false, hermes: true },
+      apps: { claude: true, codex: false },
     });
   });
-
   it("keeps the form tab disabled while the JSON has a syntax error", async () => {
     renderForm({
       editingId: "x",
       initialData: {
         id: "x",
         name: "x",
-        server: { type: "stdio", command: "uvx" },
+        server: { type: "stdio", command: "uvx", env: { TOKEN: "secret" } },
         apps: {} as McpServer["apps"],
       },
     });
@@ -281,8 +293,14 @@ describe("McpFormModal (drawer)", () => {
     expect(
       screen.getByRole("button", { name: "mcpPage.drawer.tabForm" }),
     ).toBeDisabled();
+    const reveal = screen.getByRole("button", {
+      name: "mcpPage.drawer.showValues",
+    });
+    await userEvent.click(reveal);
+    expect(screen.getByLabelText("mcpPage.drawer.jsonLabel")).toHaveValue(
+      "{ broken",
+    );
   });
-
   it("only lists visible apps but preserves hidden ones when editing", async () => {
     renderForm({
       editingId: "x",
@@ -291,7 +309,7 @@ describe("McpFormModal (drawer)", () => {
         id: "x",
         name: "x",
         server: { type: "stdio", command: "uvx" },
-        apps: { claude: false, hermes: true } as McpServer["apps"],
+        apps: { claude: false } as McpServer["apps"],
       },
     });
     expect(screen.queryByText("Hermes")).not.toBeInTheDocument();
@@ -302,19 +320,17 @@ describe("McpFormModal (drawer)", () => {
     await waitFor(() => expect(mocks.upsert).toHaveBeenCalled());
     expect(mocks.upsert.mock.calls[0][0].apps).toMatchObject({
       claude: true,
-      hermes: true,
     });
   });
-
   it("warns when an SSE server is written to apps without SSE support", async () => {
     renderForm({
       editingId: "remote",
-      visibleAppIds: ["claude", "codex", "pi"],
+      visibleAppIds: ["claude", "codex", "agy"],
       initialData: {
         id: "remote",
         name: "remote",
         server: { type: "sse", url: "http://127.0.0.1:60002/sse" },
-        apps: { claude: true, codex: true, pi: true } as McpServer["apps"],
+        apps: { claude: true, codex: true, agy: true } as McpServer["apps"],
       },
     });
     expect(
@@ -323,18 +339,15 @@ describe("McpFormModal (drawer)", () => {
     expect(
       screen.getByText("mcpPage.drawer.sseRejectedTitle"),
     ).toBeInTheDocument();
-
     await userEvent.click(screen.getByRole("checkbox", { name: /Codex/ }));
     expect(
       screen.queryByText("mcpPage.drawer.sseAsHttpTitle"),
     ).not.toBeInTheDocument();
-
     await userEvent.click(screen.getByRole("button", { name: "HTTP" }));
     expect(
       screen.queryByText("mcpPage.drawer.sseRejectedTitle"),
     ).not.toBeInTheDocument();
   });
-
   it("follows the JSON tab when checking for SSE", async () => {
     renderForm({ visibleAppIds: ["claude", "codex"] });
     expect(
@@ -348,7 +361,6 @@ describe("McpFormModal (drawer)", () => {
       screen.getByText("mcpPage.drawer.sseAsHttpTitle"),
     ).toBeInTheDocument();
   });
-
   it("reports a save failure and keeps the drawer open", async () => {
     mocks.upsert.mockRejectedValueOnce(new Error("disk full"));
     const { onSave } = renderForm();

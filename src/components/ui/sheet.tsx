@@ -1,6 +1,3 @@
-import * as React from "react";
-import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { ChevronLeft, X } from "lucide-react";
 import {
   AppPageHeader,
   ModalDragStrip,
@@ -11,7 +8,9 @@ import { Button } from "@/components/ui/button";
 import { DRAG_REGION_ATTR } from "@/lib/platform";
 import { useUnsavedChangesTracker } from "@/lib/unsavedChanges";
 import { cn } from "@/lib/utils";
-
+import * as DialogPrimitive from "@radix-ui/react-dialog";
+import { ChevronLeft, X } from "lucide-react";
+import * as React from "react";
 /**
  * 右侧抽屉（v7：圆角 14、大阴影，宽度按内容 420 / 560）。基于 Radix Dialog：
  * Escape 关闭、打开时背景不可操作、关闭后焦点回到触发按钮。
@@ -19,7 +18,6 @@ import { cn } from "@/lib/utils";
 const Sheet = DialogPrimitive.Root;
 const SheetTrigger = DialogPrimitive.Trigger;
 const SheetClose = DialogPrimitive.Close;
-
 interface SheetContentProps
   extends React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> {
   width?: number;
@@ -31,7 +29,6 @@ interface SheetContentProps
    */
   dismissOnOutsideClick?: boolean;
 }
-
 /**
  * 抽屉本体。单独成一个组件是为了在 Portal 里面量页头：Portal 只在打开时挂载子元素，
  * 这里每次打开都重新量，和同样打开时才挂载的 ModalDragStrip 读的是同一时刻的页头。
@@ -51,7 +48,6 @@ const SheetPanel = React.forwardRef<
   );
 });
 SheetPanel.displayName = "SheetPanel";
-
 const SheetContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   SheetContentProps
@@ -100,7 +96,6 @@ const SheetContent = React.forwardRef<
   },
 );
 SheetContent.displayName = "SheetContent";
-
 /** 登记整页编辑器里的改动；`display: contents` 不影响布局 */
 function UnsavedChangesScope({ children }: { children: React.ReactNode }) {
   return (
@@ -109,7 +104,6 @@ function UnsavedChangesScope({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
-
 /**
  * 整页版的 SheetContent：盖住内容区，页头带返回按钮（同 FullScreenPanel），内容随窗口铺满。
  * 配合 `<Sheet modal={false}>` 使用：侧栏和窗口拖动区照常可用；点外面不关。
@@ -160,7 +154,6 @@ const SheetPageContent = React.forwardRef<
   </DialogPrimitive.Portal>
 ));
 SheetPageContent.displayName = "SheetPageContent";
-
 const SheetHeader = ({
   className,
   ...props
@@ -170,7 +163,6 @@ const SheetHeader = ({
     {...props}
   />
 );
-
 const SheetBody = ({
   className,
   ...props
@@ -183,7 +175,6 @@ const SheetBody = ({
     {...props}
   />
 );
-
 const SheetFooter = ({
   className,
   ...props
@@ -196,7 +187,6 @@ const SheetFooter = ({
     {...props}
   />
 );
-
 const SheetTitle = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Title>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Title>
@@ -208,7 +198,6 @@ const SheetTitle = React.forwardRef<
   />
 ));
 SheetTitle.displayName = "SheetTitle";
-
 const SheetDescription = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Description>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Description>
@@ -220,16 +209,15 @@ const SheetDescription = React.forwardRef<
   />
 ));
 SheetDescription.displayName = "SheetDescription";
-
 export {
   Sheet,
-  SheetTrigger,
+  SheetBody,
   SheetClose,
   SheetContent,
-  SheetPageContent,
-  SheetHeader,
-  SheetBody,
-  SheetFooter,
-  SheetTitle,
   SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetPageContent,
+  SheetTitle,
+  SheetTrigger,
 };

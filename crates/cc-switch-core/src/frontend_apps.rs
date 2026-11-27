@@ -81,12 +81,12 @@ pub fn load_whitelist(frontend: &str) -> Vec<AppType> {
     let mut apps: Vec<AppType> = Vec::new();
     for name in names {
         match parse_app_name(name) {
-            Some(app) => {
+            Some(app) if default_apps(frontend).contains(&app) => {
                 if !apps.contains(&app) {
                     apps.push(app);
                 }
             }
-            None => log::warn!(
+            _ => log::warn!(
                 "{} 的 {frontend} 一项里有未知应用名 {name}，已忽略",
                 path.display()
             ),

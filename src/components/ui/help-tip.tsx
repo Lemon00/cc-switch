@@ -1,8 +1,7 @@
-import * as React from "react";
+import { cn } from "@/lib/utils";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
 import { CircleHelp } from "lucide-react";
-import { cn } from "@/lib/utils";
-
+import * as React from "react";
 /**
  * 说明卡（v7 第八轮「?」，规格见 docs/research/2026-09-30-ui-design-v7/HELP_BRIEF.md）。
  *
@@ -16,10 +15,8 @@ import { cn } from "@/lib/utils";
  *
  * 深色小气泡（tooltip.tsx）只给纯图标按钮报名字，不放说明句子。
  */
-
 const OPEN_DELAY = 300;
 const CLOSE_DELAY = 200;
-
 /** 焦点是不是键盘带来的（Tab / 方向键）；浏览器不认 :focus-visible 时按键盘处理 */
 function isKeyboardFocus(element: HTMLElement) {
   try {
@@ -28,26 +25,21 @@ function isKeyboardFocus(element: HTMLElement) {
     return true;
   }
 }
-
 function useHoverCard() {
   const [open, setOpen] = React.useState(false);
   const [pinned, setPinned] = React.useState(false);
   const timer = React.useRef<number | undefined>(undefined);
-
   const clear = () => {
     if (timer.current !== undefined) {
       window.clearTimeout(timer.current);
       timer.current = undefined;
     }
   };
-
   React.useEffect(() => clear, []);
-
   const schedule = (next: boolean, delay: number) => {
     clear();
     timer.current = window.setTimeout(() => setOpen(next), delay);
   };
-
   return {
     open: open || pinned,
     pinned,
@@ -83,7 +75,6 @@ function useHoverCard() {
     },
   };
 }
-
 interface HelpCardProps {
   id: string;
   title?: React.ReactNode;
@@ -93,7 +84,6 @@ interface HelpCardProps {
   onPointerEnter: () => void;
   onPointerLeave: () => void;
 }
-
 function HelpCard({
   id,
   title,
@@ -127,7 +117,6 @@ function HelpCard({
     </PopoverPrimitive.Portal>
   );
 }
-
 export interface HelpTipProps {
   /** 卡片标题，同时是「?」按钮的无障碍名字。写成问题或名词。 */
   title: string;
@@ -137,7 +126,6 @@ export interface HelpTipProps {
   align?: "start" | "end";
   className?: string;
 }
-
 /** 放在被解释的词后面的「?」按钮。 */
 export function HelpTip({
   title,
@@ -149,7 +137,6 @@ export function HelpTip({
   const id = React.useId();
   const descId = `${id}-desc`;
   const hover = useHoverCard();
-
   return (
     <PopoverPrimitive.Root open={hover.open} onOpenChange={hover.onOpenChange}>
       {/* 卡片只在打开时挂载；屏幕阅读器读这份一直在的副本 */}
@@ -190,7 +177,6 @@ export function HelpTip({
     </PopoverPrimitive.Root>
   );
 }
-
 export interface DisabledReasonProps {
   /** 为什么不能点。为空时原样渲染子元素。 */
   reason?: React.ReactNode;
@@ -205,7 +191,6 @@ export interface DisabledReasonProps {
   side?: "top" | "bottom";
   align?: "start" | "end";
 }
-
 /**
  * 禁用原因挂在按钮本身上：悬停 / 聚焦按钮时出现说明卡。
  * 菜单、对话框、抽屉这类浮层里的禁用原因照旧写成看得见的第二行，不用这个组件。
@@ -219,9 +204,7 @@ export function DisabledReason({
   const id = React.useId();
   const descId = `${id}-desc`;
   const hover = useHoverCard();
-
   if (!reason) return children;
-
   const button = React.cloneElement(children, {
     disabled: false,
     "aria-disabled": "true",
@@ -232,7 +215,6 @@ export function DisabledReason({
     },
     className: cn(children.props.className, "cursor-not-allowed opacity-45"),
   });
-
   return (
     <PopoverPrimitive.Root open={hover.open} onOpenChange={hover.onOpenChange}>
       <PopoverPrimitive.Anchor asChild>

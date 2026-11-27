@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TrayPanel, formatResetIn } from "@/tray-panel/TrayPanel";
 import {
   CHANGED_EVENT,
+  HIDE_EVENT,
   SHOW_EVENT,
   trayPanelApi,
   type PanelPlacement,
@@ -19,7 +20,6 @@ import {
 } from "@/tray-panel/api";
 import { emitTauriEvent } from "../msw/tauriMocks";
 import { createTestQueryClient } from "../utils/testQueryClient";
-
 vi.mock("@/tray-panel/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/tray-panel/api")>()),
   trayPanelApi: {
@@ -30,8 +30,13 @@ vi.mock("@/tray-panel/api", async (importOriginal) => ({
     hide: vi.fn().mockResolvedValue(undefined),
   },
 }));
-vi.mock("@/tray-panel/UsageTab", () => ({ UsageTab: () => <div>Usage</div> }));
-
+vi.mock("@/tray-panel/UsageTab", () => ({
+  UsageTab: ({ visible }: { visible: boolean }) => (
+    <div data-testid="usage-tab" data-visible={String(visible)}>
+      Usage
+    </div>
+  ),
+}));
 const texts: PanelTexts = {
   switchProvider: "Switch provider",
   searchPlaceholder: "Search providers",
@@ -51,7 +56,6 @@ const texts: PanelTexts = {
   durationSep: " ",
   resetCredits: "{count} resets",
 };
-
 const state: TrayPanelState = {
   problems: [],
   feedback: null,
@@ -82,7 +86,6 @@ const state: TrayPanelState = {
   lightweight: false,
   quitHint: null,
 };
-
 const windows: PanelPlacement = {
   seq: 1,
   platform: "windows",
@@ -99,10 +102,8 @@ const windows: PanelPlacement = {
   glass: "frosted",
   texts,
 };
-
 const frames = new Map<number, FrameRequestCallback>();
 let frameId = 0;
-
 async function paint() {
   // 两帧：第一帧完成 DOM 绘制，第二帧才能让原生窗口区域露出新卡片。
   await act(async () => {
@@ -113,7 +114,6 @@ async function paint() {
     }
   });
 }
-
 function renderPanel(client = createTestQueryClient()) {
   return render(<TrayPanel />, {
     wrapper: ({ children }: { children: ReactNode }) => (
@@ -121,7 +121,6 @@ function renderPanel(client = createTestQueryClient()) {
     ),
   });
 }
-
 async function openPanel(placement: PanelPlacement) {
   vi.mocked(trayPanelApi.placement).mockResolvedValue(placement);
   const view = renderPanel();
@@ -129,8 +128,40 @@ async function openPanel(placement: PanelPlacement) {
   await paint();
   return view;
 }
-
 describe("TrayPanel window layout", () => {
+  it("stops hidden-panel reads and usage polling, then refreshes on reopening", async () => {
+    await openPanel(windows);
+    fireEvent.click(screen.getByRole("tab", { name: "Usage" }));
+    expect(await screen.findByTestId("usage-tab")).toHaveAttribute(
+      "data-visible",
+      "true",
+    );
+    const reads = vi.mocked(trayPanelApi.state).mock.calls.length;
+    await act(async () => {
+      emitTauriEvent(HIDE_EVENT, 1);
+      emitTauriEvent(CHANGED_EVENT, null);
+    });
+    expect(screen.getByTestId("usage-tab")).toHaveAttribute(
+      "data-visible",
+      "false",
+    );
+    expect(trayPanelApi.state).toHaveBeenCalledTimes(reads);
+    await act(async () => {
+      emitTauriEvent(SHOW_EVENT, { ...windows, seq: 2 });
+    });
+    expect(trayPanelApi.state).toHaveBeenCalledTimes(reads + 1);
+    expect(screen.getByTestId("usage-tab")).toHaveAttribute(
+      "data-visible",
+      "true",
+    );
+    await act(async () => {
+      emitTauriEvent(HIDE_EVENT, 1);
+    });
+    expect(screen.getByTestId("usage-tab")).toHaveAttribute(
+      "data-visible",
+      "true",
+    );
+  });
   beforeEach(() => {
     frames.clear();
     vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
@@ -158,7 +189,6 @@ describe("TrayPanel window layout", () => {
       },
     );
   });
-
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -166,7 +196,6 @@ describe("TrayPanel window layout", () => {
     delete document.documentElement.dataset.glass;
     delete document.documentElement.dataset.layout;
   });
-
   it("colors only the balance amount green, like the provider card", async () => {
     vi.mocked(trayPanelApi.state).mockResolvedValue({
       ...state,
@@ -198,7 +227,6 @@ describe("TrayPanel window layout", () => {
     });
     vi.mocked(trayPanelApi.placement).mockResolvedValue(windows);
     renderPanel();
-
     const amount = await screen.findByText("82.10 CNY");
     expect(amount).toHaveClass("text-green-600");
     expect(amount.parentElement).toHaveTextContent("Balance 82.10 CNY");
@@ -207,7 +235,6 @@ describe("TrayPanel window layout", () => {
       "text-amber-500",
     );
   });
-
   it("shows the frame with Open main window and Quit before the panel data arrives", async () => {
     let resolveState: (value: TrayPanelState) => void = () => {};
     vi.mocked(trayPanelApi.state).mockReturnValue(
@@ -223,7 +250,6 @@ describe("TrayPanel window layout", () => {
     );
     vi.mocked(trayPanelApi.placement).mockResolvedValue(windows);
     renderPanel();
-
     const quit = await screen.findByRole("button", { name: "Quit" });
     expect(
       screen.getByRole("button", { name: "Open main window" }),
@@ -241,7 +267,6 @@ describe("TrayPanel window layout", () => {
     );
     fireEvent.click(quit);
     expect(trayPanelApi.action).toHaveBeenCalledWith("quit");
-
     await act(async () => resolveState(state));
     await screen.findByRole("button", { name: "Claude Code default · Direct" });
     expect(screen.getByRole("switch")).toBeVisible();
@@ -257,7 +282,6 @@ describe("TrayPanel window layout", () => {
       }),
     );
   });
-
   it("ignores a mount-time placement that is older than a show event already handled", async () => {
     let resolvePlacement: (value: PanelPlacement) => void = () => {};
     vi.mocked(trayPanelApi.placement).mockReturnValue(
@@ -281,7 +305,6 @@ describe("TrayPanel window layout", () => {
     expect(seqs).not.toContain(1);
     expect(trayPanelApi.state).toHaveBeenCalledTimes(1);
   });
-
   it("waits briefly for the data on a cold open so the first frame is already complete", async () => {
     vi.mocked(trayPanelApi.state).mockImplementation(
       () =>
@@ -304,7 +327,6 @@ describe("TrayPanel window layout", () => {
       }),
     );
   });
-
   it("shows the previous content at once when it pops up again and the data is slow", async () => {
     await openPanel(windows);
     vi.mocked(trayPanelApi.state).mockReturnValue(new Promise(() => {}));
@@ -324,7 +346,6 @@ describe("TrayPanel window layout", () => {
       }),
     );
   });
-
   it("drops the one-off feedback line when it pops up again with the previous content", async () => {
     vi.mocked(trayPanelApi.state).mockResolvedValue({
       ...state,
@@ -341,7 +362,6 @@ describe("TrayPanel window layout", () => {
       screen.getByRole("button", { name: "Claude Code default · Direct" }),
     ).toBeVisible();
   });
-
   it("keeps a feedback line that arrived while the panel was hidden", async () => {
     await openPanel(windows);
     vi.mocked(trayPanelApi.state).mockResolvedValue({
@@ -356,7 +376,6 @@ describe("TrayPanel window layout", () => {
     });
     expect(await screen.findByText(/Restart Codex/)).toBeVisible();
   });
-
   it("clips the first Windows frame without waiting for animation frames in a hidden window", async () => {
     vi.mocked(trayPanelApi.placement).mockResolvedValue(windows);
     renderPanel();
@@ -370,7 +389,6 @@ describe("TrayPanel window layout", () => {
     );
     expect(frames.size).toBe(0);
   });
-
   it("cancels a pending Windows reveal when the provider list is closed before painting", async () => {
     await openPanel(windows);
     const calls = vi.mocked(trayPanelApi.layout).mock.calls.length;
@@ -386,14 +404,12 @@ describe("TrayPanel window layout", () => {
         .every(([layout]) => layout.cards.length === 1),
     ).toBe(true);
   });
-
   it("keeps the Windows WebView frame fixed while revealing a painted provider list", async () => {
     const { container } = await openPanel(windows);
     const main = container.querySelector<HTMLElement>(".tp-card")!;
     expect(main).toHaveStyle({ left: "300px", top: "440px" });
     const collapsed = vi.mocked(trayPanelApi.layout).mock.lastCall![0];
     const calls = vi.mocked(trayPanelApi.layout).mock.calls.length;
-
     fireEvent.click(
       screen.getByRole("button", { name: "Claude Code default · Direct" }),
     );
@@ -418,7 +434,6 @@ describe("TrayPanel window layout", () => {
         ],
       }),
     );
-
     fireEvent.keyDown(window, { key: "Escape" });
     expect(container.querySelector(".tp-sub")).toBeNull();
     expect(main).toHaveStyle({ left: "300px", top: "440px" });
@@ -433,7 +448,6 @@ describe("TrayPanel window layout", () => {
       }),
     );
   });
-
   it.each(["windows", "linux"])(
     "keeps %s app rows stationary while switching and filtering different provider counts",
     async (platform) => {
@@ -487,14 +501,12 @@ describe("TrayPanel window layout", () => {
       const codexRow = screen.getByRole("button", {
         name: "Codex OpenAI · Direct",
       });
-
       fireEvent.click(claudeRow);
       await paint();
       expect(main).toHaveStyle(position);
       expect(container.querySelector(".tp-sub")).toHaveStyle({
         height: "320px",
       });
-
       fireEvent.mouseEnter(codexRow);
       await paint();
       expect(main).toHaveStyle(position);
@@ -504,7 +516,6 @@ describe("TrayPanel window layout", () => {
       expect(
         screen.getByRole("button", { name: /Provider 19$/ }),
       ).toBeVisible();
-
       fireEvent.change(screen.getByPlaceholderText("Search providers"), {
         target: { value: "does not exist" },
       });
@@ -522,7 +533,6 @@ describe("TrayPanel window layout", () => {
           ],
         }),
       );
-
       fireEvent.mouseEnter(claudeRow);
       fireEvent.keyDown(window, { key: "Escape" });
       await paint();
@@ -530,7 +540,6 @@ describe("TrayPanel window layout", () => {
       expect(container.querySelector(".tp-sub")).toBeNull();
     },
   );
-
   it("re-reads settings every time it pops up so changes made in the main window show", async () => {
     const client = createTestQueryClient();
     const invalidate = vi.spyOn(client, "invalidateQueries");
@@ -538,7 +547,6 @@ describe("TrayPanel window layout", () => {
     renderPanel(client);
     await screen.findByRole("button", { name: "Claude Code default · Direct" });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["settings"] });
-
     invalidate.mockClear();
     await act(async () => {
       emitTauriEvent(SHOW_EVENT, { ...windows, seq: 2 });
@@ -547,7 +555,6 @@ describe("TrayPanel window layout", () => {
       expect(invalidate).toHaveBeenCalledWith({ queryKey: ["settings"] }),
     );
   });
-
   it.each([
     { scaleFactor: 1, dpr: 1.5, side: "left" as const },
     { scaleFactor: 1, dpr: 1.5, side: "right" as const },
@@ -573,7 +580,6 @@ describe("TrayPanel window layout", () => {
       const collapsed = vi.mocked(trayPanelApi.layout).mock.lastCall![0];
       expect(collapsed.width).toBeCloseTo(320);
       expect(collapsed.height).toBeCloseTo(320 * factor);
-
       fireEvent.click(
         screen.getByRole("button", { name: "Claude Code default · Direct" }),
       );
@@ -594,7 +600,6 @@ describe("TrayPanel window layout", () => {
         expect(bounds.x + bounds.width).toBeLessThanOrEqual(expanded.width);
         expect(bounds.y + bounds.height).toBeLessThanOrEqual(expanded.height);
       }
-
       ratio.mockReturnValue(scaleFactor);
       fireEvent.resize(window);
       await paint();
@@ -611,7 +616,6 @@ describe("TrayPanel window layout", () => {
       );
     },
   );
-
   it.each([1, 1.25, 1.5, 2])(
     "keeps native bounds consistent at %s display scaling with larger WebView text",
     async (scaleFactor) => {
@@ -627,7 +631,6 @@ describe("TrayPanel window layout", () => {
       expect(scaled.offsetX).toBeCloseTo(300);
       expect(scaled.cards[0].width).toBeCloseTo(320);
       expect(scaled.cards[0].height).toBeCloseTo(352);
-
       fireEvent.click(
         screen.getByRole("button", { name: "Claude Code default · Direct" }),
       );
@@ -636,7 +639,6 @@ describe("TrayPanel window layout", () => {
       expect(expanded.cards[0]).toEqual(scaled.cards[0]);
       expect(expanded.cards[1].width).toBeCloseTo(300);
       expect(expanded.cards[1].height).toBeCloseTo(352);
-
       // 跨屏 / 缩放变化后，同一常驻 WebView 要重新量尺寸和裁剪区域。
       ratio.mockReturnValue(scaleFactor);
       fireEvent.resize(window);
@@ -652,7 +654,6 @@ describe("TrayPanel window layout", () => {
       );
     },
   );
-
   it.each([
     [1, 1.5, 2],
     [2, 1.5, 1],
@@ -662,7 +663,10 @@ describe("TrayPanel window layout", () => {
       const ratio = vi.spyOn(window, "devicePixelRatio", "get");
       ratio.mockReturnValue(initialScale);
       const mediaQueries: Array<
-        EventTarget & { media: string; matches: boolean }
+        EventTarget & {
+          media: string;
+          matches: boolean;
+        }
       > = [];
       vi.stubGlobal("matchMedia", (query: string) => {
         const media = Object.assign(new EventTarget(), {
@@ -677,7 +681,6 @@ describe("TrayPanel window layout", () => {
         scaleFactor: initialScale,
       });
       const main = container.querySelector<HTMLElement>(".tp-card")!;
-
       for (const [index, scaleFactor] of [secondScale, thirdScale].entries()) {
         const seq = index + 2;
         // 原生窗口收到布局后才跨屏：显示事件仍读到旧屏的 DPR。
@@ -686,7 +689,6 @@ describe("TrayPanel window layout", () => {
         });
         await paint();
         const calls = vi.mocked(trayPanelApi.layout).mock.calls.length;
-
         // 画布尺寸不变，没有 resize；只分发匹配状态确实改变的媒体查询事件。
         await act(async () => {
           ratio.mockReturnValue(scaleFactor);
@@ -699,7 +701,6 @@ describe("TrayPanel window layout", () => {
           }
         });
         await paint();
-
         expect(main).toHaveStyle({ width: "320px", maxHeight: "620px" });
         expect(trayPanelApi.layout).toHaveBeenCalledTimes(calls + 1);
         expect(trayPanelApi.layout).toHaveBeenLastCalledWith(
@@ -713,7 +714,6 @@ describe("TrayPanel window layout", () => {
       }
     },
   );
-
   it("limits both cards to the available height on small scaled displays", async () => {
     const { container } = await openPanel({ ...windows, boundsTop: -180 });
     fireEvent.click(
@@ -726,7 +726,6 @@ describe("TrayPanel window layout", () => {
       maxHeight: "180px",
     });
   });
-
   it.each([
     ["direct", "Direct", "text-direct-text"],
     ["route", "Route", "text-route-text"],
@@ -746,7 +745,6 @@ describe("TrayPanel window layout", () => {
       expect(screen.getByText(mode)).toHaveClass(className);
     },
   );
-
   it("opens Windows top/left taskbars toward the opposite edges", async () => {
     const { container } = await openPanel(windows);
     await act(async () => {
@@ -769,7 +767,6 @@ describe("TrayPanel window layout", () => {
       top: "0px",
     });
   });
-
   it.each([
     {
       side: "left",
@@ -842,7 +839,6 @@ describe("TrayPanel window layout", () => {
           offsetY,
         }),
       );
-
       fireEvent.click(
         screen.getByRole("button", { name: "Claude Code default · Direct" }),
       );
@@ -873,7 +869,6 @@ describe("TrayPanel window layout", () => {
       expect(window.cancelAnimationFrame).not.toHaveBeenCalled();
     },
   );
-
   it("switches apps at once on a vertical move and waits while heading for the sub panel", async () => {
     const codex = {
       ...state.apps[0],
@@ -917,12 +912,10 @@ describe("TrayPanel window layout", () => {
     const codexRow = screen.getByRole("button", {
       name: "Codex OpenAI · Direct",
     });
-
     fireEvent.mouseEnter(claudeRow);
     await waitFor(() => expect(subTitle()).toContain("Claude Code"));
     // 刚展开：卡片自己有展开动画，内容不另做淡入
     expect(container.querySelector(".tp-sub")).not.toHaveAttribute("data-swap");
-
     // 竖着移到下一行：不等，立即换
     fireEvent.mouseMove(window, { clientX: 200, clientY: 80 });
     fireEvent.mouseMove(window, { clientX: 200, clientY: 120 });
@@ -931,7 +924,6 @@ describe("TrayPanel window layout", () => {
     expect(subTitle()).toContain("Codex");
     // 从另一个应用换过来：内容做一次短淡入
     expect(container.querySelector(".tp-sub")).toHaveAttribute("data-swap");
-
     // 斜着朝子面板移动、途经 Claude 那行：先不换；鼠标停下后再换
     fireEvent.mouseMove(window, { clientX: 200, clientY: 120 });
     fireEvent.mouseMove(window, { clientX: 230, clientY: 110 });
@@ -939,11 +931,9 @@ describe("TrayPanel window layout", () => {
     fireEvent.mouseEnter(claudeRow);
     expect(subTitle()).toContain("Codex");
     await waitFor(() => expect(subTitle()).toContain("Claude Code"));
-
     // 移出应用行（比如移出整个面板）：子面板留着
     fireEvent.mouseLeave(claudeRow);
     expect(container.querySelector(".tp-sub")).not.toBeNull();
-
     // 竖着移到底部「打开主窗口」：和原生菜单一样收起子面板
     fireEvent.mouseMove(window, { clientX: 200, clientY: 300 });
     fireEvent.mouseMove(window, { clientX: 200, clientY: 340 });
@@ -953,12 +943,10 @@ describe("TrayPanel window layout", () => {
     expect(container.querySelector(".tp-sub")).toBeNull();
   });
 });
-
 describe("formatResetIn", () => {
   const now = new Date("2026-10-20T10:00:00Z");
   const at = (ms: number) => new Date(now.getTime() + ms).toISOString();
-  const MIN = 60_000;
-
+  const MIN = 60000;
   it("keeps at most two units and drops a zero second unit", () => {
     expect(formatResetIn(at((47 * 60 + 30) * MIN), now, texts)).toBe(
       "Resets in 1d 23h",
@@ -970,9 +958,8 @@ describe("formatResetIn", () => {
     expect(formatResetIn(at(3 * 60 * MIN), now, texts)).toBe("Resets in 3h");
     expect(formatResetIn(at(12 * MIN), now, texts)).toBe("Resets in 12m");
   });
-
   it("rounds sub-minute waits up and hides past or invalid times", () => {
-    expect(formatResetIn(at(20_000), now, texts)).toBe("Resets in 1m");
+    expect(formatResetIn(at(20000), now, texts)).toBe("Resets in 1m");
     expect(formatResetIn(at(-MIN), now, texts)).toBeNull();
     expect(formatResetIn("not a date", now, texts)).toBeNull();
   });

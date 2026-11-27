@@ -100,9 +100,18 @@ async fn forward(upstream: &str, uri: &Uri, headers: &HeaderMap) -> Option<Respo
     };
     let expected_host = reqwest::Url::parse(upstream).ok()?.host_str()?.to_string();
     let listed = connection_listed(headers);
-    let mut request = super::http_client::get_for_url(&url)
-        .get(&url)
-        .timeout(UPSTREAM_TIMEOUT);
+    // Fail closed on redirects: following would allow host-hop before the
+    // post-response host check below, and may leak Authorization.
+    let client = match super::http_client::no_redirect_for_url(&url) {
+        Ok(client) => client,
+        Err(error) => {
+            log::warn!(
+                "[Codex] 官方模型列表客户端构建失败，交给 Codex 用自带列表: {error}"
+            );
+            return None;
+        }
+    };
+    let mut request = client.get(&url).timeout(UPSTREAM_TIMEOUT);
     for (name, value) in headers {
         if SKIPPED_REQUEST_HEADERS.contains(&name.as_str()) || listed.contains(name) {
             continue;

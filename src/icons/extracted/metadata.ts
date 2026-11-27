@@ -1,6 +1,5 @@
 // Icon metadata for search and categorization
 import { IconMetadata } from "@/types/icon";
-
 export const iconMetadata: Record<string, IconMetadata> = {
   "88api": {
     name: "88api",
@@ -627,26 +626,12 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["gpt", "chatgpt"],
     defaultColor: "currentColor",
   },
-  openclaw: {
-    name: "openclaw",
-    displayName: "OpenClaw",
-    category: "ai-provider",
-    keywords: ["openclaw", "lobster", "claw"],
-    defaultColor: "#ff4f40",
-  },
   antigravity: {
     name: "antigravity",
     displayName: "Antigravity",
     category: "ai-provider",
     keywords: ["antigravity", "agy", "google"],
     defaultColor: "#3186FF",
-  },
-  hermes: {
-    name: "hermes",
-    displayName: "Hermes",
-    category: "ai-provider",
-    keywords: ["hermes", "agent", "nous", "nousresearch"],
-    defaultColor: "#000000",
   },
   packycode: {
     name: "packycode",
@@ -1197,15 +1182,12 @@ export const iconMetadata: Record<string, IconMetadata> = {
     defaultColor: "currentColor",
   },
 };
-
 export function getIconMetadata(name: string): IconMetadata | undefined {
   return iconMetadata[name.toLowerCase()];
 }
-
 export function isTileIcon(name?: string): boolean {
   return !!name && getIconMetadata(name)?.shape === "tile";
 }
-
 export function searchIcons(query: string): string[] {
   const lowerQuery = query.toLowerCase();
   return Object.values(iconMetadata)

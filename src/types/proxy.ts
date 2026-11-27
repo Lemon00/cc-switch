@@ -10,7 +10,6 @@ export interface ProxyConfig {
   streaming_idle_timeout: number;
   non_streaming_timeout: number;
 }
-
 export interface ProxyStatus {
   running: boolean;
   address: string;
@@ -28,19 +27,16 @@ export interface ProxyStatus {
   failover_count: number;
   active_targets?: ActiveTarget[];
 }
-
 export interface ActiveTarget {
   app_type: string;
   provider_name: string;
   provider_id: string;
 }
-
 export interface ProxyServerInfo {
   address: string;
   port: number;
   started_at: string;
 }
-
 export interface ProxyTakeoverStatus {
   claude: boolean;
   "claude-desktop"?: boolean;
@@ -48,19 +44,14 @@ export interface ProxyTakeoverStatus {
   gemini: boolean;
   grokbuild: boolean;
   opencode: boolean;
-  openclaw: boolean;
-  hermes: boolean;
 }
-
 /** Applied under the backend switch lock, not inferred from a possibly stale UI mode. */
 export interface RouteSwitchResult {
   kind: "remembered" | "route" | "stack";
   clientConfigChanged: boolean;
 }
-
 /** 应用当前的连接方式。 */
 export type AppMode = "direct" | "route" | "stack";
-
 /** 应用页模式行用的状态（后端 `get_app_mode`）。 */
 export interface AppModeView {
   mode: AppMode;
@@ -71,24 +62,21 @@ export interface AppModeView {
   /** 直连那家：直连时写进客户端的、回到直连时写回的 */
   directProviderId: string | null;
 }
-
 /** 启动时没能接上代理、已退回直连的应用。 */
 export interface StartupAttachFailure {
   appType: string;
   stack: boolean;
   error: string;
 }
-
 /** Stack 模型：名单里的一家和它发布给客户端的模型 id。 */
 export interface ProxyStackMember {
   providerId: string;
   modelIds: string[];
-  /** 这家是默认那家（代理路由）：模型走默认路由，`modelIds` 等默认换到别家后才发布。 */
+  /** 这家是默认账号；它的模型也参与公共模型合并。 */
   route: boolean;
-  /** 这家不做默认、只做成员时发布几个模型（换默认的预览用；默认那家的 `modelIds` 可能为空）。 */
+  /** 账号自身提供的模型数；多个账号可能贡献同一个公共模型。 */
   memberModels: number;
 }
-
 /**
  * Codex Stack 模型客户端看不到或看不全：`routeOwnsCatalog` 路由供应商使用自己的模型目录文件，
  * Stack 模型不发布；官方做路由时官方模型列表暂未取到：`officialModelsBundled` 暂用 Codex
@@ -100,7 +88,6 @@ export type ProxyStackNotice =
   | "officialModelsBundled"
   | "officialModelsUnavailable"
   | "officialModelsOutdated";
-
 /**
  * 官方模型列表没取到的原因（`officialModelsBundled` / `officialModelsUnavailable` 时）：先是官方
  * 列表的，不可用时再跟 Codex 自带列表的。
@@ -115,7 +102,6 @@ export type ProxyStackNoticeReason =
   | "noCli"
   | "cliFailed"
   | "nothingUsable";
-
 /**
  * 还在用旧模型列表的 Codex 客户端（它们只在启动时读模型目录）：`daemon` 是 `codex` 命令行连的
  * 托管守护进程，可以一键重启；`others` 是桌面版、编辑器插件，要用户自己彻底退出再开。
@@ -131,18 +117,18 @@ export interface CodexStaleClients {
    */
   unverified?: boolean;
 }
-
 /** Codex 聚合设置里「子代理模型」下拉的一项：发布的模型和它在合并目录里的推理强度档位。 */
 export interface ProxyStackSubagentModel {
-  /** 发布给客户端的模型 id（`ccs-<key>/<model>`），也是写进 `[agents]` 的值。 */
+  /** 仍可识别的历史选择，包括旧账号 ID 和模型合并前的 ID。 */
+  aliases?: string[];
+  /** 发布给客户端的模型 id（`group/<model>` 或 `<account>/<model>`）。 */
   id: string;
   providerId: string;
-  /** `<模型显示名>（<供应商名>）`，和 Codex 模型选择器里一样。 */
+  /** 与客户端模型选择器一致；公共模型不附带来源账号。 */
   displayName: string;
   efforts: string[];
   defaultEffort?: string;
 }
-
 /** Stack 模式的状态、名单和提示。 */
 export interface ProxyStack {
   /** 在 Stack 模式（代理模式且 Stack 模式开着）。 */
@@ -156,16 +142,13 @@ export interface ProxyStack {
   /** Codex：聚合设置里「子代理模型」下拉的选项，发布 Stack 模型的成员按名单顺序。 */
   subagentModels?: ProxyStackSubagentModel[];
 }
-
 /** 重启 Codex 守护进程的结果：`notRunning` 表示它没在运行，什么都没做。 */
 export type CodexDaemonRestartOutcome = "restarted" | "notRunning";
-
 /** 增删 Stack 模型失败。`partial` 为真：已部分写入，下次操作或重启 CC Switch 时补完。 */
 export interface ProxyStackWriteError {
   partial: boolean;
   message: string;
 }
-
 export interface ProviderHealth {
   provider_id: string;
   app_type: string;
@@ -176,7 +159,6 @@ export interface ProviderHealth {
   last_error: string | null;
   updated_at: string;
 }
-
 // 熔断器相关类型
 export interface CircuitBreakerConfig {
   failureThreshold: number;
@@ -185,9 +167,7 @@ export interface CircuitBreakerConfig {
   errorRateThreshold: number;
   minRequests: number;
 }
-
 export type CircuitState = "closed" | "open" | "half_open";
-
 export interface CircuitBreakerStats {
   state: CircuitState;
   consecutiveFailures: number;
@@ -195,7 +175,6 @@ export interface CircuitBreakerStats {
   totalRequests: number;
   failedRequests: number;
 }
-
 // 供应商健康状态枚举
 export enum ProviderHealthStatus {
   Healthy = "healthy",
@@ -203,13 +182,11 @@ export enum ProviderHealthStatus {
   Failed = "failed",
   Unknown = "unknown",
 }
-
 // 扩展 ProviderHealth 以包含前端计算的状态
 export interface ProviderHealthWithStatus extends ProviderHealth {
   status: ProviderHealthStatus;
   circuitState?: CircuitState;
 }
-
 export interface ProxyUsageRecord {
   provider_id: string;
   app_type: string;
@@ -221,7 +198,6 @@ export interface ProxyUsageRecord {
   error: string | null;
   timestamp: string;
 }
-
 // 故障转移队列条目
 export interface FailoverQueueItem {
   providerId: string;
@@ -229,7 +205,6 @@ export interface FailoverQueueItem {
   providerNotes?: string;
   sortIndex?: number;
 }
-
 // 全局代理配置（统一字段，三行镜像）
 export interface GlobalProxyConfig {
   proxyEnabled: boolean;
@@ -237,7 +212,6 @@ export interface GlobalProxyConfig {
   listenPort: number;
   enableLogging: boolean;
 }
-
 // 应用级代理配置（每个 app 独立）
 export interface AppProxyConfig {
   appType: string;

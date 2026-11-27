@@ -8,7 +8,6 @@ import {
 import { useEffect } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Provider } from "@/types";
-
 const apiMocks = vi.hoisted(() => ({
   getCurrent: vi.fn(),
   getEditorView: vi.fn(),
@@ -16,9 +15,9 @@ const apiMocks = vi.hoisted(() => ({
   getOpenClawLiveProvider: vi.fn(),
 }));
 let mockFormReady = true;
+let mockProviderKey: string | undefined;
 let mockCodexManagedAccountSelected = false;
 let submitReadyCallbacks: Array<(isReady: boolean) => void> = [];
-
 vi.mock("@/lib/api", () => ({
   providersApi: {
     getCurrent: apiMocks.getCurrent,
@@ -31,7 +30,6 @@ vi.mock("@/lib/api", () => ({
     getLiveProvider: apiMocks.getOpenClawLiveProvider,
   },
 }));
-
 vi.mock("@/components/common/FullScreenPanel", () => ({
   FullScreenPanel: ({
     isOpen,
@@ -49,7 +47,6 @@ vi.mock("@/components/common/FullScreenPanel", () => ({
       </div>
     ) : null,
 }));
-
 vi.mock("@/components/providers/forms/ProviderForm", () => ({
   ProviderForm: ({
     initialData,
@@ -72,6 +69,7 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
       websiteUrl: string;
       notes?: string;
       settingsConfig: string;
+      providerKey?: string;
       meta?: Record<string, unknown>;
       icon?: string;
       iconColor?: string;
@@ -97,6 +95,7 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
             websiteUrl: initialData.websiteUrl ?? "",
             notes: initialData.notes,
             settingsConfig: JSON.stringify(initialData.settingsConfig ?? {}),
+            providerKey: mockProviderKey,
             meta: mockCodexManagedAccountSelected
               ? {
                   ...(initialData.meta ?? {}),
@@ -129,17 +128,15 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
     );
   },
 }));
-
 vi.mock("@/components/providers/AuthSettingsPanel", () => ({
   AuthSettingsPanel: ({ target }: { target: string | null }) =>
     target ? <div data-testid="auth-settings-panel">{target}</div> : null,
 }));
-
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
-
 describe("EditProviderDialog", () => {
   beforeEach(() => {
     mockFormReady = true;
+    mockProviderKey = undefined;
     mockCodexManagedAccountSelected = false;
     submitReadyCallbacks = [];
     apiMocks.getCurrent.mockReset();
@@ -153,7 +150,97 @@ describe("EditProviderDialog", () => {
     apiMocks.getLiveProviderSettings.mockReset();
     apiMocks.getOpenClawLiveProvider.mockReset();
   });
-
+  it("loads a new projection when the edited provider changes without closing", async () => {
+    const props = {
+      open: true,
+      appId: "codex" as const,
+      onOpenChange: vi.fn(),
+      onSubmit: vi.fn(),
+    };
+    const first: Provider = {
+      id: "first",
+      name: "First",
+      settingsConfig: { config: "first" },
+    };
+    const second: Provider = {
+      id: "second",
+      name: "Second",
+      settingsConfig: { config: "second" },
+    };
+    const { rerender } = render(
+      <EditProviderDialog {...props} provider={first} />,
+    );
+    await screen.findByTestId("settings-config");
+    rerender(<EditProviderDialog {...props} provider={second} />);
+    await waitFor(() =>
+      expect(apiMocks.getEditorView).toHaveBeenCalledTimes(2),
+    );
+    expect(
+      JSON.parse((await screen.findByTestId("settings-config")).textContent!),
+    ).toEqual(second.settingsConfig);
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+    await waitFor(() =>
+      expect(props.onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: expect.objectContaining({
+            id: "second",
+            settingsConfig: second.settingsConfig,
+          }),
+          editorSave: { base: second.settingsConfig, onConflict: "refuse" },
+        }),
+      ),
+    );
+  });
+  it("reloads the editor when the app changes even if provider IDs match", async () => {
+    const provider: Provider = {
+      id: "shared",
+      name: "Shared",
+      settingsConfig: {},
+    };
+    apiMocks.getEditorView.mockImplementation(async (app: string) => ({
+      settings: { app },
+      inactive: [],
+    }));
+    const props = {
+      open: true,
+      provider,
+      onOpenChange: vi.fn(),
+      onSubmit: vi.fn(),
+    };
+    const { rerender } = render(
+      <EditProviderDialog {...props} appId="claude" />,
+    );
+    await screen.findByTestId("settings-config");
+    rerender(<EditProviderDialog {...props} appId="codex" />);
+    await waitFor(() =>
+      expect(screen.getByTestId("settings-config")).toHaveTextContent(
+        '"app":"codex"',
+      ),
+    );
+  });
+  it("does not close a reopened editor when the old save finishes", async () => {
+    let finish!: () => void;
+    const onSubmit = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const props = {
+      provider: { id: "same", name: "Same", settingsConfig: {} },
+      appId: "opencode" as const,
+      onOpenChange: vi.fn(),
+      onSubmit,
+    };
+    const { rerender } = render(<EditProviderDialog open {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    rerender(<EditProviderDialog open={false} {...props} />);
+    rerender(<EditProviderDialog open {...props} />);
+    await act(async () => finish());
+    expect(props.onOpenChange).not.toHaveBeenCalled();
+    expect(screen.getByTestId("settings-config")).toBeInTheDocument();
+  });
   it("keeps the list visible until the initial editor projection is ready", async () => {
     let resolveView!: (view: {
       settings: Record<string, unknown>;
@@ -181,12 +268,10 @@ describe("EditProviderDialog", () => {
       screen.queryByRole("button", { name: "common.save" }),
     ).not.toBeInTheDocument();
     expect(screen.queryByTestId("settings-config")).not.toBeInTheDocument();
-
     await act(async () => {
       resolveView({ settings: provider.settingsConfig, inactive: [] });
     });
     expect(screen.getByTestId("settings-config")).toBeInTheDocument();
-
     rerender(<EditProviderDialog open={false} {...props} />);
     rerender(<EditProviderDialog open {...props} />);
     expect(screen.queryByTestId("settings-config")).not.toBeInTheDocument();
@@ -196,7 +281,6 @@ describe("EditProviderDialog", () => {
     });
     expect(screen.queryByTestId("settings-config")).not.toBeInTheDocument();
   });
-
   it("Codex 显示后端算出的切换投影，并把它作为保存时三方比较的基准", async () => {
     const modelCatalog = {
       models: [{ model: "deepseek-v4-flash", contextWindow: 1000000 }],
@@ -219,7 +303,6 @@ describe("EditProviderDialog", () => {
     };
     apiMocks.getEditorView.mockResolvedValue({ settings: view, inactive: [] });
     const handleSubmit = vi.fn().mockResolvedValue(undefined);
-
     render(
       <EditProviderDialog
         open
@@ -229,7 +312,6 @@ describe("EditProviderDialog", () => {
         appId="codex"
       />,
     );
-
     await waitFor(() => {
       expect(
         JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
@@ -243,15 +325,12 @@ describe("EditProviderDialog", () => {
       undefined,
     );
     expect(apiMocks.getLiveProviderSettings).not.toHaveBeenCalled();
-
     fireEvent.click(screen.getByRole("button", { name: "common.save" }));
-
     await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
     const payload = handleSubmit.mock.calls[0][0];
     expect(payload.provider.settingsConfig).toEqual(view);
     expect(payload.editorSave).toEqual({ base: view, onConflict: "refuse" });
   });
-
   it.each([undefined, "openai_responses"] as const)(
     "passes stored Copilot metadata to the edit projection (%s)",
     async (format) => {
@@ -302,25 +381,7 @@ describe("EditProviderDialog", () => {
       expect(payload.editorSave.base).toEqual(provider.settingsConfig);
     },
   );
-
-  it.each([
-    [
-      "gemini",
-      {
-        env: { GEMINI_API_KEY: "db-key", GEMINI_MODEL: "m" },
-        config: {},
-      },
-      {
-        env: { GEMINI_SANDBOX: "docker", GEMINI_API_KEY: "db-key" },
-        config: { ui: { theme: "dark" } },
-      },
-    ],
-    [
-      "grokbuild",
-      { config: '[models]\ndefault = "grok-4.5"\n' },
-      { config: '[ui]\ntheme = "dark"\n\n[models]\ndefault = "grok-4.5"\n' },
-    ],
-  ] as const)(
+  it.each([] as const)(
     "%s 也显示切换投影，并把它作为保存时三方比较的基准",
     async (appId, settingsConfig, view) => {
       const provider: Provider = {
@@ -334,7 +395,6 @@ describe("EditProviderDialog", () => {
         inactive: [],
       });
       const handleSubmit = vi.fn().mockResolvedValue(undefined);
-
       render(
         <EditProviderDialog
           open
@@ -344,7 +404,6 @@ describe("EditProviderDialog", () => {
           appId={appId}
         />,
       );
-
       await waitFor(() => {
         expect(
           JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
@@ -359,7 +418,6 @@ describe("EditProviderDialog", () => {
       );
       expect(apiMocks.getCurrent).not.toHaveBeenCalled();
       expect(apiMocks.getLiveProviderSettings).not.toHaveBeenCalled();
-
       fireEvent.click(screen.getByRole("button", { name: "common.save" }));
       await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
       expect(handleSubmit.mock.calls[0][0].editorSave).toEqual({
@@ -368,7 +426,6 @@ describe("EditProviderDialog", () => {
       });
     },
   );
-
   it("Codex 读不了配置文件时退回显示保存的供应商配置", async () => {
     const provider: Provider = {
       id: "relay",
@@ -381,7 +438,6 @@ describe("EditProviderDialog", () => {
     };
     apiMocks.getEditorView.mockRejectedValue(new Error("broken config.toml"));
     const handleSubmit = vi.fn().mockResolvedValue(undefined);
-
     render(
       <EditProviderDialog
         open
@@ -391,7 +447,6 @@ describe("EditProviderDialog", () => {
         appId="codex"
       />,
     );
-
     await waitFor(() => {
       expect(
         JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
@@ -401,7 +456,6 @@ describe("EditProviderDialog", () => {
     await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
     expect(handleSubmit.mock.calls[0][0].editorSave).toBeUndefined();
   });
-
   it("代理模式下编辑 Codex 供应商也显示它自己的关键字段，不读 live 里的代理契约", async () => {
     const provider: Provider = {
       id: "deepseek",
@@ -415,7 +469,6 @@ describe("EditProviderDialog", () => {
           'model_provider = "custom"\n[model_providers.custom]\nbase_url = "https://api.deepseek.com/v1"\n',
       },
     };
-
     render(
       <EditProviderDialog
         open
@@ -426,11 +479,9 @@ describe("EditProviderDialog", () => {
         isProxyTakeover
       />,
     );
-
     await waitFor(() => {
       expect(screen.getByTestId("is-proxy-takeover").textContent).toBe("true");
     });
-
     expect(apiMocks.getLiveProviderSettings).not.toHaveBeenCalled();
     await waitFor(() => {
       expect(
@@ -445,7 +496,6 @@ describe("EditProviderDialog", () => {
       undefined,
     );
   });
-
   it("clears the nested auth panel before the dialog reopens", async () => {
     const provider: Provider = {
       id: "official",
@@ -459,22 +509,18 @@ describe("EditProviderDialog", () => {
       appId: "codex" as const,
     };
     const { rerender } = render(<EditProviderDialog open {...props} />);
-
     fireEvent.click(await screen.findByRole("button", { name: "manage-auth" }));
     expect(screen.getByTestId("auth-settings-panel")).toHaveTextContent(
       "codex_oauth",
     );
-
     rerender(<EditProviderDialog open={false} {...props} />);
     rerender(<EditProviderDialog open {...props} />);
-
     await waitFor(() => {
       expect(
         screen.queryByTestId("auth-settings-panel"),
       ).not.toBeInTheDocument();
     });
   });
-
   it("keeps an unbound Codex Official provider ID unchanged", async () => {
     apiMocks.getCurrent.mockResolvedValue(null);
     const onSubmit = vi.fn();
@@ -484,7 +530,6 @@ describe("EditProviderDialog", () => {
       category: "official",
       settingsConfig: { auth: {}, config: "" },
     };
-
     render(
       <EditProviderDialog
         open
@@ -494,10 +539,8 @@ describe("EditProviderDialog", () => {
         appId="codex"
       />,
     );
-
     await screen.findByTestId("settings-config");
     fireEvent.click(screen.getByRole("button", { name: "common.save" }));
-
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -506,7 +549,6 @@ describe("EditProviderDialog", () => {
       }),
     );
   });
-
   it("keeps the fixed Codex provider ID when an account is bound", async () => {
     mockCodexManagedAccountSelected = true;
     apiMocks.getCurrent.mockResolvedValue(null);
@@ -517,7 +559,6 @@ describe("EditProviderDialog", () => {
       category: "official",
       settingsConfig: { auth: {}, config: "" },
     };
-
     render(
       <EditProviderDialog
         open
@@ -527,10 +568,8 @@ describe("EditProviderDialog", () => {
         appId="codex"
       />,
     );
-
     await screen.findByTestId("settings-config");
     fireEvent.click(screen.getByRole("button", { name: "common.save" }));
-
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     const submitted = onSubmit.mock.calls[0][0];
     expect(submitted.originalId).toBe("codex-official");
@@ -540,109 +579,5 @@ describe("EditProviderDialog", () => {
       authProvider: "codex_oauth",
       accountId: "acct-managed",
     });
-  });
-
-  it("编辑 Pi 供应商时保留通用元数据", async () => {
-    const provider: Provider = {
-      id: "pi-provider",
-      name: "Pi Provider",
-      settingsConfig: {
-        baseUrl: "https://api.example.com/v1",
-        models: [{ id: "model" }],
-      },
-      meta: {
-        isPartner: true,
-        endpointAutoSelect: true,
-        custom_endpoints: {
-          "https://failover.example.com/v1": {
-            url: "https://failover.example.com/v1",
-            addedAt: 1,
-          },
-        },
-      },
-    };
-    const handleSubmit = vi.fn().mockResolvedValue(undefined);
-
-    render(
-      <EditProviderDialog
-        open
-        provider={provider}
-        onOpenChange={vi.fn()}
-        onSubmit={handleSubmit}
-        appId="pi"
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
-
-    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
-    expect(handleSubmit.mock.calls[0][0].provider.meta).toMatchObject({
-      isPartner: true,
-    });
-    expect(handleSubmit.mock.calls[0][0]).not.toHaveProperty(
-      "expectedSettingsConfig",
-    );
-  });
-
-  it("重新打开 Pi 编辑表单后忽略上一轮的就绪回调", async () => {
-    const provider: Provider = {
-      id: "pi-provider",
-      name: "Pi Provider",
-      settingsConfig: { models: [{ id: "model" }] },
-    };
-    const props = {
-      provider,
-      onOpenChange: vi.fn(),
-      onSubmit: vi.fn(),
-      appId: "pi" as const,
-    };
-    const { rerender } = render(<EditProviderDialog open {...props} />);
-
-    const saveButton = await screen.findByRole("button", {
-      name: "common.save",
-    });
-    await waitFor(() => expect(saveButton).toBeEnabled());
-    const staleCallback = submitReadyCallbacks.at(-1);
-    expect(staleCallback).toBeDefined();
-
-    rerender(<EditProviderDialog open={false} {...props} />);
-    mockFormReady = false;
-    rerender(<EditProviderDialog open {...props} />);
-    const reopenedButton = await screen.findByRole("button", {
-      name: "common.save",
-    });
-    await waitFor(() => expect(reopenedButton).toBeDisabled());
-
-    act(() => staleCallback?.(true));
-    expect(reopenedButton).toBeDisabled();
-  });
-
-  it("Oh My Pi 编辑表单报告未就绪时禁用保存按钮", async () => {
-    const provider: Provider = {
-      id: "omp-provider",
-      name: "Oh My Pi Provider",
-      settingsConfig: {
-        baseUrl: "https://api.example.com/v1",
-        api: "openai-completions",
-      },
-    };
-    mockFormReady = false;
-    render(
-      <EditProviderDialog
-        open
-        provider={provider}
-        onOpenChange={vi.fn()}
-        onSubmit={vi.fn()}
-        appId="omp"
-      />,
-    );
-
-    const saveButton = await screen.findByRole("button", {
-      name: "common.save",
-    });
-    await waitFor(() => expect(saveButton).toBeDisabled());
-
-    act(() => submitReadyCallbacks.at(-1)?.(true));
-    await waitFor(() => expect(saveButton).toBeEnabled());
   });
 });

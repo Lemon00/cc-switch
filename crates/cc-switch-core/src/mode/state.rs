@@ -80,6 +80,10 @@ pub struct ModeState {
     /// 代理模式下路由到的供应商。和直连指针互相独立，退出代理时保留。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy_route: Option<String>,
+    /// 最近一次把契约/客户端文件写进 live 的供应商。故障转移只改 `proxy_route`
+    /// 时保留本字段，退出时按它认领 auth.json / 托管账号切走。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_owner: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contract: Option<Contract>,
 }
@@ -117,7 +121,7 @@ pub struct Written {
 /// （`mode::stack`）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct StackState {
-    /// Stack 模式：代理模式下发布 Stack 模型、不做故障转移（界面上和路由模式二选一，见
+    /// 聚合模式：发布公共模型池及账号独有模型，公共模型支持轮询和故障转移（界面上和路由模式二选一，见
     /// `controller::enter`）。只在代理模式下有意义：每次进入代理时按用户选的模式写定，
     /// 退出代理时不动，名单也留着。
     #[serde(default, skip_serializing_if = "is_false")]
@@ -160,6 +164,8 @@ pub struct AppLiveState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy_route: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_owner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contract: Option<Contract>,
     /// 没有值：这台设备上还没有新版写过这个应用的文件（升级前旧版写的，按行推断）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -186,6 +192,7 @@ impl AppLiveState {
             mode: self.mode,
             attached: self.attached,
             proxy_route: self.proxy_route.clone(),
+            file_owner: self.file_owner.clone(),
             contract: self.contract.clone(),
         }
     }
@@ -194,6 +201,7 @@ impl AppLiveState {
         self.mode = state.mode;
         self.attached = state.attached;
         self.proxy_route = state.proxy_route;
+        self.file_owner = state.file_owner;
         self.contract = state.contract;
     }
 }
@@ -393,21 +401,35 @@ pub fn written(store: &DeviceStore, app: &str) -> Result<Option<Written>, AppErr
 
 /// 这个应用的 Stack 模型（成员和 key 登记簿）。
 pub fn stack(store: &DeviceStore, app: &str) -> Result<StackState, AppError> {
-    let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
-    Ok(load(store)?
-        .apps
-        .get(app)
-        .map(|state| state.stack.clone())
-        .unwrap_or_default())
+    Ok(stack_view(store, app)?.stack)
 }
 
 /// 这个应用在 Stack 模式（代理模式且 Stack 模式开着），状态文件只读一次。
 pub fn stack_mode(store: &DeviceStore, app: &str) -> Result<bool, AppError> {
+    Ok(stack_view(store, app)?.enabled)
+}
+
+/// Stack 热路径一次读盘：模式开关 + 名单 +（可选）路由状态。
+pub struct StackView {
+    pub enabled: bool,
+    pub stack: StackState,
+    pub mode_state: ModeState,
+}
+
+pub fn stack_view(store: &DeviceStore, app: &str) -> Result<StackView, AppError> {
     let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
-    Ok(load(store)?
-        .apps
-        .get(app)
-        .is_some_and(|state| state.mode == Some(Mode::Proxy) && state.stack.enabled))
+    let state = load(store)?;
+    let app_state = state.apps.get(app);
+    Ok(StackView {
+        enabled: app_state
+            .is_some_and(|state| state.mode == Some(Mode::Proxy) && state.stack.enabled),
+        stack: app_state
+            .map(|state| state.stack.clone())
+            .unwrap_or_default(),
+        mode_state: app_state
+            .map(AppLiveState::mode_state)
+            .unwrap_or_default(),
+    })
 }
 
 /// 有未完成操作的应用。

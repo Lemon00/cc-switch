@@ -1,5 +1,4 @@
 export const REQUEST_HEADER_DRAFT_PREFIX = "draft-header:";
-
 export function normalizeRequestHeaders(
   headers: Record<string, string>,
 ): Record<string, string> {
@@ -12,7 +11,6 @@ export function normalizeRequestHeaders(
   }
   return normalized;
 }
-
 export function findRequestHeaderValue(
   headers: Record<string, string>,
   name: string,

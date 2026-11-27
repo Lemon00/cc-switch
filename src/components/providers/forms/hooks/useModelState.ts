@@ -1,5 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
-
+import { useCallback, useEffect, useRef, useState } from "react";
 interface UseModelStateProps {
   settingsConfig: string;
   onConfigChange: (config: string) => void;
@@ -10,7 +9,6 @@ interface UseModelStateProps {
    */
   getSettingsConfig?: () => string;
 }
-
 export type ClaudeModelEnvField =
   | "ANTHROPIC_MODEL"
   | "ANTHROPIC_DEFAULT_HAIKU_MODEL"
@@ -22,25 +20,46 @@ export type ClaudeModelEnvField =
   | "ANTHROPIC_DEFAULT_FABLE_MODEL"
   | "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"
   | "CLAUDE_CODE_SUBAGENT_MODEL";
-
-export const CLAUDE_ONE_M_MARKER = "[1M]";
-
+export const CLAUDE_ONE_M_MARKER = "[1m]";
 export function hasClaudeOneMMarker(model: string): boolean {
   return model.trimEnd().toLowerCase().endsWith("[1m]");
 }
-
 export function stripClaudeOneMMarker(model: string): string {
   const trimmedEnd = model.trimEnd();
   if (!trimmedEnd.toLowerCase().endsWith("[1m]")) return model;
   return trimmedEnd.slice(0, -CLAUDE_ONE_M_MARKER.length).trimEnd();
 }
-
 export function setClaudeOneMMarker(model: string, enabled: boolean): string {
   const base = stripClaudeOneMMarker(model).trim();
   if (!base) return "";
   return enabled ? `${base}${CLAUDE_ONE_M_MARKER}` : base;
 }
-
+/** Copilot 报的上下文到这个数才算原生 1M（与代理测试里的 1_000_000 / 1_048_576 一致）。 */
+const COPILOT_NATIVE_ONE_M = 1000000;
+/**
+ * Copilot 有没有这个模型的 1M 版本：列表里有 `<模型>-1m`，或同名模型本身报的上下文
+ * 就有 1M。代理把 `[1M]` 改写成 `-1m` 发出，所以没有时勾 1M 只会请求一个不存在的
+ * 模型（或被退回普通版、上下文却按 1M 规划）。模型名两种写法（`5.1` / `5-1`）都认。
+ * 列表还没取、或模型名为空时返回 `undefined`（不知道）。
+ */
+export function copilotOneMAvailable(
+  model: string,
+  models: readonly {
+    id: string;
+    context_window?: number;
+  }[],
+): boolean | undefined {
+  const canon = (id: string) => id.trim().toLowerCase().replace(/\./g, "-");
+  const base = canon(stripClaudeOneMMarker(model));
+  if (!base || models.length === 0) return undefined;
+  return models.some((candidate) => {
+    const id = canon(candidate.id);
+    return (
+      id === `${base}-1m` ||
+      (id === base && (candidate.context_window ?? 0) >= COPILOT_NATIVE_ONE_M)
+    );
+  });
+}
 /**
  * Parse model values from settings config JSON
  */
@@ -92,7 +111,6 @@ function parseModelsFromConfig(settingsConfig: string) {
       typeof env.CLAUDE_CODE_SUBAGENT_MODEL === "string"
         ? env.CLAUDE_CODE_SUBAGENT_MODEL
         : "";
-
     return {
       model,
       haiku,
@@ -120,7 +138,6 @@ function parseModelsFromConfig(settingsConfig: string) {
     };
   }
 }
-
 /**
  * 管理模型选择状态
  * 支持 ANTHROPIC_MODEL 和各类型默认模型
@@ -149,13 +166,10 @@ export function useModelState({
     initial.fableName,
   );
   const [subagentModel, setSubagentModel] = useState(initial.subagent);
-
   const isUserEditingRef = useRef(false);
   const lastConfigRef = useRef(settingsConfig);
   const latestConfigRef = useRef(settingsConfig);
-
   latestConfigRef.current = settingsConfig;
-
   // 仅在 settingsConfig 外部变化时同步（表单加载 / 切换预设）；
   // 用户正在编辑时 (isUserEditingRef) 跳过一次以避免回填覆盖。
   useEffect(() => {
@@ -168,7 +182,6 @@ export function useModelState({
       return;
     }
     lastConfigRef.current = settingsConfig;
-
     const parsed = parseModelsFromConfig(settingsConfig);
     setClaudeModel(parsed.model);
     setDefaultHaikuModel(parsed.haiku);
@@ -181,11 +194,9 @@ export function useModelState({
     setDefaultFableModelName(parsed.fableName);
     setSubagentModel(parsed.subagent);
   }, [settingsConfig]);
-
   const handleModelChange = useCallback(
     (field: ClaudeModelEnvField, value: string) => {
       isUserEditingRef.current = true;
-
       if (field === "ANTHROPIC_MODEL") setClaudeModel(value);
       if (field === "ANTHROPIC_DEFAULT_HAIKU_MODEL")
         setDefaultHaikuModel(value);
@@ -203,13 +214,11 @@ export function useModelState({
       if (field === "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME")
         setDefaultFableModelName(value);
       if (field === "CLAUDE_CODE_SUBAGENT_MODEL") setSubagentModel(value);
-
       try {
         const currentRaw = getSettingsConfig?.() ?? latestConfigRef.current;
         const currentConfig = currentRaw ? JSON.parse(currentRaw) : { env: {} };
         if (!currentConfig.env) currentConfig.env = {};
         const env = currentConfig.env as Record<string, unknown>;
-
         // 新键仅写入；旧键不再写入
         const trimmed = value.trim();
         if (trimmed) {
@@ -219,7 +228,6 @@ export function useModelState({
         }
         // 删除旧键
         delete env["ANTHROPIC_SMALL_FAST_MODEL"];
-
         const updatedConfig = JSON.stringify(currentConfig, null, 2);
         latestConfigRef.current = updatedConfig;
         onConfigChange(updatedConfig);
@@ -229,7 +237,6 @@ export function useModelState({
     },
     [getSettingsConfig, onConfigChange],
   );
-
   return {
     claudeModel,
     setClaudeModel,

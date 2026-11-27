@@ -1,16 +1,22 @@
-import { useRef } from "react";
-import { useQuery, type UseQueryResult } from "@tanstack/react-query";
+import { hasNativeProviderCatalog } from "@/config/appCapabilities";
 import {
   providersApi,
+  sessionsApi,
   settingsApi,
   usageApi,
-  sessionsApi,
   type AppId,
 } from "@/lib/api";
-import type { Provider, Settings, UsageResult, SessionMeta } from "@/types";
 import { usageKeys } from "@/lib/query/usage";
+import type { Provider, SessionMeta, Settings, UsageResult } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
-
+import {
+  focusManager,
+  useQuery,
+  useQueryClient,
+  type UseQueryResult,
+} from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
+import { refreshNativeProviderCatalog } from "./providerActions";
 const sortProviders = (
   providers: Record<string, Provider>,
 ): Record<string, Provider> => {
@@ -21,7 +27,6 @@ const sortProviders = (
       if (indexA !== indexB) {
         return indexA - indexB;
       }
-
       const timeA = a.createdAt ?? 0;
       const timeB = b.createdAt ?? 0;
       if (timeA === timeB) {
@@ -30,19 +35,15 @@ const sortProviders = (
       return timeA - timeB;
     })
     .map((provider) => [provider.id, provider] as const);
-
   return Object.fromEntries(sortedEntries);
 };
-
 export interface ProvidersQueryData {
   providers: Record<string, Provider>;
   currentProviderId: string;
 }
-
 export interface UseProvidersQueryOptions {
   isProxyRunning?: boolean; // 代理服务是否运行中
 }
-
 /**
  * 供应商列表的查询键与读取函数。App 启动后用它把其他应用的列表预取进缓存，
  * 第一次切过去时直接有数据，不用先画骨架。
@@ -52,74 +53,96 @@ export const providersQueryOptions = (appId: AppId) => ({
   // 列表很小：没人订阅时也一直留在缓存里，过了默认的 5 分钟再切过去也不画骨架
   gcTime: Infinity,
   queryFn: async (): Promise<ProvidersQueryData> => {
-    let providers: Record<string, Provider> = {};
-    let currentProviderId = "";
-
-    try {
-      providers = await providersApi.getAll(appId);
-    } catch (error) {
-      console.error("获取供应商列表失败:", error);
-    }
-
-    try {
-      currentProviderId = await providersApi.getCurrent(appId);
-    } catch (error) {
-      console.error("获取当前供应商失败:", error);
-    }
-
+    const [providers, currentProviderId] = await Promise.all([
+      providersApi.getAll(appId),
+      providersApi.getCurrent(appId),
+    ]);
     return {
       providers: sortProviders(providers),
       currentProviderId,
     };
   },
 });
-
 export const useProvidersQuery = (
   appId: AppId,
   options?: UseProvidersQueryOptions,
 ): UseQueryResult<ProvidersQueryData> => {
   const { isProxyRunning = false } = options || {};
-
+  const client = useQueryClient();
+  const native = hasNativeProviderCatalog(appId);
+  useEffect(() => {
+    if (!native) return;
+    const refresh = () => {
+      if (!focusManager.isFocused()) return;
+      void refreshNativeProviderCatalog(client, appId).catch((error) => {
+        console.warn(
+          `Failed to reconcile ${appId} providers; retaining saved catalog`,
+          error,
+        );
+      });
+    };
+    refresh();
+    const unsubscribe = focusManager.subscribe((visible) => {
+      if (visible) refresh();
+    });
+    window.addEventListener("focus", refresh);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    const timer = isProxyRunning
+      ? window.setInterval(refresh, 10000)
+      : undefined;
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", onVisible);
+      unsubscribe();
+      if (timer !== undefined) window.clearInterval(timer);
+    };
+  }, [appId, client, native, isProxyRunning]);
   // 不设 keepPreviousData：键只随应用变化，占位数据就是上一个应用的列表，
   // 切应用时会先闪一下别家的卡片
-  return useQuery({
+  const query = useQuery({
     ...providersQueryOptions(appId),
     // 当代理服务运行时，每 10 秒刷新一次供应商列表
     // 这样可以自动反映后端熔断器自动禁用代理目标的变更
-    refetchInterval: isProxyRunning ? 10000 : false,
+    refetchInterval: isProxyRunning && !native ? 10000 : false,
   });
+  return {
+    ...query,
+    refetch: async (options) => {
+      if (native)
+        await refreshNativeProviderCatalog(client, appId, {
+          afterChange: true,
+        });
+      return query.refetch(options);
+    },
+  };
 };
-
 export const useSettingsQuery = (): UseQueryResult<Settings> => {
   return useQuery({
     queryKey: ["settings"],
     queryFn: async () => settingsApi.get(),
   });
 };
-
 export interface UseUsageQueryOptions {
   enabled?: boolean;
   autoQueryInterval?: number; // 自动查询间隔（分钟），0 表示禁用
 }
-
 /** keep-last-good 判定所需的最小结果形状（UsageResult / SubscriptionQuota 都满足）。 */
 export interface UsageLikeResult {
   success: boolean;
   error?: string | null;
 }
-
 /** 最近一次成功的结果快照（keep-last-good 用）。 */
 export interface LastGoodSnapshot<T> {
   data: T;
   at: number; // 该成功结果的获取时刻（ms）
 }
-
 /** 脚本路径 UsageResult 的快照类型（历史别名）。 */
 export type LastGoodUsage = LastGoodSnapshot<UsageResult>;
-
 /** 在最近一次成功后多久内，失败仍继续展示该成功值。 */
 export const KEEP_LAST_GOOD_MS = 10 * 60 * 1000; // 10 分钟
-
 /**
  * 判断一次用量/额度查询失败是否属于"瞬时"（可被 keep-last-good 短暂掩盖）。
  *
@@ -144,7 +167,13 @@ export function isTransientUsageError(result: UsageLikeResult): boolean {
   if (result.success) return false;
   const e = result.error?.toLowerCase() ?? "";
   if (!e) return false;
-
+  // 后端把 HTTP 状态和响应正文一起返回；正文中的 "request failed" 等文案
+  // 不能把明确的 401/403/404 误判成网络抖动，掩盖凭据或配置错误。
+  const httpMatch = e.match(/http\s+(\d{3})\b/);
+  if (httpMatch) {
+    const status = Number(httpMatch[1]);
+    return (status >= 500 && status <= 599) || status === 429;
+  }
   // 网络类（send 失败/超时/读取响应失败）
   if (
     e.includes("network error") || // 原生路径
@@ -155,18 +184,8 @@ export function isTransientUsageError(result: UsageLikeResult): boolean {
   ) {
     return true;
   }
-
-  // HTTP 状态码：5xx 与 429（限流）视为瞬时，其余 4xx 视为确定性。错误文案里第一处
-  // "HTTP <code>" 即为上游状态码（原生 "API error (HTTP 500…)"、JS 脚本 "HTTP 500 …"）。
-  const httpMatch = e.match(/http\s+(\d{3})/);
-  if (httpMatch) {
-    const status = Number(httpMatch[1]);
-    return (status >= 500 && status <= 599) || status === 429;
-  }
-
   return false;
 }
-
 /**
  * Keep-last-good 的纯决策函数（无 ref、无时钟，`now` 注入以便测试）。
  * 对 `UsageResult`（脚本路径）与 `SubscriptionQuota`（订阅系 hooks）通用。
@@ -189,7 +208,6 @@ export interface ResolveDisplayUsageOptions {
   rejected?: boolean;
   keepMs?: number;
 }
-
 export function resolveDisplayUsage<T extends UsageLikeResult>(
   raw: T | undefined,
   dataUpdatedAt: number,
@@ -202,7 +220,6 @@ export function resolveDisplayUsage<T extends UsageLikeResult>(
   lastGood: LastGoodSnapshot<T> | null;
 } {
   const { rejected = false, keepMs = KEEP_LAST_GOOD_MS } = options;
-
   if (rejected && raw?.success) {
     // reject 时看到的"成功"是 react-query 保留的旧值。用它补种 lastGood——锚定
     // 上次真实成功时刻（dataUpdatedAt），且从 query 缓存派生，组件重挂丢失 ref
@@ -216,7 +233,6 @@ export function resolveDisplayUsage<T extends UsageLikeResult>(
     // 超窗后自然保持失效，直到下次成功刷新。
     return { data: undefined, lastQueriedAt: lastGood.at, lastGood };
   }
-
   let lastGood = prevLastGood;
   if (raw?.success) {
     // 成功：刷新快照
@@ -226,7 +242,6 @@ export function resolveDisplayUsage<T extends UsageLikeResult>(
     // 避免后续一次网络抖动把"配置/鉴权已失效"的旧额度重新复活。
     lastGood = null;
   }
-
   let data = raw;
   let lastQueriedAt = dataUpdatedAt || null;
   if (
@@ -239,24 +254,20 @@ export function resolveDisplayUsage<T extends UsageLikeResult>(
     data = lastGood.data;
     lastQueriedAt = lastGood.at;
   }
-
   return { data, lastQueriedAt, lastGood };
 }
-
 export const useUsageQuery = (
   providerId: string,
   appId: AppId,
   options?: UseUsageQueryOptions,
 ) => {
   const { enabled = true, autoQueryInterval = 0 } = options || {};
-
   // 计算 staleTime：如果有自动刷新间隔，使用该间隔；否则默认 5 分钟
   // 这样可以避免切换 app 页面时重复触发查询
   const staleTime =
     autoQueryInterval > 0
       ? autoQueryInterval * 60 * 1000 // 与刷新间隔保持一致
       : 5 * 60 * 1000; // 默认 5 分钟
-
   const query = useQuery<UsageResult>({
     queryKey: usageKeys.script(providerId, appId),
     queryFn: async () => usageApi.query(providerId, appId),
@@ -276,19 +287,23 @@ export const useUsageQuery = (
     staleTime, // 使用动态计算的缓存时间
     gcTime: 10 * 60 * 1000, // 缓存保留 10 分钟（组件卸载后）
   });
-
   // Keep-last-good：失败时在 10 分钟窗口内继续展示上一次成功值（见 resolveDisplayUsage）。
-  // 每个 hook 实例各持一份 ref（按卡片维度）；ref 写入是幂等的（同份成功重复写无副作用）。
-  const lastGoodRef = useRef<LastGoodUsage | null>(null);
+  const scopeKey = `${appId}:${providerId}`;
+  const lastGoodRef = useRef<{
+    key: string;
+    snap: LastGoodUsage | null;
+  }>({ key: scopeKey, snap: null });
+  if (lastGoodRef.current.key !== scopeKey) {
+    lastGoodRef.current = { key: scopeKey, snap: null };
+  }
   const { data, lastQueriedAt, lastGood } = resolveDisplayUsage(
     query.data,
     query.dataUpdatedAt,
-    lastGoodRef.current,
+    lastGoodRef.current.snap,
     Date.now(),
     { rejected: query.isError },
   );
-  lastGoodRef.current = lastGood;
-
+  lastGoodRef.current.snap = lastGood;
   return {
     ...query,
     // reject 且无可展示值（首次查询即失败，或保留的旧成功已超窗）：合成失败占位，
@@ -304,7 +319,6 @@ export const useUsageQuery = (
     lastQueriedAt,
   };
 };
-
 export const useSessionsQuery = () => {
   return useQuery<SessionMeta[]>({
     queryKey: ["sessions"],
@@ -312,6 +326,5 @@ export const useSessionsQuery = () => {
     staleTime: 30 * 1000,
   });
 };
-
 // 会话消息查询已迁到 ./sessions（阅读页数据层），这里保留转发给旧调用方
 export { useSessionMessagesQuery } from "./sessions";

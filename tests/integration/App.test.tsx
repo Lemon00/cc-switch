@@ -8,7 +8,7 @@ import {
   fireEvent,
   within,
 } from "@testing-library/react";
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { providersApi } from "@/lib/api/providers";
 import {
@@ -21,7 +21,6 @@ import {
 import { emitTauriEvent } from "../msw/tauriMocks";
 import { server } from "../msw/server";
 import { createTestQueryClient } from "../utils/testQueryClient";
-
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
 const skillsPanelMocks = vi.hoisted(() => ({
@@ -38,23 +37,19 @@ const windowMocks = vi.hoisted(() => ({
   onResized: vi.fn(),
   onScaleChanged: vi.fn(),
 }));
-
 vi.mock("@/lib/platform", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/platform")>()),
   isLinux: windowMocks.isLinux,
 }));
-
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => windowMocks,
 }));
-
 vi.mock("sonner", () => ({
   toast: {
     success: (...args: unknown[]) => toastSuccessMock(...args),
     error: (...args: unknown[]) => toastErrorMock(...args),
   },
 }));
-
 vi.mock("@/components/providers/ProviderList", () => ({
   ProviderList: ({
     providers,
@@ -94,7 +89,6 @@ vi.mock("@/components/providers/ProviderList", () => ({
     </div>
   ),
 }));
-
 vi.mock("@/components/providers/AddProviderDialog", () => ({
   AddProviderDialog: ({ open, onOpenChange, onSubmit, appId }: any) =>
     open ? (
@@ -115,7 +109,6 @@ vi.mock("@/components/providers/AddProviderDialog", () => ({
       </div>
     ) : null,
 }));
-
 vi.mock("@/components/providers/EditProviderDialog", async () => {
   const { useUnsavedChangesTracker } = await vi.importActual<
     typeof import("@/lib/unsavedChanges")
@@ -145,7 +138,6 @@ vi.mock("@/components/providers/EditProviderDialog", async () => {
       props.open ? <Body {...props} /> : null,
   };
 });
-
 vi.mock("@/components/UsageScriptModal", () => ({
   default: ({ isOpen, provider, onSave, onClose }: any) =>
     isOpen ? (
@@ -156,7 +148,6 @@ vi.mock("@/components/UsageScriptModal", () => ({
       </div>
     ) : null,
 }));
-
 vi.mock("@/components/ConfirmDialog", () => ({
   ConfirmDialog: ({ isOpen, message, onConfirm, onCancel }: any) =>
     isOpen ? (
@@ -167,16 +158,13 @@ vi.mock("@/components/ConfirmDialog", () => ({
       </div>
     ) : null,
 }));
-
 vi.mock("@/contexts/UpdateContext", () => ({
   useUpdate: () => ({ hasUpdate: false, updateInfo: null }),
 }));
-
 // 设置页要 ThemeProvider，这里只看导航进去时发生了什么
 vi.mock("@/components/settings/SettingsPage", () => ({
   SettingsPage: () => <div data-testid="settings-page" />,
 }));
-
 vi.mock("@/components/skills/UnifiedSkillsPanel", () => ({
   // v7：Skills 的页头（添加 / 检查更新 / 存储与同步）在面板自己里面
   default: ({ initialView }: { initialView?: string }) => {
@@ -184,7 +172,6 @@ vi.mock("@/components/skills/UnifiedSkillsPanel", () => ({
     return <div data-testid="unified-skills-panel">{initialView}</div>;
   },
 }));
-
 vi.mock("@/components/mcp/McpPanel", () => ({
   default: ({ open, onOpenChange }: any) =>
     open ? (
@@ -195,7 +182,6 @@ vi.mock("@/components/mcp/McpPanel", () => ({
       <button onClick={() => onOpenChange(true)}>open-mcp</button>
     ),
 }));
-
 vi.mock("@/components/mcp/UnifiedMcpPanel", async () => {
   const { useUnsavedChangesTracker } = await vi.importActual<
     typeof import("@/lib/unsavedChanges")
@@ -208,7 +194,6 @@ vi.mock("@/components/mcp/UnifiedMcpPanel", async () => {
   );
   return { default: Body };
 });
-
 /** 侧栏里的应用行（v7 侧栏取代了原来页头的应用切换器） */
 const sidebarApp = (name: string) =>
   // 首次启动提示是模态对话框，会把侧栏标成 aria-hidden，所以带上 hidden
@@ -216,9 +201,10 @@ const sidebarApp = (name: string) =>
     name,
     hidden: true,
   });
-
-const renderApp = (AppComponent: ComponentType) => {
-  const client = createTestQueryClient();
+const renderApp = (
+  AppComponent: ComponentType,
+  client = createTestQueryClient(),
+) => {
   return render(
     <QueryClientProvider client={client}>
       <Suspense fallback={<div data-testid="loading">loading</div>}>
@@ -227,8 +213,46 @@ const renderApp = (AppComponent: ComponentType) => {
     </QueryClientProvider>,
   );
 };
-
 describe("App integration with MSW", () => {
+  it("refreshes universal children, failover lists and usage after partial synchronization", async () => {
+    const client = createTestQueryClient();
+    const { default: App } = await import("@/App");
+    renderApp(App, client);
+    await screen.findByTestId("provider-list");
+    const keys = [
+      ["failoverQueue", "claude"],
+      ["availableProvidersForFailover", "codex"],
+      ["usage", "script", "universal-codex-shared", "codex"],
+    ];
+    keys.forEach((key) => client.setQueryData(key, []));
+    const unrelated = ["usage", "script", "ordinary", "codex"];
+    client.setQueryData(unrelated, []);
+    // Active queries may finish refetching before the event handler returns.
+    const invalidated = new Set<string>();
+    const unsubscribe = client.getQueryCache().subscribe((event) => {
+      if (event.type === "updated" && event.query.state.isInvalidated) {
+        invalidated.add(JSON.stringify(event.query.queryKey));
+      }
+    });
+    await act(async () =>
+      emitTauriEvent("universal-provider-synced", {
+        id: "shared",
+        action: "sync",
+      }),
+    );
+    await waitFor(() =>
+      keys.forEach((key) =>
+        expect(invalidated.has(JSON.stringify(key))).toBe(true),
+      ),
+    );
+    expect(client.getQueryState(unrelated)?.isInvalidated).toBe(false);
+    unsubscribe();
+  });
+  beforeAll(async () => {
+    // Keep the first dynamic import's transform time out of individual UI tests.
+    // A timed-out import otherwise resumes and mounts into a later test's DOM.
+    await import("@/App");
+  }, 60000);
   beforeEach(() => {
     resetProviderState();
     toastSuccessMock.mockReset();
@@ -249,29 +273,47 @@ describe("App integration with MSW", () => {
     localStorage.removeItem("cc-switch-last-view");
     localStorage.removeItem("cc-switch-last-app");
   });
-
+  it("loads other provider catalogs when their app is opened", async () => {
+    setSettings({
+      firstRunNoticeConfirmed: true,
+      newLayoutNoticeConfirmed: true,
+    });
+    const client = createTestQueryClient();
+    const { default: App } = await import("@/App");
+    renderApp(App, client);
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list")).toHaveTextContent("claude-1"),
+    );
+    await waitFor(() =>
+      expect(client.getQueryData(["settings"])).toBeDefined(),
+    );
+    for (const app of ["codex", "opencode", "dsh", "agy"]) {
+      expect(client.getQueryState(["providers", app])).toBeUndefined();
+    }
+    fireEvent.click(sidebarApp("Codex"));
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list")).toHaveTextContent("codex-1"),
+    );
+    expect(client.getQueryData(["providers", "codex"])).toBeDefined();
+  });
   it("covers basic provider flows via real hooks", async () => {
     const { default: App } = await import("@/App");
     renderApp(App);
-
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
         "claude-1",
       ),
     );
-
     fireEvent.click(sidebarApp("Codex"));
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
         "codex-1",
       ),
     );
-
     fireEvent.click(screen.getByText("usage"));
     expect(await screen.findByTestId("usage-modal")).toBeInTheDocument();
     fireEvent.click(screen.getByText("save-script"));
     fireEvent.click(screen.getByText("close-usage"));
-
     fireEvent.click(screen.getByText("create"));
     expect(
       await screen.findByTestId("add-provider-dialog"),
@@ -282,7 +324,6 @@ describe("App integration with MSW", () => {
         /New codex Provider/,
       ),
     );
-
     fireEvent.click(screen.getByText("edit"));
     expect(
       await screen.findByTestId("edit-provider-dialog"),
@@ -293,30 +334,27 @@ describe("App integration with MSW", () => {
         /-edited/,
       ),
     );
-
     fireEvent.click(screen.getByText("switch"));
     fireEvent.click(screen.getByText("duplicate"));
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toMatch(/copy/),
     );
-
     fireEvent.click(screen.getByText("open-website"));
-
     emitTauriEvent("provider-switched", {
       appType: "codex",
       providerId: "codex-2",
     });
-
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
-  }, 20_000);
-
+  }, 20000);
   it("refreshes the route pointer when the proxy fails over to another provider", async () => {
     let routeProviderId = "claude-1";
     let modeRequests = 0;
     server.use(
       http.post("http://tauri.local/get_app_mode", async ({ request }) => {
-        const { appType } = (await request.json()) as { appType: string };
+        const { appType } = (await request.json()) as {
+          appType: string;
+        };
         if (appType !== "claude") return;
         modeRequests += 1;
         return HttpResponse.json({
@@ -327,13 +365,10 @@ describe("App integration with MSW", () => {
         });
       }),
     );
-
     const { default: App } = await import("@/App");
     renderApp(App);
-
     await waitFor(() => expect(modeRequests).toBeGreaterThan(0));
     const before = modeRequests;
-
     // 故障转移只改后端的路由指针，再发 provider-switched
     routeProviderId = "claude-2";
     emitTauriEvent("provider-switched", {
@@ -341,57 +376,45 @@ describe("App integration with MSW", () => {
       providerId: "claude-2",
       source: "failover",
     });
-
     await waitFor(() => expect(modeRequests).toBeGreaterThan(before));
   });
-
   it("resets provider view scroll when switching apps", async () => {
     const { default: App } = await import("@/App");
     const { container } = renderApp(App);
-
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
         "claude-1",
       ),
     );
-
     const mainScrollContainer = container.querySelector("main") as HTMLElement;
     // 列表的滚动区在模式行下面（切换式应用每个应用一份）
     const providerScrollContainer = () =>
       container.querySelector<HTMLElement>("#main-content");
-
     expect(mainScrollContainer).not.toBeNull();
     expect(providerScrollContainer()).not.toBeNull();
-
     mainScrollContainer.scrollTop = 320;
     mainScrollContainer.scrollLeft = 12;
     providerScrollContainer()!.scrollTop = 640;
     providerScrollContainer()!.scrollLeft = 24;
-
     fireEvent.click(sidebarApp("Codex"));
-
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
         "codex-1",
       ),
     );
-
     expect(mainScrollContainer.scrollTop).toBe(0);
     expect(mainScrollContainer.scrollLeft).toBe(0);
     expect(providerScrollContainer()!.scrollTop).toBe(0);
     expect(providerScrollContainer()!.scrollLeft).toBe(0);
-  }, 10_000);
-
+  }, 10000);
   it("closes provider panels when navigating away from the app page", async () => {
     const { default: App } = await import("@/App");
     renderApp(App);
-
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
         "claude-1",
       ),
     );
-
     // 面板只盖住内容区，侧栏还能点：切应用时编辑面板必须关掉，否则 Claude 的
     // 供应商会以 appId=codex 保存进 Codex
     fireEvent.click(screen.getByText("edit"));
@@ -407,14 +430,12 @@ describe("App integration with MSW", () => {
     expect(
       screen.queryByTestId("edit-provider-dialog"),
     ).not.toBeInTheDocument();
-
     fireEvent.click(screen.getByText("usage"));
     expect(await screen.findByTestId("usage-modal")).toBeInTheDocument();
     fireEvent.click(sidebarApp("nav.usage"));
     await waitFor(() =>
       expect(screen.queryByTestId("usage-modal")).not.toBeInTheDocument(),
     );
-
     fireEvent.click(sidebarApp("Codex"));
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
@@ -428,8 +449,7 @@ describe("App integration with MSW", () => {
     fireEvent.keyDown(window, { key: ",", metaKey: true });
     expect(await screen.findByTestId("settings-page")).toBeInTheDocument();
     expect(screen.queryByTestId("add-provider-dialog")).not.toBeInTheDocument();
-  }, 10_000);
-
+  }, 10000);
   it("asks before leaving an editor page with unsaved changes", async () => {
     const { default: App } = await import("@/App");
     renderApp(App);
@@ -438,7 +458,6 @@ describe("App integration with MSW", () => {
         "claude-1",
       ),
     );
-
     // 没改过：照常离开，不问
     fireEvent.click(screen.getByText("edit"));
     fireEvent.click(sidebarApp("Codex"));
@@ -448,7 +467,6 @@ describe("App integration with MSW", () => {
       ),
     );
     expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument();
-
     // 改过：先问；继续编辑就留在原页
     // （ConfirmDialog 在这个文件里是 mock：只渲染消息和 confirm-delete / cancel-delete）
     fireEvent.click(screen.getByText("edit"));
@@ -466,7 +484,6 @@ describe("App integration with MSW", () => {
     expect(screen.getByTestId("provider-list").textContent).toContain(
       "codex-1",
     );
-
     // ⌘, 也问；放弃后才离开
     fireEvent.keyDown(window, { key: ",", metaKey: true });
     expect(await screen.findByTestId("confirm-message")).toHaveTextContent(
@@ -477,8 +494,7 @@ describe("App integration with MSW", () => {
     expect(
       screen.queryByTestId("edit-provider-dialog"),
     ).not.toBeInTheDocument();
-  }, 10_000);
-
+  }, 10000);
   it("keeps the unsaved guard when re-clicking the current page", async () => {
     const { default: App } = await import("@/App");
     renderApp(App);
@@ -487,17 +503,14 @@ describe("App integration with MSW", () => {
         "claude-1",
       ),
     );
-
     fireEvent.click(sidebarApp("MCP"));
     fireEvent.input(await screen.findByLabelText("mcp-field"), {
       target: { value: "draft" },
     });
-
     // 再点当前页：不离开，所以不问，也不能把未保存登记清掉
     fireEvent.click(sidebarApp("MCP"));
     expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument();
     expect(await screen.findByTestId("mcp-editor")).toBeInTheDocument();
-
     // 之后真的离开时照样要问
     fireEvent.click(sidebarApp("nav.usage"));
     expect(await screen.findByTestId("confirm-message")).toHaveTextContent(
@@ -505,93 +518,41 @@ describe("App integration with MSW", () => {
     );
     fireEvent.click(screen.getByText("cancel-delete"));
     expect(await screen.findByTestId("mcp-editor")).toBeInTheDocument();
-  }, 10_000);
-
+  }, 10000);
   it("shows toast when auto sync fails in background", async () => {
     const { default: App } = await import("@/App");
     renderApp(App);
-
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
         "claude-1",
       ),
     );
-
     expect(() => {
       emitTauriEvent("webdav-sync-status-updated", null);
     }).not.toThrow();
     expect(toastErrorMock).not.toHaveBeenCalled();
-
     emitTauriEvent("webdav-sync-status-updated", {
       source: "auto",
       status: "error",
       error: "network timeout",
     });
-
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalled();
     });
-
     toastErrorMock.mockReset();
     expect(() => {
       emitTauriEvent("s3-sync-status-updated", null);
     }).not.toThrow();
     expect(toastErrorMock).not.toHaveBeenCalled();
-
     emitTauriEvent("s3-sync-status-updated", {
       source: "auto",
       status: "error",
       error: "s3 timeout",
     });
-
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalled();
     });
   });
-
-  it("duplicates openclaw providers with a generated key that avoids live-only ids", async () => {
-    setProviders("openclaw", {
-      deepseek: {
-        id: "deepseek",
-        name: "DeepSeek",
-        settingsConfig: {
-          baseUrl: "https://api.deepseek.com",
-          apiKey: "test-key",
-          api: "openai-completions",
-          models: [],
-        },
-        category: "custom",
-        sortIndex: 0,
-        createdAt: Date.now(),
-      },
-    });
-    setCurrentProviderId("openclaw", "deepseek");
-    setLiveProviderIds("openclaw", ["deepseek-copy"]);
-
-    const { default: App } = await import("@/App");
-    renderApp(App);
-
-    fireEvent.click(sidebarApp("OpenClaw"));
-
-    await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toContain(
-        "deepseek",
-      ),
-    );
-
-    fireEvent.click(screen.getByText("duplicate"));
-
-    await waitFor(() => {
-      const providerList = screen.getByTestId("provider-list").textContent;
-      expect(providerList).toContain("deepseek-copy-2");
-      expect(providerList).toContain("DeepSeek copy");
-    });
-
-    expect(toastErrorMock).not.toHaveBeenCalledWith(
-      expect.stringContaining("Provider key is required for openclaw"),
-    );
-  });
-
   it.each([
     { options: { apiKey: "test-key" } },
     { npm: "@ai-sdk/openai-compatible", models: {} },
@@ -638,7 +599,6 @@ describe("App integration with MSW", () => {
       }
     },
   );
-
   it("duplicates complete OpenCode providers using an unused ID", async () => {
     localStorage.setItem("cc-switch-last-app", "opencode");
     setProviders("opencode", {
@@ -669,7 +629,6 @@ describe("App integration with MSW", () => {
     );
     expect(toastErrorMock).not.toHaveBeenCalled();
   });
-
   it.each([
     { settingsConfig: { settings: { baseURL: "https://native.example" } } },
     {
@@ -712,7 +671,6 @@ describe("App integration with MSW", () => {
       }
     },
   );
-
   it("duplicates complete native OpenCode providers using an unused ID", async () => {
     localStorage.setItem("cc-switch-last-app", "opencode");
     setProviders("opencode", {
@@ -744,9 +702,8 @@ describe("App integration with MSW", () => {
     );
     expect(toastErrorMock).not.toHaveBeenCalled();
   });
-
-  it("duplicates MiniMax Code providers under a generated unused key", async () => {
-    localStorage.setItem("cc-switch-last-app", "mcode");
+  it("duplicates DeepSeek Harness providers under a generated unused key", async () => {
+    localStorage.setItem("cc-switch-last-app", "dsh");
     const provider = (id: string, name: string) => ({
       id,
       name,
@@ -755,45 +712,71 @@ describe("App integration with MSW", () => {
       sortIndex: 0,
       createdAt: Date.now(),
     });
-    setProviders("mcode", {
+    setProviders("dsh", {
       kimi: provider("kimi", "Kimi"),
       "kimi-copy": provider("kimi-copy", "Kimi copy"),
     });
-    setCurrentProviderId("mcode", "kimi");
-
+    setCurrentProviderId("dsh", "kimi");
     const { default: App } = await import("@/App");
     renderApp(App);
-
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
         "kimi-copy",
       ),
     );
     fireEvent.click(screen.getByText("duplicate"));
-
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
         "kimi-copy-2",
       ),
     );
     expect(toastErrorMock).not.toHaveBeenCalledWith(
-      expect.stringContaining("Provider key is required for mcode"),
+      expect.stringContaining("Provider key is required for dsh"),
     );
   });
-
-  it("refreshes MiniMax Code provider membership after removing it from live config", async () => {
-    localStorage.setItem("cc-switch-last-app", "mcode");
+  it("reports a native refresh failure when retrying the provider list", async () => {
+    localStorage.setItem("cc-switch-last-app", "dsh");
+    server.use(
+      http.post("http://tauri.local/get_providers", async ({ request }) => {
+        const { app } = (await request.json()) as {
+          app: string;
+        };
+        if (app !== "dsh") return;
+        return HttpResponse.text("catalog unavailable", { status: 500 });
+      }),
+      http.post("http://tauri.local/refresh_providers", () =>
+        HttpResponse.text("native config unreadable", { status: 500 }),
+      ),
+    );
+    const { default: App } = await import("@/App");
+    renderApp(App);
+    const retry = await screen.findByRole("button", {
+      name: "common.retry",
+      hidden: true,
+    });
+    await waitFor(() => expect(retry).toBeEnabled());
+    fireEvent.click(retry);
+    await waitFor(() =>
+      expect(toastErrorMock).toHaveBeenCalledWith("native config unreadable", {
+        closeButton: true,
+      }),
+    );
+  });
+  it("refreshes DeepSeek Harness provider membership after removing it from live config", async () => {
+    localStorage.setItem("cc-switch-last-app", "dsh");
     let liveConfigManaged = true;
     let providerRequests = 0;
     server.use(
       http.post("http://tauri.local/get_providers", async ({ request }) => {
-        const { app } = (await request.json()) as { app: string };
-        if (app !== "mcode") return;
+        const { app } = (await request.json()) as {
+          app: string;
+        };
+        if (app !== "dsh") return;
         providerRequests += 1;
         return HttpResponse.json({
           custom: {
             id: "custom",
-            name: "Custom MiniMax Code",
+            name: "Custom DeepSeek Harness",
             settingsConfig: {},
             meta: { liveConfigManaged },
           },
@@ -802,16 +785,14 @@ describe("App integration with MSW", () => {
       http.post(
         "http://tauri.local/remove_provider_from_live_config",
         async ({ request }) => {
-          expect(await request.json()).toEqual({ id: "custom", app: "mcode" });
+          expect(await request.json()).toEqual({ id: "custom", app: "dsh" });
           liveConfigManaged = false;
           return HttpResponse.json(true);
         },
       ),
     );
-
     const { default: App } = await import("@/App");
     renderApp(App);
-
     await waitFor(() =>
       expect(screen.getByTestId("provider-list")).toHaveTextContent(
         '"liveConfigManaged":true',
@@ -820,7 +801,6 @@ describe("App integration with MSW", () => {
     const requestsBeforeRemoval = providerRequests;
     fireEvent.click(screen.getByText("remove"));
     fireEvent.click(screen.getByText("confirm-delete"));
-
     await waitFor(() =>
       expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument(),
     );
@@ -832,296 +812,63 @@ describe("App integration with MSW", () => {
     );
     expect(providerRequests).toBeGreaterThan(requestsBeforeRemoval);
     expect(screen.getByTestId("provider-list")).toHaveTextContent(
-      "Custom MiniMax Code",
+      "Custom DeepSeek Harness",
     );
   });
-
-  it("rereads Kimi's default after a removal is refused for a stale default", async () => {
-    localStorage.setItem("cc-switch-last-app", "kimi");
-    let kimiCurrent = "kimi-sub";
-    let currentRequests = 0;
-    server.use(
-      http.post("http://tauri.local/get_providers", async ({ request }) => {
-        const { app } = (await request.json()) as { app: string };
-        if (app !== "kimi") return;
-        return HttpResponse.json({
-          go: {
-            id: "go",
-            name: "OpenCode Go",
-            settingsConfig: {},
-            meta: { liveConfigManaged: true },
-          },
-          "kimi-sub": {
-            id: "kimi-sub",
-            name: "Kimi subscription",
-            settingsConfig: {},
-            meta: { liveConfigManaged: true },
-          },
-        });
-      }),
-      http.post(
-        "http://tauri.local/get_current_provider",
-        async ({ request }) => {
-          const { app } = (await request.json()) as { app: string };
-          if (app !== "kimi") return;
-          currentRequests += 1;
-          return HttpResponse.json(kimiCurrent);
-        },
-      ),
-      http.post("http://tauri.local/remove_provider_from_live_config", () =>
-        HttpResponse.json(
-          "无效输入: Select another default model in Kimi Code before removing this model or provider",
-          { status: 500 },
-        ),
-      ),
-    );
-
-    const { default: App } = await import("@/App");
-    renderApp(App);
-
-    await waitFor(() =>
-      expect(screen.getByTestId("current-provider")).toHaveTextContent(
-        "kimi-sub",
-      ),
-    );
-    // 用户在 Kimi Code 里用 /model 换到了 OpenCode Go 的模型，页面还没重读
-    kimiCurrent = "go";
-    const requestsBeforeRemoval = currentRequests;
-    fireEvent.click(screen.getByText("remove"));
-    fireEvent.click(screen.getByText("confirm-delete"));
-
-    await waitFor(() =>
-      expect(toastErrorMock).toHaveBeenCalledWith(
-        "notifications.removeFromConfigFailed",
-        expect.objectContaining({
-          description: "kimi.error.defaultModelInUse",
-        }),
-      ),
-    );
-    await waitFor(() =>
-      expect(screen.getByTestId("current-provider")).toHaveTextContent("go"),
-    );
-    expect(currentRequests).toBeGreaterThan(requestsBeforeRemoval);
-  });
-
-  it("warns without blocking when removing Pi's global default provider", async () => {
-    localStorage.setItem("cc-switch-last-app", "pi");
-    setProviders("pi", {
-      custom: {
-        id: "custom",
-        name: "Custom Pi",
-        settingsConfig: {
-          baseUrl: "https://api.example.com/v1",
-          apiKey: "test-key",
-          api: "openai-completions",
-          models: [{ id: "model-a" }],
-        },
-        category: "custom",
-        sortIndex: 0,
-        createdAt: Date.now(),
-      },
-    });
-    server.use(
-      http.post("http://tauri.local/get_pi_current_state", () =>
-        HttpResponse.json({
-          enabledProviderIds: ["custom"],
-          defaultProviderId: "custom",
-        }),
-      ),
-    );
-
-    const { default: App } = await import("@/App");
-    renderApp(App);
-
-    await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toContain(
-        "Custom Pi",
-      ),
-    );
-    fireEvent.click(screen.getByText("remove"));
-
-    expect(screen.getByTestId("confirm-message")).toHaveTextContent(
-      "confirm.piDefaultProviderWarning",
-    );
-    fireEvent.click(screen.getByText("confirm-delete"));
-    await waitFor(() =>
-      expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument(),
-    );
-  });
-
   it("shows toast when duplicate cannot load live provider ids", async () => {
-    setProviders("openclaw", {
+    setProviders("opencode", {
       deepseek: {
         id: "deepseek",
         name: "DeepSeek",
         settingsConfig: {
-          baseUrl: "https://api.deepseek.com",
-          apiKey: "test-key",
-          api: "openai-completions",
-          models: [],
+          npm: "@ai-sdk/openai-compatible",
+          options: { baseURL: "https://api.deepseek.com", apiKey: "test-key" },
+          models: { "deepseek-chat": { name: "DeepSeek Chat" } },
         },
         category: "custom",
         sortIndex: 0,
         createdAt: Date.now(),
       },
     });
-    setCurrentProviderId("openclaw", "deepseek");
-
+    setCurrentProviderId("opencode", "deepseek");
     const liveIdsSpy = vi
-      .spyOn(providersApi, "getOpenClawLiveProviderIds")
+      .spyOn(providersApi, "getOpenCodeLiveProviderIds")
       .mockRejectedValueOnce(new Error("broken config"));
-
     const { default: App } = await import("@/App");
     renderApp(App);
-
-    fireEvent.click(sidebarApp("OpenClaw"));
-
+    fireEvent.click(sidebarApp("OpenCode"));
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
         "deepseek",
       ),
     );
-
     fireEvent.click(screen.getByText("duplicate"));
-
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalledWith(
         expect.stringContaining("读取配置中的供应商标识失败"),
       );
     });
-
     expect(screen.getByTestId("provider-list").textContent).not.toContain(
       "deepseek-copy",
     );
-
     liveIdsSpy.mockRestore();
   });
-
   it("renders the Skills page with its own header", async () => {
     localStorage.setItem("cc-switch-last-view", "skills");
     const { default: App } = await import("@/App");
     renderApp(App);
-
     expect(await screen.findByTestId("unified-skills-panel")).toHaveTextContent(
       "installed",
     );
   });
-
-  it("navigates OpenClaw and Hermes pages with underline tabs", async () => {
-    server.use(
-      http.post("http://tauri.local/get_openclaw_env", () =>
-        HttpResponse.json({}),
-      ),
-    );
-    const { default: App } = await import("@/App");
-    renderApp(App);
-
-    fireEvent.click(sidebarApp("OpenClaw"));
-    // 首次启动提示是模态对话框，页面其余部分是 aria-hidden，所以带上 hidden
-    const openclawTabs = await screen.findByRole(
-      "tablist",
-      {
-        name: "OpenClaw",
-        hidden: true,
-      },
-      { timeout: 5000 },
-    );
-    const pageTabs = within(openclawTabs).getAllByRole("tab", { hidden: true });
-    expect(pageTabs.map((tab) => tab.textContent)).toEqual([
-      "appPage.providers",
-      "appPage.workspace",
-      "appPage.openclawConfig",
-    ]);
-    expect(pageTabs[0]).toHaveAttribute("aria-selected", "true");
-    expect(
-      screen.queryByRole("group", { name: "OpenClaw", hidden: true }),
-    ).not.toBeInTheDocument();
-
-    fireEvent.click(pageTabs[2]);
-    const configTabs = await screen.findByRole(
-      "tablist",
-      {
-        name: "appPage.openclawConfig",
-        hidden: true,
-      },
-      { timeout: 5000 },
-    );
-    const subTabs = within(configTabs).getAllByRole("tab", { hidden: true });
-    expect(subTabs).toHaveLength(3);
-    expect(subTabs[0]).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tabpanel", { hidden: true })).toHaveAttribute(
-      "aria-labelledby",
-      "openclaw-config-env",
-    );
-
-    fireEvent.click(sidebarApp("Hermes"));
-    const hermesTabs = await screen.findByRole(
-      "tablist",
-      {
-        name: "Hermes",
-        hidden: true,
-      },
-      { timeout: 5000 },
-    );
-    const hermesPageTabs = within(hermesTabs).getAllByRole("tab", {
-      hidden: true,
-    });
-    expect(hermesPageTabs.map((tab) => tab.textContent)).toEqual([
-      "appPage.providers",
-      "appPage.memory",
-    ]);
-
-    // 记忆页：页头的 solid 主操作换成「保存」，两份记忆用二级页签
-    fireEvent.click(hermesPageTabs[1]);
-    const header = document.querySelector("header") as HTMLElement;
-    const save = await within(header).findByRole(
-      "button",
-      {
-        name: "common.save",
-        hidden: true,
-      },
-      { timeout: 5000 },
-    );
-    expect(save).toHaveAttribute("aria-disabled", "true");
-    expect(
-      within(header).queryByRole("button", {
-        name: /provider.addProvider/,
-        hidden: true,
-      }),
-    ).not.toBeInTheDocument();
-    const memoryTabs = await screen.findByRole(
-      "tablist",
-      {
-        name: "hermes.memory.fileTabs",
-        hidden: true,
-      },
-      { timeout: 5000 },
-    );
-    expect(
-      within(memoryTabs).getAllByRole("tab", { hidden: true }),
-    ).toHaveLength(2);
-    await waitFor(
-      () =>
-        expect(
-          screen.getAllByRole("textbox", {
-            name: "hermes.memory.editorLabel",
-            hidden: true,
-          })[0],
-        ).toHaveValue("agent notes"),
-      { timeout: 5000 },
-    );
-  }, 10_000);
-
   it("opens the old skillsDiscovery view as the Discover segment", async () => {
     localStorage.setItem("cc-switch-last-view", "skillsDiscovery");
     const { default: App } = await import("@/App");
     renderApp(App);
-
     expect(await screen.findByTestId("unified-skills-panel")).toHaveTextContent(
       "discover",
     );
   });
-
   it("shows all eight native resize cursors and restores existing inline styles", async () => {
     windowMocks.isLinux.mockReturnValue(true);
     setSettings({ useAppWindowControls: true });
@@ -1131,7 +878,6 @@ describe("App integration with MSW", () => {
     header.style.setProperty("cursor", "help", "important");
     const x = window.innerWidth;
     const y = window.innerHeight;
-
     await waitFor(() => {
       fireEvent.mouseMove(header, { clientX: x / 2, clientY: 1 });
       expect(header.style.cursor).toBe("ns-resize");
@@ -1152,7 +898,6 @@ describe("App integration with MSW", () => {
     fireEvent.mouseMove(header, { clientX: x / 2, clientY: 30 });
     expect(header.style.cursor).toBe("help");
     expect(header.style.getPropertyPriority("cursor")).toBe("important");
-
     const icon = header.querySelector("svg")!;
     fireEvent.mouseMove(header, { clientX: x / 2, clientY: 1 });
     fireEvent.mouseMove(icon, { clientX: x / 2, clientY: 1 });
@@ -1177,7 +922,6 @@ describe("App integration with MSW", () => {
     }
     expect(header.style.cursor).toBe("help");
   });
-
   it("lets the top edge resize before Tauri dragging without blocking inner-header or button events", async () => {
     windowMocks.isLinux.mockReturnValue(true);
     setSettings({ useAppWindowControls: true });
@@ -1188,7 +932,6 @@ describe("App integration with MSW", () => {
       fireEvent.mouseMove(header, { clientX: 500, clientY: 1 });
       expect(header.style.cursor).toBe("ns-resize");
     });
-
     // Tauri's drag-region script listens during document bubbling.
     const startDragging = vi.fn();
     const documentMouseDown = vi.fn((event: MouseEvent) => {
@@ -1238,7 +981,6 @@ describe("App integration with MSW", () => {
       document.removeEventListener("mousedown", documentMouseDown);
     }
   });
-
   it("clears resize hints and leaves events alone when native resizing is unavailable", async () => {
     windowMocks.isLinux.mockReturnValue(true);
     setSettings({ useAppWindowControls: true });

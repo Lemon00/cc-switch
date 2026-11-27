@@ -6,10 +6,8 @@ import {
   getUsageProviderLabel,
   usageProviderTitle,
 } from "@/components/usage/providerLabel";
-
 const t = ((key: string, options?: Record<string, unknown>) =>
   options?.app ? `${key}:${options.app}` : key) as unknown as TFunction;
-
 describe("getUsageProviderLabel", () => {
   it("translates session-log placeholder names with the full app name", () => {
     expect(getUsageProviderLabel("Claude (Session)", t)).toEqual({
@@ -24,15 +22,11 @@ describe("getUsageProviderLabel", () => {
       "usage.sessionProvider.label:Oh My Pi",
     );
   });
-
   it("translates every placeholder name the backend can return", () => {
     // 后端 provider_name_coalesce 里的占位名，新增应用时漏了前端对照表就会原样显示英文全名。
-    // 该文件已随 decouple-core 搬到 crates/cc-switch-core，别再读 src-tauri 的旧路径。
+    // 查询实现归 database 层；services/usage_stats.rs 只保留兼容导出。
     const rust = readFileSync(
-      resolve(
-        __dirname,
-        "../../crates/cc-switch-core/src/services/usage_stats.rs",
-      ),
+      resolve(__dirname, "../../crates/cc-switch-core/src/database/usage.rs"),
       "utf8",
     );
     const names = [...rust.matchAll(/THEN '([^']+ \(Session\))'/g)].map(
@@ -53,21 +47,18 @@ describe("getUsageProviderLabel", () => {
       hint: "usage.sessionAccountProvider.hint",
     });
   });
-
   it("keeps real provider names as-is", () => {
     expect(getUsageProviderLabel("DeepSeek", t)).toEqual({
       label: "DeepSeek",
       shortLabel: "DeepSeek",
     });
   });
-
   it("falls back to unknown provider for empty names", () => {
     expect(getUsageProviderLabel("", t).label).toBe("usage.unknownProvider");
     expect(getUsageProviderLabel(undefined, t).label).toBe(
       "usage.unknownProvider",
     );
   });
-
   it("appends the hint to the hover title only for placeholders", () => {
     expect(usageProviderTitle({ label: "A", hint: "B" })).toBe("A\nB");
     expect(usageProviderTitle({ label: "A" })).toBe("A");

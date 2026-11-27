@@ -1,26 +1,4 @@
-import React from "react";
-import { useTranslation } from "react-i18next";
-import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectSeparator,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Loader2, Plus, AlertTriangle, RefreshCw } from "lucide-react";
-import { useCodexOauth } from "./hooks/useCodexOauth";
-import type { CodexLoginMethod } from "@/lib/api/auth";
-import {
-  ManagedAccountRemoveDialog,
-  type ManagedAccountRemoveTarget,
-} from "./ManagedAccountRemoveDialog";
-import { useManagedAccountUsers } from "./hooks/useManagedAccountUsers";
 import CodexOauthAccountQuota from "@/components/CodexOauthAccountQuota";
-import { cn } from "@/lib/utils";
 import {
   ManagedAccountsGroup,
   type GroupAccountRow,
@@ -29,7 +7,28 @@ import {
   signedInDate,
   withMonoToken,
 } from "@/components/settings/auth/accountDetails";
-
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import type { CodexLoginMethod } from "@/lib/api/auth";
+import { cn } from "@/lib/utils";
+import { AlertTriangle, Loader2, Plus, RefreshCw } from "lucide-react";
+import React from "react";
+import { useTranslation } from "react-i18next";
+import {
+  ManagedAccountRemoveDialog,
+  type ManagedAccountRemoveTarget,
+} from "./ManagedAccountRemoveDialog";
+import { useCodexOauth } from "./hooks/useCodexOauth";
+import { useManagedAccountUsers } from "./hooks/useManagedAccountUsers";
 interface CodexOAuthSectionProps {
   className?: string;
   /** select 模式只展示账号选择和管理入口；manage 模式展示完整账号管理 */
@@ -67,7 +66,6 @@ interface CodexOAuthSectionProps {
   /** 授权中心里最后一组的「?」向上弹 */
   helpSide?: "top" | "bottom";
 }
-
 /**
  * Codex OAuth 认证区块
  *
@@ -97,7 +95,6 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
   const { t, i18n } = useTranslation();
   const [loginMethod, setLoginMethod] =
     React.useState<CodexLoginMethod>("browser");
-
   const {
     accounts,
     defaultAccountId,
@@ -122,7 +119,6 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
   const accountUsers = useManagedAccountUsers("codex_oauth", defaultAccountId);
   const [removeTarget, setRemoveTarget] =
     React.useState<ManagedAccountRemoveTarget | null>(null);
-
   const handleAccountSelect = (value: string) => {
     if (value === "__manage_accounts__") {
       onManageAccounts?.();
@@ -131,7 +127,6 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
     onSelectionConfirmed?.();
     onAccountSelect?.(value === "none" ? null : value);
   };
-
   React.useEffect(() => {
     // Only clear a bound account when the status query has *successfully*
     // loaded and the account is genuinely gone. On a failed/pending query
@@ -145,7 +140,6 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
     ) {
       return;
     }
-
     if (!accounts.some((account) => account.id === selectedAccountId)) {
       onSelectionInvalidated?.();
       onAccountSelect(null);
@@ -158,19 +152,21 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
     onSelectionInvalidated,
     selectedAccountId,
   ]);
-
-  const confirmRemove = () => {
+  const confirmRemove = async () => {
     const target = removeTarget;
-    setRemoveTarget(null);
     // 标题行没有「删除全部」，只会是单个账号
     if (target?.kind !== "one") return;
-    removeAccount(target.accountId);
-    if (selectedAccountId === target.accountId) {
-      onSelectionInvalidated?.();
-      onAccountSelect?.(null);
+    try {
+      await removeAccount(target.accountId);
+      setRemoveTarget(null);
+      if (selectedAccountId === target.accountId) {
+        onSelectionInvalidated?.();
+        onAccountSelect?.(null);
+      }
+    } catch {
+      // toast 由 useManagedAuth 统一给出；保留确认框便于重试
     }
   };
-
   // 升级前登录的旧账号没有持久化 id_token，需重新登录补全
   const selectedAccountNeedsReauth =
     !!selectedAccountId &&
@@ -204,7 +200,6 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
       (allowUnboundSelection
         ? (noneOptionLabel ?? t("codexOauth.useDefaultAccount", "使用默认账号"))
         : t("codexOauth.selectAccountPlaceholder", "选择一个 ChatGPT 账号"));
-
   const accountSelect = (isStatusSuccess ||
     (allowUnboundSelection && allowUnboundSelectionWithoutStatus)) &&
     onAccountSelect &&
@@ -321,7 +316,6 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
         </Select>
       </div>
     );
-
   const statusErrorBanner = isStatusError && (
     <div
       role="alert"
@@ -346,7 +340,6 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
       </Button>
     </div>
   );
-
   if (mode === "select") {
     return (
       <div className={`space-y-4 ${className || ""}`}>
@@ -407,9 +400,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
       </div>
     );
   }
-
   // ── 授权中心（manage） ──
-
   const rows: GroupAccountRow[] = accounts.map((account) => {
     const date = signedInDate(account.authenticated_at, i18n.language);
     const needsReauth = !!account.reauth_required;
@@ -441,7 +432,6 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
         ) : undefined,
     };
   });
-
   return (
     <ManagedAccountsGroup
       slug="chatgpt"
@@ -523,5 +513,4 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
     </ManagedAccountsGroup>
   );
 };
-
 export default CodexOAuthSection;

@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { formatUsageDataSummary } from "@/utils/usageDisplay";
-
 const labels = {
   invalid: "Invalid",
   remaining: "Remaining:",
   used: "Used:",
 };
-
 describe("formatUsageDataSummary", () => {
   it("formats used percentage when remaining is omitted", () => {
     expect(
@@ -21,7 +19,6 @@ describe("formatUsageDataSummary", () => {
       ),
     ).toBe("[Coco OpenRouter] Used: 55%");
   });
-
   it("formats remaining when present", () => {
     expect(
       formatUsageDataSummary(
@@ -34,7 +31,6 @@ describe("formatUsageDataSummary", () => {
       ),
     ).toBe("[Balance] Remaining: 12.50 USD");
   });
-
   it("formats invalid results without requiring quota fields", () => {
     expect(
       formatUsageDataSummary(

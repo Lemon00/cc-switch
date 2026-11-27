@@ -16,7 +16,6 @@ import {
   setCodexTopLevelInt,
   updateCodexExperimentalBearerToken,
 } from "@/utils/providerConfigUtils";
-
 describe("Codex TOML utils", () => {
   it("removes base_url line when set to empty", () => {
     const input = [
@@ -25,14 +24,11 @@ describe("Codex TOML utils", () => {
       'model = "gpt-5-codex"',
       "",
     ].join("\n");
-
     const output = setCodexBaseUrl(input, "");
-
     expect(output).not.toMatch(/^\s*base_url\s*=/m);
     expect(extractCodexBaseUrl(output)).toBeUndefined();
     expect(extractCodexModelName(output)).toBe("gpt-5-codex");
   });
-
   it("removes only the top-level model line when set to empty", () => {
     const input = [
       'model_provider = "openai"',
@@ -43,15 +39,12 @@ describe("Codex TOML utils", () => {
       'model = "profile-model"',
       "",
     ].join("\n");
-
     const output = setCodexModelName(input, "");
-
     expect(output).not.toMatch(/^model\s*=\s*"gpt-5-codex"$/m);
     expect(output).toMatch(/^\[profiles\.default\]\nmodel = "profile-model"$/m);
     expect(extractCodexModelName(output)).toBeUndefined();
     expect(extractCodexBaseUrl(output)).toBe("https://api.example.com/v1");
   });
-
   it("updates existing values when non-empty", () => {
     const input = [
       'model_provider = "openai"',
@@ -59,14 +52,11 @@ describe("Codex TOML utils", () => {
       'model = "old-model"',
       "",
     ].join("\n");
-
     const output1 = setCodexBaseUrl(input, " https://new.example/v1 \n");
     expect(extractCodexBaseUrl(output1)).toBe("https://new.example/v1");
-
     const output2 = setCodexModelName(output1, " new-model \n");
     expect(extractCodexModelName(output2)).toBe("new-model");
   });
-
   it("updates a double-quoted base_url containing single quotes without duplicating it", () => {
     const input = [
       'model_provider = "custom"',
@@ -79,14 +69,11 @@ describe("Codex TOML utils", () => {
       "requires_openai_auth = true",
       "",
     ].join("\n");
-
     const output = setCodexBaseUrl(input, "https://su'us'd.codes/v1");
-
     expect(extractCodexBaseUrl(output)).toBe("https://su'us'd.codes/v1");
     expect(output.match(/^\s*base_url\s*=/gm)).toHaveLength(1);
     expect(output).toContain("base_url = \"https://su'us'd.codes/v1\"");
   });
-
   it("collapses duplicate base_url lines when editing the active provider section", () => {
     const input = [
       'model_provider = "custom"',
@@ -100,15 +87,12 @@ describe("Codex TOML utils", () => {
       "requires_openai_auth = true",
       "",
     ].join("\n");
-
     const output = setCodexBaseUrl(input, "https://new.example/v1");
-
     expect(extractCodexBaseUrl(output)).toBe("https://new.example/v1");
     expect(output.match(/^\s*base_url\s*=/gm)).toHaveLength(1);
     expect(output).toContain('base_url = "https://new.example/v1"');
     expect(output).not.toContain("older.example");
   });
-
   it("reads and writes base_url in the active provider section", () => {
     const input = [
       'model_provider = "custom"',
@@ -122,15 +106,12 @@ describe("Codex TOML utils", () => {
       'approval_policy = "never"',
       "",
     ].join("\n");
-
     const output = setCodexBaseUrl(input, "https://api.example.com/v1");
-
     expect(output).toContain(
       '[model_providers.custom]\nname = "custom"\nwire_api = "responses"\nbase_url = "https://api.example.com/v1"',
     );
     expect(extractCodexBaseUrl(output)).toBe("https://api.example.com/v1");
   });
-
   it("recovers a single misplaced base_url from another section", () => {
     const input = [
       'model_provider = "custom"',
@@ -145,18 +126,14 @@ describe("Codex TOML utils", () => {
       'base_url = "https://wrong.example/v1"',
       "",
     ].join("\n");
-
     expect(extractCodexBaseUrl(input)).toBe("https://wrong.example/v1");
-
     const output = setCodexBaseUrl(input, "https://fixed.example/v1");
-
     expect(output).toContain(
       '[model_providers.custom]\nname = "custom"\nwire_api = "responses"\nbase_url = "https://fixed.example/v1"',
     );
     expect(output).not.toContain("https://wrong.example/v1");
     expect(output.match(/base_url\s*=/g)).toHaveLength(1);
   });
-
   it("does not treat mcp_servers base_url as provider base_url", () => {
     const input = [
       'model_provider = "azure"',
@@ -170,11 +147,8 @@ describe("Codex TOML utils", () => {
       'base_url = "http://localhost:8080"',
       "",
     ].join("\n");
-
     expect(extractCodexBaseUrl(input)).toBeUndefined();
-
     const output = setCodexBaseUrl(input, "https://new.azure/v1");
-
     expect(output).toContain(
       '[model_providers.azure]\nname = "Azure OpenAI"\nwire_api = "responses"\nbase_url = "https://new.azure/v1"',
     );
@@ -182,13 +156,11 @@ describe("Codex TOML utils", () => {
       '[mcp_servers.my_server]\nbase_url = "http://localhost:8080"',
     );
   });
-
   it("writes base_url into a selected custom table when there is no model_provider", () => {
     const output = setCodexBaseUrl(
       'model = "gpt-5.4"\n',
       "https://relay.example/v1",
     );
-
     expect(output).toBe(
       [
         'model_provider = "custom"',
@@ -202,7 +174,6 @@ describe("Codex TOML utils", () => {
     );
     expect(extractCodexBaseUrl(output)).toBe("https://relay.example/v1");
   });
-
   it("moves a legacy top-level base_url and wire_api into the custom table", () => {
     const input = [
       'base_url = "https://old.example/v1"',
@@ -213,9 +184,7 @@ describe("Codex TOML utils", () => {
       'base_url = "http://localhost:8080"',
       "",
     ].join("\n");
-
     const output = setCodexBaseUrl(input, "https://new.example/v1");
-
     expect(output).toMatch(/^model_provider = "custom"\nmodel = "gpt-5.4"\n/);
     expect(output).toContain(
       '[model_providers.custom]\nname = "custom"\nwire_api = "chat"\nbase_url = "https://new.example/v1"',
@@ -227,7 +196,6 @@ describe("Codex TOML utils", () => {
     expect(output.match(/^wire_api\s*=/gm)).toHaveLength(1);
     expect(extractCodexBaseUrl(output)).toBe("https://new.example/v1");
   });
-
   it("selects an existing custom table instead of adding another one", () => {
     const input = [
       'model = "gpt-5.4"',
@@ -237,14 +205,11 @@ describe("Codex TOML utils", () => {
       'wire_api = "responses"',
       "",
     ].join("\n");
-
     const output = setCodexBaseUrl(input, "https://relay.example/v1");
-
     expect(output.match(/^\[model_providers\.custom\]$/gm)).toHaveLength(1);
     expect(output).toMatch(/^model_provider = "custom"$/m);
     expect(extractCodexBaseUrl(output)).toBe("https://relay.example/v1");
   });
-
   it("finds the active provider table when its header quotes the key", () => {
     for (const header of [
       '[model_providers."custom"]',
@@ -263,9 +228,7 @@ describe("Codex TOML utils", () => {
         "[features]",
         "",
       ].join("\n");
-
       const output = setCodexBaseUrl(input, "https://relay.example/v1");
-
       const parsed = parseToml(output) as Record<string, any>;
       expect(parsed.model_providers.custom, header).toEqual({
         name: "custom",
@@ -282,7 +245,6 @@ describe("Codex TOML utils", () => {
       ).toBeUndefined();
     }
   });
-
   it("writes base_url into a quoted provider table whose id needs quoting", () => {
     const input = [
       'model_provider = "my.relay"',
@@ -291,16 +253,13 @@ describe("Codex TOML utils", () => {
       'name = "my.relay"',
       "",
     ].join("\n");
-
     const output = setCodexBaseUrl(input, "https://relay.example/v1");
-
     const parsed = parseToml(output) as Record<string, any>;
     expect(Object.keys(parsed.model_providers)).toEqual(["my.relay"]);
     expect(parsed.model_providers["my.relay"].base_url).toBe(
       "https://relay.example/v1",
     );
   });
-
   it("updates the bearer token in a provider table whose header quotes the key", () => {
     const input = [
       'model_provider = "custom"',
@@ -310,16 +269,13 @@ describe("Codex TOML utils", () => {
       'experimental_bearer_token = "old"',
       "",
     ].join("\n");
-
     const output = updateCodexExperimentalBearerToken(input, "new");
-
     expect(extractCodexExperimentalBearerToken(output)).toBe("new");
     expect(
       (parseToml(output) as Record<string, any>).model_providers.custom
         .experimental_bearer_token,
     ).toBe("new");
   });
-
   it("skips provider tables quoted inside a multi-line string", () => {
     for (const delimiter of ['"""', "'''"]) {
       const instructions = [
@@ -340,19 +296,16 @@ describe("Codex TOML utils", () => {
         'experimental_bearer_token = "old-token"',
         "",
       ].join("\n");
-
       expect(extractCodexBaseUrl(input), delimiter).toBe(
         "https://old.invalid/v1",
       );
       expect(extractCodexExperimentalBearerToken(input), delimiter).toBe(
         "old-token",
       );
-
       const output = updateCodexExperimentalBearerToken(
         setCodexBaseUrl(input, "https://new.invalid/v1"),
         "new-token",
       );
-
       const parsed = parseToml(output) as Record<string, any>;
       expect(parsed.developer_instructions, delimiter).toBe(instructions);
       expect(parsed.model_providers.custom, delimiter).toEqual({
@@ -362,7 +315,6 @@ describe("Codex TOML utils", () => {
       });
     }
   });
-
   it("never redefines a custom table the line scan cannot see", () => {
     for (const input of [
       'model = "m"\n\n[model_providers.custom] # mine\nname = "custom"\nwire_api = "responses"\n',
@@ -375,19 +327,15 @@ describe("Codex TOML utils", () => {
       expect(extractCodexBaseUrl(output), input).toBe("https://r.example/v1");
     }
   });
-
   it("keeps assignment-like lines inside a multi-line string", () => {
     const instructions =
       'line one\nmodel_provider = example\nwire_api = "chat"\n';
     const input = `model = "m"\nbase_instructions = """\n${instructions}"""\n`;
-
     const output = setCodexBaseUrl(input, "https://r.example/v1");
-
     const parsed = parseToml(output) as Record<string, any>;
     expect(parsed.base_instructions).toBe(instructions);
     expect(parsed.base_url).toBe("https://r.example/v1");
   });
-
   it("reads model only from the top-level config", () => {
     const input = [
       'model_provider = "custom"',
@@ -396,17 +344,13 @@ describe("Codex TOML utils", () => {
       'model = "profile-model"',
       "",
     ].join("\n");
-
     expect(extractCodexModelName(input)).toBeUndefined();
   });
-
   it("handles single-quoted values", () => {
     const input = "base_url = 'https://api.example.com/v1'\nmodel = 'gpt-5'\n";
-
     expect(extractCodexBaseUrl(input)).toBe("https://api.example.com/v1");
     expect(extractCodexModelName(input)).toBe("gpt-5");
   });
-
   it("reads, writes, and removes top-level integer metadata fields", () => {
     const input = [
       'model_provider = "custom"',
@@ -416,7 +360,6 @@ describe("Codex TOML utils", () => {
       'name = "DeepSeek"',
       "",
     ].join("\n");
-
     const withContext = setCodexTopLevelInt(
       input,
       "model_context_window",
@@ -427,7 +370,6 @@ describe("Codex TOML utils", () => {
       "model_auto_compact_token_limit",
       90000,
     );
-
     expect(extractCodexTopLevelInt(withCompact, "model_context_window")).toBe(
       128000,
     );
@@ -436,18 +378,15 @@ describe("Codex TOML utils", () => {
     ).toBe(90000);
     expect(withCompact).toMatch(/^model_context_window = 128000$/m);
     expect(withCompact).toMatch(/^model_auto_compact_token_limit = 90000$/m);
-
     const removed = removeCodexTopLevelField(
       withCompact,
       "model_context_window",
     );
-
     expect(
       extractCodexTopLevelInt(removed, "model_context_window"),
     ).toBeUndefined();
     expect(removed).toContain("[model_providers.custom]");
   });
-
   // P3 回归: 不能在 config 没用 bearer token 模式时, 误为它新增一行
   it("updateCodexExperimentalBearerToken leaves config without the token alone", () => {
     const input = [
@@ -455,11 +394,9 @@ describe("Codex TOML utils", () => {
       'base_url = "https://api.example.com/v1"',
       "",
     ].join("\n");
-
     expect(updateCodexExperimentalBearerToken(input, "new-key")).toBe(input);
     expect(updateCodexExperimentalBearerToken(input, "")).toBe(input);
   });
-
   // P3 回归: bearer 模式下清空 API key 必须真正擦掉 token, 让 pickCodexApiKey 的 fallback 找不到
   it("updateCodexExperimentalBearerToken removes the token line when set to empty", () => {
     const input = [
@@ -472,14 +409,11 @@ describe("Codex TOML utils", () => {
       "requires_openai_auth = true",
       "",
     ].join("\n");
-
     const cleared = updateCodexExperimentalBearerToken(input, "");
-
     expect(extractCodexExperimentalBearerToken(cleared)).toBeUndefined();
     expect(cleared).toMatch(/requires_openai_auth = true/);
     expect(cleared).toMatch(/base_url = "https:\/\/thirdparty\.example\/v1"/);
   });
-
   it("updateCodexExperimentalBearerToken replaces the token inside the active model_providers section", () => {
     const input = [
       'model_provider = "thirdparty"',
@@ -488,13 +422,10 @@ describe("Codex TOML utils", () => {
       'experimental_bearer_token = "old-key"',
       "",
     ].join("\n");
-
     const updated = updateCodexExperimentalBearerToken(input, "new-key");
-
     expect(extractCodexExperimentalBearerToken(updated)).toBe("new-key");
     expect(updated).not.toMatch(/old-key/);
   });
-
   it("updateCodexExperimentalBearerToken escapes basic TOML strings and keeps comments", () => {
     const input = [
       'model_provider = "thirdparty"',
@@ -503,15 +434,12 @@ describe("Codex TOML utils", () => {
       'experimental_bearer_token = "old-key" # vendor token',
       "",
     ].join("\n");
-
     const updated = updateCodexExperimentalBearerToken(input, 'abc"def\\ghi');
-
     expect(updated).toContain(
       'experimental_bearer_token = "abc\\"def\\\\ghi" # vendor token',
     );
     expect(extractCodexExperimentalBearerToken(updated)).toBe('abc"def\\ghi');
   });
-
   it("updateCodexExperimentalBearerToken escapes all TOML control characters", () => {
     const input = [
       'model_provider = "thirdparty"',
@@ -520,12 +448,10 @@ describe("Codex TOML utils", () => {
       'experimental_bearer_token = "old-key"',
       "",
     ].join("\n");
-
     const updated = updateCodexExperimentalBearerToken(
       input,
       "a\u0000b\u0001c\u001fd",
     );
-
     expect(updated).toContain(
       'experimental_bearer_token = "a\\u0000b\\u0001c\\u001fd"',
     );
@@ -533,7 +459,6 @@ describe("Codex TOML utils", () => {
       "a\u0000b\u0001c\u001fd",
     );
   });
-
   it("updateCodexExperimentalBearerToken can replace an already escaped basic string", () => {
     const input = [
       'model_provider = "thirdparty"',
@@ -542,15 +467,12 @@ describe("Codex TOML utils", () => {
       'experimental_bearer_token = "old\\"key" # vendor token',
       "",
     ].join("\n");
-
     const updated = updateCodexExperimentalBearerToken(input, "new-key");
-
     expect(updated).toContain(
       'experimental_bearer_token = "new-key" # vendor token',
     );
     expect(extractCodexExperimentalBearerToken(updated)).toBe("new-key");
   });
-
   it("extractCodexExperimentalBearerToken ignores reserved provider tables", () => {
     const input = [
       'model_provider = "openai"',
@@ -560,10 +482,8 @@ describe("Codex TOML utils", () => {
       'experimental_bearer_token = "stale-table-key"',
       "",
     ].join("\n");
-
     expect(extractCodexExperimentalBearerToken(input)).toBe("top-level-key");
   });
-
   it("extractCodexExperimentalBearerToken reads only top-level model_provider", () => {
     const input = [
       'experimental_bearer_token = "top-level-key"',
@@ -575,11 +495,9 @@ describe("Codex TOML utils", () => {
       'experimental_bearer_token = "wrong-key"',
       "",
     ].join("\n");
-
     expect(extractCodexExperimentalBearerToken(input)).toBe("top-level-key");
   });
 });
-
 describe("Codex [agents] subagent defaults", () => {
   const base = [
     'model_provider = "custom"',
@@ -588,7 +506,6 @@ describe("Codex [agents] subagent defaults", () => {
     "[model_providers.custom]",
     'base_url = "https://a.example/v1"',
   ].join("\n");
-
   it("adds an [agents] table and removes it again when cleared", () => {
     const withModel = setCodexAgentsString(
       base,
@@ -599,7 +516,6 @@ describe("Codex [agents] subagent defaults", () => {
       model: "gpt-a",
       agents: { default_subagent_model: "gpt-a-mini" },
     });
-
     const withEffort = setCodexAgentsString(
       withModel,
       "default_subagent_reasoning_effort",
@@ -608,7 +524,6 @@ describe("Codex [agents] subagent defaults", () => {
     expect(
       extractCodexAgentsString(withEffort, "default_subagent_reasoning_effort"),
     ).toBe("low");
-
     const cleared = setCodexAgentsString(
       setCodexAgentsString(withEffort, "default_subagent_model", ""),
       "default_subagent_reasoning_effort",
@@ -616,7 +531,6 @@ describe("Codex [agents] subagent defaults", () => {
     );
     expect(cleared.trim()).toBe(base);
   });
-
   it("edits only its key inside an existing [agents] table", () => {
     const input = [
       base,
@@ -628,7 +542,6 @@ describe("Codex [agents] subagent defaults", () => {
       "[agents.reviewer]",
       'description = "review"',
     ].join("\n");
-
     const updated = setCodexAgentsString(
       input,
       "default_subagent_model",
@@ -641,13 +554,11 @@ describe("Codex [agents] subagent defaults", () => {
     expect(extractCodexAgentsString(updated, "default_subagent_model")).toBe(
       'k3"mini',
     );
-
     const cleared = setCodexAgentsString(updated, "default_subagent_model", "");
     const afterClear = parseToml(cleared) as any;
     expect(afterClear.agents.default_subagent_model).toBeUndefined();
     expect(afterClear.agents.max_threads).toBe(4);
   });
-
   it("adds [agents] after an existing [agents.<role>] table", () => {
     const input = `${base}\n\n[agents.reviewer]\ndescription = "review"\n`;
     const updated = setCodexAgentsString(input, "default_subagent_model", "m");
@@ -655,7 +566,6 @@ describe("Codex [agents] subagent defaults", () => {
     expect(parsed.agents.default_subagent_model).toBe("m");
     expect(parsed.agents.reviewer.description).toBe("review");
   });
-
   it("replaces a quoted key in place", () => {
     const input = `[agents]\n"default_subagent_model" = "old"\n`;
     const updated = setCodexAgentsString(input, "default_subagent_model", "m");
@@ -666,7 +576,6 @@ describe("Codex [agents] subagent defaults", () => {
       extractCodexAgentsString(`${input}broken = [`, "default_subagent_model"),
     ).toBe("old");
   });
-
   it("leaves an inline agents table untouched instead of breaking the TOML", () => {
     const input = `agents = { max_threads = 4 }\n${base}\n`;
     expect(extractCodexAgentsString(input, "default_subagent_model")).toBe(
@@ -677,7 +586,6 @@ describe("Codex [agents] subagent defaults", () => {
     expect((parseToml(updated) as any).agents).toEqual({ max_threads: 4 });
   });
 });
-
 describe("Codex [agents] sub-agent concurrency limit", () => {
   const base = [
     'model = "gpt-a"',
@@ -685,17 +593,14 @@ describe("Codex [agents] sub-agent concurrency limit", () => {
     "[mcp_servers.fs]",
     'command = "fs"',
   ].join("\n");
-
   it("writes max_threads into a new [agents] table and removes it when cleared", () => {
     const updated = setCodexAgentsMaxThreads(base, 8);
     expect((parseToml(updated) as any).agents).toEqual({ max_threads: 8 });
     expect(extractCodexAgentsMaxThreads(updated)).toBe(8);
-
     const cleared = setCodexAgentsMaxThreads(updated, undefined);
     expect(cleared.trim()).toBe(base);
     expect(extractCodexAgentsMaxThreads(cleared)).toBeUndefined();
   });
-
   it("keeps the canonical name in place and the other [agents] keys", () => {
     const input = [
       "[agents]",
@@ -703,18 +608,15 @@ describe("Codex [agents] sub-agent concurrency limit", () => {
       'default_subagent_model = "m"',
     ].join("\n");
     expect(extractCodexAgentsMaxThreads(input)).toBe(2);
-
     const updated = setCodexAgentsMaxThreads(input, 12);
     expect(updated).toContain("max_concurrent_threads_per_session = 12");
     expect(updated).not.toContain("max_threads");
     expect((parseToml(updated) as any).agents.default_subagent_model).toBe("m");
-
     const cleared = setCodexAgentsMaxThreads(updated, undefined);
     expect((parseToml(cleared) as any).agents).toEqual({
       default_subagent_model: "m",
     });
   });
-
   it("drops the duplicate spelling so Codex does not reject the config", () => {
     const input =
       "[agents]\nmax_threads = 2\nmax_concurrent_threads_per_session = 3\n";
@@ -723,7 +625,6 @@ describe("Codex [agents] sub-agent concurrency limit", () => {
       max_concurrent_threads_per_session: 5,
     });
   });
-
   it("does not mistake the multi_agent_v2 key for the [agents] one", () => {
     const input = [
       "[features.multi_agent_v2]",
@@ -732,14 +633,12 @@ describe("Codex [agents] sub-agent concurrency limit", () => {
     ].join("\n");
     expect(extractCodexAgentsMaxThreads(input)).toBeUndefined();
     expect(extractCodexMultiAgentV2Total(input)).toBe(6);
-
     const parsed = parseToml(setCodexAgentsMaxThreads(input, 4)) as any;
     expect(parsed.agents).toEqual({ max_threads: 4 });
     expect(
       parsed.features.multi_agent_v2.max_concurrent_threads_per_session,
     ).toBe(6);
   });
-
   it("stops the [agents] table at a header with a trailing comment", () => {
     const input = [
       "[agents]",
@@ -748,14 +647,12 @@ describe("Codex [agents] sub-agent concurrency limit", () => {
       "[features.multi_agent_v2] # tools",
       "max_concurrent_threads_per_session = 6",
     ].join("\n");
-
     const parsed = parseToml(setCodexAgentsMaxThreads(input, 8)) as any;
     expect(parsed.agents).toEqual({ max_threads: 8 });
     expect(
       parsed.features.multi_agent_v2.max_concurrent_threads_per_session,
     ).toBe(6);
   });
-
   it("finds an [agents] header that has a trailing comment", () => {
     const input = "[agents] # mine\nmax_threads = 4\n";
     const updated = setCodexAgentsMaxThreads(input, 8);
@@ -767,7 +664,6 @@ describe("Codex [agents] sub-agent concurrency limit", () => {
       ),
     ).toBe(7);
   });
-
   it("recognizes quoted key spellings instead of adding a second one", () => {
     for (const quoted of [
       '"max_concurrent_threads_per_session"',
@@ -779,7 +675,6 @@ describe("Codex [agents] sub-agent concurrency limit", () => {
         max_concurrent_threads_per_session: 8,
       });
       expect(extractCodexAgentsMaxThreads(updated), quoted).toBe(8);
-
       expect(setCodexAgentsMaxThreads(input, undefined), quoted).not.toContain(
         "[agents]",
       );
@@ -787,14 +682,12 @@ describe("Codex [agents] sub-agent concurrency limit", () => {
         3,
       );
     }
-
     const both =
       '[agents]\n"max_threads" = 2\nmax_concurrent_threads_per_session = 3\n';
     expect(
       (parseToml(setCodexAgentsMaxThreads(both, 5)) as any).agents,
     ).toEqual({ max_concurrent_threads_per_session: 5 });
   });
-
   it("reads half-edited TOML line by line and ignores 0", () => {
     expect(
       extractCodexAgentsMaxThreads("[agents]\nmax_threads = 7\nbroken = ["),

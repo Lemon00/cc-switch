@@ -1,4 +1,4 @@
-import { useTranslation } from "react-i18next";
+import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -6,16 +6,21 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import {
   groupUsersByApp,
   type ManagedAccountUser,
 } from "@/lib/managedAccountUsage";
-
+import { useTranslation } from "react-i18next";
 export type ManagedAccountRemoveTarget =
-  | { kind: "one"; accountId: string; login: string }
-  | { kind: "all"; accountIds: string[] };
-
+  | {
+      kind: "one";
+      accountId: string;
+      login: string;
+    }
+  | {
+      kind: "all";
+      accountIds: string[];
+    };
 interface ManagedAccountRemoveDialogProps {
   target: ManagedAccountRemoveTarget | null;
   /** 服务名：GitHub Copilot / ChatGPT / xAI */
@@ -30,7 +35,6 @@ interface ManagedAccountRemoveDialogProps {
   onConfirm: () => void;
   onCancel: () => void;
 }
-
 /**
  * 删除授权中心账号的确认框：写清哪些供应商会受影响（照会话删除确认框的写法）。
  * 登录凭据删了就没了，确认键用红底。
@@ -48,19 +52,16 @@ export function ManagedAccountRemoveDialog({
   const { t } = useTranslation();
   const one = target?.kind === "one";
   const count = target?.kind === "all" ? target.accountIds.length : 1;
-
   // 只删一个、且还剩别的账号时，跟着默认账号的供应商不会坏，而是换到新的默认账号
   const moved = one && othersRemain ? users.filter((u) => u.viaDefault) : [];
   const broken =
     one && othersRemain ? users.filter((u) => !u.viaDefault) : users;
-
   const appSeparator = t("managedAuth.remove.appSeparator", {
     defaultValue: "：",
   });
   const nameSeparator = t("managedAuth.remove.nameSeparator", {
     defaultValue: "、",
   });
-
   const renderList = (lead: string, list: ManagedAccountUser[]) => (
     <div className="flex flex-col gap-1.5">
       <p className="m-0 text-body text-fg-1">{lead}</p>
@@ -91,7 +92,6 @@ export function ManagedAccountRemoveDialog({
       </ul>
     </div>
   );
-
   return (
     <Dialog
       open={target !== null}
@@ -200,7 +200,6 @@ export function ManagedAccountRemoveDialog({
     </Dialog>
   );
 }
-
 /** 账号行上的「N 个供应商在用」；没有供应商在用时不显示 */
 export function ManagedAccountUsage({
   users,

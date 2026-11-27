@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import type { CodexCatalogModel } from "@/types";
 import {
   extractCodexAgentsMaxThreads,
   extractCodexAgentsString,
@@ -7,24 +7,27 @@ import {
   extractCodexModelName,
   extractCodexMultiAgentV2Total,
   setCodexAgentsMaxThreads,
-  setCodexBaseUrl as setCodexBaseUrlInConfig,
   setCodexAgentsString,
+  setCodexBaseUrl as setCodexBaseUrlInConfig,
   setCodexModelName as setCodexModelNameInConfig,
   updateCodexExperimentalBearerToken,
 } from "@/utils/providerConfigUtils";
 import { normalizeTomlText } from "@/utils/textNormalization";
-import type { CodexCatalogModel } from "@/types";
-
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 interface UseCodexConfigStateProps {
   initialData?: {
     settingsConfig?: Record<string, unknown>;
   };
 }
-
 // auth.json 缺 OPENAI_API_KEY 时回退到 config.toml 的 experimental_bearer_token
 // (Mobile 兼容形态：保留 ChatGPT 登录态但用第三方 token)
 function pickCodexApiKey(
-  authObj: { OPENAI_API_KEY?: unknown } | null | undefined,
+  authObj:
+    | {
+        OPENAI_API_KEY?: unknown;
+      }
+    | null
+    | undefined,
   configText: string,
 ): string {
   if (authObj && typeof authObj.OPENAI_API_KEY === "string") {
@@ -33,7 +36,6 @@ function pickCodexApiKey(
   }
   return extractCodexExperimentalBearerToken(configText) || "";
 }
-
 // 目录行 load 映射（隐藏字段白名单重建）。抽成可导出的纯函数，与
 // normalizeCodexCatalogModelsForSave 成对做 load→save 回环测试——
 // 任一侧丢字段都会静默清空供应商的逐模型声明（reasoningLevels、
@@ -98,7 +100,6 @@ export const mapCodexCatalogModelForForm = (item: any): CodexCatalogModel => {
     ...(defaultReasoningLevel ? { defaultReasoningLevel } : {}),
   };
 };
-
 /** 编辑已有供应商时，从它的 settingsConfig 读出表单的初始值；没有可用的配置时为 null */
 function readCodexInitialState(
   initialData: UseCodexConfigStateProps["initialData"],
@@ -128,7 +129,6 @@ function readCodexInitialState(
     apiKey: pickCodexApiKey(auth, configStr),
   };
 }
-
 /**
  * 管理 Codex 配置状态
  * Codex 配置包含两部分：auth.json (JSON) 和 config.toml (TOML 字符串)
@@ -152,10 +152,8 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     initial?.autoReviewModel ?? "",
   );
   const [codexAuthError, setCodexAuthError] = useState("");
-
   const isUpdatingCodexBaseUrlRef = useRef(false);
   const isUpdatingCodexModelRef = useRef(false);
-
   // initialData 之后换了（编辑模式）：重新读一遍。挂载时的那份已经用作初始值。
   const initializedFor = useRef(initialData);
   useEffect(() => {
@@ -172,7 +170,6 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     }
     setCodexApiKey(next.apiKey);
   }, [initialData]);
-
   // 与 TOML 配置保持基础 URL 同步
   useEffect(() => {
     if (isUpdatingCodexBaseUrlRef.current) {
@@ -181,7 +178,6 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     const extracted = extractCodexBaseUrl(codexConfig) || "";
     setCodexBaseUrl((prev) => (prev === extracted ? prev : extracted));
   }, [codexConfig]);
-
   // 与 TOML 配置保持默认模型同步（顶层 model 键）
   useEffect(() => {
     if (isUpdatingCodexModelRef.current) {
@@ -190,7 +186,6 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     const extracted = extractCodexModelName(codexConfig) || "";
     setCodexModel((prev) => (prev === extracted ? prev : extracted));
   }, [codexConfig]);
-
   // 获取 API Key（从 auth JSON）
   const getCodexAuthApiKey = useCallback((authString: string): string => {
     try {
@@ -200,10 +195,11 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
       return "";
     }
   }, []);
-
   // 从 codexAuth 中提取并同步 API Key
   useEffect(() => {
-    let parsed: { OPENAI_API_KEY?: unknown } | null = null;
+    let parsed: {
+      OPENAI_API_KEY?: unknown;
+    } | null = null;
     try {
       parsed = JSON.parse(codexAuth || "{}");
     } catch {
@@ -212,7 +208,6 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     const extractedKey = pickCodexApiKey(parsed, codexConfig);
     setCodexApiKey((prev) => (prev === extractedKey ? prev : extractedKey));
   }, [codexAuth, codexConfig]);
-
   // 验证 Codex Auth JSON
   const validateCodexAuth = useCallback((value: string): string => {
     if (!value.trim()) return "";
@@ -226,7 +221,6 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
       return "Invalid JSON format";
     }
   }, []);
-
   // 设置 auth 并验证
   const setCodexAuth = useCallback(
     (value: string) => {
@@ -235,7 +229,6 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     },
     [validateCodexAuth],
   );
-
   // 设置 config (支持函数更新)
   const setCodexConfig = useCallback(
     (value: string | ((prev: string) => string)) => {
@@ -247,7 +240,6 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     },
     [],
   );
-
   // 处理 Codex API Key 输入并写回 auth.json
   // 同步: 若 config.toml 当前含 experimental_bearer_token (Mobile 兼容形态),
   // 也一并更新/清除——否则用户清空输入框会被 pickCodexApiKey 的 fallback 又填回去
@@ -268,13 +260,11 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     },
     [codexAuth, setCodexAuth, setCodexConfig],
   );
-
   // 处理 Codex Base URL 变化
   const handleCodexBaseUrlChange = useCallback(
     (url: string) => {
       const sanitized = url.trim();
       setCodexBaseUrl(sanitized);
-
       isUpdatingCodexBaseUrlRef.current = true;
       setCodexConfig((prev) => setCodexBaseUrlInConfig(prev, sanitized));
       setTimeout(() => {
@@ -283,14 +273,12 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     },
     [setCodexConfig],
   );
-
   // 处理默认模型变化（写回 TOML 顶层 model；清空则删掉该行，交回 Codex 内置默认）
   // 剥控制字符：值可能来自 /models 下拉（远端数据），换行等会破坏单行 TOML 语义
   const handleCodexModelChange = useCallback(
     (model: string) => {
       const sanitized = model.replace(/[\u0000-\u001f\u007f]/g, "").trim();
       setCodexModel(sanitized);
-
       isUpdatingCodexModelRef.current = true;
       setCodexConfig((prev) => setCodexModelNameInConfig(prev, sanitized));
       setTimeout(() => {
@@ -299,7 +287,6 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     },
     [setCodexConfig],
   );
-
   // 子代理的默认模型和推理强度（`[agents]` 表）：直接从 TOML 读，改动实时写回，清空则删键
   const codexSubagentModel = useMemo(
     () => extractCodexAgentsString(codexConfig, "default_subagent_model") || "",
@@ -313,7 +300,6 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
       ) || "",
     [codexConfig],
   );
-
   const handleCodexSubagentModelChange = useCallback(
     (model: string) => {
       const sanitized = model.replace(/[\u0000-\u001f\u007f]/g, "").trim();
@@ -323,7 +309,6 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     },
     [setCodexConfig],
   );
-
   const handleCodexSubagentReasoningEffortChange = useCallback(
     (effort: string) => {
       setCodexConfig((prev) =>
@@ -332,7 +317,6 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     },
     [setCodexConfig],
   );
-
   // 子代理并发上限（`[agents] max_threads`）：Codex 的全局设置，保存时写进 live，不随供应商切换。
   // 只收数字，清空或 0 删键，回到 Codex 默认值
   const codexAgentMaxThreads = useMemo(
@@ -343,7 +327,6 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     () => extractCodexMultiAgentV2Total(codexConfig),
     [codexConfig],
   );
-
   const handleCodexAgentMaxThreadsChange = useCallback(
     (value: string) => {
       const digits = value.replace(/\D/g, "").slice(0, 4);
@@ -353,14 +336,12 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     },
     [setCodexConfig],
   );
-
   // 处理 config 变化（同步 Base URL）
   const handleCodexConfigChange = useCallback(
     (value: string) => {
       // 归一化中文/全角/弯引号，避免 TOML 解析报错
       const normalized = normalizeTomlText(value);
       setCodexConfig(normalized);
-
       if (!isUpdatingCodexBaseUrlRef.current) {
         const extracted = extractCodexBaseUrl(normalized) || "";
         if (extracted !== codexBaseUrl) {
@@ -370,7 +351,6 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     },
     [setCodexConfig, codexBaseUrl],
   );
-
   // 重置配置（用于预设切换）
   const resetCodexConfig = useCallback(
     (
@@ -383,15 +363,12 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
       setCodexConfig(config);
       setCodexCatalogModels(modelCatalogModels);
       setCodexAutoReviewModel("");
-
       const baseUrl = extractCodexBaseUrl(config);
       setCodexBaseUrl(baseUrl || "");
-
       setCodexApiKey(pickCodexApiKey(auth, config));
     },
     [setCodexAuth, setCodexConfig, setCodexCatalogModels],
   );
-
   return {
     codexAuth,
     codexConfig,

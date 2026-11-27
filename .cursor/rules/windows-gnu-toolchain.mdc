@@ -1,0 +1,23 @@
+---
+description: Windows 本机 Rust 构建必须用 GNU/x86_64 宿主工具链，禁止依赖 MSVC link.exe
+alwaysApply: true
+---
+
+# Windows Rust 工具链
+
+本机没有可用的 MSVC `link.exe`。构建、检查、测试一律走 **GNU 宿主工具链**（用户说的「直接用 x86 那个」= `stable-x86_64-pc-windows-gnu`），不要用默认 MSVC / `link.exe`。
+
+必须选 GNU **宿主工具链**，而不只是给 MSVC 工具链加 `--target`。按仓库 `docs/windows-gnu-build.md`：
+
+```powershell
+$gnuBin = 'D:\msys64\ucrt64\bin'
+$env:PATH = "$gnuBin;" + $env:PATH
+$env:CC = Join-Path $gnuBin 'gcc.exe'
+$env:CXX = Join-Path $gnuBin 'g++.exe'
+$env:AR = Join-Path $gnuBin 'ar.exe'
+$env:RC = Join-Path $gnuBin 'windres.exe'
+$env:CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER = $env:CC
+$env:CARGO_TARGET_DIR = Join-Path (Get-Location) 'target\windows-gnu'
+
+cargo +stable-x86_64-pc-windows-gnu check --locked --manifest-path src-tauri/Cargo.toml --tests --jobs 4
+```

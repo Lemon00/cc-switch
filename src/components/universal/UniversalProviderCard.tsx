@@ -1,10 +1,9 @@
-import { useTranslation } from "react-i18next";
-import { Edit2, Trash2, RefreshCw, Globe, Copy } from "lucide-react";
+import { ProviderIcon } from "@/components/ProviderIcon";
 import { Button } from "@/components/ui/button";
 import { HoverTip } from "@/components/ui/hover-tip";
-import { ProviderIcon } from "@/components/ProviderIcon";
 import type { UniversalProvider } from "@/types";
-
+import { Copy, Edit2, Globe, RefreshCw, Trash2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 interface UniversalProviderCardProps {
   provider: UniversalProvider;
   onEdit: (provider: UniversalProvider) => void;
@@ -12,7 +11,6 @@ interface UniversalProviderCardProps {
   onSync: (id: string) => void;
   onDuplicate: (provider: UniversalProvider) => void;
 }
-
 export function UniversalProviderCard({
   provider,
   onEdit,
@@ -21,14 +19,11 @@ export function UniversalProviderCard({
   onDuplicate,
 }: UniversalProviderCardProps) {
   const { t } = useTranslation();
-
   // 获取启用的应用列表
   const enabledApps: string[] = [
     provider.apps.claude ? "Claude" : null,
     provider.apps.codex ? "Codex" : null,
-    provider.apps.gemini ? "Gemini" : null,
   ].filter((app): app is string => app !== null);
-
   return (
     <div className="group relative rounded-xl border border-border/50 bg-surface p-4 transition-all hover:border-border hover:shadow-md">
       {/* 头部：图标和名称 */}

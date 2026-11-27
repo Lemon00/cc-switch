@@ -5,7 +5,6 @@ import { describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import UsageScriptModal from "@/components/UsageScriptModal";
 import type { Provider, UsageScript } from "@/types";
-
 vi.mock("@/components/common/FullScreenPanel", () => ({
   FullScreenPanel: ({
     isOpen,
@@ -23,13 +22,11 @@ vi.mock("@/components/common/FullScreenPanel", () => ({
       </div>
     ) : null,
 }));
-
 vi.mock("@/components/JsonEditor", () => ({
   default: ({ value }: { value: string }) => (
     <textarea data-testid="usage-script-code" value={value} readOnly />
   ),
 }));
-
 const provider: Provider = {
   id: "sub2api-site",
   name: "Example Sub2API",
@@ -47,7 +44,6 @@ const provider: Provider = {
     },
   },
 };
-
 function renderModal(
   onSave: (script: UsageScript) => void,
   usageScript?: UsageScript,
@@ -71,16 +67,13 @@ function renderModal(
     </QueryClientProvider>,
   );
 }
-
 describe("UsageScriptModal Sub2API template", () => {
   it("fills the /v1/usage script and saves it as the sub2api template", async () => {
     const onSave = vi.fn();
     renderModal(onSave);
-
     await userEvent.click(
       screen.getByRole("button", { name: "usageScript.templateSub2API" }),
     );
-
     const code = (
       screen.getByTestId("usage-script-code") as HTMLTextAreaElement
     ).value;
@@ -91,7 +84,6 @@ describe("UsageScriptModal Sub2API template", () => {
     expect(
       screen.queryByLabelText("usageScript.accessToken"),
     ).not.toBeInTheDocument();
-
     await userEvent.click(
       screen.getByRole("button", { name: "usageScript.saveConfig" }),
     );
@@ -99,14 +91,12 @@ describe("UsageScriptModal Sub2API template", () => {
       expect.objectContaining({ templateType: "sub2api", code }),
     );
   });
-
   it("reopens a script saved with the sub2api template as that template", async () => {
     const onSave = vi.fn();
     renderModal(onSave, {
       ...provider.meta!.usage_script!,
       templateType: "sub2api",
     });
-
     await userEvent.click(
       screen.getByRole("button", { name: "usageScript.saveConfig" }),
     );
@@ -115,7 +105,6 @@ describe("UsageScriptModal Sub2API template", () => {
     );
   });
 });
-
 describe("UsageScriptModal official subscription hint", () => {
   // agy 的额度靠它自己的 /usage 命令查，不读登录凭据
   it("explains Antigravity's quota check instead of reading OAuth credentials", () => {
@@ -154,7 +143,6 @@ describe("UsageScriptModal official subscription hint", () => {
     ).not.toBeInTheDocument();
   });
 });
-
 describe("UsageScriptModal Claude official card bound to an account", () => {
   // 卡片和托盘在没保存开关时默认查这个号的额度，配置页也要显示为已开
   it("shows usage enabled by default when nothing was saved", async () => {
@@ -185,7 +173,6 @@ describe("UsageScriptModal Claude official card bound to an account", () => {
         />
       </QueryClientProvider>,
     );
-
     await userEvent.click(
       screen.getByRole("button", { name: "usageScript.saveConfig" }),
     );
@@ -197,59 +184,11 @@ describe("UsageScriptModal Claude official card bound to an account", () => {
     );
   });
 });
-
 /**
  * Oh My Pi has its own `AppId` ("omp"), so it never matched the `pi` branch
  * and both built-in tests reported "API key is empty" on an omp card. The
  * provider key and base URL must reach the balance API like they do for Pi.
  */
-describe("UsageScriptModal Oh My Pi credentials", () => {
-  it("passes the omp provider's key and base URL to the balance test", async () => {
-    const getBalance = vi.fn().mockResolvedValue({ success: true, data: [] });
-    vi.doMock("@/lib/api/subscription", () => ({
-      subscriptionApi: { getBalance },
-    }));
-    const { default: Modal } = await import("@/components/UsageScriptModal");
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    render(
-      <QueryClientProvider client={client}>
-        <Modal
-          provider={{
-            id: "cc-switch-demo",
-            name: "Demo",
-            // A base URL the balance template recognises, so the test reaches
-            // `getBalance` instead of stopping at the template picker.
-            settingsConfig: {
-              baseUrl: "https://api.deepseek.com/v1",
-              apiKey: "sk-omp",
-              api: "openai-completions",
-            },
-          }}
-          appId="omp"
-          isOpen
-          onClose={() => {}}
-          onSave={() => {}}
-        />
-      </QueryClientProvider>,
-    );
-
-    // The usage query is off by default; enabling it asks for confirmation once.
-    await userEvent.click(screen.getByRole("switch"));
-    await userEvent.click(
-      screen.getByRole("button", { name: "confirm.usage.confirm" }),
-    );
-    await userEvent.click(
-      screen.getByRole("button", { name: "usageScript.testScript" }),
-    );
-
-    expect(getBalance).toHaveBeenCalledWith(
-      "https://api.deepseek.com/v1",
-      "sk-omp",
-    );
-  });
-});
 
 describe("UsageScriptModal DeepSeek Harness credentials", () => {
   const dshProvider: Provider = {
@@ -271,7 +210,6 @@ describe("UsageScriptModal DeepSeek Harness credentials", () => {
       },
     },
   };
-
   function renderDshModal() {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -288,14 +226,11 @@ describe("UsageScriptModal DeepSeek Harness credentials", () => {
       </QueryClientProvider>,
     );
   }
-
   it("detects the official balance template from the DSH provider endpoint", () => {
     renderDshModal();
-
     expect(screen.getByText("usageScript.balanceHint")).toBeInTheDocument();
     expect(screen.queryByTestId("usage-script-code")).not.toBeInTheDocument();
   });
-
   it("passes the saved DSH key and normalized endpoint to the balance test", async () => {
     const { subscriptionApi } = await import("@/lib/api/subscription");
     const getBalance = vi
@@ -304,7 +239,6 @@ describe("UsageScriptModal DeepSeek Harness credentials", () => {
         success: true,
         data: [{ isValid: true, remaining: 1, unit: "CNY" }],
       });
-
     try {
       renderDshModal();
       await userEvent.click(
@@ -313,7 +247,6 @@ describe("UsageScriptModal DeepSeek Harness credentials", () => {
       await userEvent.click(
         screen.getByRole("button", { name: "usageScript.testScript" }),
       );
-
       expect(getBalance).toHaveBeenCalledWith(
         "https://api.deepseek.com/v1",
         "sk-test-dsh",
@@ -322,13 +255,11 @@ describe("UsageScriptModal DeepSeek Harness credentials", () => {
       getBalance.mockRestore();
     }
   });
-
   it("shows inherited DSH credentials in the custom template variables", async () => {
     renderDshModal();
     await userEvent.click(
       screen.getByRole("button", { name: "usageScript.templateCustom" }),
     );
-
     expect(screen.getByText("https://api.deepseek.com/v1")).toBeInTheDocument();
     await userEvent.click(
       screen.getByRole("button", { name: "apiKeyInput.show" }),
@@ -336,102 +267,3 @@ describe("UsageScriptModal DeepSeek Harness credentials", () => {
     expect(screen.getByText("sk-test-dsh")).toBeInTheDocument();
   });
 });
-
-describe.each([
-  {
-    appId: "mcode" as const,
-    settingsConfig: {
-      kind: "custom",
-      api: "openai-completions",
-      options: {
-        baseURL: "https://api.deepseek.com/v1/",
-        apiKey: "sk-test-mcode",
-      },
-      models: {},
-    },
-    apiKey: "sk-test-mcode",
-  },
-  {
-    appId: "kimi" as const,
-    settingsConfig: {
-      provider: {
-        type: "openai",
-        base_url: "https://api.deepseek.com/v1/",
-        api_key: "sk-test-kimi",
-      },
-    },
-    apiKey: "sk-test-kimi",
-  },
-])(
-  "UsageScriptModal $appId credentials",
-  ({ appId, settingsConfig, apiKey }) => {
-    function renderAppModal() {
-      const client = new QueryClient({
-        defaultOptions: { queries: { retry: false } },
-      });
-      render(
-        <QueryClientProvider client={client}>
-          <UsageScriptModal
-            provider={{
-              id: `deepseek-${appId}`,
-              name: "DeepSeek",
-              settingsConfig,
-              meta: {
-                usage_script: {
-                  enabled: true,
-                  language: "javascript",
-                  code: "",
-                },
-              },
-            }}
-            appId={appId}
-            isOpen
-            onClose={() => {}}
-            onSave={() => {}}
-          />
-        </QueryClientProvider>,
-      );
-    }
-
-    it("passes the saved key and normalized endpoint to the balance test", async () => {
-      const { subscriptionApi } = await import("@/lib/api/subscription");
-      const getBalance = vi
-        .spyOn(subscriptionApi, "getBalance")
-        .mockResolvedValue({
-          success: true,
-          data: [{ isValid: true, remaining: 1, unit: "CNY" }],
-        });
-
-      try {
-        renderAppModal();
-        // The DeepSeek endpoint auto-selects the official balance template.
-        expect(screen.getByText("usageScript.balanceHint")).toBeInTheDocument();
-        await userEvent.click(
-          screen.getByRole("button", { name: "usageScript.testScript" }),
-        );
-
-        expect(getBalance).toHaveBeenCalledWith(
-          "https://api.deepseek.com/v1",
-          apiKey,
-        );
-      } finally {
-        getBalance.mockRestore();
-      }
-    });
-
-    it("shows inherited credentials in the custom template variables", async () => {
-      renderAppModal();
-      await userEvent.click(
-        screen.getByRole("button", { name: "usageScript.templateCustom" }),
-      );
-
-      expect(
-        screen.getByText("https://api.deepseek.com/v1"),
-      ).toBeInTheDocument();
-      await userEvent.click(
-        screen.getByRole("button", { name: "apiKeyInput.show" }),
-      );
-      expect(screen.getByText(apiKey)).toBeInTheDocument();
-    });
-  },
-);

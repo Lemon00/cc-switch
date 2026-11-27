@@ -1,7 +1,6 @@
-import { memo, useMemo } from "react";
-import { ChevronRight } from "lucide-react";
-
 import { cn } from "@/lib/utils";
+import { ChevronRight } from "lucide-react";
+import { memo, useMemo } from "react";
 import { highlightText } from "../utils";
 import type { AgentReaderStyle } from "./agentStyles";
 import { useReaderContext } from "./context";
@@ -21,9 +20,7 @@ import {
   type Translate,
 } from "./toolSummary";
 import type { MergedStep, TimelineStep, ToolStep } from "./turns";
-
 export type StepToggle = (id: string, expanded: boolean) => void;
-
 /** 标题：动作（品牌字面）+ 对象；call 格式包括号，icon 格式前置符号 */
 const TitleText = ({
   title,
@@ -61,7 +58,6 @@ const TitleText = ({
     </span>
   );
 };
-
 const mergedDetail = (step: MergedStep, rt: Translate) => {
   if (step.mergeKind !== "explored") return undefined;
   const title = formatMergedTitle(step);
@@ -70,14 +66,12 @@ const mergedDetail = (step: MergedStep, rt: Translate) => {
     searches: title.searches,
   });
 };
-
 interface ToolRowProps {
   step: ToolStep | MergedStep;
   expanded: boolean;
   previewLines: number;
   onToggle: StepToggle;
 }
-
 /** 工具步骤 / 合并步骤的一行：glyph、标题、detail、状态、元信息；点开看详情 */
 const ToolRow = memo(function ToolRow({
   step,
@@ -105,7 +99,6 @@ const ToolRow = memo(function ToolRow({
   const regionId = `reader-step-${step.id}`;
   const fullTitle = [title.text, detail].filter(Boolean).join(" · ");
   const failure = step.status === "error" || step.status === "interrupted";
-
   return (
     <div className="min-w-0">
       <button
@@ -156,14 +149,12 @@ const ToolRow = memo(function ToolRow({
     </div>
   );
 });
-
 export interface SessionStepProps {
   step: TimelineStep;
   expanded: boolean;
   previewLines: number;
   onToggle: StepToggle;
 }
-
 /** 执行过程里的一步：按类型分派到工具行 / 思考 / 说明 / 图片 / 事件 */
 export const SessionStep = memo(function SessionStep({
   step,

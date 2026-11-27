@@ -1,17 +1,15 @@
-import { useEffect, useId, useRef } from "react";
-import { useTranslation } from "react-i18next";
-import { CopilotAuthSection } from "@/components/providers/forms/CopilotAuthSection";
-import { CodexOAuthSection } from "@/components/providers/forms/CodexOAuthSection";
-import { XaiOAuthSection } from "@/components/providers/forms/XaiOAuthSection";
+import { DshAccountLogin } from "@/components/providers/DshAccount";
 import { AgyOAuthSection } from "@/components/providers/forms/AgyOAuthSection";
 import { ClaudeOfficialSection } from "@/components/providers/forms/ClaudeOfficialSection";
-import { KimiAccountLogin } from "@/components/providers/KimiAccountLogin";
-import { DshAccountLogin } from "@/components/providers/DshAccount";
-import { isMac } from "@/lib/platform";
+import { CodexOAuthSection } from "@/components/providers/forms/CodexOAuthSection";
+import { CopilotAuthSection } from "@/components/providers/forms/CopilotAuthSection";
+import { XaiOAuthSection } from "@/components/providers/forms/XaiOAuthSection";
 import { Switch } from "@/components/ui/switch";
-import { useAuthOpenBrowser, writeAuthOpenBrowser } from "@/lib/authLoginLink";
 import type { AuthCenterTarget } from "@/lib/api";
-
+import { useAuthOpenBrowser, writeAuthOpenBrowser } from "@/lib/authLoginLink";
+import { isMac } from "@/lib/platform";
+import { useEffect, useId, useRef } from "react";
+import { useTranslation } from "react-i18next";
 interface AuthCenterPanelProps {
   authScrollTarget?: AuthCenterTarget | null;
   /**
@@ -20,7 +18,6 @@ interface AuthCenterPanelProps {
    */
   showIntro?: boolean;
 }
-
 /**
  * 「登录时自动打开浏览器」：所有服务的登录共用。关掉后只复制登录链接，用户自己选浏览器打开
  * （用独立浏览器环境管多个账号时，不让登录混进系统默认浏览器）。
@@ -54,10 +51,8 @@ function OpenBrowserToggle() {
     </div>
   );
 }
-
 /** 定位到某一组时，卡片上沿离正文顶部留的距离 */
 const SECTION_SCROLL_MARGIN = 16;
-
 /** 最近的纵向可滚动祖先（FullScreenPanel 的正文） */
 function findScrollContainer(element: HTMLElement): HTMLElement | null {
   for (
@@ -70,9 +65,8 @@ function findScrollContainer(element: HTMLElement): HTMLElement | null {
   }
   return null;
 }
-
 /**
- * 授权中心：Claude 官方账号、GitHub Copilot、ChatGPT、xAI、Kimi Code、DeepSeek Harness，一组一张卡片；
+ * 授权中心：Claude 官方账号、GitHub Copilot、ChatGPT、xAI、DeepSeek Harness，一组一张卡片；
  * macOS 上另有 Antigravity 一组（切 agy 的官方登录，目前只实现了 macOS 钥匙串）。
  * 侧栏的「授权中心」页和供应商表单里「管理账号」打开的全屏页共用。
  */
@@ -87,34 +81,27 @@ export function AuthCenterPanel({
   const codexOauthSectionRef = useRef<HTMLDivElement | null>(null);
   const xaiOauthSectionRef = useRef<HTMLDivElement | null>(null);
   const agyOauthSectionRef = useRef<HTMLDivElement | null>(null);
-  const kimiOauthSectionRef = useRef<HTMLDivElement | null>(null);
   const dshAccountSectionRef = useRef<HTMLDivElement | null>(null);
   const showAgy = isMac();
-
   useEffect(() => {
     if (!authScrollTarget) return;
     const root = rootRef.current;
     if (!root) return;
-
     const sectionRef =
-      authScrollTarget === "kimi_oauth"
-        ? kimiOauthSectionRef
-        : authScrollTarget === "dsh_account"
-          ? dshAccountSectionRef
-          : authScrollTarget === "claude_official"
-            ? claudeOfficialSectionRef
-            : authScrollTarget === "github_copilot"
-              ? copilotSectionRef
-              : authScrollTarget === "codex_oauth"
-                ? codexOauthSectionRef
-                : authScrollTarget === "agy_oauth"
-                  ? agyOauthSectionRef
-                  : xaiOauthSectionRef;
-
+      authScrollTarget === "dsh_account"
+        ? dshAccountSectionRef
+        : authScrollTarget === "claude_official"
+          ? claudeOfficialSectionRef
+          : authScrollTarget === "github_copilot"
+            ? copilotSectionRef
+            : authScrollTarget === "codex_oauth"
+              ? codexOauthSectionRef
+              : authScrollTarget === "agy_oauth"
+                ? agyOauthSectionRef
+                : xaiOauthSectionRef;
     const target = sectionRef.current;
     const container = findScrollContainer(root);
     if (!target || !container) return;
-
     // 不用 scrollIntoView：面板滑入时目标还在右侧视口外，它会连带滚动外壳里
     // overflow-hidden 的 #content-area，把整块内容区横向/纵向带偏。只滚面板自己的正文。
     // 上面几组的账号是异步加载的，加载完会把目标挤下去：内容尺寸变化时重新对齐，
@@ -154,7 +141,6 @@ export function AuthCenterPanel({
       );
       expectedTop = container.scrollTop;
     };
-
     const inputOptions = {
       capture: true,
       passive: true,
@@ -164,7 +150,6 @@ export function AuthCenterPanel({
       container.addEventListener(event, stopPinning, inputOptions);
     }
     window.addEventListener("keydown", stopPinning, inputOptions);
-
     frame = requestAnimationFrame(() => {
       alignTarget();
       if (
@@ -178,10 +163,8 @@ export function AuthCenterPanel({
       });
       resizeObserver.observe(root);
     });
-
     return stopPinning;
   }, [authScrollTarget]);
-
   return (
     <div ref={rootRef} className="flex flex-col gap-3">
       {showIntro && (
@@ -201,9 +184,6 @@ export function AuthCenterPanel({
       </div>
       <div ref={xaiOauthSectionRef}>
         <XaiOAuthSection mode="manage" helpSide="bottom" />
-      </div>
-      <div ref={kimiOauthSectionRef}>
-        <KimiAccountLogin helpSide="bottom" />
       </div>
       <div ref={dshAccountSectionRef}>
         <DshAccountLogin helpSide={showAgy ? "bottom" : "top"} />

@@ -1,5 +1,4 @@
 import type { CodexChatEffortParam } from "@/types";
-
 export const normalizeEnabledCodexChatEffortParam = (
   effortParam?: string,
 ): CodexChatEffortParam =>

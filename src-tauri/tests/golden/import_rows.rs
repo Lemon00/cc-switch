@@ -10,12 +10,14 @@ use cc_switch_lib::{
 use crate::support::{create_test_state, reset_test_fs, test_mutex};
 use crate::util::{assert_golden, dump_provider_rows, write_home_file};
 
-/// 深链生成的 id 是「名称-毫秒时间戳」，快照里换成固定写法。
+/// 深链生成的 id 是「名称-UUID v4」；只归一化随机部分，继续检查名称和 ID 格式。
 fn stable_deeplink_id(id: &str) -> String {
-    match id.rsplit_once('-') {
-        Some((name, ts)) if ts.chars().all(|c| c.is_ascii_digit()) => format!("{name}-<ts>"),
-        _ => id.to_string(),
-    }
+    let split = id.len().checked_sub(37).expect("name and UUID suffix");
+    assert_eq!(id.as_bytes()[split], b'-');
+    let name = id.get(..split).expect("name ends at a character boundary");
+    let suffix = uuid::Uuid::parse_str(&id[split + 1..]).expect("UUID suffix");
+    assert_eq!(suffix.get_version_num(), 4);
+    format!("{name}-<uuid>")
 }
 
 fn import_deeplinks(app: AppType, urls: &[&str], snapshot: &str) {
@@ -82,55 +84,6 @@ fn deeplink_codex_config_rows() {
         BASE64_URL_SAFE_NO_PAD.encode(config.to_string())
     );
     import_deeplinks(AppType::Codex, &[&url], "rows/deeplink-codex-config.txt");
-}
-
-#[test]
-fn deeplink_gemini_rows() {
-    import_deeplinks(
-        AppType::Gemini,
-        &[
-            "ccswitch://v1/import?resource=provider&app=gemini&name=Relay%20Gemini&homepage=https%3A%2F%2Frelay.example&endpoint=https%3A%2F%2Fapi.relay.example&apiKey=g-relay&model=gemini-2.5-pro",
-        ],
-        "rows/deeplink-gemini.txt",
-    );
-}
-
-#[test]
-fn deeplink_grokbuild_rows() {
-    import_deeplinks(
-        AppType::GrokBuild,
-        &[
-            "ccswitch://v1/import?resource=provider&app=grokbuild&name=Relay%20Grok&homepage=https%3A%2F%2Frelay.example&endpoint=https%3A%2F%2Fapi.relay.example%2Fv1&apiKey=xai-relay&model=grok-4.5",
-        ],
-        "rows/deeplink-grokbuild.txt",
-    );
-}
-
-/// 带 `config.toml` 的 Grok Build 链接：只收 `models.default` 指向的那张表，地址和 Key
-/// 用链接参数。
-#[test]
-fn deeplink_grokbuild_config_rows() {
-    use base64::prelude::*;
-
-    let config = serde_json::json!({
-        "config": concat!(
-            "[models]\ndefault = \"grok-4.6\"\n\n",
-            "[model.\"grok-4.6\"]\nmodel = \"grok-4.6\"\nname = \"Grok 4.6 (Relay)\"\n",
-            "description = \"Fast coding model\"\n",
-            "base_url = \"https://ignored.example/v1\"\napi_key = \"sk-ignored\"\n",
-            "api_backend = \"chat_completions\"\ncontext_window = 256000\n\n",
-            "[model.\"grok-4.5\"]\nmodel = \"grok-4.5\"\nname = \"Grok 4.5\"\n",
-        )
-    });
-    let url = format!(
-        "ccswitch://v1/import?resource=provider&app=grokbuild&name=Relay%20Grok%20Config&endpoint=https%3A%2F%2Fapi.relay.example%2Fv1&apiKey=xai-relay&configFormat=json&config={}",
-        BASE64_URL_SAFE_NO_PAD.encode(config.to_string())
-    );
-    import_deeplinks(
-        AppType::GrokBuild,
-        &[&url],
-        "rows/deeplink-grokbuild-config.txt",
-    );
 }
 
 /// 首启：先把 live 导入成 `default`，再 seed 官方预设（顺序同 `lib.rs` 的启动流程）。
@@ -210,43 +163,4 @@ command = "external"
 "#,
     );
     first_run_import(AppType::Codex, "rows/first-run-codex.txt", &[]);
-}
-
-#[test]
-fn first_run_gemini_rows() {
-    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
-    reset_test_fs();
-    write_home_file(
-        ".gemini/.env",
-        "GEMINI_API_KEY=g-live\nGOOGLE_GEMINI_BASE_URL=https://relay.example\nGEMINI_MODEL=gemini-2.5-pro\n",
-    );
-    write_home_file(
-        ".gemini/settings.json",
-        r#"{
-  "security": { "auth": { "selectedType": "gemini-api-key" } },
-  "ui": { "theme": "GitHub" }
-}"#,
-    );
-    first_run_import(AppType::Gemini, "rows/first-run-gemini.txt", &["/env"]);
-}
-
-#[test]
-fn first_run_grokbuild_rows() {
-    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
-    reset_test_fs();
-    write_home_file(
-        ".grok/config.toml",
-        r#"[models]
-default = "grok-4.5"
-
-[model."grok-4.5"]
-model = "grok-4.5"
-base_url = "https://relay.example/v1"
-name = "Relay"
-api_key = "xai-live"
-api_backend = "responses"
-context_window = 500000
-"#,
-    );
-    first_run_import(AppType::GrokBuild, "rows/first-run-grokbuild.txt", &[]);
 }

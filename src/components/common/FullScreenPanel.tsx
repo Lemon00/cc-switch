@@ -1,15 +1,14 @@
-import React from "react";
-import { createPortal } from "react-dom";
-import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import { ChevronLeft } from "lucide-react";
-import { useTranslation } from "react-i18next";
+import { AppPageHeader } from "@/components/shell/AppPageHeader";
 import { Button } from "@/components/ui/button";
 import { HoverTip } from "@/components/ui/hover-tip";
-import { AppPageHeader } from "@/components/shell/AppPageHeader";
-import { isTextEditableTarget } from "@/utils/domUtils";
 import { useUnsavedChangesTracker } from "@/lib/unsavedChanges";
 import { cn } from "@/lib/utils";
-
+import { isTextEditableTarget } from "@/utils/domUtils";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { ChevronLeft } from "lucide-react";
+import React from "react";
+import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 interface FullScreenPanelProps {
   isOpen: boolean;
   title: string;
@@ -35,13 +34,10 @@ interface FullScreenPanelProps {
    */
   trackUnsavedChanges?: boolean;
 }
-
 /** 外壳里的内容区（App 的 <main id="content-area">）：二级页只盖住它，侧栏留着 */
 const CONTENT_AREA_ID = "content-area";
-
 let bodyScrollLockCount = 0;
 let bodyOverflowBeforeFirstLock: string | null = null;
-
 const lockBodyScroll = () => {
   if (bodyScrollLockCount === 0) {
     bodyOverflowBeforeFirstLock = document.body.style.overflow;
@@ -49,7 +45,6 @@ const lockBodyScroll = () => {
   }
   bodyScrollLockCount += 1;
 };
-
 const unlockBodyScroll = () => {
   bodyScrollLockCount = Math.max(0, bodyScrollLockCount - 1);
   if (bodyScrollLockCount === 0) {
@@ -57,14 +52,12 @@ const unlockBodyScroll = () => {
     bodyOverflowBeforeFirstLock = null;
   }
 };
-
 /**
  * 打开着的面板，后打开的在最后。二级页里再开二级页（定价 → 编辑定价、编辑供应商 → 测速）时
  * 每层都在 window 上挂了 ESC 监听，stopPropagation 拦不住同一目标上的其他监听，
  * 所以只让栈顶那层响应，一次 ESC 只退一层。
  */
 const openPanelStack: object[] = [];
-
 /**
  * Reusable full-screen panel component
  * Handles portal rendering, header with back button, and footer
@@ -92,48 +85,37 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
   const disableMotion = motionPreset === "none" || prefersReducedMotion;
   const shouldSlideFromRight =
     motionPreset === "slide-from-right" && !prefersReducedMotion;
-
   React.useEffect(() => {
     if (!isOpen) return;
-
     lockBodyScroll();
     return unlockBodyScroll;
   }, [isOpen]);
-
   // ESC 键关闭面板
   const onCloseRef = React.useRef(onClose);
-
   React.useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
-
   React.useEffect(() => {
     if (!isOpen) return;
-
     const entry = {};
     openPanelStack.push(entry);
-
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         // 上面还叠着别的面板：交给最上面那层
         if (openPanelStack[openPanelStack.length - 1] !== entry) {
           return;
         }
-
         // 子组件（例如 Radix 的 Select/Dialog/Dropdown）如果已经消费了 ESC，就不要再关闭整个面板
         if (event.defaultPrevented) {
           return;
         }
-
         if (isTextEditableTarget(event.target)) {
           return; // 让输入框自己处理 ESC（比如清空、失焦等）
         }
-
         event.stopPropagation(); // 阻止事件继续冒泡到 window，避免触发 App.tsx 的全局监听
         onCloseRef.current();
       }
     };
-
     // 使用冒泡阶段监听，让子组件（如 Radix UI）优先处理 ESC
     window.addEventListener("keydown", handleKeyDown, false);
     return () => {
@@ -142,12 +124,10 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
       if (index >= 0) openPanelStack.splice(index, 1);
     };
   }, [isOpen]);
-
   const host =
     typeof document !== "undefined"
       ? document.getElementById(CONTENT_AREA_ID)
       : null;
-
   return createPortal(
     <AnimatePresence>
       {isOpen && (

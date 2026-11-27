@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import React, {
   createContext,
   useContext,
@@ -5,25 +6,19 @@ import React, {
   useMemo,
   useState,
 } from "react";
-import { invoke } from "@tauri-apps/api/core";
-
 type Theme = "light" | "dark" | "system";
-
 interface ThemeProviderProps {
   children: React.ReactNode;
   defaultTheme?: Theme;
   storageKey?: string;
 }
-
 interface ThemeContextValue {
   theme: Theme;
   setTheme: (theme: Theme) => void;
 }
-
 const ThemeProviderContext = createContext<ThemeContextValue | undefined>(
   undefined,
 );
-
 /**
  * 切换 html 上的 light / dark。切换期间暂停所有过渡（`.theme-switching`），
  * 否则各处的 transition-colors 会让颜色一块块慢慢变过去。
@@ -47,7 +42,6 @@ function applyColorScheme(isDark: boolean) {
     });
   });
 }
-
 export function ThemeProvider({
   children,
   defaultTheme = "system",
@@ -57,30 +51,23 @@ export function ThemeProvider({
     if (typeof window === "undefined") {
       return defaultTheme;
     }
-
     const stored = window.localStorage.getItem(storageKey) as Theme | null;
     if (stored === "light" || stored === "dark" || stored === "system") {
       return stored;
     }
-
     return defaultTheme;
   };
-
   const [theme, setThemeState] = useState<Theme>(getInitialTheme);
-
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
-
     window.localStorage.setItem(storageKey, theme);
   }, [theme, storageKey]);
-
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
-
     const isDark =
       theme === "system"
         ? window.matchMedia &&
@@ -88,37 +75,29 @@ export function ThemeProvider({
         : theme === "dark";
     applyColorScheme(isDark);
   }, [theme]);
-
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
-
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
     const handleChange = () => {
       if (theme !== "system") {
         return;
       }
-
       applyColorScheme(mediaQuery.matches);
     };
-
     if (theme === "system") {
       handleChange();
     }
-
     mediaQuery.addEventListener("change", handleChange);
     return () => mediaQuery.removeEventListener("change", handleChange);
   }, [theme]);
-
   // Sync native window theme (Windows/macOS title bar)
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
-
     let isCancelled = false;
-
     const updateNativeTheme = async (nativeTheme: string) => {
       if (isCancelled) return;
       try {
@@ -128,7 +107,6 @@ export function ThemeProvider({
         console.debug("Failed to set native window theme:", e);
       }
     };
-
     // When "system", pass "system" so Tauri uses None (follows OS theme natively).
     // This keeps the WebView's prefers-color-scheme in sync with the real OS theme,
     // allowing effect #3's media query listener to fire on system theme changes.
@@ -137,12 +115,10 @@ export function ThemeProvider({
     } else {
       updateNativeTheme(theme);
     }
-
     return () => {
       isCancelled = true;
     };
   }, [theme]);
-
   const value = useMemo<ThemeContextValue>(
     () => ({
       theme,
@@ -153,14 +129,12 @@ export function ThemeProvider({
     }),
     [theme],
   );
-
   return (
     <ThemeProviderContext.Provider value={value}>
       {children}
     </ThemeProviderContext.Provider>
   );
 }
-
 export function useTheme() {
   const context = useContext(ThemeProviderContext);
   if (context === undefined) {

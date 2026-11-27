@@ -1,4 +1,4 @@
-import * as React from "react";
+import { cn } from "@/lib/utils";
 import {
   AlertTriangle,
   CircleAlert,
@@ -8,8 +8,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
-
+import * as React from "react";
 /**
  * 通知条（v7 AUTHORING「通知条」）：圆角 10，左侧 16px 图标，不用左边框强调色。
  * 应用页的通知槽（NoticeSlot）里排成一列，按严重程度从上到下。
@@ -21,10 +20,13 @@ export type NoticeTone =
   | "route"
   | "stack"
   | "direct";
-
 const TONE: Record<
   NoticeTone,
-  { box: string; icon: string; Icon: LucideIcon }
+  {
+    box: string;
+    icon: string;
+    Icon: LucideIcon;
+  }
 > = {
   neutral: { box: "bg-subtle", icon: "text-fg-2", Icon: Info },
   warning: {
@@ -41,7 +43,6 @@ const TONE: Record<
   stack: { box: "bg-stack-soft", icon: "text-stack-text", Icon: Layers },
   direct: { box: "bg-direct-soft", icon: "text-direct-text", Icon: Info },
 };
-
 export interface NoticeProps {
   tone?: NoticeTone;
   icon?: LucideIcon;
@@ -56,7 +57,6 @@ export interface NoticeProps {
   dismissLabel?: string;
   className?: string;
 }
-
 export function Notice({
   tone = "neutral",
   icon,
@@ -108,7 +108,6 @@ export function Notice({
     </div>
   );
 }
-
 /**
  * 通知槽：一直渲染的 role="status" 容器（R4），操作后出现的提示放进来才会被读出。
  * 页面一打开就在的提示不要用 role="alert"。

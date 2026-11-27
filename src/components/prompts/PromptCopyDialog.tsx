@@ -1,6 +1,4 @@
-import { useEffect, useId, useState } from "react";
-import { useQueries } from "@tanstack/react-query";
-import { useTranslation } from "react-i18next";
+import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -8,12 +6,13 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { promptsApi, type AppId, type Prompt } from "@/lib/api";
 import { promptKeys } from "@/lib/query/prompts";
 import { cn } from "@/lib/utils";
+import { useQueries } from "@tanstack/react-query";
+import { useEffect, useId, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { FieldError } from "./PromptFormPanel";
-
 interface PromptCopyDialogProps {
   prompt: Prompt;
   /** 可以复制到的应用（已去掉当前应用） */
@@ -22,7 +21,6 @@ interface PromptCopyDialogProps {
   onCancel: () => void;
   onConfirm: (apps: AppId[]) => void;
 }
-
 /**
  * 复制到其他应用（Prompts.dc.html 第 446–480 行）：各自存成独立的一条、不启用。
  * 默认勾选没有同名条目的应用；Hermes 的 SOUL.md 是人设，编码规范之类复制过去多半不对，默认不勾。
@@ -51,25 +49,17 @@ export function PromptCopyDialog({
     null,
   );
   const [attempted, setAttempted] = useState(false);
-
   useEffect(() => {
     if (!ready || picks) return;
     setPicks(
-      Object.fromEntries(
-        targets.map((app, index) => [
-          app,
-          !sameName(index) && app !== "hermes",
-        ]),
-      ),
+      Object.fromEntries(targets.map((app, index) => [app, !sameName(index)])),
     );
     // sameName 依赖 lists，只在第一次读完时定默认勾选
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, picks, targets]);
-
   const picked = targets.filter((app) => picks?.[app]);
   const showError = attempted && picked.length === 0;
   const errorId = `${baseId}-error`;
-
   return (
     <Dialog
       open
@@ -100,9 +90,7 @@ export function PromptCopyDialog({
               const noteId = `${inputId}-note`;
               const note = sameName(index)
                 ? t("prompts.copyDialog.sameName")
-                : app === "hermes"
-                  ? t("prompts.copyDialog.hermesNote")
-                  : "";
+                : "";
               return (
                 <li
                   key={app}

@@ -4,14 +4,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useMcpConnectivity } from "@/hooks/useMcpConnectivity";
 import { mcpApi, type McpConnectivityResult } from "@/lib/api/mcp";
 import type { McpServersMap } from "@/types";
-
 vi.mock("@/lib/api/mcp", () => ({
   mcpApi: {
     startConnectivityChecks: vi.fn(),
     cancelConnectivityChecks: vi.fn(),
   },
 }));
-
 const servers = (enabled = true, command = "example"): McpServersMap => ({
   example: {
     id: "example",
@@ -20,17 +18,12 @@ const servers = (enabled = true, command = "example"): McpServersMap => ({
     apps: {
       claude: enabled,
       codex: false,
-      gemini: false,
       opencode: false,
-      openclaw: false,
-      hermes: false,
     },
   },
 });
-
 const delivery = (call = 0) =>
   vi.mocked(mcpApi.startConnectivityChecks).mock.calls[call][1];
-
 describe("page-local MCP connectivity", () => {
   beforeEach(() => {
     vi.mocked(mcpApi.startConnectivityChecks)
@@ -38,7 +31,30 @@ describe("page-local MCP connectivity", () => {
       .mockResolvedValue("batch");
     vi.mocked(mcpApi.cancelConnectivityChecks).mockReset().mockResolvedValue();
   });
-
+  it("checks server IDs that match JavaScript object properties", () => {
+    const data = Object.fromEntries(
+      ["__proto__", "constructor", "toString"].map((id) => [
+        id,
+        { ...servers().example, id },
+      ]),
+    );
+    const { result } = renderHook(() => useMcpConnectivity(data));
+    act(() => result.current.checkAll());
+    expect(mcpApi.startConnectivityChecks).toHaveBeenCalledWith(
+      ["__proto__", "constructor", "toString"],
+      expect.any(Function),
+    );
+    act(() => {
+      for (const serverId of Object.keys(data))
+        delivery()({ serverId, status: "connected" });
+    });
+    expect(Object.values(result.current.states)).toEqual([
+      "connected",
+      "connected",
+      "connected",
+    ]);
+    expect(result.current.checking).toBe(false);
+  });
   it("never checks on its own and shows enabled servers as unchecked", () => {
     const { result, rerender } = renderHook(
       ({ data }) => useMcpConnectivity(data),
@@ -58,7 +74,6 @@ describe("page-local MCP connectivity", () => {
     expect(result.current.checking).toBe(false);
     expect(result.current.canCheck).toBe(true);
   });
-
   it("checks every enabled server on request and reports progress", () => {
     const disabled = { ...servers(false).example, id: "disabled" };
     const { result } = renderHook(() =>
@@ -75,7 +90,6 @@ describe("page-local MCP connectivity", () => {
     expect(result.current.states.example).toBe("connected");
     expect(result.current.checking).toBe(false);
   });
-
   it("checks a single server and ignores disabled ones", () => {
     const { result, rerender } = renderHook(
       ({ data }) => useMcpConnectivity(data),
@@ -92,7 +106,6 @@ describe("page-local MCP connectivity", () => {
     act(() => delivery()({ serverId: "example", status: "failed" }));
     expect(result.current.states.example).toBe("disconnected");
   });
-
   it("keeps a sign-in requirement apart from a failed connection", () => {
     const { result } = renderHook(() => useMcpConnectivity(servers()));
     act(() => result.current.checkAll());
@@ -100,7 +113,6 @@ describe("page-local MCP connectivity", () => {
     expect(result.current.states.example).toBe("authRequired");
     expect(result.current.checking).toBe(false);
   });
-
   it("keeps results through metadata changes and resets them when the config changes", () => {
     const { result, rerender } = renderHook(
       ({ data }) => useMcpConnectivity(data),
@@ -117,7 +129,6 @@ describe("page-local MCP connectivity", () => {
     expect(result.current.states.example).toBe("unchecked");
     expect(mcpApi.startConnectivityChecks).toHaveBeenCalledTimes(1);
   });
-
   it("replaces running checks and ignores their late results", async () => {
     let batch = 0;
     vi.mocked(mcpApi.startConnectivityChecks).mockImplementation(
@@ -134,7 +145,6 @@ describe("page-local MCP connectivity", () => {
     act(() => delivery(1)({ serverId: "example", status: "failed" }));
     expect(result.current.states.example).toBe("disconnected");
   });
-
   it("does not start a second check for a server already being checked", () => {
     const { result } = renderHook(() => useMcpConnectivity(servers()));
     act(() => result.current.checkAll());
@@ -145,7 +155,6 @@ describe("page-local MCP connectivity", () => {
     act(() => result.current.checkServer("example"));
     expect(mcpApi.startConnectivityChecks).toHaveBeenCalledTimes(2);
   });
-
   it("lets a check of an edited config win over the older running one", () => {
     const { result, rerender } = renderHook(
       ({ data }) => useMcpConnectivity(data),
@@ -159,7 +168,6 @@ describe("page-local MCP connectivity", () => {
     act(() => delivery(0)({ serverId: "example", status: "failed" }));
     expect(result.current.states.example).toBe("connected");
   });
-
   it("does not leave a replaced check stuck when its server was disabled", () => {
     const other = { ...servers().example, id: "other" };
     const { result, rerender } = renderHook(
@@ -181,7 +189,6 @@ describe("page-local MCP connectivity", () => {
     act(() => result.current.checkServer("example"));
     expect(result.current.states.example).toBe("checking");
   });
-
   it("cancels running checks when leaving, even before the backend registers them", async () => {
     let register!: (id: string) => void;
     vi.mocked(mcpApi.startConnectivityChecks).mockReturnValueOnce(
@@ -195,7 +202,6 @@ describe("page-local MCP connectivity", () => {
     await act(async () => register("late-batch"));
     expect(mcpApi.cancelConnectivityChecks).toHaveBeenCalledWith("late-batch");
   });
-
   it("does not cancel batches that already finished", async () => {
     const { result, unmount } = renderHook(() => useMcpConnectivity(servers()));
     act(() => result.current.checkAll());
@@ -204,7 +210,6 @@ describe("page-local MCP connectivity", () => {
     await Promise.resolve();
     expect(mcpApi.cancelConnectivityChecks).not.toHaveBeenCalled();
   });
-
   it("shows a failed start as disconnected without retrying", async () => {
     vi.mocked(mcpApi.startConnectivityChecks).mockRejectedValueOnce(
       new Error("IPC failed"),
@@ -216,7 +221,6 @@ describe("page-local MCP connectivity", () => {
     );
     expect(mcpApi.startConnectivityChecks).toHaveBeenCalledTimes(1);
   });
-
   it("starts nothing under StrictMode until asked", () => {
     const callbacks: ((result: McpConnectivityResult) => void)[] = [];
     vi.mocked(mcpApi.startConnectivityChecks).mockImplementation(

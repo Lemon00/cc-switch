@@ -7,39 +7,19 @@
 
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::sync::Mutex;
 
-use crate::app_config::{McpApps, McpConfig, McpServer, MultiAppConfig};
+static WRITE_LOCK: Mutex<()> = Mutex::new(());
+
+use crate::app_config::{McpApps, McpServer, MultiAppConfig};
 use crate::error::AppError;
 
-use super::validation::{extract_server_spec, spec_transport_type, validate_server_spec};
+use super::validation::{spec_transport_type, validate_server_spec};
 
 fn should_sync_codex_mcp() -> bool {
     // Codex 未安装/未初始化时：~/.codex 目录不存在。
     // 按用户偏好：目录缺失时跳过写入/删除，不创建任何文件或目录。
     crate::codex_config::get_codex_config_dir().exists()
-}
-
-/// 返回已启用的 MCP 服务器（过滤 enabled==true）
-fn collect_enabled_servers(cfg: &McpConfig) -> HashMap<String, Value> {
-    let mut out = HashMap::new();
-    for (id, entry) in cfg.servers.iter() {
-        let enabled = entry
-            .get("enabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        if !enabled {
-            continue;
-        }
-        match extract_server_spec(entry) {
-            Ok(spec) => {
-                out.insert(id.clone(), spec);
-            }
-            Err(err) => {
-                log::warn!("跳过无效的 MCP 条目 '{id}': {err}");
-            }
-        }
-    }
-    out
 }
 
 /// 推断 Codex `[mcp_servers.*]` 条目的传输类型。
@@ -68,6 +48,10 @@ fn codex_entry_transport_type(entry_tbl: &toml::value::Table) -> &str {
 /// 已存在的服务器将启用 Codex 应用，不覆盖其他字段和应用状态
 pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError> {
     let text = crate::codex_config::read_and_validate_codex_config_text()?;
+    import_from_codex_text(config, &text)
+}
+
+fn import_from_codex_text(config: &mut MultiAppConfig, text: &str) -> Result<usize, AppError> {
     if text.trim().is_empty() {
         return Ok(0);
     }
@@ -161,7 +145,7 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                 }
                 _ => {
                     log::warn!("跳过未知类型 '{typ}' 的 Codex MCP 项 '{id}'");
-                    return changed;
+                    continue;
                 }
             }
 
@@ -224,6 +208,11 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                 }
             }
 
+            let enabled = entry_tbl
+                .get("enabled")
+                .and_then(toml::Value::as_bool)
+                .unwrap_or(true);
+            spec.remove("enabled");
             let spec_v = serde_json::Value::Object(spec);
 
             // 校验：单项失败继续处理
@@ -234,8 +223,8 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
 
             if let Some(existing) = servers.get_mut(id) {
                 // 已存在：仅启用 Codex 应用
-                if !existing.apps.codex {
-                    existing.apps.codex = true;
+                if existing.apps.codex != enabled {
+                    existing.apps.codex = enabled;
                     changed += 1;
                     log::info!("MCP 服务器 '{id}' 已启用 Codex 应用");
                 }
@@ -250,16 +239,9 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                         apps: McpApps {
                             agy: false,
                             claude: false,
-                            codex: true,
-                            gemini: false,
-                            grokbuild: false,
+                            codex: enabled,
                             opencode: false,
-                            hermes: false,
-                            mcode: false,
-                            kimi: false,
                             dsh: false,
-                            pi: false,
-                            omp: false,
                         },
                         description: None,
                         homepage: None,
@@ -295,79 +277,56 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
     Ok(changed_total)
 }
 
-/// 将 config.json 中 Codex 的 enabled==true 项以 TOML 形式写入 ~/.codex/config.toml
-///
-/// 格式策略：
-/// - 唯一正确格式：[mcp_servers] 顶层表（Codex 官方标准）
-/// - 自动清理错误格式：[mcp.servers]（如果存在）
-/// - 读取现有 config.toml；若语法无效则报错，不尝试覆盖
-/// - 仅更新 `mcp_servers` 表，保留其它键
-/// - 仅写入启用项；无启用项时清理 mcp_servers 表
-pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), AppError> {
-    if !should_sync_codex_mcp() {
+/// 把历史错误位置 `[mcp.servers.*]` 迁到官方 `[mcp_servers.*]` 后删除该节。
+/// 已存在于 `mcp_servers` 的同名条目优先保留（不覆盖）。
+fn migrate_legacy_mcp_servers_section(doc: &mut toml_edit::DocumentMut) -> Result<(), AppError> {
+    let Some(servers_item) = doc
+        .get_mut("mcp")
+        .and_then(|item| item.as_table_like_mut())
+        .and_then(|tbl| {
+            if tbl.contains_key("servers") {
+                Some(tbl.remove("servers").unwrap_or(toml_edit::Item::None))
+            } else {
+                None
+            }
+        })
+    else {
         return Ok(());
-    }
-    use toml_edit::{Item, Table};
-
-    // 1) 收集启用项（Codex 维度）
-    let enabled = collect_enabled_servers(&config.mcp.codex);
-
-    // 2) 读取现有 config.toml 文本；保持无效 TOML 的错误返回（不覆盖文件）
-    let base_text = crate::codex_config::read_and_validate_codex_config_text()?;
-
-    // 3) 使用 toml_edit 解析（允许空文件）
-    let mut doc = if base_text.trim().is_empty() {
-        toml_edit::DocumentMut::default()
-    } else {
-        base_text
-            .parse::<toml_edit::DocumentMut>()
-            .map_err(|e| AppError::McpValidation(format!("解析 config.toml 失败: {e}")))?
     };
 
-    // 4) 清理可能存在的错误格式 [mcp.servers]
-    if let Some(mcp_item) = doc.get_mut("mcp") {
-        if let Some(tbl) = mcp_item.as_table_like_mut() {
-            if tbl.contains_key("servers") {
-                log::warn!("检测到错误的 MCP 格式 [mcp.servers]，正在清理并迁移到 [mcp_servers]");
-                tbl.remove("servers");
+    log::warn!("检测到错误的 MCP 格式 [mcp.servers]，正在清理并迁移到 [mcp_servers]");
+
+    let Some(legacy) = servers_item.as_table_like() else {
+        return Ok(());
+    };
+
+    let mut to_migrate: Vec<(String, toml_edit::Table)> = Vec::new();
+    for (key, value) in legacy.iter() {
+        if let Some(table) = value.as_table() {
+            to_migrate.push((key.to_string(), table.clone()));
+        } else if let Some(inline) = value.as_inline_table() {
+            let mut table = toml_edit::Table::new();
+            for (k, v) in inline.iter() {
+                table.insert(k, toml_edit::Item::Value(v.clone()));
             }
+            to_migrate.push((key.to_string(), table));
         }
     }
 
-    // 5) 构造目标 servers 表（稳定的键顺序）
-    if enabled.is_empty() {
-        // 无启用项：移除 mcp_servers 表
-        doc.as_table_mut().remove("mcp_servers");
-    } else {
-        // 构建 servers 表
-        let mut servers_tbl = Table::new();
-        let mut ids: Vec<_> = enabled.keys().cloned().collect();
-        ids.sort();
-        for id in ids {
-            let spec = enabled.get(&id).expect("spec must exist");
-            // 复用通用转换函数（已包含扩展字段支持）
-            match json_server_to_codex_toml_table(spec) {
-                Ok(table) => {
-                    servers_tbl[&id[..]] = Item::Table(table);
-                }
-                Err(err) => {
-                    log::error!("跳过无效的 MCP 服务器 '{id}': {err}");
-                }
-            }
+    for (key, table) in to_migrate {
+        let already = doc
+            .get("mcp_servers")
+            .and_then(|item| item.as_table_like())
+            .is_some_and(|servers| servers.contains_key(key.as_str()));
+        if already {
+            log::info!("[mcp.servers.{key}] 已存在于 [mcp_servers]，跳过迁移以免覆盖");
+            continue;
         }
-        // 使用唯一正确的格式：[mcp_servers]
-        doc["mcp_servers"] = Item::Table(servers_tbl);
+        upsert_mcp_server_table(doc, &key, table)?;
     }
-
-    // 6) 写回（仅改 TOML，不触碰 auth.json）；toml_edit 会尽量保留未改区域的注释/空白/顺序
-    let new_text = doc.to_string();
-    let path = crate::codex_config::get_codex_config_path();
-    crate::config::write_text_file(&path, &new_text)?;
     Ok(())
 }
 
-/// 将单个 MCP 服务器同步到 Codex live 配置
-/// 始终使用 Codex 官方格式 [mcp_servers]，并清理可能存在的错误格式 [mcp.servers]
 /// 把单个 MCP server 表写入 `[mcp_servers]`，并保证该键是「表」。
 ///
 /// `~/.codex/config.toml` 是用户可手改的：若 `mcp_servers` 存在但不是表
@@ -407,7 +366,7 @@ fn upsert_mcp_server_table(
 /// 加载。这比 panic 更隐蔽，因为用户往往正是发现某个 MCP 有问题才来关它的。
 ///
 /// 与写入分离成纯 doc 级函数，使守卫可脱离真实 `~/.codex/config.toml` 单测。
-fn remove_mcp_server_from_doc(doc: &mut toml_edit::DocumentMut, id: &str) {
+fn remove_mcp_server_from_doc(doc: &mut toml_edit::DocumentMut, id: &str) -> Result<(), AppError> {
     if let Some(item) = doc.get_mut("mcp_servers") {
         // `Item::None` 是 toml_edit 的占位形态，不是用户写下的值——对它告警是噪音。
         // 必须在取可变借用之前算出来。
@@ -417,7 +376,9 @@ fn remove_mcp_server_from_doc(doc: &mut toml_edit::DocumentMut, id: &str) {
                 mcp_servers.remove(id);
             }
             None if user_authored => {
-                log::warn!("config.toml 的 mcp_servers 不是表，无法删除服务器 '{id}'");
+                return Err(AppError::Config(format!(
+                    "Codex config.toml 的 mcp_servers 不是表，无法删除服务器 '{id}'"
+                )));
             }
             None => {}
         }
@@ -434,16 +395,16 @@ fn remove_mcp_server_from_doc(doc: &mut toml_edit::DocumentMut, id: &str) {
             }
         }
     }
+    Ok(())
 }
 
-pub fn sync_single_server_to_codex(
-    _config: &MultiAppConfig,
-    id: &str,
-    server_spec: &Value,
-) -> Result<(), AppError> {
+pub fn sync_single_server_to_codex(id: &str, server_spec: &Value) -> Result<(), AppError> {
     if !should_sync_codex_mcp() {
         return Ok(());
     }
+    let _guard = WRITE_LOCK
+        .lock()
+        .map_err(|e| AppError::Message(e.to_string()))?;
 
     // 读取现有的 config.toml
     let config_path = crate::codex_config::get_codex_config_path();
@@ -460,15 +421,8 @@ pub fn sync_single_server_to_codex(
         toml_edit::DocumentMut::new()
     };
 
-    // 清理可能存在的错误格式 [mcp.servers]
-    if let Some(mcp_item) = doc.get_mut("mcp") {
-        if let Some(tbl) = mcp_item.as_table_like_mut() {
-            if tbl.contains_key("servers") {
-                log::warn!("检测到错误的 MCP 格式 [mcp.servers]，正在清理并迁移到 [mcp_servers]");
-                tbl.remove("servers");
-            }
-        }
-    }
+    // 迁移错误格式 [mcp.servers.*] → [mcp_servers.*]，再删除整节，避免未导入条目丢失。
+    migrate_legacy_mcp_servers_section(&mut doc)?;
 
     // 将 JSON 服务器规范转换为 TOML 表
     let toml_table = json_server_to_codex_toml_table(server_spec)?;
@@ -476,7 +430,7 @@ pub fn sync_single_server_to_codex(
 
     // 写回文件
     let new_text = doc.to_string();
-    crate::config::write_text_file(&config_path, &new_text)?;
+    crate::config::write_text_file_private(&config_path, &new_text)?;
 
     Ok(())
 }
@@ -487,6 +441,9 @@ pub fn remove_server_from_codex(id: &str) -> Result<(), AppError> {
     if !should_sync_codex_mcp() {
         return Ok(());
     }
+    let _guard = WRITE_LOCK
+        .lock()
+        .map_err(|e| AppError::Message(e.to_string()))?;
     let config_path = crate::codex_config::get_codex_config_path();
 
     if !config_path.exists() {
@@ -496,20 +453,18 @@ pub fn remove_server_from_codex(id: &str) -> Result<(), AppError> {
     let content =
         std::fs::read_to_string(&config_path).map_err(|e| AppError::io(&config_path, e))?;
 
-    // 尝试解析现有配置，如果失败则直接返回（无法删除不存在的内容）
-    let mut doc = match content.parse::<toml_edit::DocumentMut>() {
-        Ok(doc) => doc,
-        Err(e) => {
-            log::warn!("解析 Codex config.toml 失败: {e}，跳过删除操作");
-            return Ok(());
-        }
-    };
+    // TOML 损坏时不能假装删除成功，否则 DB 已删但客户端仍保留该 MCP。
+    let mut doc = content.parse::<toml_edit::DocumentMut>().map_err(|e| {
+        AppError::Config(format!(
+            "解析 Codex config.toml 失败，无法删除 MCP '{id}': {e}"
+        ))
+    })?;
 
-    remove_mcp_server_from_doc(&mut doc, id);
+    remove_mcp_server_from_doc(&mut doc, id)?;
 
     // 写回文件
     let new_text = doc.to_string();
-    crate::config::write_text_file(&config_path, &new_text)?;
+    crate::config::write_text_file_private(&config_path, &new_text)?;
 
     Ok(())
 }
@@ -532,92 +487,53 @@ pub fn remove_server_from_codex(id: &str) -> Result<(), AppError> {
 /// - null
 /// - 深度嵌套对象
 /// - 混合类型数组
-fn json_value_to_toml_item(value: &Value, field_name: &str) -> Option<toml_edit::Item> {
-    use toml_edit::{Array, InlineTable, Item};
+fn json_scalar_to_toml(value: &Value) -> Option<toml_edit::Value> {
+    match value {
+        Value::String(s) => Some(s.into()),
+        Value::Bool(b) => Some((*b).into()),
+        Value::Number(n) => n
+            .as_i64()
+            .map(Into::into)
+            .or_else(|| n.as_f64().map(Into::into)),
+        _ => None,
+    }
+}
+
+fn json_value_to_toml_value(value: &Value, field_name: &str) -> Option<toml_edit::Value> {
+    use toml_edit::{Array, InlineTable};
 
     match value {
-        Value::String(s) => Some(toml_edit::value(s.as_str())),
-
-        Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Some(toml_edit::value(i))
-            } else if let Some(f) = n.as_f64() {
-                Some(toml_edit::value(f))
-            } else {
-                log::warn!("跳过字段 '{field_name}': 无法转换的数字类型 {n}");
-                None
-            }
-        }
-
-        Value::Bool(b) => Some(toml_edit::value(*b)),
-
         Value::Array(arr) => {
-            // 只支持简单类型的数组（字符串、数字、布尔）
             let mut toml_arr = Array::default();
-            let mut all_same_type = true;
-
             for item in arr {
-                match item {
-                    Value::String(s) => toml_arr.push(s.as_str()),
-                    Value::Number(n) if n.is_i64() => {
-                        if let Some(i) = n.as_i64() {
-                            toml_arr.push(i);
-                        } else {
-                            all_same_type = false;
-                            break;
-                        }
-                    }
-                    Value::Number(n) if n.is_f64() => {
-                        if let Some(f) = n.as_f64() {
-                            toml_arr.push(f);
-                        } else {
-                            all_same_type = false;
-                            break;
-                        }
-                    }
-                    Value::Bool(b) => toml_arr.push(*b),
-                    _ => {
-                        all_same_type = false;
-                        break;
-                    }
-                }
+                let converted = json_value_to_toml_value(item, field_name)?;
+                toml_arr.push(converted);
             }
-
-            if all_same_type && !toml_arr.is_empty() {
-                Some(Item::Value(toml_edit::Value::Array(toml_arr)))
-            } else {
-                log::warn!("跳过字段 '{field_name}': 不支持的数组类型（混合类型或嵌套结构）");
-                None
-            }
+            Some(toml_edit::Value::Array(toml_arr))
         }
-
         Value::Object(obj) => {
-            // 只支持浅层对象（所有值都是字符串）→ TOML Inline Table
             let mut inline_table = InlineTable::new();
-            let mut all_strings = true;
-
             for (k, v) in obj {
-                if let Some(s) = v.as_str() {
-                    // InlineTable 需要 Value 类型，toml_edit::value() 返回 Item，需要提取内部的 Value
-                    inline_table.insert(k, s.into());
-                } else {
-                    all_strings = false;
-                    break;
-                }
+                inline_table.insert(k, json_value_to_toml_value(v, field_name)?);
             }
-
-            if all_strings && !inline_table.is_empty() {
-                Some(Item::Value(toml_edit::Value::InlineTable(inline_table)))
-            } else {
-                log::warn!("跳过字段 '{field_name}': 对象值包含非字符串类型，建议使用子表语法");
-                None
-            }
+            Some(toml_edit::Value::InlineTable(inline_table))
         }
+        _ => json_scalar_to_toml(value),
+    }
+}
 
+fn json_value_to_toml_item(value: &Value, field_name: &str) -> Option<toml_edit::Item> {
+    match value {
         Value::Null => {
             log::debug!("跳过字段 '{field_name}': TOML 不支持 null 值");
             None
         }
+        _ => json_value_to_toml_value(value, field_name)
+            .map(toml_edit::Item::Value)
+            .or_else(|| {
+                log::warn!("跳过字段 '{field_name}': 无法转换为 TOML");
+                None
+            }),
     }
 }
 
@@ -804,6 +720,58 @@ mod tests {
     use super::*;
 
     #[test]
+    fn importing_unknown_transport_does_not_skip_later_servers() {
+        let mut config = MultiAppConfig::default();
+        let count = import_from_codex_text(
+            &mut config,
+            r#"
+[mcp_servers.a_unknown]
+type = "unsupported"
+url = "https://example.com"
+[mcp_servers.z_valid]
+command = "valid-command"
+[mcp.servers.legacy]
+command = "legacy-command"
+"#,
+        )
+        .unwrap();
+        assert_eq!(count, 2);
+        let servers = config.mcp.servers.unwrap();
+        assert!(!servers.contains_key("a_unknown"));
+        assert!(servers["z_valid"].apps.codex);
+        assert!(servers["legacy"].apps.codex);
+    }
+
+    #[test]
+    fn migrate_legacy_mcp_servers_preserves_other_entries() {
+        let mut doc = r#"
+[mcp.servers.keep_me]
+command = "legacy-cmd"
+[mcp.servers.also]
+command = "also-cmd"
+[mcp_servers.existing]
+command = "keep"
+"#
+        .parse::<toml_edit::DocumentMut>()
+        .expect("fixture");
+
+        migrate_legacy_mcp_servers_section(&mut doc).expect("migrate");
+
+        let servers = doc
+            .get("mcp_servers")
+            .and_then(|item| item.as_table_like())
+            .expect("mcp_servers");
+        assert!(servers.contains_key("keep_me"));
+        assert!(servers.contains_key("also"));
+        assert!(servers.contains_key("existing"));
+        let mcp = doc.get("mcp").and_then(|item| item.as_table_like());
+        assert!(
+            mcp.is_none_or(|tbl| !tbl.contains_key("servers")),
+            "legacy servers section must be removed"
+        );
+    }
+
+    #[test]
     fn upsert_normalizes_non_table_mcp_servers_without_panicking() {
         // 用户手改过的 config.toml：mcp_servers 是字符串而不是表。
         // 修复前 `doc["mcp_servers"][id] = …` 会 panic。
@@ -861,7 +829,7 @@ mod tests {
             .parse::<toml_edit::DocumentMut>()
             .expect("fixture parses");
 
-        remove_mcp_server_from_doc(&mut doc, "drop");
+        remove_mcp_server_from_doc(&mut doc, "drop").expect("inline table remove");
 
         let servers = doc
             .get("mcp_servers")
@@ -875,14 +843,13 @@ mod tests {
     }
 
     #[test]
-    fn remove_is_a_noop_on_non_table_mcp_servers() {
-        // 既不能 panic，也不能把用户手写的值悄悄抹掉
+    fn remove_errors_on_non_table_mcp_servers() {
+        // 不能假装删成功，也不能把用户手写的值悄悄抹掉
         let mut doc = "mcp_servers = 42\n"
             .parse::<toml_edit::DocumentMut>()
             .expect("fixture parses");
 
-        remove_mcp_server_from_doc(&mut doc, "whatever");
-
+        assert!(remove_mcp_server_from_doc(&mut doc, "whatever").is_err());
         assert_eq!(doc.to_string(), "mcp_servers = 42\n");
     }
 

@@ -1,3 +1,4 @@
+use crate::app_config::AppType;
 use tauri::State;
 
 use crate::services::omo::{OmoLocalFileData, SLIM, STANDARD};
@@ -13,27 +14,18 @@ pub async fn read_omo_local_file() -> Result<OmoLocalFileData, String> {
 pub async fn get_current_omo_provider_id(state: State<'_, AppState>) -> Result<String, String> {
     let provider = state
         .db
-        .get_current_omo_provider("opencode", "omo")
+        .get_current_omo_provider(&AppType::OpenCode, "omo")
         .map_err(|e| e.to_string())?;
     Ok(provider.map(|p| p.id).unwrap_or_default())
 }
 
 #[tauri::command]
 pub async fn disable_current_omo(state: State<'_, AppState>) -> Result<(), String> {
-    let providers = state
-        .db
-        .get_all_providers("opencode")
-        .map_err(|e| e.to_string())?;
-    for (id, p) in &providers {
-        if p.category.as_deref() == Some("omo") {
-            state
-                .db
-                .clear_omo_provider_current("opencode", id, "omo")
-                .map_err(|e| e.to_string())?;
-        }
-    }
-    OmoService::delete_config_file(&STANDARD).map_err(|e| e.to_string())?;
-    Ok(())
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || OmoService::disable_current(&state, &STANDARD))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())
 }
 
 // ── OMO Slim commands ───────────────────────────────────────
@@ -49,25 +41,16 @@ pub async fn get_current_omo_slim_provider_id(
 ) -> Result<String, String> {
     let provider = state
         .db
-        .get_current_omo_provider("opencode", "omo-slim")
+        .get_current_omo_provider(&AppType::OpenCode, "omo-slim")
         .map_err(|e| e.to_string())?;
     Ok(provider.map(|p| p.id).unwrap_or_default())
 }
 
 #[tauri::command]
 pub async fn disable_current_omo_slim(state: State<'_, AppState>) -> Result<(), String> {
-    let providers = state
-        .db
-        .get_all_providers("opencode")
-        .map_err(|e| e.to_string())?;
-    for (id, p) in &providers {
-        if p.category.as_deref() == Some("omo-slim") {
-            state
-                .db
-                .clear_omo_provider_current("opencode", id, "omo-slim")
-                .map_err(|e| e.to_string())?;
-        }
-    }
-    OmoService::delete_config_file(&SLIM).map_err(|e| e.to_string())?;
-    Ok(())
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || OmoService::disable_current(&state, &SLIM))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())
 }

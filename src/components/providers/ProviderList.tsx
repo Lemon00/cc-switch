@@ -1,10 +1,48 @@
-import { CSS } from "@dnd-kit/utilities";
+import { UnreadableEntriesNotice } from "@/components/common/UnreadableEntriesNotice";
+import {
+  DshAccountCard,
+  accountName as dshAccountName,
+  useDshAccountStatus,
+} from "@/components/providers/DshAccount";
+import { getOpencodeDeclaredModels } from "@/components/providers/forms/helpers/opencodeFormUtils";
+import {
+  buildAdditiveSections,
+  buildLaunchSections,
+  buildSwitchSections,
+  type CardPresentation,
+  type ProviderSection,
+  type SwitchModeInput,
+} from "@/components/providers/presentation";
+import { ProviderCard } from "@/components/providers/ProviderCard";
+import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
+import { Button } from "@/components/ui/button";
+import { HelpTip } from "@/components/ui/help-tip";
+import { Input } from "@/components/ui/input";
+import { Notice } from "@/components/ui/notice";
+import { useDragSort } from "@/hooks/useDragSort";
+import { useStreamCheck } from "@/hooks/useStreamCheck";
+import type { AppId } from "@/lib/api";
+import { providersApi } from "@/lib/api/providers";
+import {
+  useCurrentOmoProviderId,
+  useCurrentOmoSlimProviderId,
+} from "@/lib/query/omo";
+import { toast } from "@/lib/toast";
+import { cn } from "@/lib/utils";
+import type { Provider } from "@/types";
+import { isTextEditableTarget } from "@/utils/domUtils";
+import { extractErrorMessage } from "@/utils/errorUtils";
+import { extractProviderBaseUrl } from "@/utils/providerConfigUtils";
 import { DndContext, closestCenter, type Modifier } from "@dnd-kit/core";
 import {
   SortableContext,
   useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AnimatePresence, motion } from "framer-motion";
+import { Search, X } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -14,66 +52,12 @@ import {
   type CSSProperties,
 } from "react";
 import { createPortal } from "react-dom";
-import { AnimatePresence, motion } from "framer-motion";
-import { Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { toast } from "@/lib/toast";
-import type { OpenClawProviderConfig, Provider } from "@/types";
-import { getOpencodeDeclaredModels } from "@/components/providers/forms/helpers/opencodeFormUtils";
-import type { AppId } from "@/lib/api";
-import { providersApi } from "@/lib/api/providers";
-import {
-  extractErrorMessage,
-  translatePiProviderMutationError,
-} from "@/utils/errorUtils";
-import { useDragSort } from "@/hooks/useDragSort";
-import {
-  useOpenClawLiveProviderIds,
-  useOpenClawDefaultModel,
-} from "@/hooks/useOpenClaw";
-import {
-  useHermesLiveProviderIds,
-  useHermesModelConfig,
-} from "@/hooks/useHermes";
-import { useStreamCheck } from "@/hooks/useStreamCheck";
-import { ProviderCard } from "@/components/providers/ProviderCard";
-import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
-import {
-  useCurrentOmoProviderId,
-  useCurrentOmoSlimProviderId,
-} from "@/lib/query/omo";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { HelpTip } from "@/components/ui/help-tip";
-import { Notice } from "@/components/ui/notice";
-import { cn } from "@/lib/utils";
-import { isTextEditableTarget } from "@/utils/domUtils";
-import { extractProviderBaseUrl } from "@/utils/providerConfigUtils";
-import { usePiCurrentState } from "@/lib/query/pi";
-import { isPiFamilyApp } from "@/config/appConfig";
-import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
-import {
-  DshAccountCard,
-  accountName as dshAccountName,
-  useDshAccountStatus,
-} from "@/components/providers/DshAccount";
-import {
-  buildAdditiveSections,
-  buildLaunchSections,
-  buildSwitchSections,
-  type CardPresentation,
-  type ProviderSection,
-  type SwitchModeInput,
-} from "@/components/providers/presentation";
-
 /** 切换式应用（Claude Code / Codex / Gemini CLI / Grok Build）的模式状态和动作，由供应商页传入。 */
 export type SwitchModeProps = Omit<SwitchModeInput, "app" | "t" | "providers">;
-
 const verticalDragModifiers: Modifier[] = [
   ({ transform }) => ({ ...transform, x: 0 }),
 ];
-
 interface ProviderListProps {
   providers: Record<string, Provider>;
   currentProviderId: string;
@@ -104,7 +88,6 @@ interface ProviderListProps {
    */
   searchSlot?: HTMLElement | null;
 }
-
 export function ProviderList({
   providers,
   currentProviderId,
@@ -133,7 +116,6 @@ export function ProviderList({
     providers,
     appId,
   );
-
   const {
     data: opencodeLiveIds,
     isPending: isOpencodeLiveIdsPending,
@@ -148,103 +130,43 @@ export function ProviderList({
     queryFn: () => providersApi.getOpenCodeDefaultModel(),
     enabled: appId === "opencode",
   });
-  const {
-    data: openclawLiveIds,
-    isPending: isOpenclawLiveIdsPending,
-    error: openclawLiveIdsError,
-  } = useOpenClawLiveProviderIds(appId === "openclaw");
-  const {
-    data: hermesLiveIds,
-    isPending: isHermesLiveIdsPending,
-    error: hermesLiveIdsError,
-  } = useHermesLiveProviderIds(appId === "hermes");
-  const { data: hermesModelConfig } = useHermesModelConfig(appId === "hermes");
-  const { data: openclawDefaultModel } = useOpenClawDefaultModel(
-    appId === "openclaw",
-  );
   const isOpenCode = appId === "opencode";
   const { data: currentOmoId } = useCurrentOmoProviderId(isOpenCode);
   const { data: currentOmoSlimId } = useCurrentOmoSlimProviderId(isOpenCode);
-  const {
-    data: piCurrentState,
-    isSuccess: isPiCurrentStateSuccess,
-    isPending: isPiCurrentStatePending,
-    isError: isPiCurrentStateError,
-    error: piCurrentStateError,
-  } = usePiCurrentState(isPiFamilyApp(appId), appId === "omp" ? "omp" : "pi");
-  const isPiStateReady = !isPiFamilyApp(appId) || isPiCurrentStateSuccess;
   // 累加式应用要等 live 里有哪些供应商读回来（成功或失败）才知道卡片该进哪个分区；
   // 在那之前按加载中画骨架，不然卡片先全落进「可添加」，读回来再整体搬到「已添加」。
   // 一张卡都没有时不用等，直接出空状态
   const isLiveMembershipPending =
-    (appId === "opencode" && isOpencodeLiveIdsPending) ||
-    (appId === "openclaw" && isOpenclawLiveIdsPending) ||
-    (appId === "hermes" && isHermesLiveIdsPending) ||
-    (isPiFamilyApp(appId) && isPiCurrentStatePending);
-
+    appId === "opencode" && isOpencodeLiveIdsPending;
   const isInConfig = useCallback(
     (provider: Provider): boolean => {
       switch (appId) {
-        case "kimi":
         case "dsh":
-        case "mcode":
-          return provider.meta?.liveConfigManaged === true;
         case "opencode":
           return opencodeLiveIds?.includes(provider.id) ?? false;
-        case "openclaw":
-          return openclawLiveIds?.includes(provider.id) ?? false;
-        case "hermes":
-          return hermesLiveIds?.includes(provider.id) ?? false;
-        case "pi":
-        case "omp":
-          return isPiStateReady
-            ? (piCurrentState?.enabledProviderIds.includes(provider.id) ??
-                false)
-            : false;
         default:
           return true;
       }
     },
-    [
-      appId,
-      opencodeLiveIds,
-      openclawLiveIds,
-      hermesLiveIds,
-      isPiStateReady,
-      piCurrentState,
-    ],
+    [appId, opencodeLiveIds],
   );
-
   const handleTest = useCallback(
     (provider: Provider) => {
       checkProvider(provider.id, provider.name);
     },
     [checkProvider],
   );
-
   const queryClient = useQueryClient();
   const importMutation = useMutation({
     mutationFn: async (): Promise<boolean> => {
       if (appId === "opencode") {
         return (await providersApi.importOpenCodeFromLive()) > 0;
       }
-      if (appId === "openclaw") {
-        return (await providersApi.importOpenClawFromLive()) > 0;
-      }
-      if (appId === "hermes") {
-        return (await providersApi.importHermesFromLive()) > 0;
-      }
-      if (appId === "claude-desktop") {
-        return (await providersApi.importClaudeDesktopFromClaude()) > 0;
-      }
       return providersApi.importDefault(appId);
     },
     onSuccess: (imported) => {
       if (imported) {
         queryClient.invalidateQueries({ queryKey: ["providers", appId] });
-        if (appId === "claude-desktop") {
-          queryClient.invalidateQueries({ queryKey: ["claudeDesktopStatus"] });
-        }
         toast.success(t("provider.importCurrentDescription"));
       } else {
         toast.info(t("provider.noProviders"));
@@ -259,7 +181,6 @@ export function ProviderList({
       queryClient.invalidateQueries({ queryKey: ["providers", appId] });
     },
   });
-
   const [searchTerm, setSearchTerm] = useState("");
   const [innerSearchOpen, setInnerSearchOpen] = useState(false);
   const isSearchOpen = searchOpen ?? innerSearchOpen;
@@ -272,11 +193,9 @@ export function ProviderList({
     input.select();
     input.scrollIntoView?.({ block: "nearest" });
   }, []);
-
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
-
       const key = event.key.toLowerCase();
       if ((event.metaKey || event.ctrlKey) && key === "f") {
         // 正在输入框/可编辑区域中时不抢占 Ctrl+F（例如添加供应商表单里
@@ -291,23 +210,19 @@ export function ProviderList({
         }
         return;
       }
-
       if (key === "escape") {
         setIsSearchOpen(false);
       }
     };
-
     globalThis.addEventListener("keydown", handleKeyDown);
     return () => globalThis.removeEventListener("keydown", handleKeyDown);
   }, [setIsSearchOpen, isSearchOpen, focusSearch]);
-
   useEffect(() => {
     if (isSearchOpen) {
       const frame = requestAnimationFrame(focusSearch);
       return () => cancelAnimationFrame(frame);
     }
   }, [isSearchOpen, focusSearch]);
-
   // 每家可被搜到的文字：名称、备注、官网、请求地址（请求地址要解析配置，只随列表变化重算）
   const searchIndex = useMemo(
     () =>
@@ -325,9 +240,7 @@ export function ProviderList({
       })),
     [sortedProviders],
   );
-
   const searchKeyword = isSearchOpen ? searchTerm.trim().toLowerCase() : "";
-
   // DSH 登录了 DeepSeek 账号时，「已添加」最前面画一张官方账号卡（不是供应商行，见 DshAccountCard）
   const { data: dshAccount } = useDshAccountStatus(appId === "dsh");
   const dshAccountCard =
@@ -340,7 +253,6 @@ export function ProviderList({
           .toLowerCase()
           .includes(searchKeyword)),
   );
-
   // 关掉面板就不再过滤：搜索词留着，下次打开还在，但列表不会悄悄少几家
   const filteredProviders = useMemo(() => {
     const keyword = searchKeyword;
@@ -349,7 +261,6 @@ export function ProviderList({
       .filter((entry) => entry.text.includes(keyword))
       .map((entry) => entry.provider);
   }, [searchKeyword, searchIndex, sortedProviders]);
-
   const sections = useMemo<ProviderSection[]>(() => {
     if (switchMode) {
       // 队列按没过滤的全部供应商剔掉已不存在的 id：序号和上下移要按完整队列算，
@@ -372,11 +283,7 @@ export function ProviderList({
       });
     }
     const defaultPrimary =
-      (appId === "openclaw"
-        ? openclawDefaultModel?.primary
-        : appId === "opencode"
-          ? opencodeDefaultModel
-          : null) ?? "";
+      (appId === "opencode" ? opencodeDefaultModel : null) ?? "";
     const slash = defaultPrimary.indexOf("/");
     return buildAdditiveSections({
       app: appId,
@@ -399,22 +306,11 @@ export function ProviderList({
             provider.settingsConfig,
           );
         }
-        const config = provider.settingsConfig as OpenClawProviderConfig;
-        if (!Array.isArray(config?.models)) return [];
-        return config.models
-          .filter((model) => typeof model.id === "string" && model.id.trim())
-          .map((model) => ({ id: model.id, name: model.name }));
+        return [];
       },
-      hermesCurrentId: hermesModelConfig?.provider ?? null,
       // Hermes 删掉的 dict 条目不再归它管（导入不会清理，只读就删不掉）；
       // 读不到 Hermes 配置时无从判断，仍按托管处理
-      isHermesManaged: (provider) =>
-        isHermesReadOnlyProvider(provider.settingsConfig) &&
-        (!hermesLiveIds ||
-          !!hermesLiveIdsError ||
-          hermesLiveIds.includes(provider.id)),
-      piStateUnavailable: isPiFamilyApp(appId) && !isPiStateReady,
-      kimiCurrentId: currentProviderId,
+
       extraAdded: showDshAccountCard ? 1 : 0,
       actions: {
         add: onSwitch,
@@ -437,15 +333,10 @@ export function ProviderList({
     filteredProviders,
     onSwitch,
     onOpenTerminal,
-    openclawDefaultModel?.primary,
     opencodeDefaultModel,
     isInConfig,
     currentOmoId,
     currentOmoSlimId,
-    hermesLiveIds,
-    hermesLiveIdsError,
-    hermesModelConfig?.provider,
-    isPiStateReady,
     currentProviderId,
     showDshAccountCard,
     onRemoveFromConfig,
@@ -454,36 +345,10 @@ export function ProviderList({
     onDisableOmoSlim,
     onSetAsDefault,
   ]);
-
-  const piStateRawError =
-    isPiFamilyApp(appId) && isPiCurrentStateError
-      ? extractErrorMessage(piCurrentStateError)
-      : "";
-  const piStateError =
-    translatePiProviderMutationError(piStateRawError, t) || piStateRawError;
-  const piStateErrorNotice =
-    isPiFamilyApp(appId) && isPiCurrentStateError ? (
-      <Notice
-        tone="warning"
-        title={t(`${appId}.current.readFailed`, {
-          defaultValue: "无法读取 Pi 当前配置",
-        })}
-      >
-        {t(`${appId}.current.stateUnavailableHint`)}
-        {piStateError ? ` ${piStateError}` : ""}
-      </Notice>
-    ) : null;
-
+  const piStateErrorNotice = null;
   // 累加式应用读不了 live 配置（如 YAML 写坏了）时，列表和空状态看起来跟没配置过一样，
   // 添加 / 移除又会报错，所以在顶部说清楚
-  const liveIdsError =
-    appId === "opencode"
-      ? opencodeLiveIdsError
-      : appId === "openclaw"
-        ? openclawLiveIdsError
-        : appId === "hermes"
-          ? hermesLiveIdsError
-          : null;
+  const liveIdsError = appId === "opencode" ? opencodeLiveIdsError : null;
   const liveIdsErrorMessage = liveIdsError
     ? extractErrorMessage(liveIdsError)
     : "";
@@ -501,7 +366,15 @@ export function ProviderList({
       {liveIdsErrorMessage ? ` ${liveIdsErrorMessage}` : ""}
     </Notice>
   ) : null;
-
+  // 库里读不出来的供应商不在 providers 里（不能编辑、切换），单独列出、只能删除
+  const unreadableNotice = (
+    <UnreadableEntriesNotice
+      queryKey={["providers", appId, "unreadable"]}
+      load={() => providersApi.getUnreadable(appId)}
+      remove={(id) => providersApi.delete(id, appId)}
+      invalidate={[["providers", appId]]}
+    />
+  );
   if (isLoading || (isLiveMembershipPending && sortedProviders.length > 0)) {
     return (
       <div className="space-y-2">
@@ -514,40 +387,29 @@ export function ProviderList({
       </div>
     );
   }
-
   if (sortedProviders.length === 0 && !dshAccountCard) {
     return (
       <div className="space-y-4">
         {piStateErrorNotice}
         {liveConfigErrorNotice}
+        {unreadableNotice}
         <ProviderEmptyState
           appId={appId}
-          onCreate={isPiFamilyApp(appId) ? undefined : onCreate}
-          onImport={
-            isPiFamilyApp(appId) ||
-            appId === "mcode" ||
-            appId === "kimi" ||
-            appId === "dsh"
-              ? undefined
-              : () => importMutation.mutate()
-          }
+          onCreate={onCreate}
+          onImport={appId === "dsh" ? undefined : () => importMutation.mutate()}
         />
       </div>
     );
   }
-
   // 「当前」只用来决定官方订阅 / OAuth 额度自动刷新：Pi 没有当前项，OMO / Hermes 各看自己的当前项；
   // Antigravity 没有「启用」，每张卡都随时能打开，额度一律照常显示
   const isCurrentFor = (provider: Provider) => {
-    if (isPiFamilyApp(appId)) return false;
     if (appId === "agy") return true;
     if (provider.category === "omo") return provider.id === currentOmoId;
     if (provider.category === "omo-slim")
       return provider.id === currentOmoSlimId;
-    if (appId === "hermes") return provider.id === hermesModelConfig?.provider;
     return provider.id === currentProviderId;
   };
-
   const renderCard = (provider: Provider, presentation: CardPresentation) => (
     <SortableProviderCard
       key={provider.id}
@@ -568,7 +430,6 @@ export function ProviderList({
       isTesting={isChecking(provider.id)}
     />
   );
-
   // 搜索框放在列表上方第一行的最右端，不盖住卡片、打开时卡片也不下移
   const searchField = (
     <AnimatePresence>
@@ -625,7 +486,6 @@ export function ProviderList({
       )}
     </AnimatePresence>
   );
-
   const renderSectionTitle = (section: ProviderSection) => (
     <div className="flex items-center gap-1 text-caption font-semibold text-fg-2">
       <h2 className="m-0 text-caption font-semibold">{section.title}</h2>
@@ -637,7 +497,6 @@ export function ProviderList({
       )}
     </div>
   );
-
   // 没有模式行的应用：第一个分组标题和搜索框同一行。这一行一直在（搜不到结果时只剩搜索框），
   // 输入框在树里的位置不变，打字中途不会因为结果清空被重新挂载而丢焦点
   const hostedSearch = searchSlot !== undefined;
@@ -648,12 +507,12 @@ export function ProviderList({
     (filteredProviders.length > 0 || showDshAccountCard);
   const showListHeader =
     !hostedSearch && (Boolean(leadSection?.title) || isSearchOpen);
-
   // 卡片列表铺满主区域，和页头同宽
   return (
     <div className="space-y-4">
       {piStateErrorNotice}
       {liveConfigErrorNotice}
+      {unreadableNotice}
       {searchSlot && createPortal(searchField, searchSlot)}
       {showListHeader && (
         <div
@@ -715,7 +574,6 @@ export function ProviderList({
     </div>
   );
 }
-
 interface SortableProviderCardProps {
   provider: Provider;
   appId: AppId;
@@ -730,7 +588,6 @@ interface SortableProviderCardProps {
   onTest?: (provider: Provider) => void;
   isTesting: boolean;
 }
-
 function SortableProviderCard(props: SortableProviderCardProps) {
   const {
     setNodeRef,
@@ -740,14 +597,12 @@ function SortableProviderCard(props: SortableProviderCardProps) {
     transition,
     isDragging,
   } = useSortable({ id: props.provider.id });
-
   const style: CSSProperties = {
     transform: CSS.Translate.toString(transform),
     transition,
     position: "relative",
     zIndex: isDragging ? 10 : undefined,
   };
-
   return (
     <div ref={setNodeRef} style={style}>
       <ProviderCard

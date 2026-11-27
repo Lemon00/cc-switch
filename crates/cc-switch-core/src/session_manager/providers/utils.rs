@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, BufRead, BufReader, Seek, SeekFrom};
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::SystemTime;
@@ -13,6 +13,47 @@ use crate::session_manager::SessionMeta;
 
 /// Maximum number of characters for session titles (shared across providers).
 pub const TITLE_MAX_CHARS: usize = 80;
+/// Match the maximum size that lazy ContentRef reads can resolve.
+const MAX_JSONL_LINE_BYTES: u64 = super::super::content::MAX_TEXT_BYTES;
+
+/// Native IDs are also used as path components and terminal arguments. Keep
+/// malformed records readable, but never turn their IDs into shell syntax.
+pub fn is_safe_id(id: &str) -> bool {
+    id.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
+        && id
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'.'))
+}
+
+pub fn resume_command(command: &str, id: &str) -> Option<String> {
+    is_safe_id(id).then(|| format!("{command} {id}"))
+}
+
+/// Iterative traversal never follows child links (including directory loops).
+/// The configured root itself may be a symlink, as with relocated native data.
+pub fn collect_session_files(
+    root: &Path,
+    files: &mut Vec<PathBuf>,
+    accept: impl Fn(&Path) -> bool,
+) {
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            let path = entry.path();
+            if kind.is_dir() {
+                pending.push(path);
+            } else if kind.is_file() && accept(&path) {
+                files.push(path);
+            }
+        }
+    }
+}
 
 /// 会话文件解析结果的缓存：按文件的修改时间和大小判断有没有变，没变就复用上次
 /// 解析出的 [`SessionMeta`]，只重新解析新增或改过的文件。
@@ -111,7 +152,7 @@ pub fn read_head_tail_lines(
     // For small files, read all lines once and split
     if file_len < 16_384 {
         let reader = BufReader::new(file);
-        let all: Vec<String> = reader.lines().map_while(Result::ok).collect();
+        let all = read_metadata_lines(reader, usize::MAX)?;
         let head = all.iter().take(head_n).cloned().collect();
         let skip = all.len().saturating_sub(tail_n);
         let tail = all.into_iter().skip(skip).collect();
@@ -120,32 +161,75 @@ pub fn read_head_tail_lines(
 
     // Read head lines from the beginning
     let reader = BufReader::new(file);
-    let head: Vec<String> = reader.lines().take(head_n).map_while(Result::ok).collect();
+    let head = read_metadata_lines(reader, head_n)?;
 
     // Seek to last ~16 KB for tail lines
     let seek_pos = file_len.saturating_sub(16_384);
     let mut file2 = File::open(path)?;
-    file2.seek(SeekFrom::Start(seek_pos))?;
-    let tail_reader = BufReader::new(file2);
-    let all_tail: Vec<String> = tail_reader.lines().map_while(Result::ok).collect();
-
-    // Skip first partial line if we seeked into the middle of a line
-    let skip_first = if seek_pos > 0 { 1 } else { 0 };
-    let usable: Vec<String> = all_tail.into_iter().skip(skip_first).collect();
+    file2.seek(SeekFrom::Start(seek_pos.saturating_sub(1)))?;
+    let mut tail_reader = BufReader::new(file2);
+    if seek_pos > 0 {
+        let mut previous = [0];
+        tail_reader.read_exact(&mut previous)?;
+        if previous[0] != b'\n' {
+            // Discard bytes before decoding: the window may start inside UTF-8.
+            tail_reader.skip_until(b'\n')?;
+        }
+    }
+    let usable = read_metadata_lines(tail_reader, usize::MAX)?;
     let skip = usable.len().saturating_sub(tail_n);
     let tail = usable.into_iter().skip(skip).collect();
 
     Ok((head, tail))
 }
 
+pub(super) fn read_metadata_lines(
+    mut reader: impl BufRead,
+    count: usize,
+) -> io::Result<Vec<String>> {
+    let mut lines = Vec::new();
+    let mut bytes = Vec::new();
+    for _ in 0..count {
+        bytes.clear();
+        let read = reader
+            .by_ref()
+            .take(MAX_JSONL_LINE_BYTES + 1)
+            .read_until(b'\n', &mut bytes)?;
+        if read == 0 {
+            break;
+        }
+        if read as u64 > MAX_JSONL_LINE_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Session JSONL line exceeds 32MB",
+            ));
+        }
+        // A damaged line must not hide later valid records; actual I/O errors
+        // propagate so FileParseCache retries instead of caching partial data.
+        if let Ok(line) = std::str::from_utf8(&bytes) {
+            lines.push(line.trim_end_matches(['\r', '\n']).to_owned());
+        }
+    }
+    Ok(lines)
+}
+
 pub fn parse_timestamp_to_ms(value: &Value) -> Option<i64> {
     // Integer: milliseconds (>1e12) or seconds
     if let Some(n) = value.as_i64() {
-        return Some(if n > 1_000_000_000_000 { n } else { n * 1000 });
+        return if n.unsigned_abs() >= 1_000_000_000_000 {
+            Some(n)
+        } else {
+            n.checked_mul(1000)
+        };
     }
     if let Some(n) = value.as_f64() {
-        let n = n as i64;
-        return Some(if n > 1_000_000_000_000 { n } else { n * 1000 });
+        let millis = if n.abs() >= 1_000_000_000_000.0 {
+            n
+        } else {
+            n * 1000.0
+        };
+        return (millis.is_finite() && millis >= i64::MIN as f64 && millis < i64::MAX as f64)
+            .then(|| millis.round() as i64);
     }
     // RFC3339 string
     let raw = value.as_str()?;
@@ -281,7 +365,17 @@ impl<R: BufRead> LineSpans<R> {
     /// 读取下一行；到文件末尾返回 `Ok(None)`。
     pub fn next_line(&mut self) -> io::Result<Option<LineSpan<'_>>> {
         self.buf.clear();
-        let read = self.reader.read_until(b'\n', &mut self.buf)?;
+        let read = self
+            .reader
+            .by_ref()
+            .take(MAX_JSONL_LINE_BYTES + 1)
+            .read_until(b'\n', &mut self.buf)?;
+        if read as u64 > MAX_JSONL_LINE_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Session JSONL line exceeds 32MB",
+            ));
+        }
         if read == 0 {
             return Ok(None);
         }
@@ -345,6 +439,96 @@ pub fn path_basename(value: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resume_commands_reject_shell_syntax_and_options() {
+        for id in [
+            "",
+            "--help",
+            "a b",
+            "x;whoami",
+            "$(whoami)",
+            "a\nb",
+            "../x",
+            "a\\b",
+            "x&calc",
+            "a'\"b",
+        ] {
+            assert_eq!(resume_command("codex resume", id), None, "{id:?}");
+        }
+        assert_eq!(
+            resume_command("codex resume", "ses_1-a.2").as_deref(),
+            Some("codex resume ses_1-a.2")
+        );
+    }
+
+    #[test]
+    fn timestamps_preserve_fractional_seconds_and_handle_integer_boundaries() {
+        assert_eq!(
+            parse_timestamp_to_ms(&serde_json::json!(1_700_000_000.125)),
+            Some(1_700_000_000_125)
+        );
+        assert_eq!(
+            parse_timestamp_to_ms(&serde_json::json!(1_000_000_000_000i64)),
+            Some(1_000_000_000_000)
+        );
+        assert_eq!(
+            parse_timestamp_to_ms(&serde_json::json!(i64::MIN)),
+            Some(i64::MIN)
+        );
+        assert_eq!(parse_timestamp_to_ms(&serde_json::json!(1e30)), None);
+    }
+
+    #[test]
+    fn metadata_tail_survives_utf8_window_and_damaged_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.jsonl");
+        let mut bytes = b"head\n".to_vec();
+        bytes.extend("中".repeat(6000).as_bytes());
+        bytes.extend(b"\nlast\n");
+        assert_ne!(bytes.len().saturating_sub(16_384) % 3, 5 % 3);
+        std::fs::write(&path, bytes).unwrap();
+        let (_, tail) = read_head_tail_lines(&path, 1, 2).unwrap();
+        assert_eq!(tail, ["last"]);
+        std::fs::write(&path, b"first\n\xff\nlast\n").unwrap();
+        let (head, tail) = read_head_tail_lines(&path, 10, 10).unwrap();
+        assert_eq!(head, ["first", "last"]);
+        assert_eq!(tail, head);
+    }
+
+    #[test]
+    fn metadata_tail_keeps_a_complete_first_line_at_window_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.jsonl");
+        let tail = format!("boundary\n{}\n", "x".repeat(16_384 - 10));
+        assert_eq!(tail.len(), 16_384);
+        std::fs::write(&path, format!("{}\n{tail}", "h".repeat(100))).unwrap();
+        let (_, lines) = read_head_tail_lines(&path, 1, 2).unwrap();
+        assert_eq!(lines[0], "boundary");
+    }
+
+    #[test]
+    fn jsonl_reader_bounds_an_unterminated_line() {
+        let bytes = vec![b'x'; MAX_JSONL_LINE_BYTES as usize + 2];
+        let mut lines = LineSpans::new(std::io::Cursor::new(bytes));
+        let error = lines.next_line().err().unwrap();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(lines.buf.len(), MAX_JSONL_LINE_BYTES as usize + 1);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn session_scan_does_not_follow_child_symlinks_or_cycles() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("own.jsonl"), "{}").unwrap();
+        std::fs::write(outside.path().join("other.jsonl"), "{}").unwrap();
+        std::os::unix::fs::symlink(root.path(), root.path().join("cycle")).unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("outside")).unwrap();
+        let mut files = Vec::new();
+        collect_session_files(root.path(), &mut files, |_| true);
+        assert_eq!(files, [root.path().join("own.jsonl")]);
+    }
     use serde_json::json;
 
     fn meta_from_file(path: &Path) -> Option<SessionMeta> {
@@ -509,13 +693,5 @@ mod tests {
             }
         );
         assert_eq!(seen[1].1, json!({"b":"字"}));
-    }
-
-    #[test]
-    fn extract_text_supports_pi_tool_calls() {
-        assert_eq!(
-            extract_text(&json!([{ "type": "toolCall", "name": "read" }])),
-            "[Tool: read]"
-        );
     }
 }

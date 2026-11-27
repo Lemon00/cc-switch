@@ -1,6 +1,5 @@
-import type { AppId } from "@/lib/api/types";
 import type { PerApp, Profile, ProfileScope } from "@/lib/api/profiles";
-
+import type { AppId } from "@/lib/api/types";
 /**
  * 应用页 → 所属项目分组（后端 ProfileScope::for_app 的前端镜像，两处同步）
  *
@@ -8,17 +7,14 @@ import type { PerApp, Profile, ProfileScope } from "@/lib/api/profiles";
  */
 export const APP_PROFILE_SCOPE: Partial<Record<AppId, ProfileScope>> = {
   claude: "claude",
-  "claude-desktop": "claude-desktop",
   codex: "codex",
 };
-
 /** 分组内的 payload 槽位 key（后端 ProfileScope::apps 的前端镜像） */
 const SCOPE_SLOT_KEYS: Record<ProfileScope, (keyof PerApp<unknown>)[]> = {
   claude: ["claude"],
   "claude-desktop": ["claude-desktop"],
   codex: ["codex"],
 };
-
 /**
  * 项目在某分组是否拍过快照（任一槽位非 null 即视为拍过）
  *

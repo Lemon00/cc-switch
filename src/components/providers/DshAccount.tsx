@@ -1,13 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "@/lib/toast";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { ProviderIconBox } from "@/components/ProviderIconBox";
+import { QuotaRefreshCell } from "@/components/settings/auth/AccountQuota";
 import {
   ManagedAccountsGroup,
   type GroupAccountRow,
 } from "@/components/settings/auth/ManagedAccountsGroup";
-import { QuotaRefreshCell } from "@/components/settings/auth/AccountQuota";
 import {
   dshApi,
   type DshAccountStatus,
@@ -15,41 +12,38 @@ import {
   type DshWallet,
 } from "@/lib/api/dsh";
 import { deliverLoginLink } from "@/lib/authLoginLink";
+import { toast } from "@/lib/toast";
 import { extractErrorMessage } from "@/utils/errorUtils";
-import { ProviderIconBox } from "@/components/ProviderIconBox";
 import { resolveProviderIcon } from "@/utils/providerIcon";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { CardChipBadge } from "./ProviderCard";
 import { ProviderCardActions } from "./ProviderCardActions";
 import type { CardChip } from "./presentation";
-
 /** 授权中心和两个 DeepSeek Harness 供应商页共用一份查询：登录本来就是 Web / Desktop 共用的 */
 export const DSH_ACCOUNT_STATUS_KEY = ["dsh-account-status"] as const;
-
 export function useDshAccountStatus(enabled = true) {
   return useQuery({
     queryKey: DSH_ACCOUNT_STATUS_KEY,
     queryFn: dshApi.accountStatus,
-    staleTime: 60_000,
+    staleTime: 60000,
     enabled,
   });
 }
-
 const CURRENCY_SYMBOL: Record<string, string> = { CNY: "¥", USD: "$" };
-
 function formatWallet({ currency, balance }: DshWallet): string {
   const amount = Number(balance);
   const text = Number.isFinite(amount) ? amount.toFixed(2) : balance;
   const symbol = CURRENCY_SYMBOL[currency];
   return symbol ? `${symbol}${text}` : `${text} ${currency}`;
 }
-
 export function accountName(
   status: DshAccountStatus,
   fallback: string,
 ): string {
   return status.profile?.name ?? status.profile?.contact ?? fallback;
 }
-
 /**
  * 右侧额度列：余额一行、赠金一行（DeepSeek Harness 也分开显示，免得把赠金当成充值），
  * 写在别的服务「剩余 xx%」那一格的位置；刷新用各服务共用的「x 分钟前 ↻」。
@@ -101,69 +95,87 @@ function DshBalance({
     </>
   );
 }
-
-const POLL_INTERVAL_MS = 2_000;
-
+const POLL_INTERVAL_MS = 2000;
 /**
  * 浏览器登录：后端起本机回调、向平台登记，这里打开授权页并轮询，直到登录写进共用的凭据文件。
  */
-function useDshLogin(onSignedIn: () => void) {
+export function useDshLogin(onSignedIn: () => void) {
   const { t } = useTranslation();
   const [flow, setFlow] = useState<DshLoginStart | null>(null);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const flowRef = useRef<DshLoginStart | null>(null);
-  flowRef.current = flow;
-
+  const generation = useRef(0);
   const start = useCallback(async () => {
+    const currentGeneration = ++generation.current;
+    const previous = flowRef.current;
+    flowRef.current = null;
+    setFlow(null);
     setError(null);
     setStarting(true);
     try {
+      if (previous) await dshApi.loginCancel(previous.flowId);
+      if (generation.current !== currentGeneration) return;
       const next = await dshApi.loginStart();
+      if (generation.current !== currentGeneration) {
+        void dshApi.loginCancel(next.flowId).catch(() => {});
+        return;
+      }
+      flowRef.current = next;
       setFlow(next);
       void deliverLoginLink(next.authUrl, t);
     } catch (e) {
+      if (generation.current !== currentGeneration) return;
       setFlow(null);
       setError(extractErrorMessage(e) || t("dsh.account.signInFailed"));
     } finally {
-      setStarting(false);
+      if (generation.current === currentGeneration) setStarting(false);
     }
   }, [t]);
-
   const cancel = useCallback(() => {
+    generation.current += 1;
     const current = flowRef.current;
+    flowRef.current = null;
     if (current) void dshApi.loginCancel(current.flowId).catch(() => {});
     setFlow(null);
+    setStarting(false);
     setError(null);
   }, []);
-
   useEffect(() => {
     if (!flow || error) return;
+    let polling = false;
     const timer = window.setInterval(() => {
+      if (polling || flowRef.current?.flowId !== flow.flowId) return;
+      polling = true;
       dshApi
         .loginPoll(flow.flowId)
         .then((done) => {
           if (!done || flowRef.current?.flowId !== flow.flowId) return;
+          flowRef.current = null;
           setFlow(null);
           toast.success(t("dsh.account.signedIn"));
           onSignedIn();
         })
-        .catch((e) =>
-          setError(extractErrorMessage(e) || t("dsh.account.signInFailed")),
-        );
+        .catch((e) => {
+          if (flowRef.current?.flowId !== flow.flowId) return;
+          setError(extractErrorMessage(e) || t("dsh.account.signInFailed"));
+        })
+        .finally(() => {
+          polling = false;
+        });
     }, POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
   }, [flow, error, onSignedIn, t]);
-
   // 离开页面时撤下还在等的登录，本机回调端口随之关闭
   useEffect(
     () => () => {
+      generation.current += 1;
       const current = flowRef.current;
+      flowRef.current = null;
       if (current) void dshApi.loginCancel(current.flowId).catch(() => {});
     },
     [],
   );
-
   return {
     start,
     login: {
@@ -184,11 +196,9 @@ function useDshLogin(onSignedIn: () => void) {
     },
   };
 }
-
 interface DshAccountLoginProps {
   helpSide?: "top" | "bottom";
 }
-
 /**
  * 授权中心的 DeepSeek 账号组。登录和 DeepSeek Harness Web 走同一套浏览器授权，结果写进
  * `$DSH_HOME/.credentials.yaml`，Web 与 Desktop 共用（运行中的 DeepSeek Harness 会自动重新读取）；
@@ -216,7 +226,6 @@ export function DshAccountLogin({ helpSide }: DshAccountLoginProps) {
         description: extractErrorMessage(error) || undefined,
       }),
   });
-
   const data = status.data;
   const name = data ? accountName(data, t("dsh.account.unnamed")) : "";
   const rows: GroupAccountRow[] =
@@ -248,7 +257,6 @@ export function DshAccountLogin({ helpSide }: DshAccountLoginProps) {
           },
         ]
       : [];
-
   return (
     <ManagedAccountsGroup
       slug="dsh"
@@ -282,7 +290,6 @@ export function DshAccountLogin({ helpSide }: DshAccountLoginProps) {
     </ManagedAccountsGroup>
   );
 }
-
 /**
  * DeepSeek Harness 供应商页「已添加」里的官方账号卡：登录了才有。账号下的模型由 DeepSeek Harness
  * 自带的账号插件提供，不写进 profile，所以这张卡不是供应商行，也不能移除；登录、退出在授权中心。

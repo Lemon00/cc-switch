@@ -4,9 +4,7 @@
  * 提供 GitHub Copilot OAuth 设备码流程相关的 API 函数。
  * 支持多账号管理。
  */
-
 import { invoke } from "@tauri-apps/api/core";
-
 /**
  * GitHub 设备码响应
  */
@@ -17,7 +15,6 @@ export interface CopilotDeviceCodeResponse {
   expires_in: number;
   interval: number;
 }
-
 /**
  * GitHub 账号信息（公开信息）
  */
@@ -33,7 +30,6 @@ export interface GitHubAccount {
   /** GitHub 域名（github.com 或 GHES 域名） */
   github_domain: string;
 }
-
 /**
  * Copilot 认证状态（多账号版本）
  */
@@ -51,7 +47,6 @@ export interface CopilotAuthStatus {
   /** 所有已认证账号列表 */
   accounts: GitHubAccount[];
 }
-
 /**
  * 启动 GitHub OAuth 设备码流程
  *
@@ -60,7 +55,6 @@ export interface CopilotAuthStatus {
 export async function copilotStartDeviceFlow(): Promise<CopilotDeviceCodeResponse> {
   return invoke<CopilotDeviceCodeResponse>("copilot_start_device_flow");
 }
-
 /**
  * 轮询 OAuth Token
  *
@@ -74,7 +68,6 @@ export async function copilotPollForAuth(deviceCode: string): Promise<boolean> {
     deviceCode,
   });
 }
-
 /**
  * 获取 Copilot 认证状态
  *
@@ -83,14 +76,12 @@ export async function copilotPollForAuth(deviceCode: string): Promise<boolean> {
 export async function copilotGetAuthStatus(): Promise<CopilotAuthStatus> {
   return invoke<CopilotAuthStatus>("copilot_get_auth_status");
 }
-
 /**
  * 注销 Copilot 认证
  */
 export async function copilotLogout(): Promise<void> {
   return invoke("copilot_logout");
 }
-
 /**
  * 检查是否已认证
  *
@@ -99,7 +90,6 @@ export async function copilotLogout(): Promise<void> {
 export async function copilotIsAuthenticated(): Promise<boolean> {
   return invoke<boolean>("copilot_is_authenticated");
 }
-
 /**
  * Copilot 可用模型
  */
@@ -112,7 +102,6 @@ export type CopilotReasoningEffort =
   | "xhigh"
   | "max"
   | "ultra";
-
 export interface CopilotModel {
   id: string;
   name: string;
@@ -123,7 +112,6 @@ export interface CopilotModel {
   supports_parallel_tool_calls?: boolean;
   reasoning_effort?: CopilotReasoningEffort[];
 }
-
 /**
  * 获取有效的 Copilot Token
  *
@@ -134,7 +122,6 @@ export interface CopilotModel {
 export async function copilotGetToken(): Promise<string> {
   return invoke<string>("copilot_get_token");
 }
-
 /**
  * 获取 Copilot 可用模型列表
  *
@@ -143,7 +130,6 @@ export async function copilotGetToken(): Promise<string> {
 export async function copilotGetModels(): Promise<CopilotModel[]> {
   return invoke<CopilotModel[]>("copilot_get_models");
 }
-
 /**
  * 配额详情
  */
@@ -153,7 +139,6 @@ export interface QuotaDetail {
   percent_remaining: number;
   unlimited: boolean;
 }
-
 /**
  * 配额快照
  */
@@ -162,7 +147,6 @@ export interface QuotaSnapshots {
   completions: QuotaDetail;
   premium_interactions: QuotaDetail;
 }
-
 /**
  * Copilot 使用量响应
  */
@@ -171,7 +155,6 @@ export interface CopilotUsageResponse {
   quota_reset_date: string;
   quota_snapshots: QuotaSnapshots;
 }
-
 /**
  * 获取 Copilot 使用量信息
  *
@@ -180,9 +163,7 @@ export interface CopilotUsageResponse {
 export async function copilotGetUsage(): Promise<CopilotUsageResponse> {
   return invoke<CopilotUsageResponse>("copilot_get_usage");
 }
-
 // ==================== 多账号管理 API ====================
-
 /**
  * 列出所有已认证的 GitHub 账号
  *
@@ -191,7 +172,6 @@ export async function copilotGetUsage(): Promise<CopilotUsageResponse> {
 export async function copilotListAccounts(): Promise<GitHubAccount[]> {
   return invoke<GitHubAccount[]>("copilot_list_accounts");
 }
-
 /**
  * 轮询 OAuth Token（多账号版本）
  *
@@ -208,7 +188,6 @@ export async function copilotPollForAccount(
     deviceCode,
   });
 }
-
 /**
  * 移除指定的 GitHub 账号
  *
@@ -217,7 +196,6 @@ export async function copilotPollForAccount(
 export async function copilotRemoveAccount(accountId: string): Promise<void> {
   return invoke("copilot_remove_account", { accountId });
 }
-
 /**
  * 设置默认 GitHub 账号
  *
@@ -228,7 +206,6 @@ export async function copilotSetDefaultAccount(
 ): Promise<void> {
   return invoke("copilot_set_default_account", { accountId });
 }
-
 /**
  * 获取指定账号的有效 Copilot Token
  *
@@ -242,7 +219,6 @@ export async function copilotGetTokenForAccount(
 ): Promise<string> {
   return invoke<string>("copilot_get_token_for_account", { accountId });
 }
-
 /**
  * 获取指定账号的 Copilot 可用模型列表
  *
@@ -256,7 +232,6 @@ export async function copilotGetModelsForAccount(
     accountId,
   });
 }
-
 /**
  * 获取指定账号的 Copilot 使用量信息
  *

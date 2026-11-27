@@ -7,41 +7,35 @@ import {
   getStatsSpeed,
 } from "@/components/usage/statsColumns";
 import type { ProviderStats } from "@/types/usage";
-
 const useProviderStatsMock = vi.hoisted(() => vi.fn());
-
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: (key: string) => key,
     i18n: { resolvedLanguage: "en", language: "en" },
   }),
 }));
-
 vi.mock("@/lib/query/usage", () => ({
   useProviderStats: (...args: unknown[]) => useProviderStatsMock(...args),
 }));
-
 const stat = (overrides: Partial<ProviderStats>): ProviderStats => ({
   providerId: "p",
   appType: "claude",
   providerName: "P",
   requestCount: 1,
-  totalTokens: 1_000,
+  totalTokens: 1000,
   totalCost: "1",
   successRate: 100,
-  avgLatencyMs: 1_000,
+  avgLatencyMs: 1000,
   ...overrides,
 });
-
 // 列顺序：…成功率、速度、首字
 const speedCell = (row: HTMLElement) => row.children[row.children.length - 2];
 const firstTokenCell = (row: HTMLElement) => row.lastElementChild;
-
 describe("ProviderStatsTable", () => {
   it("computes speed as total output over total generation time", () => {
     expect(
       getStatsSpeed(
-        stat({ speedOutputTokens: 1_200, speedGenerationMs: 10_500 }),
+        stat({ speedOutputTokens: 1200, speedGenerationMs: 10500 }),
       ),
     ).toBe("114");
     expect(
@@ -50,15 +44,13 @@ describe("ProviderStatsTable", () => {
     // 老后端没有这两个字段
     expect(getStatsSpeed(stat({}))).toBeNull();
   });
-
   it("falls back to the estimated speed, marked with ≈, when there is no exact one", () => {
     expect(
       getStatsEstimatedSpeed(
-        stat({ estSpeedOutputTokens: 2_500, estSpeedDurationMs: 25_000 }),
+        stat({ estSpeedOutputTokens: 2500, estSpeedDurationMs: 25000 }),
       ),
     ).toBe("100");
     expect(getStatsEstimatedSpeed(stat({}))).toBeNull();
-
     useProviderStatsMock.mockReturnValue({
       isLoading: false,
       data: [
@@ -66,32 +58,29 @@ describe("ProviderStatsTable", () => {
           providerId: "_session",
           providerName: "Claude session",
           requestCount: 9,
-          estSpeedOutputTokens: 2_500,
-          estSpeedDurationMs: 25_000,
+          estSpeedOutputTokens: 2500,
+          estSpeedDurationMs: 25000,
         }),
         // 两种都有时用精确的，不带 ≈
         stat({
           providerId: "mixed",
           providerName: "Mixed",
           requestCount: 3,
-          speedOutputTokens: 9_200,
-          speedGenerationMs: 100_000,
-          estSpeedOutputTokens: 2_500,
-          estSpeedDurationMs: 25_000,
+          speedOutputTokens: 9200,
+          speedGenerationMs: 100000,
+          estSpeedOutputTokens: 2500,
+          estSpeedDurationMs: 25000,
         }),
       ],
     });
-
     render(
       <ProviderStatsTable range={{ preset: "7d" }} refreshIntervalMs={0} />,
     );
-
     const rows = screen.getAllByRole("row").slice(1);
     expect(speedCell(rows[0])).toHaveTextContent("≈100tok/s");
     expect(speedCell(rows[1])).toHaveTextContent("92tok/s");
     expect(speedCell(rows[1])).not.toHaveTextContent("≈");
   });
-
   it("sorts by requests and replaces average latency with speed", () => {
     useProviderStatsMock.mockReturnValue({
       isLoading: false,
@@ -105,16 +94,14 @@ describe("ProviderStatsTable", () => {
           providerId: "b",
           providerName: "DeepSeek",
           requestCount: 9,
-          speedOutputTokens: 9_200,
-          speedGenerationMs: 100_000,
+          speedOutputTokens: 9200,
+          speedGenerationMs: 100000,
         }),
       ],
     });
-
     render(
       <ProviderStatsTable range={{ preset: "7d" }} refreshIntervalMs={0} />,
     );
-
     expect(screen.queryByText("usage.avgLatency")).not.toBeInTheDocument();
     expect(
       screen.getByRole("columnheader", { name: /usage.speed/ }),
@@ -125,12 +112,11 @@ describe("ProviderStatsTable", () => {
     expect(rows[1]).toHaveTextContent("Kimi For Coding");
     expect(speedCell(rows[1])).toHaveTextContent("—");
   });
-
   it("shows the first-token median in seconds, or — without routed streams", () => {
     useProviderStatsMock.mockReturnValue({
       isLoading: false,
       data: [
-        stat({ providerId: "a", requestCount: 5, firstTokenMedianMs: 2_640 }),
+        stat({ providerId: "a", requestCount: 5, firstTokenMedianMs: 2640 }),
         stat({ providerId: "b", requestCount: 3, firstTokenMedianMs: null }),
         // 老后端没有这个字段
         stat({ providerId: "c", requestCount: 1 }),
@@ -139,22 +125,20 @@ describe("ProviderStatsTable", () => {
           providerId: "d",
           requestCount: 0,
           firstTokenMedianMs: null,
-          estFirstTokenMedianMs: 3_300,
+          estFirstTokenMedianMs: 3300,
         }),
         // 两种都有时用精确的
         stat({
           providerId: "e",
           requestCount: 0,
-          firstTokenMedianMs: 1_200,
-          estFirstTokenMedianMs: 3_300,
+          firstTokenMedianMs: 1200,
+          estFirstTokenMedianMs: 3300,
         }),
       ],
     });
-
     render(
       <ProviderStatsTable range={{ preset: "7d" }} refreshIntervalMs={0} />,
     );
-
     expect(
       screen.getByRole("columnheader", { name: /usage.firstToken/ }),
     ).toBeInTheDocument();
@@ -166,7 +150,6 @@ describe("ProviderStatsTable", () => {
     expect(firstTokenCell(rows[4])).toHaveTextContent("1.2s");
     expect(firstTokenCell(rows[4])).not.toHaveTextContent("≈");
   });
-
   it.each([false, true])(
     "removes cross-app rows after repeated switches (empty target: %s)",
     (emptyTarget) => {
@@ -208,14 +191,12 @@ describe("ProviderStatsTable", () => {
           refreshIntervalMs={0}
         />
       );
-
       try {
         useProviderStatsMock.mockReturnValue({
           isLoading: false,
           data: claudeStats,
         });
         const { rerender } = render(table("claude"));
-
         for (let cycle = 0; cycle < 2; cycle++) {
           if (cycle > 0) {
             useProviderStatsMock.mockReturnValue({
@@ -230,7 +211,6 @@ describe("ProviderStatsTable", () => {
           expect(claudeRows[0]).toHaveTextContent("42");
           expect(claudeRows[1]).toHaveTextContent("Shared Provider");
           expect(claudeRows[1]).toHaveTextContent("7");
-
           useProviderStatsMock.mockReturnValue({
             isLoading: false,
             data: targetStats,
@@ -246,7 +226,6 @@ describe("ProviderStatsTable", () => {
             expect(targetRows[1]).toHaveTextContent("Other");
           }
         }
-
         useProviderStatsMock.mockReturnValue({ isLoading: false, data: [] });
         rerender(table("gemini"));
         expect(screen.queryByText("Shared Provider")).not.toBeInTheDocument();

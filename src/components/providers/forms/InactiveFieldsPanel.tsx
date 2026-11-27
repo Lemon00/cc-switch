@@ -1,6 +1,6 @@
-import { toast } from "@/lib/toast";
 import type { ProviderEditorInactiveField } from "@/lib/api/providers";
-
+import { toast } from "@/lib/toast";
+import { useTranslation } from "react-i18next";
 /** 点一个字段做什么：加入上方的编辑框，或复制它的值（可以照抄的 TOML）。 */
 export type InactiveFieldAction =
   | {
@@ -8,21 +8,27 @@ export type InactiveFieldAction =
       title: string;
       onAdd: (field: ProviderEditorInactiveField) => void;
     }
-  | { kind: "copy"; copiedText: string };
-
+  | {
+      kind: "copy";
+      copiedText: string;
+    };
 interface InactiveFieldsPanelProps {
   fields: ProviderEditorInactiveField[];
   /** 面板上方的说明（已翻译）。 */
   hint: string;
   action: InactiveFieldAction;
 }
-
+const SENSITIVE_FIELD_PATTERN = /key|token|secret|password|auth/i;
+function isSensitiveFieldPath(path: string[]): boolean {
+  return path.some((segment) => SENSITIVE_FIELD_PATTERN.test(segment));
+}
 /** 供应商行里保存着、但不随切换生效的字段。 */
 export function InactiveFieldsPanel({
   fields,
   hint,
   action,
 }: InactiveFieldsPanelProps) {
+  const { t } = useTranslation();
   if (fields.length === 0) return null;
   return (
     <div className="rounded-md border border-border bg-subtle p-3 space-y-2">
@@ -34,10 +40,26 @@ export function InactiveFieldsPanel({
             <button
               key={name}
               type="button"
-              title={action.kind === "add" ? action.title : String(field.value)}
+              title={
+                action.kind === "add"
+                  ? action.title
+                  : isSensitiveFieldPath(field.path)
+                    ? t("provider.inactiveFieldSensitiveValue", {
+                        defaultValue: "敏感字段（不可复制）",
+                      })
+                    : String(field.value)
+              }
               onClick={() => {
                 if (action.kind === "add") {
                   action.onAdd(field);
+                  return;
+                }
+                if (isSensitiveFieldPath(field.path)) {
+                  toast.warning(
+                    t("provider.inactiveFieldSecretNotCopied", {
+                      defaultValue: "敏感字段不会复制到剪贴板",
+                    }),
+                  );
                   return;
                 }
                 void navigator.clipboard

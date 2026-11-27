@@ -9,17 +9,10 @@ use crate::error::AppError;
 use crate::events::EventSink;
 use crate::store::AppState;
 use std::collections::HashSet;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// 前端回调路径共用的切换管理器（GUI 的 failover_notify 回调经此执行，
-/// 与 forwarder 自带的 per-forwarder 管理器分开——GUI 构建里 forwarder
-/// 只走回调，所以去重语义在 GUI 内仍是一致的）。
-static GLOBAL_MANAGER: OnceLock<FailoverSwitchManager> = OnceLock::new();
-
-/// 供前端（GUI failover_notify 回调）调用：用前端自己的 AppState 执行
-/// 一次故障转移切换。路由提交本身有 mode 锁串行化，即使并发调用，
-/// 第二次也会因 proxy_route 已是目标而返回 false，不会重复切换。
+/// Execute a core failover request using this application instance's coordinator.
 pub async fn request_failover_switch(
     state: &AppState,
     sink: &dyn EventSink,
@@ -28,7 +21,9 @@ pub async fn request_failover_switch(
     provider_id: &str,
     provider_name: &str,
 ) -> Result<bool, AppError> {
-    let manager = GLOBAL_MANAGER.get_or_init(FailoverSwitchManager::new);
+    let manager = &state.failover_manager;
+    let serial = manager.switch_serial();
+    let _order = serial.lock().await;
     let ctx = FailoverContext {
         state,
         sink: Some(sink),
@@ -50,17 +45,30 @@ pub struct FailoverContext<'a> {
 /// 故障转移切换管理器
 ///
 /// 负责处理故障转移成功后的供应商切换，确保 UI 能够直观反映当前使用的供应商。
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct FailoverSwitchManager {
     /// 正在处理中的切换（key = "app_type:provider_id"）
     pending_switches: Arc<RwLock<HashSet<String>>>,
+    /// 串行化故障转移 UI 切换，与 `current_providers` 更新顺序一致
+    switch_serial: Arc<tokio::sync::Mutex<()>>,
+}
+
+impl Default for FailoverSwitchManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl FailoverSwitchManager {
     pub fn new() -> Self {
         Self {
             pending_switches: Arc::new(RwLock::new(HashSet::new())),
+            switch_serial: Arc::new(tokio::sync::Mutex::new(())),
         }
+    }
+
+    pub(crate) fn switch_serial(&self) -> Arc<tokio::sync::Mutex<()>> {
+        self.switch_serial.clone()
     }
 
     /// 尝试执行故障转移切换
@@ -88,18 +96,31 @@ impl FailoverSwitchManager {
             pending.insert(switch_key.clone());
         }
 
-        // 执行切换（确保最后清理 pending 标记）
-        let result = self
-            .do_switch(ctx, app_type, provider_id, provider_name)
-            .await;
-
-        // 清理 pending 标记
-        {
-            let mut pending = self.pending_switches.write().await;
-            pending.remove(&switch_key);
+        // RAII: clear pending even if do_switch is cancelled / panics across await.
+        struct PendingGuard {
+            set: Arc<RwLock<HashSet<String>>>,
+            key: String,
         }
+        impl Drop for PendingGuard {
+            fn drop(&mut self) {
+                if let Ok(mut pending) = self.set.try_write() {
+                    pending.remove(&self.key);
+                } else {
+                    let set = self.set.clone();
+                    let key = self.key.clone();
+                    tokio::spawn(async move {
+                        set.write().await.remove(&key);
+                    });
+                }
+            }
+        }
+        let _guard = PendingGuard {
+            set: self.pending_switches.clone(),
+            key: switch_key,
+        };
 
-        result
+        self.do_switch(ctx, app_type, provider_id, provider_name)
+            .await
     }
 
     async fn do_switch(

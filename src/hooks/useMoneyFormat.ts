@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import {
   formatMoney,
   formatMoneyCompact,
@@ -8,7 +7,7 @@ import {
   USD_DISPLAY,
 } from "@/components/usage/format";
 import { useSettingsQuery } from "@/lib/query";
-
+import { useMemo } from "react";
 /**
  * 用量金额的统一出口：用量面板、侧栏「今日」、会话阅读页的费用都经这里显示。
  * 定价（按美元录入）和额度 / 余额（供应商自己的币种）不走这里。
@@ -16,7 +15,6 @@ import { useSettingsQuery } from "@/lib/query";
 export function useMoneyFormat() {
   const { data: settings } = useSettingsQuery();
   const { currency, rate } = resolveMoneyDisplay(settings?.usageDisplay);
-
   return useMemo(() => {
     const display = { currency, rate };
     const converted = currency !== "USD";

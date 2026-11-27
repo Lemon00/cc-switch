@@ -11,7 +11,6 @@ import {
   useUninstallSkill,
 } from "@/hooks/useSkills";
 import type { DiscoverableSkill, InstalledSkill } from "@/lib/api/skills";
-
 const apiMocks = vi.hoisted(() => ({
   discoverAvailable: vi.fn(),
   importFromApps: vi.fn(),
@@ -19,11 +18,9 @@ const apiMocks = vi.hoisted(() => ({
   installUnified: vi.fn(),
   uninstallUnified: vi.fn(),
 }));
-
 vi.mock("@/lib/api/skills", () => ({
   skillsApi: apiMocks,
 }));
-
 function makeSkill(overrides: Partial<InstalledSkill> = {}): InstalledSkill {
   return {
     id: "skill-a",
@@ -32,18 +29,13 @@ function makeSkill(overrides: Partial<InstalledSkill> = {}): InstalledSkill {
     apps: {
       claude: true,
       codex: false,
-      gemini: false,
       opencode: false,
-      openclaw: false,
-      hermes: false,
-      pi: false,
     },
     installedAt: 0,
     updatedAt: 0,
     ...overrides,
   };
 }
-
 function makeDiscoverableSkill(): DiscoverableSkill {
   return {
     key: "owner/repo:skill-a",
@@ -55,7 +47,6 @@ function makeDiscoverableSkill(): DiscoverableSkill {
     repoBranch: "main",
   };
 }
-
 function createQueryClient() {
   return new QueryClient({
     defaultOptions: {
@@ -64,7 +55,6 @@ function createQueryClient() {
     },
   });
 }
-
 function createWrapper(queryClient: QueryClient) {
   return function Wrapper({ children }: PropsWithChildren) {
     return (
@@ -72,7 +62,6 @@ function createWrapper(queryClient: QueryClient) {
     );
   };
 }
-
 // Regression coverage for issue #2139: when a user double-clicks the import
 // button (or the mutation otherwise fires twice with the same payload), the
 // installed cache must not accumulate duplicate entries for the same skill.
@@ -81,7 +70,6 @@ describe("mergeImportedSkills", () => {
     const imported = [makeSkill()];
     expect(mergeImportedSkills(undefined, imported)).toEqual(imported);
   });
-
   it("dedupes by id when the same skill is imported twice in a row", () => {
     const existing = [makeSkill()];
     const secondImport = [makeSkill()];
@@ -89,7 +77,6 @@ describe("mergeImportedSkills", () => {
     expect(merged).toHaveLength(1);
     expect(merged[0]).toBe(secondImport[0]);
   });
-
   it("replaces stale cache entries with fresh imports for the same id", () => {
     const stale = [makeSkill({ name: "Stale Name" })];
     const fresh = [makeSkill({ name: "Fresh Name" })];
@@ -97,12 +84,10 @@ describe("mergeImportedSkills", () => {
     expect(merged).toHaveLength(1);
     expect(merged[0].name).toBe("Fresh Name");
   });
-
   it("returns the existing reference unchanged when the imported list is empty", () => {
     const existing = [makeSkill()];
     expect(mergeImportedSkills(existing, [])).toBe(existing);
   });
-
   it("appends newly imported skills without dropping existing unrelated ones", () => {
     const existing = [makeSkill({ id: "skill-a", directory: "skill-a" })];
     const imported = [
@@ -111,27 +96,20 @@ describe("mergeImportedSkills", () => {
     const merged = mergeImportedSkills(existing, imported);
     expect(merged.map((s) => s.id).sort()).toEqual(["skill-a", "skill-b"]);
   });
-
   it("dedupes repeated IDs within the incoming list and keeps the last value", () => {
     const first = makeSkill({ name: "First Value" });
     const last = makeSkill({ name: "Last Value" });
-
     const merged = mergeImportedSkills(undefined, [first, last]);
-
     expect(merged).toEqual([last]);
   });
-
   it("also removes duplicate IDs already present in stale cache data", () => {
     const stale = makeSkill({ name: "Stale Value" });
     const newer = makeSkill({ name: "Newer Value" });
     const imported = makeSkill({ id: "skill-b", name: "Skill B" });
-
     const merged = mergeImportedSkills([stale, newer], [imported]);
-
     expect(merged).toEqual([newer, imported]);
   });
 });
-
 describe("Skills install and import mutation hooks", () => {
   beforeEach(() => {
     apiMocks.importFromApps.mockReset();
@@ -139,7 +117,6 @@ describe("Skills install and import mutation hooks", () => {
     apiMocks.installUnified.mockReset();
     apiMocks.uninstallUnified.mockReset();
   });
-
   it("merges a successful install by ID without mutating discoverable cache", async () => {
     const queryClient = createQueryClient();
     const stale = makeSkill({ name: "Stale Skill" });
@@ -152,14 +129,12 @@ describe("Skills install and import mutation hooks", () => {
     const { result } = renderHook(() => useInstallSkill(), {
       wrapper: createWrapper(queryClient),
     });
-
     await act(async () => {
       await result.current.mutateAsync({
         skill: makeDiscoverableSkill(),
         currentApp: "claude",
       });
     });
-
     expect(
       queryClient.getQueryData<InstalledSkill[]>(["skills", "installed"]),
     ).toEqual([installed, unrelated]);
@@ -167,7 +142,6 @@ describe("Skills install and import mutation hooks", () => {
       discoverable,
     );
   });
-
   it("merges ZIP results without duplicate IDs", async () => {
     const queryClient = createQueryClient();
     const stale = makeSkill({ name: "Stale Skill" });
@@ -182,19 +156,16 @@ describe("Skills install and import mutation hooks", () => {
     const { result } = renderHook(() => useInstallSkillsFromZip(), {
       wrapper: createWrapper(queryClient),
     });
-
     await act(async () => {
       await result.current.mutateAsync({
         filePath: "C:\\skills.zip",
         currentApp: "claude",
       });
     });
-
     expect(
       queryClient.getQueryData<InstalledSkill[]>(["skills", "installed"]),
     ).toEqual([last, second]);
   });
-
   it("merges imported results and refreshes every affected collection", async () => {
     const queryClient = createQueryClient();
     const stale = makeSkill({ name: "Stale Skill" });
@@ -205,11 +176,9 @@ describe("Skills install and import mutation hooks", () => {
     const { result } = renderHook(() => useImportSkillsFromApps(), {
       wrapper: createWrapper(queryClient),
     });
-
     await act(async () => {
       await result.current.mutateAsync([]);
     });
-
     expect(
       queryClient.getQueryData<InstalledSkill[]>(["skills", "installed"]),
     ).toEqual([imported]);
@@ -222,7 +191,6 @@ describe("Skills install and import mutation hooks", () => {
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey });
     }
   });
-
   // #9273：导入可能新增来源仓库，发现列表没人在看时 invalidate 不会重拉，
   // 下次打开也必须重新发现，不能沿用本次运行已验证过的旧结果
   it("rediscovers on the next mount after an import", async () => {
@@ -235,12 +203,10 @@ describe("Skills install and import mutation hooks", () => {
     );
     await waitFor(() => expect(first.result.current.isFetching).toBe(false));
     first.unmount();
-
     // 验证过一次后，再挂载不重拉
     const second = renderHook(() => useDiscoverableSkills(), { wrapper });
     second.unmount();
     expect(apiMocks.discoverAvailable).toHaveBeenCalledTimes(1);
-
     apiMocks.importFromApps.mockResolvedValueOnce([]);
     const { result } = renderHook(() => useImportSkillsFromApps(), {
       wrapper,
@@ -249,13 +215,11 @@ describe("Skills install and import mutation hooks", () => {
       await result.current.mutateAsync([]);
     });
     expect(apiMocks.discoverAvailable).toHaveBeenCalledTimes(1);
-
     renderHook(() => useDiscoverableSkills(), { wrapper });
     await waitFor(() =>
       expect(apiMocks.discoverAvailable).toHaveBeenCalledTimes(2),
     );
   });
-
   it("keeps a rejected install pending until installed and unmanaged refresh", async () => {
     let releaseInvalidation: (() => void) | undefined;
     const invalidationPending = new Promise<void>((resolve) => {
@@ -269,7 +233,6 @@ describe("Skills install and import mutation hooks", () => {
     const { result } = renderHook(() => useInstallSkill(), {
       wrapper: createWrapper(queryClient),
     });
-
     let mutation!: Promise<InstalledSkill>;
     act(() => {
       mutation = result.current.mutateAsync({
@@ -278,7 +241,6 @@ describe("Skills install and import mutation hooks", () => {
       });
       void mutation.catch(() => undefined);
     });
-
     await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(2));
     expect(result.current.isPending).toBe(true);
     expect(invalidateSpy).toHaveBeenCalledWith({
@@ -287,14 +249,12 @@ describe("Skills install and import mutation hooks", () => {
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ["skills", "unmanaged"],
     });
-
     releaseInvalidation?.();
     await act(async () => {
       await expect(mutation).rejects.toThrow("sync failed");
     });
     await waitFor(() => expect(result.current.isPending).toBe(false));
   });
-
   it("refreshes installed and unmanaged when ZIP install rejects", async () => {
     const queryClient = createQueryClient();
     apiMocks.installFromZip.mockRejectedValueOnce(new Error("sync failed"));
@@ -302,7 +262,6 @@ describe("Skills install and import mutation hooks", () => {
     const { result } = renderHook(() => useInstallSkillsFromZip(), {
       wrapper: createWrapper(queryClient),
     });
-
     await act(async () => {
       await expect(
         result.current.mutateAsync({
@@ -311,7 +270,6 @@ describe("Skills install and import mutation hooks", () => {
         }),
       ).rejects.toThrow("sync failed");
     });
-
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ["skills", "installed"],
     });
@@ -319,7 +277,6 @@ describe("Skills install and import mutation hooks", () => {
       queryKey: ["skills", "unmanaged"],
     });
   });
-
   // #7994：「发现」重拉要从 GitHub 下载仓库，可能很久都不返回；导入只等
   // installed / unmanaged，不能因为它一直 pending、把导入弹窗锁住
   function spyImportInvalidations(queryClient: QueryClient) {
@@ -337,7 +294,6 @@ describe("Skills install and import mutation hooks", () => {
       });
     return { spy, releaseLocal: () => releaseLocal?.() };
   }
-
   it("finishes an import without waiting for repos or discover to refetch", async () => {
     const queryClient = createQueryClient();
     const imported = makeSkill({ name: "Imported Skill" });
@@ -346,22 +302,18 @@ describe("Skills install and import mutation hooks", () => {
     const { result } = renderHook(() => useImportSkillsFromApps(), {
       wrapper: createWrapper(queryClient),
     });
-
     let mutation!: Promise<InstalledSkill[]>;
     act(() => {
       mutation = result.current.mutateAsync([]);
     });
-
     await waitFor(() => expect(spy).toHaveBeenCalledTimes(4));
     expect(result.current.isPending).toBe(true);
-
     releaseLocal();
     await act(async () => {
       await expect(mutation).resolves.toEqual([imported]);
     });
     await waitFor(() => expect(result.current.isPending).toBe(false));
   });
-
   it("keeps a rejected import pending only until installed and unmanaged refresh", async () => {
     const queryClient = createQueryClient();
     apiMocks.importFromApps.mockRejectedValueOnce(new Error("import failed"));
@@ -369,13 +321,11 @@ describe("Skills install and import mutation hooks", () => {
     const { result } = renderHook(() => useImportSkillsFromApps(), {
       wrapper: createWrapper(queryClient),
     });
-
     let mutation!: Promise<InstalledSkill[]>;
     act(() => {
       mutation = result.current.mutateAsync([]);
       void mutation.catch(() => undefined);
     });
-
     await waitFor(() => expect(spy).toHaveBeenCalledTimes(4));
     expect(result.current.isPending).toBe(true);
     for (const queryKey of [
@@ -386,14 +336,12 @@ describe("Skills install and import mutation hooks", () => {
     ]) {
       expect(spy).toHaveBeenCalledWith({ queryKey });
     }
-
     releaseLocal();
     await act(async () => {
       await expect(mutation).rejects.toThrow("import failed");
     });
     await waitFor(() => expect(result.current.isPending).toBe(false));
   });
-
   it("does not rewrite discoverable cache when uninstall succeeds", async () => {
     const queryClient = createQueryClient();
     const discoverable = [makeDiscoverableSkill()];
@@ -403,11 +351,9 @@ describe("Skills install and import mutation hooks", () => {
     const { result } = renderHook(() => useUninstallSkill(), {
       wrapper: createWrapper(queryClient),
     });
-
     await act(async () => {
       await result.current.mutateAsync("skill-a");
     });
-
     expect(
       queryClient.getQueryData<InstalledSkill[]>(["skills", "installed"]),
     ).toEqual([]);

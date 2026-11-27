@@ -14,7 +14,6 @@ import { providersApi } from "@/lib/api";
 import type { ProviderEditorView } from "@/lib/api/providers";
 import { usePresetStep } from "@/components/providers/forms/presetStep";
 import { createPortal } from "react-dom";
-
 vi.mock("@/components/ui/dialog", () => ({
   Dialog: ({ children }: { children: React.ReactNode }) => (
     <div>{children}</div>
@@ -35,7 +34,6 @@ vi.mock("@/components/ui/dialog", () => ({
     <div>{children}</div>
   ),
 }));
-
 let mockFormValues: ProviderFormValues;
 let mockFormReady = true;
 let mockHasPresetSelector = false;
@@ -49,7 +47,23 @@ let universalProps: {
   onUniversalPresetSelect?: unknown;
   onManageUniversalProviders?: unknown;
 } = {};
-
+it.each(["claude", "codex"] as const)(
+  "provides shared provider presets for %s",
+  async (appId) => {
+    render(
+      <AddProviderDialog
+        open
+        appId={appId}
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(universalProps.onUniversalPresetSelect).toBeTypeOf("function"),
+    );
+    expect(universalProps.onManageUniversalProviders).toBeTypeOf("function");
+  },
+);
 vi.mock("@/components/providers/forms/ProviderForm", () => ({
   ProviderForm: ({
     onSubmit,
@@ -110,13 +124,35 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
     );
   },
 }));
-
 vi.mock("@/components/providers/AuthSettingsPanel", () => ({
   AuthSettingsPanel: ({ target }: { target: string | null }) =>
     target ? <div data-testid="auth-settings-panel">{target}</div> : null,
 }));
-
 describe("AddProviderDialog", () => {
+  it("does not close a reopened add form when an earlier save completes", async () => {
+    let finish!: () => void;
+    const onSubmit = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const props = {
+      appId: "opencode" as const,
+      onOpenChange: vi.fn(),
+      onSubmit,
+    };
+    const { rerender } = render(<AddProviderDialog open {...props} />);
+    fireEvent.click(await screen.findByRole("button", { name: "common.add" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    rerender(<AddProviderDialog open={false} {...props} />);
+    rerender(<AddProviderDialog open {...props} />);
+    await act(async () => finish());
+    expect(props.onOpenChange).not.toHaveBeenCalled();
+    expect(
+      await screen.findByRole("button", { name: "common.add" }),
+    ).toBeInTheDocument();
+  });
   beforeEach(() => {
     vi.restoreAllMocks();
     mockFormReady = true;
@@ -138,7 +174,6 @@ describe("AddProviderDialog", () => {
       },
     };
   });
-
   it("opens without a fade while Claude's live base loads, then shows the picker", async () => {
     let resolveView!: (view: ProviderEditorView) => void;
     vi.spyOn(providersApi, "getEditorView").mockReturnValue(
@@ -162,7 +197,6 @@ describe("AddProviderDialog", () => {
     ).toHaveStyle({ opacity: "1" });
     expect(screen.getByText("common.loading")).toBeInTheDocument();
     expect(document.getElementById("provider-form")).toBeNull();
-
     await act(async () => {
       resolveView({ settings: {}, inactive: [] });
     });
@@ -181,7 +215,6 @@ describe("AddProviderDialog", () => {
       screen.getByRole("button", { name: "pick-preset" }),
     ).toBeInTheDocument();
   });
-
   it("falls back to the form when Claude's live base cannot be read", async () => {
     vi.spyOn(providersApi, "getEditorView").mockRejectedValue(
       new Error("invalid settings.json"),
@@ -198,7 +231,6 @@ describe("AddProviderDialog", () => {
       await screen.findByRole("button", { name: "common.add" }),
     ).toBeEnabled();
   });
-
   it("ignores a closed Claude request when loading the next opening's form", async () => {
     const resolvers: Array<(view: ProviderEditorView) => void> = [];
     vi.spyOn(providersApi, "getEditorView").mockImplementation(
@@ -221,11 +253,9 @@ describe("AddProviderDialog", () => {
       screen.getByRole("button", { name: "manage-auth" }),
     ).toBeInTheDocument();
   });
-
   it("使用 ProviderForm 返回的自定义端点", async () => {
     const handleSubmit = vi.fn().mockResolvedValue(undefined);
     const handleOpenChange = vi.fn();
-
     render(
       <AddProviderDialog
         open
@@ -234,7 +264,6 @@ describe("AddProviderDialog", () => {
         onSubmit={handleSubmit}
       />,
     );
-
     // Claude 的表单要等 live 底读回来才渲染。
     await screen.findByRole("button", { name: "manage-auth" });
     fireEvent.click(
@@ -242,9 +271,7 @@ describe("AddProviderDialog", () => {
         name: "common.add",
       }),
     );
-
     await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
-
     const submitted = handleSubmit.mock.calls[0][0];
     expect(submitted.meta?.custom_endpoints).toEqual(
       mockFormValues.meta?.custom_endpoints,
@@ -253,10 +280,8 @@ describe("AddProviderDialog", () => {
     expect(submitted.editorSave).toEqual({ base: {}, onConflict: "refuse" });
     expect(handleOpenChange).toHaveBeenCalledWith(false);
   });
-
   it("在缺少自定义端点时回退到配置中的 baseUrl", async () => {
     const handleSubmit = vi.fn().mockResolvedValue(undefined);
-
     mockFormValues = {
       name: "Base URL Provider",
       websiteUrl: "",
@@ -265,7 +290,6 @@ describe("AddProviderDialog", () => {
         config: {},
       }),
     };
-
     render(
       <AddProviderDialog
         open
@@ -274,16 +298,13 @@ describe("AddProviderDialog", () => {
         onSubmit={handleSubmit}
       />,
     );
-
     await screen.findByRole("button", { name: "manage-auth" });
     fireEvent.click(
       await screen.findByRole("button", {
         name: "common.add",
       }),
     );
-
     await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
-
     const submitted = handleSubmit.mock.calls[0][0];
     expect(submitted.meta?.custom_endpoints).toEqual({
       "https://claude.base": {
@@ -293,8 +314,7 @@ describe("AddProviderDialog", () => {
       },
     });
   });
-
-  it.each(["codex", "gemini", "grokbuild"] as const)(
+  it.each(["codex"] as const)(
     "%s 新增时带上表单投影出的底，和编辑器同一套保存规则",
     async (appId) => {
       const handleSubmit = vi.fn().mockResolvedValue(undefined);
@@ -307,7 +327,6 @@ describe("AddProviderDialog", () => {
         websiteUrl: "",
         settingsConfig: JSON.stringify(projected),
       };
-
       render(
         <AddProviderDialog
           open
@@ -316,12 +335,10 @@ describe("AddProviderDialog", () => {
           onSubmit={handleSubmit}
         />,
       );
-
       await screen.findByRole("button", { name: "manage-auth" });
       fireEvent.click(
         await screen.findByRole("button", { name: "common.add" }),
       );
-
       await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
       expect(handleSubmit.mock.calls[0][0].editorSave).toEqual({
         base: projected,
@@ -330,7 +347,6 @@ describe("AddProviderDialog", () => {
       });
     },
   );
-
   it("投影还没回来或失败时只存供应商，不带底", async () => {
     const handleSubmit = vi.fn().mockResolvedValue(undefined);
     mockProjectedBase = null;
@@ -339,7 +355,6 @@ describe("AddProviderDialog", () => {
       websiteUrl: "",
       settingsConfig: JSON.stringify({ auth: {}, config: "" }),
     };
-
     render(
       <AddProviderDialog
         open
@@ -348,14 +363,11 @@ describe("AddProviderDialog", () => {
         onSubmit={handleSubmit}
       />,
     );
-
     await screen.findByRole("button", { name: "manage-auth" });
     fireEvent.click(await screen.findByRole("button", { name: "common.add" }));
-
     await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
     expect(handleSubmit.mock.calls[0][0].editorSave).toBeUndefined();
   });
-
   it("submits the optional managed account from the Codex Official preset", async () => {
     const handleSubmit = vi.fn().mockResolvedValue(undefined);
     const officialPresetIndex = codexProviderPresets.findIndex(
@@ -363,7 +375,6 @@ describe("AddProviderDialog", () => {
         preset.category === "official" && preset.providerType === "codex_oauth",
     );
     expect(officialPresetIndex).toBeGreaterThanOrEqual(0);
-
     mockFormValues = {
       name: "OpenAI Official",
       websiteUrl: "https://chatgpt.com/codex",
@@ -379,7 +390,6 @@ describe("AddProviderDialog", () => {
         },
       },
     };
-
     render(
       <AddProviderDialog
         open
@@ -388,9 +398,7 @@ describe("AddProviderDialog", () => {
         onSubmit={handleSubmit}
       />,
     );
-
     fireEvent.click(await screen.findByRole("button", { name: "common.add" }));
-
     await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
     expect(handleSubmit).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -408,7 +416,6 @@ describe("AddProviderDialog", () => {
       "ensureCodexOfficialSeed",
     );
   });
-
   it("clears the nested auth panel before the dialog reopens", async () => {
     const props = {
       onOpenChange: vi.fn(),
@@ -416,178 +423,16 @@ describe("AddProviderDialog", () => {
       onSubmit: vi.fn(),
     };
     const { rerender } = render(<AddProviderDialog open {...props} />);
-
     fireEvent.click(screen.getByRole("button", { name: "manage-auth" }));
     expect(screen.getByTestId("auth-settings-panel")).toHaveTextContent(
       "codex_oauth",
     );
-
     rerender(<AddProviderDialog open={false} {...props} />);
     rerender(<AddProviderDialog open {...props} />);
-
     await waitFor(() => {
       expect(
         screen.queryByTestId("auth-settings-panel"),
       ).not.toBeInTheDocument();
     });
-  });
-
-  it("新建 Grok Build 自定义供应商时不补默认 Grok 图标", async () => {
-    const handleSubmit = vi.fn().mockResolvedValue(undefined);
-
-    mockFormValues = {
-      name: "tes 1",
-      websiteUrl: "",
-      icon: "",
-      iconColor: "",
-      settingsConfig: JSON.stringify({
-        config: `[models]
-default = "grok-4.5"
-
-[model."grok-4.5"]
-model = "grok-4.5"
-base_url = "https://grok.example.com/v1"
-name = "tes 1"
-api_key = "secret"
-api_backend = "responses"
-context_window = 500000
-`,
-      }),
-    };
-
-    render(
-      <AddProviderDialog
-        open
-        onOpenChange={vi.fn()}
-        appId="grokbuild"
-        onSubmit={handleSubmit}
-      />,
-    );
-
-    fireEvent.click(await screen.findByRole("button", { name: "common.add" }));
-
-    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
-
-    const submitted = handleSubmit.mock.calls[0][0];
-    expect(submitted.icon).toBeUndefined();
-    expect(submitted.iconColor).toBeUndefined();
-  });
-
-  it("Pi 添加供应商时仅提交供应商目录", async () => {
-    const handleSubmit = vi.fn().mockResolvedValue(undefined);
-    mockFormValues = {
-      name: "Pi Provider",
-      providerKey: "pi-provider",
-      websiteUrl: "",
-      settingsConfig: JSON.stringify({
-        baseUrl: "https://api.example.com/v1",
-        models: [
-          { id: "selected-model", name: "Selected" },
-          { id: "other-model", name: "Other" },
-        ],
-      }),
-      meta: {
-        isPartner: true,
-        endpointAutoSelect: true,
-        custom_endpoints: {
-          "https://failover.example.com/v1": {
-            url: "https://failover.example.com/v1",
-            addedAt: 1,
-          },
-        },
-      },
-    };
-
-    render(
-      <AddProviderDialog
-        open
-        onOpenChange={vi.fn()}
-        appId="pi"
-        onSubmit={handleSubmit}
-      />,
-    );
-
-    fireEvent.click(await screen.findByRole("button", { name: "common.add" }));
-    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
-    expect(handleSubmit.mock.calls[0][0]).toMatchObject({
-      providerKey: "pi-provider",
-      meta: { isPartner: true },
-    });
-    expect(handleSubmit.mock.calls[0][0]).not.toHaveProperty(
-      "piActivateModelId",
-    );
-  });
-
-  it("重新打开 Pi 表单后忽略上一轮的就绪回调", async () => {
-    const props = {
-      onOpenChange: vi.fn(),
-      appId: "pi" as const,
-      onSubmit: vi.fn(),
-    };
-    const { rerender } = render(<AddProviderDialog open {...props} />);
-
-    const addButton = await screen.findByRole("button", { name: "common.add" });
-    await waitFor(() => expect(addButton).toBeEnabled());
-    const staleCallback = submitReadyCallbacks.at(-1);
-    expect(staleCallback).toBeDefined();
-
-    rerender(<AddProviderDialog open={false} {...props} />);
-    mockFormReady = false;
-    rerender(<AddProviderDialog open {...props} />);
-    const reopenedButton = await screen.findByRole("button", {
-      name: "common.add",
-    });
-    await waitFor(() => expect(reopenedButton).toBeDisabled());
-
-    act(() => staleCallback?.(true));
-    expect(reopenedButton).toBeDisabled();
-  });
-
-  // Oh My Pi 用 Pi 的表单：标识与模型都在表单里，必填项对话框看不见，按钮必须等表单报告就绪。
-  it("Oh My Pi 添加表单报告未就绪时禁用添加按钮", async () => {
-    mockFormReady = false;
-    render(
-      <AddProviderDialog
-        open
-        onOpenChange={vi.fn()}
-        appId="omp"
-        onSubmit={vi.fn()}
-      />,
-    );
-
-    const addButton = await screen.findByRole("button", { name: "common.add" });
-    await waitFor(() => expect(addButton).toBeDisabled());
-
-    act(() => submitReadyCallbacks.at(-1)?.(true));
-    await waitFor(() => expect(addButton).toBeEnabled());
-  });
-
-  // 统一供应商只能投影到 Claude Code / Codex / Gemini（后端 `UniversalProviderApps`），
-  // 所以对话框对 omp 不能把入口交给表单；Claude Code 作为对照必须照旧传。
-  it("只有能接收统一供应商的应用才拿到统一预设入口", async () => {
-    const { rerender } = render(
-      <AddProviderDialog
-        open
-        onOpenChange={vi.fn()}
-        appId="omp"
-        onSubmit={vi.fn()}
-      />,
-    );
-    await screen.findByRole("button", { name: "common.add" });
-    expect(universalProps.onUniversalPresetSelect).toBeUndefined();
-    expect(universalProps.onManageUniversalProviders).toBeUndefined();
-
-    rerender(
-      <AddProviderDialog
-        open
-        onOpenChange={vi.fn()}
-        appId="claude"
-        onSubmit={vi.fn()}
-      />,
-    );
-    await waitFor(() =>
-      expect(universalProps.onUniversalPresetSelect).toBeTypeOf("function"),
-    );
-    expect(universalProps.onManageUniversalProviders).toBeTypeOf("function");
   });
 });

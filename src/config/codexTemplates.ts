@@ -2,12 +2,10 @@
  * Codex 配置模板
  * 用于新建自定义供应商时的默认配置
  */
-
 export interface CodexTemplate {
   auth: Record<string, any>;
   config: string;
 }
-
 /**
  * 获取 Codex 自定义模板
  * @returns Codex 模板配置
@@ -21,7 +19,6 @@ model_reasoning_effort = "high"
 name = "custom"
 wire_api = "responses"
 requires_openai_auth = true`;
-
   return {
     auth: { OPENAI_API_KEY: "" },
     config,

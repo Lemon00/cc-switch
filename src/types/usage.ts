@@ -1,12 +1,10 @@
 // 使用统计相关类型定义
-
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
 }
-
 export interface RequestLog {
   requestId: string;
   providerId: string;
@@ -36,7 +34,6 @@ export interface RequestLog {
   createdAt: number;
   dataSource?: string;
 }
-
 export interface SessionSyncResult {
   imported: number;
   skipped: number;
@@ -45,20 +42,17 @@ export interface SessionSyncResult {
   deferredFiles: number;
   errors: string[];
 }
-
 export interface DataSourceSummary {
   dataSource: string;
   requestCount: number;
   totalCostUsd: string;
 }
-
 export interface PaginatedLogs {
   data: RequestLog[];
   total: number;
   page: number;
   pageSize: number;
 }
-
 export interface ModelPricing {
   modelId: string;
   displayName: string;
@@ -67,7 +61,6 @@ export interface ModelPricing {
   cacheReadCostPerMillion: string;
   cacheCreationCostPerMillion: string;
 }
-
 export interface ModelsDevSyncConfig {
   autoSyncEnabled: boolean;
   includeCommonModels: boolean;
@@ -76,12 +69,10 @@ export interface ModelsDevSyncConfig {
   lastSyncAt: number | null;
   lastSyncError: string | null;
 }
-
 export interface ModelsDevSyncState {
   config: ModelsDevSyncConfig;
   configPath: string;
 }
-
 export interface UsageSummary {
   totalRequests: number;
   totalCost: string;
@@ -95,12 +86,10 @@ export interface UsageSummary {
   /** cache_read / (input + cache_creation + cache_read), range 0–1 */
   cacheHitRate: number;
 }
-
 export interface UsageSummaryByApp {
   appType: string;
   summary: UsageSummary;
 }
-
 export interface DailyStats {
   date: string;
   requestCount: number;
@@ -111,7 +100,6 @@ export interface DailyStats {
   totalCacheCreationTokens: number;
   totalCacheReadTokens: number;
 }
-
 export interface ProviderStats {
   providerId: string;
   appType: string;
@@ -135,7 +123,6 @@ export interface ProviderStats {
   /** 估算首字中位数（毫秒）：会话日志导入、按时间戳推出了首字的请求；没有精确值时才显示，带 ≈ */
   estFirstTokenMedianMs?: number | null;
 }
-
 export interface ModelStats {
   model: string;
   requestCount: number;
@@ -153,7 +140,6 @@ export interface ModelStats {
   firstTokenMedianMs?: number | null;
   estFirstTokenMedianMs?: number | null;
 }
-
 export interface LogFilters {
   appType?: string;
   providerName?: string;
@@ -162,7 +148,6 @@ export interface LogFilters {
   startDate?: number;
   endDate?: number;
 }
-
 /**
  * Dashboard 顶栏的全局筛选维度，作用于 Hero / 趋势图 / 三个统计 Tab。
  *
@@ -176,7 +161,6 @@ export interface UsageScopeFilters {
   providerName?: string;
   model?: string;
 }
-
 export interface ProviderLimitStatus {
   providerId: string;
   dailyUsage: string;
@@ -186,7 +170,6 @@ export interface ProviderLimitStatus {
   monthlyLimit?: string;
   monthlyExceeded: boolean;
 }
-
 export type UsageRangePreset =
   | "today"
   | "1d"
@@ -195,7 +178,6 @@ export type UsageRangePreset =
   | "30d"
   | "all"
   | "custom";
-
 export interface UsageRangeSelection {
   preset: UsageRangePreset;
   customStartDate?: number;
@@ -204,7 +186,6 @@ export interface UsageRangeSelection {
    *  fixed customEndDate snapshot, and the end-time field becomes read-only. */
   liveEndTime?: boolean;
 }
-
 /**
  * App types surfaced as dashboard filter buttons.
  *
@@ -221,35 +202,15 @@ export interface UsageRangeSelection {
  * dashboard through session importers. `openclaw` / `hermes` appear only as
  * managed apps elsewhere.
  */
-export type AppType =
-  | "claude"
-  | "codex"
-  | "gemini"
-  | "grokbuild"
-  | "opencode"
-  | "pi"
-  | "omp"
-  | "mcode"
-  | "kimi"
-  | "dsh"
-  | "agy";
-
+export type AppType = "claude" | "codex" | "opencode" | "dsh" | "agy";
 export type AppTypeFilter = "all" | AppType;
-
 export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "claude",
   "codex",
-  "gemini",
-  "grokbuild",
   "opencode",
-  "pi",
-  "omp",
-  "mcode",
-  "kimi",
   "dsh",
   "agy",
 ];
-
 /**
  * App types whose proxy uses an OpenAI-style protocol. Two consequences:
  *
@@ -267,7 +228,6 @@ export const CACHE_INCLUSIVE_APP_TYPES: ReadonlySet<string> = new Set([
   "gemini",
   "grokbuild",
 ]);
-
 // Pi and Oh My Pi sessions can mix Anthropic and OpenAI APIs, but the dashboard
 // aggregates only by app type. Treat cache-write coverage as partial without
 // changing their fresh-input token semantics.
@@ -277,9 +237,7 @@ const PARTIAL_CACHE_WRITE_APP_TYPES: ReadonlySet<string> = new Set([
   "mcode",
   "kimi",
 ]);
-
 export type CacheWriteAvailability = "ok" | "partial" | "na";
-
 export function getCacheWriteAvailability(
   appTypes: readonly string[],
 ): CacheWriteAvailability {
@@ -293,14 +251,12 @@ export function getCacheWriteAvailability(
   );
   return unavailable === 0 && !partial ? "ok" : "partial";
 }
-
 /** Subset of request-log fields needed to derive cache-normalized input. */
 export interface CacheNormalizableLog {
   appType: string;
   inputTokens: number;
   cacheReadTokens: number;
 }
-
 /**
  * For a single request log, return the input token count with cache reads
  * removed. Anthropic-style providers already report `inputTokens` without
@@ -315,15 +271,12 @@ export function getFreshInputTokens(log: CacheNormalizableLog): number {
   }
   return log.inputTokens;
 }
-
 export const NON_NEGATIVE_DECIMAL_REGEX = /^\d+(?:\.\d+)?$/;
-
 export function isNonNegativeDecimalString(value: string): boolean {
   const trimmed = value.trim();
   if (!NON_NEGATIVE_DECIMAL_REGEX.test(trimmed)) return false;
-  return Number.isFinite(Number(trimmed));
+  return Number.isFinite(Number(trimmed)) && Number(trimmed) < 1e12;
 }
-
 type UsageCostLog = Pick<
   RequestLog,
   | "inputTokens"
@@ -334,7 +287,6 @@ type UsageCostLog = Pick<
   | "statusCode"
 > &
   Partial<Pick<RequestLog, "costMultiplier">>;
-
 export function hasUsageTokens(log: UsageCostLog): boolean {
   return (
     log.inputTokens > 0 ||
@@ -343,7 +295,6 @@ export function hasUsageTokens(log: UsageCostLog): boolean {
     log.cacheCreationTokens > 0
   );
 }
-
 export function isUnpricedUsage(log: UsageCostLog): boolean {
   const totalCost = Number.parseFloat(log.totalCostUsd);
   const multiplier =
@@ -359,7 +310,6 @@ export function isUnpricedUsage(log: UsageCostLog): boolean {
     totalCost === 0
   );
 }
-
 export interface StatsFilters {
   timeRange: UsageRangePreset;
   providerId?: string;

@@ -6,13 +6,14 @@
 
 use std::collections::VecDeque;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::io;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use std::time::SystemTime;
 
-use super::content::{SourceLocation, ValidatedSource, GROK_CHAT_HISTORY};
+use super::content::{SourceLocation, ValidatedSource};
 use super::model::{EventKind, SessionBlock, SessionMessage, ToolStatus, TurnIndex};
 
 /// 最多缓存的会话数
@@ -72,13 +73,17 @@ fn serialized_message_len(message: &SessionMessage) -> usize {
 pub struct Fingerprint {
     pub modified: Option<SystemTime>,
     pub len: u64,
+    revision: u64,
 }
 
 impl Fingerprint {
-    fn of_metadata(meta: &fs::Metadata) -> Self {
+    fn of_metadata(path: &Path, meta: &fs::Metadata) -> Self {
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        (path, meta.modified().ok(), meta.created().ok(), meta.len()).hash(&mut hash);
         Self {
             modified: meta.modified().ok(),
             len: meta.len(),
+            revision: hash.finish(),
         }
     }
 
@@ -89,6 +94,10 @@ impl Fingerprint {
             (a, b) => a.or(b),
         };
         self.len = self.len.wrapping_add(other.len);
+        // Include every file's identity and timestamp. Taking only max(mtime)
+        // loses equal-length updates whenever another file has a newer clock.
+        // Addition keeps directory enumeration order irrelevant.
+        self.revision = self.revision.wrapping_add(other.revision);
     }
 }
 
@@ -101,11 +110,11 @@ pub fn fingerprint(location: &SourceLocation) -> io::Result<Fingerprint> {
     match location {
         SourceLocation::Path { path, .. } => {
             let meta = fs::metadata(path)?;
-            let mut fp = Fingerprint::of_metadata(&meta);
+            let mut fp = Fingerprint::of_metadata(path, &meta);
             if meta.is_dir() {
                 for entry in fs::read_dir(path)?.flatten() {
                     if let Ok(child) = entry.metadata() {
-                        fp.merge(Fingerprint::of_metadata(&child));
+                        fp.merge(Fingerprint::of_metadata(&entry.path(), &child));
                         // 子项个数也计入，避免「删一个、加一个同样大小」时指纹不变
                         fp.len = fp.len.wrapping_add(1);
                     }
@@ -114,10 +123,10 @@ pub fn fingerprint(location: &SourceLocation) -> io::Result<Fingerprint> {
             Ok(fp)
         }
         SourceLocation::Sqlite { db, .. } => {
-            let mut fp = Fingerprint::of_metadata(&fs::metadata(db)?);
+            let mut fp = Fingerprint::of_metadata(db, &fs::metadata(db)?);
             if let Some(wal) = sqlite_wal_path(db) {
-                if let Ok(meta) = fs::metadata(wal) {
-                    fp.merge(Fingerprint::of_metadata(&meta));
+                if let Ok(meta) = fs::metadata(&wal) {
+                    fp.merge(Fingerprint::of_metadata(&wal, &meta));
                 }
             }
             Ok(fp)
@@ -137,12 +146,6 @@ pub fn source_fingerprint(source: &ValidatedSource) -> io::Result<Fingerprint> {
         return Ok(fp);
     };
     match source.provider_id.as_str() {
-        "grokbuild" => {
-            let history = path.with_file_name(GROK_CHAT_HISTORY);
-            if let Ok(meta) = fs::metadata(&history) {
-                fp.merge(Fingerprint::of_metadata(&meta));
-            }
-        }
         "opencode" if path.is_dir() => merge_opencode_parts(path, &mut fp),
         _ => {}
     }
@@ -174,13 +177,13 @@ fn merge_opencode_parts(message_dir: &Path, fp: &mut Fingerprint) {
         let Ok(meta) = fs::metadata(&part_dir) else {
             continue;
         };
-        fp.merge(Fingerprint::of_metadata(&meta));
+        fp.merge(Fingerprint::of_metadata(&part_dir, &meta));
         let Ok(parts) = fs::read_dir(&part_dir) else {
             continue;
         };
         for part in parts.flatten() {
             if let Ok(child) = part.metadata() {
-                fp.merge(Fingerprint::of_metadata(&child));
+                fp.merge(Fingerprint::of_metadata(&part.path(), &child));
                 fp.len = fp.len.wrapping_add(1);
             }
         }
@@ -621,6 +624,7 @@ mod tests {
         Fingerprint {
             modified: Some(SystemTime::UNIX_EPOCH),
             len,
+            revision: len,
         }
     }
 
@@ -675,40 +679,6 @@ mod tests {
         // 新增 part 文件
         std::fs::write(part_dir.join("prt_2.json"), "{}").unwrap();
         assert_ne!(source_fingerprint(&source).unwrap(), grown);
-    }
-
-    #[test]
-    fn grok_fingerprint_follows_chat_history() {
-        use std::io::Write;
-
-        let dir = tempdir().unwrap();
-        let summary = dir.path().join("summary.json");
-        let history = dir.path().join(GROK_CHAT_HISTORY);
-        std::fs::write(&summary, "{}").unwrap();
-        std::fs::write(&history, "{\"role\":\"user\"}\n").unwrap();
-        let source = |provider: &str| ValidatedSource {
-            provider_id: provider.to_string(),
-            raw: summary.to_string_lossy().into_owned(),
-            location: SourceLocation::Path {
-                path: summary.clone(),
-                root: dir.path().to_path_buf(),
-            },
-        };
-
-        let grok_before = source_fingerprint(&source("grokbuild")).unwrap();
-        let other_before = source_fingerprint(&source("claude")).unwrap();
-        std::fs::OpenOptions::new()
-            .append(true)
-            .open(&history)
-            .unwrap()
-            .write_all(b"{\"role\":\"assistant\"}\n")
-            .unwrap();
-
-        assert_ne!(
-            source_fingerprint(&source("grokbuild")).unwrap(),
-            grok_before
-        );
-        assert_eq!(source_fingerprint(&source("claude")).unwrap(), other_before);
     }
 
     #[test]
@@ -810,6 +780,36 @@ mod tests {
         let before = fingerprint(&location).unwrap();
         std::fs::write(dir.path().join("state.db-wal"), "wal").unwrap();
         assert_ne!(fingerprint(&location).unwrap(), before);
+    }
+
+    #[test]
+    fn composite_fingerprint_detects_change_older_than_newest_file() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("state.db");
+        let wal = dir.path().join("state.db-wal");
+        std::fs::write(&db, "db").unwrap();
+        std::fs::write(&wal, "old").unwrap();
+        let set_time = |path: &Path, secs| {
+            std::fs::File::options()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(secs))
+                .unwrap();
+        };
+        set_time(&db, 2_000_000_000);
+        set_time(&wal, 1_000_000_000);
+        let location = SourceLocation::Sqlite {
+            db,
+            session_id: "s".into(),
+        };
+        let before = fingerprint(&location).unwrap();
+        std::fs::write(&wal, "new").unwrap();
+        set_time(&wal, 1_000_000_001);
+        let after = fingerprint(&location).unwrap();
+        assert_eq!(before.len, after.len);
+        assert_eq!(before.modified, after.modified);
+        assert_ne!(before, after);
     }
 
     fn text(role: &str, text: &str) -> SessionMessage {

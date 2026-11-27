@@ -33,6 +33,7 @@ pub fn uses_native_menu() -> bool {
 
 /// 弹出前发给面板：带上这次的方位，前端据此排版后回报尺寸（`tray_panel_layout`）。
 const SHOW_EVENT: &str = "tray-panel-show";
+const HIDE_EVENT: &str = "tray-panel-hide";
 /// 托盘状态变了（切换、额度、问题区），面板重新取数据。
 const CHANGED_EVENT: &str = "tray-panel-changed";
 
@@ -401,6 +402,7 @@ fn create_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
 fn hide_window(window: &WebviewWindow) {
     PENDING_REVEAL.store(false, Ordering::Release);
     let _ = window.hide();
+    let _ = window.emit_to(PANEL_LABEL, HIDE_EVENT, SEQ.load(Ordering::Acquire));
     // 面板里已经显示过反馈行了，下次弹出不再显示。
     crate::tray::mark_feedback_seen();
     release_if_lightweight(window.app_handle());
@@ -428,6 +430,8 @@ pub fn release_if_lightweight(app: &AppHandle) {
             }
             if let Err(e) = window.destroy() {
                 log::warn!("[TrayPanel] 轻量模式下销毁面板窗口失败: {e}");
+            } else {
+                crate::trim_process_memory();
             }
         });
     });
@@ -1102,7 +1106,9 @@ mod platform {
 #[tauri::command]
 pub async fn tray_panel_state(app: AppHandle) -> Result<crate::tray::PanelModel, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
+        let state = app
+            .try_state::<AppState>()
+            .ok_or("Application is not ready")?;
         crate::tray::collect_panel_model(state.inner()).map_err(|e| e.to_string())
     })
     .await

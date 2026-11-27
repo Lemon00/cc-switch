@@ -1,25 +1,23 @@
-import { Fragment, useMemo, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { ChevronDown, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import { useUsageFirstDate, useUsageTrends } from "@/lib/query/usage";
 import { cn } from "@/lib/utils";
 import type { UsageRangeSelection } from "@/types/usage";
+import { ChevronDown, Loader2 } from "lucide-react";
+import { Fragment, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   formatTokensShort,
   getLocaleFromLanguage,
   parseFiniteNumber,
 } from "./format";
-import { hitRateOf, type UsageTrendStatLike } from "./UsageTrendChart";
-import { UsageTooltipCard } from "./UsageTooltipCard";
-import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import type { UsageMetric } from "./rememberedChoice";
-
+import { UsageTooltipCard } from "./UsageTooltipCard";
+import { hitRateOf, type UsageTrendStatLike } from "./UsageTrendChart";
 const WEEKS = 53;
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** 0 档用底色，1–4 档是 --heat-1…4（与趋势图同一色相，色阶在 index.css 按深浅色分别定） */
 const LEVELS = [0, 1, 2, 3, 4];
-
 interface UsageHeatmapProps {
   /** 格子深浅按哪个指标分档：由上方指标条选 */
   metric: UsageMetric;
@@ -28,7 +26,6 @@ interface UsageHeatmapProps {
   model?: string;
   refreshIntervalMs: number;
 }
-
 interface DayCell {
   key: string;
   date: Date;
@@ -41,7 +38,6 @@ interface DayCell {
   cost: number;
   future: boolean;
 }
-
 /** 一段 53 周：最新一段右端是今天，更早的段首尾相接往前排 */
 interface SpanGrid {
   start: Date;
@@ -49,29 +45,28 @@ interface SpanGrid {
   end: Date;
   weeks: DayCell[][];
   monthLabels: (number | null)[];
-  totals: { tokens: number; requests: number; cost: number };
+  totals: {
+    tokens: number;
+    requests: number;
+    cost: number;
+  };
 }
-
 interface HoverState {
   cell: DayCell;
   /** 相对热力图卡片的格子顶部中点 */
   x: number;
   y: number;
 }
-
 function startOfDay(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
-
 function dayKey(date: Date): string {
   return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
 }
-
 /** 周一为一周第一天：0 = 周一 … 6 = 周日 */
 function weekdayIndex(date: Date): number {
   return (date.getDay() + 6) % 7;
 }
-
 /** 两个本地日期相差的天数（按 UTC 日历算，不受夏令时影响） */
 function daysBetween(from: Date, to: Date): number {
   return Math.round(
@@ -80,11 +75,9 @@ function daysBetween(from: Date, to: Date): number {
       DAY_MS,
   );
 }
-
 function addDays(date: Date, days: number): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
 }
-
 /**
  * 第 index 段的起点（周一）：第 0 段是往前 52 周那一周的周一，凑满 53 列、右端是本周；
  * 再往前每段 53 周，首尾相接。
@@ -93,7 +86,6 @@ function spanStart(today: Date, index: number): Date {
   const thisMonday = addDays(today, -weekdayIndex(today));
   return addDays(thisMonday, -((WEEKS - 1) * 7 + index * WEEKS * 7));
 }
-
 /** 一共几段：最早有记录的那天落在哪一段；没有记录或在第 0 段里时只有 1 段 */
 function spanCountFor(
   firstDate: string | null | undefined,
@@ -109,7 +101,6 @@ function spanCountFor(
   const before = daysBetween(first, spanStart(today, 0));
   return before > 0 ? 1 + Math.ceil(before / (WEEKS * 7)) : 1;
 }
-
 function metricValue(
   stat: UsageTrendStatLike,
   metric: Exclude<UsageMetric, "hitRate">,
@@ -123,7 +114,6 @@ function metricValue(
     stat.totalCacheReadTokens
   );
 }
-
 /** 格子分档用的值：用量类指标 0 就是没用；命中率 0% 是真实数据，只有没有输入时才是空 */
 function heatValue(
   stat: UsageTrendStatLike | undefined,
@@ -134,7 +124,6 @@ function heatValue(
   const value = metricValue(stat, metric);
   return value > 0 ? value : null;
 }
-
 /** 按有数据的天的四分位分档，避免个别高峰日把其余格子都压成最浅 */
 function buildThresholds(values: (number | null)[]): number[] {
   const sorted = values
@@ -145,7 +134,6 @@ function buildThresholds(values: (number | null)[]): number[] {
     sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))];
   return [at(0.25), at(0.5), at(0.75)];
 }
-
 function levelOf(value: number | null, thresholds: number[]): number {
   if (value == null) return 0;
   if (value <= thresholds[0]) return 1;
@@ -153,7 +141,6 @@ function levelOf(value: number | null, thresholds: number[]): number {
   if (value <= thresholds[2]) return 3;
   return 4;
 }
-
 function cellStyle(level: number) {
   return level === 0
     ? undefined
@@ -161,13 +148,16 @@ function cellStyle(level: number) {
         backgroundColor: `var(--heat-${level})`,
       };
 }
-
 /**
  * 从最早一段的起点到现在的按天数据。先查最早日期算出要几段，再查趋势；
  * 起点按周取整，同一周内查询键不变。
  */
 function useAllSpansDailyTrends(
-  filters: { appType?: string; providerName?: string; model?: string },
+  filters: {
+    appType?: string;
+    providerName?: string;
+    model?: string;
+  },
   refreshIntervalMs: number,
 ) {
   const refetchInterval = refreshIntervalMs > 0 ? refreshIntervalMs : false;
@@ -199,7 +189,6 @@ function useAllSpansDailyTrends(
     isLoading: firstDateQuery.isPending || trendsQuery.isLoading,
   };
 }
-
 /** 把后端按天的数据铺成一段 53 周 × 7 天的格子（周一开头，未来的日子标记出来）。 */
 function buildSpan(
   index: number,
@@ -233,17 +222,14 @@ function buildSpan(
     }
     weeks.push(column);
   }
-
   // 月份标签：某一列包含当月 1 号（或第一列）时标出月份
   const monthLabels = weeks.map((column, w) => {
     if (w === 0) return column[0].date.getMonth() + 1;
     const first = column.find((cell) => cell.date.getDate() === 1);
     return first ? first.date.getMonth() + 1 : null;
   });
-
   return { start, end, weeks, monthLabels, totals };
 }
-
 export function UsageHeatmap({
   metric,
   appType,
@@ -257,7 +243,6 @@ export function UsageHeatmap({
   const [hover, setHover] = useState<HoverState | null>(null);
   // 默认只画最近 53 周，点「显示更多」才把更早的段全部展开；不记住，每次进来都是收起
   const [showEarlier, setShowEarlier] = useState(false);
-
   const showTooltip = (cell: DayCell, target: HTMLElement) => {
     const section = sectionRef.current;
     if (!section) return;
@@ -271,12 +256,10 @@ export function UsageHeatmap({
   };
   const language = i18n.resolvedLanguage || i18n.language || "en";
   const locale = getLocaleFromLanguage(language);
-
   const { spanCount, trends, isLoading } = useAllSpansDailyTrends(
     { appType, providerName, model },
     refreshIntervalMs,
   );
-
   const heat = useMemo(() => {
     const byDay = new Map<string, UsageTrendStatLike>();
     for (const stat of trends ?? []) {
@@ -292,10 +275,8 @@ export function UsageHeatmap({
       .flatMap((span) => span.weeks.flat())
       .filter((cell) => !cell.future);
     const thresholds = buildThresholds(days.map((cell) => cell.value));
-
     return { spans, thresholds };
   }, [trends, metric, spanCount]);
-
   const earlierCount = heat.spans.length - 1;
   const visibleSpans = showEarlier ? heat.spans : heat.spans.slice(0, 1);
   const formatDay = (date: Date) =>
@@ -304,7 +285,6 @@ export function UsageHeatmap({
       month: "short",
       day: "numeric",
     });
-
   const weekdayLabels = useMemo(() => {
     // 2024-01-01 是周一
     return Array.from({ length: 7 }, (_, d) =>
@@ -313,7 +293,6 @@ export function UsageHeatmap({
       }),
     );
   }, [locale]);
-
   return (
     <section
       ref={sectionRef}

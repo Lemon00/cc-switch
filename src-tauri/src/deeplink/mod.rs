@@ -9,7 +9,6 @@
 //!
 
 mod codex_link;
-mod grok_link;
 mod icon_fetch;
 mod mcp;
 mod parser;
@@ -32,6 +31,67 @@ pub use parser::parse_deeplink_url;
 pub use prompt::import_prompt_from_deeplink;
 pub use provider::{import_provider_from_deeplink, parse_and_merge_config};
 pub use skill::import_skill_from_deeplink;
+
+/// Retain the legacy decoder for archived links; application entry points enforce
+/// the supported app set before opening a dialog, fetching config, or importing.
+pub fn validate_supported_apps(
+    request: &DeepLinkImportRequest,
+) -> Result<(), crate::error::AppError> {
+    for name in request
+        .app
+        .iter()
+        .map(String::as_str)
+        .chain(request.apps.iter().flat_map(|apps| apps.split(',')))
+    {
+        let app: crate::AppType = name.parse()?;
+        if !app.is_supported() {
+            return Err(crate::error::AppError::InvalidInput(format!(
+                "This application is no longer supported: {name}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+pub fn parse_supported_deeplink_url(
+    url: &str,
+) -> Result<DeepLinkImportRequest, crate::error::AppError> {
+    let request = parse_deeplink_url(url)?;
+    validate_supported_apps(&request)?;
+    Ok(request)
+}
+
+#[cfg(test)]
+mod supported_app_tests {
+    use super::*;
+
+    #[test]
+    fn supported_links_reject_retired_apps_and_mixed_mcp_targets() {
+        for app in crate::AppType::persisted() {
+            let request = DeepLinkImportRequest {
+                app: Some(app.to_string()),
+                ..Default::default()
+            };
+            assert_eq!(
+                validate_supported_apps(&request).is_ok(),
+                app.is_supported()
+            );
+        }
+        for apps in ["codex,gemini", "claude,pi", "agy,unknown"] {
+            let request = DeepLinkImportRequest {
+                apps: Some(apps.into()),
+                ..Default::default()
+            };
+            assert!(validate_supported_apps(&request).is_err());
+        }
+        let request = DeepLinkImportRequest {
+            apps: Some("claude,codex,opencode,dsh,agy".into()),
+            ..Default::default()
+        };
+        assert!(validate_supported_apps(&request).is_ok());
+        assert!(parse_supported_deeplink_url("ccswitch://v1/import?resource=provider&app=gemini&name=test&endpoint=https%3A%2F%2Fexample.com&apiKey=test").is_err());
+    }
+}
 
 /// 等前端处理的深链接（解析结果或解析错误）
 ///

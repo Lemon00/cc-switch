@@ -2,7 +2,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
 const {
   getModelsDevSyncConfig,
   saveModelsDevSyncConfig,
@@ -16,10 +15,15 @@ const {
   openAppConfigFolder: vi.fn(),
   syncModelsDevPricing: vi.fn(),
 }));
-
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string, options?: { count?: number; status?: string }) =>
+    t: (
+      key: string,
+      options?: {
+        count?: number;
+        status?: string;
+      },
+    ) =>
       options?.count != null
         ? `${key}:${options.count}`
         : options?.status != null
@@ -28,11 +32,9 @@ vi.mock("react-i18next", () => ({
     i18n: { resolvedLanguage: "en" },
   }),
 }));
-
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
-
 vi.mock("@/lib/api/usage", () => ({
   usageApi: {
     getModelsDevSyncConfig,
@@ -40,24 +42,18 @@ vi.mock("@/lib/api/usage", () => ({
     getModelPricing,
   },
 }));
-
 vi.mock("@/lib/api/settings", () => ({
   settingsApi: { openAppConfigFolder },
 }));
-
 vi.mock("@/lib/modelsDevAutoSync", () => ({
   MODELS_DEV_SYNC_CONFIG_QUERY_KEY: ["models-dev-sync-config"],
   syncModelsDevPricing,
 }));
-
 const invokeMock = vi.hoisted(() => vi.fn());
-
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: invokeMock,
 }));
-
 import { ModelsDevAutoSyncPanel } from "@/components/usage/ModelsDevAutoSyncPanel";
-
 const state = {
   configPath: "C:/Users/test/.cc-switch/model-pricing.json",
   config: {
@@ -69,7 +65,6 @@ const state = {
     lastSyncError: null,
   },
 };
-
 function renderPanel() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -80,7 +75,6 @@ function renderPanel() {
     </QueryClientProvider>,
   );
 }
-
 describe("ModelsDevAutoSyncPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -99,7 +93,7 @@ describe("ModelsDevAutoSyncPanel", () => {
       if (command !== "fetch_models_dev") {
         throw new Error(`Unexpected command: ${command}`);
       }
-      return JSON.stringify({
+      return {
         openai: {
           name: "OpenAI",
           models: {
@@ -120,14 +114,12 @@ describe("ModelsDevAutoSyncPanel", () => {
             },
           },
         },
-      });
+      };
     });
   });
-
   it("loads automatic sync as disabled by default", async () => {
     const user = userEvent.setup();
     renderPanel();
-
     expect(
       await screen.findByText(
         "usage.pricing.modelsDevTitle:usage.modelsDevAutoSync.disabled",
@@ -141,7 +133,6 @@ describe("ModelsDevAutoSyncPanel", () => {
     expect(await screen.findByText(state.configPath)).toBeInTheDocument();
     expect(saveModelsDevSyncConfig).not.toHaveBeenCalled();
   });
-
   it("persists disabling without showing the overwrite warning", async () => {
     const enabledState = {
       ...state,
@@ -149,7 +140,6 @@ describe("ModelsDevAutoSyncPanel", () => {
     };
     getModelsDevSyncConfig.mockResolvedValue(enabledState);
     renderPanel();
-
     fireEvent.click(await screen.findByRole("switch"));
     await waitFor(() =>
       expect(saveModelsDevSyncConfig).toHaveBeenCalledWith({
@@ -161,12 +151,9 @@ describe("ModelsDevAutoSyncPanel", () => {
       screen.queryByText("usage.modelsDevAutoSync.enableConfirmTitle"),
     ).not.toBeInTheDocument();
   });
-
   it("warns about price overwrites before enabling automatic sync", async () => {
     renderPanel();
-
     fireEvent.click(await screen.findByRole("switch"));
-
     expect(saveModelsDevSyncConfig).not.toHaveBeenCalled();
     expect(
       await screen.findByText("usage.modelsDevAutoSync.enableConfirmTitle"),
@@ -176,7 +163,6 @@ describe("ModelsDevAutoSyncPanel", () => {
         name: "usage.modelsDevAutoSync.enableConfirmAction",
       }),
     );
-
     await waitFor(() =>
       expect(saveModelsDevSyncConfig).toHaveBeenCalledWith({
         ...state.config,
@@ -184,19 +170,15 @@ describe("ModelsDevAutoSyncPanel", () => {
       }),
     );
   });
-
   it("keeps automatic sync disabled when the overwrite warning is cancelled", async () => {
     renderPanel();
-
     fireEvent.click(await screen.findByRole("switch"));
     fireEvent.click(
       await screen.findByRole("button", { name: "common.cancel" }),
     );
-
     expect(saveModelsDevSyncConfig).not.toHaveBeenCalled();
     expect(screen.getByRole("switch")).not.toBeChecked();
   });
-
   it("reloads the automatic sync config after reading the local pricing file", async () => {
     const initialState = {
       ...state,
@@ -207,7 +189,6 @@ describe("ModelsDevAutoSyncPanel", () => {
       .mockResolvedValue(state);
     const user = userEvent.setup();
     renderPanel();
-
     await user.click(
       await screen.findByRole("button", { name: "usage.pricing.moreActions" }),
     );
@@ -216,14 +197,12 @@ describe("ModelsDevAutoSyncPanel", () => {
         name: "usage.modelsDevAutoSync.reloadLocalFile",
       }),
     );
-
     await waitFor(() =>
       expect(getModelsDevSyncConfig).toHaveBeenCalledTimes(2),
     );
     expect(getModelPricing).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(screen.getByRole("switch")).not.toBeChecked());
   });
-
   it("opens the searchable multi-select dialog with common models selected", async () => {
     renderPanel();
     fireEvent.click(
@@ -231,7 +210,6 @@ describe("ModelsDevAutoSyncPanel", () => {
         name: "usage.modelsDevAutoSync.configure",
       }),
     );
-
     expect(
       await screen.findByText("usage.modelsDevAutoSync.configureTitle"),
     ).toBeInTheDocument();

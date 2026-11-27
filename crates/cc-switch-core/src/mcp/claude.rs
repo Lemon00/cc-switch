@@ -2,11 +2,14 @@
 
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::Mutex;
 
-use crate::app_config::{McpApps, McpConfig, McpServer, MultiAppConfig};
+static WRITE_LOCK: Mutex<()> = Mutex::new(());
+
+use crate::app_config::{McpApps, McpServer, MultiAppConfig};
 use crate::error::AppError;
 
-use super::validation::{extract_server_spec, validate_server_spec};
+use super::validation::validate_server_spec;
 
 fn should_sync_claude_mcp() -> bool {
     // Claude 未安装/未初始化时：通常 ~/.claude 目录与 ~/.claude.json 都不存在。
@@ -14,49 +17,15 @@ fn should_sync_claude_mcp() -> bool {
     crate::config::get_claude_config_dir().exists() || crate::config::get_claude_mcp_path().exists()
 }
 
-/// 返回已启用的 MCP 服务器（过滤 enabled==true）
-fn collect_enabled_servers(cfg: &McpConfig) -> HashMap<String, Value> {
-    let mut out = HashMap::new();
-    for (id, entry) in cfg.servers.iter() {
-        let enabled = entry
-            .get("enabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        if !enabled {
-            continue;
-        }
-        match extract_server_spec(entry) {
-            Ok(spec) => {
-                out.insert(id.clone(), spec);
-            }
-            Err(err) => {
-                log::warn!("跳过无效的 MCP 条目 '{id}': {err}");
-            }
-        }
-    }
-    out
-}
-
-/// 将 config.json 中 enabled==true 的项投影写入 ~/.claude.json
-pub fn sync_enabled_to_claude(config: &MultiAppConfig) -> Result<(), AppError> {
-    if !should_sync_claude_mcp() {
-        return Ok(());
-    }
-    let enabled = collect_enabled_servers(&config.mcp.claude);
-    crate::claude_mcp::set_mcp_servers_map(&enabled)
-}
-
 /// 从 ~/.claude.json 导入 mcpServers 到统一结构（v3.7.0+）
 /// 已存在的服务器将启用 Claude 应用，不覆盖其他字段和应用状态
 pub fn import_from_claude(config: &mut MultiAppConfig) -> Result<usize, AppError> {
-    let text_opt = crate::claude_mcp::read_mcp_json()?;
-    let Some(text) = text_opt else { return Ok(0) };
-
-    let v: Value = serde_json::from_str(&text)
-        .map_err(|e| AppError::McpValidation(format!("解析 ~/.claude.json 失败: {e}")))?;
-    let Some(map) = v.get("mcpServers").and_then(|x| x.as_object()) else {
-        return Ok(0);
-    };
+    let map = crate::claude_mcp::read_mcp_servers_map().map_err(|error| match error {
+        AppError::Json { source, .. } => {
+            AppError::McpValidation(format!("解析 ~/.claude.json 失败: {source}"))
+        }
+        other => other,
+    })?;
 
     // 确保新结构存在
     let servers = config.mcp.servers.get_or_insert_with(HashMap::new);
@@ -91,15 +60,8 @@ pub fn import_from_claude(config: &mut MultiAppConfig) -> Result<usize, AppError
                         agy: false,
                         claude: true,
                         codex: false,
-                        gemini: false,
-                        grokbuild: false,
                         opencode: false,
-                        hermes: false,
-                        mcode: false,
-                        kimi: false,
                         dsh: false,
-                        pi: false,
-                        omp: false,
                     },
                     description: None,
                     homepage: None,
@@ -120,14 +82,13 @@ pub fn import_from_claude(config: &mut MultiAppConfig) -> Result<usize, AppError
 }
 
 /// 将单个 MCP 服务器同步到 Claude live 配置
-pub fn sync_single_server_to_claude(
-    _config: &MultiAppConfig,
-    id: &str,
-    server_spec: &Value,
-) -> Result<(), AppError> {
+pub fn sync_single_server_to_claude(id: &str, server_spec: &Value) -> Result<(), AppError> {
     if !should_sync_claude_mcp() {
         return Ok(());
     }
+    let _guard = WRITE_LOCK
+        .lock()
+        .map_err(|e| AppError::Message(e.to_string()))?;
     // 读取现有的 MCP 配置
     let current = crate::claude_mcp::read_mcp_servers_map()?;
 
@@ -144,6 +105,9 @@ pub fn remove_server_from_claude(id: &str) -> Result<(), AppError> {
     if !should_sync_claude_mcp() {
         return Ok(());
     }
+    let _guard = WRITE_LOCK
+        .lock()
+        .map_err(|e| AppError::Message(e.to_string()))?;
     // 读取现有的 MCP 配置
     let mut current = crate::claude_mcp::read_mcp_servers_map()?;
 

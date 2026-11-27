@@ -1,14 +1,12 @@
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import type { Translate } from "./toolSummary";
-
 /**
  * 阅读页文案（`sessionManager.reader.*`）。
  * 这里的简体中文是各 key 的 defaultValue：语言包缺 key（含单测）时仍有可读文案。
  * 四套语言包里的取值以 src/i18n/locales/*.json 为准。
  */
 export const READER_I18N_PREFIX = "sessionManager.reader.";
-
 export const READER_DEFAULTS: Record<string, string> = {
   timelineSummary: "执行过程 · {{steps}} 步",
   summaryCommands: "{{count}} 个命令",
@@ -119,13 +117,11 @@ export const READER_DEFAULTS: Record<string, string> = {
   expandContent: "展开完整内容",
   collapseContent: "收起",
 };
-
 /** 完整 key → defaultValue（formatStepTitle 等纯函数传进来的是完整 key） */
 const defaultFor = (key: string) =>
   key.startsWith(READER_I18N_PREFIX)
     ? READER_DEFAULTS[key.slice(READER_I18N_PREFIX.length)]
     : undefined;
-
 /**
  * 阅读页的翻译函数：`rt("status.error")` 取 `sessionManager.reader.status.error`；
  * 以 `sessionManager.` 开头的完整 key 原样使用。自动带上中文 defaultValue。

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
-
 // 预填口径（2026-08-15 官方文档盘点 + Jason 同日拍板"表单可见性优先"）：
 // - native Responses 直连预设：填厂商官方声明的真实差异化档位子集（含照抄
 //   DeepSeek 官方 catalog 镜像、MiniMax/MiMo 与模板默认相同的显式声明——
@@ -22,7 +21,6 @@ const CANONICAL_EFFORTS = [
   "max",
   "ultra",
 ];
-
 function catalogModel(presetName: string, modelId: string) {
   const preset = codexProviderPresets.find((item) => item.name === presetName);
   expect(preset, `preset ${presetName}`).toBeDefined();
@@ -32,7 +30,6 @@ function catalogModel(presetName: string, modelId: string) {
   expect(model, `${presetName} catalog model ${modelId}`).toBeDefined();
   return model!;
 }
-
 describe("Codex preset pre-filled reasoning levels", () => {
   // 每条期望值都对应官方文档证据（见预设文件内注释）；改动任一侧前先核对来源。
   // 第四位=期望的显式 defaultReasoningLevel：用于官方 catalog 的默认值，
@@ -339,7 +336,6 @@ describe("Codex preset pre-filled reasoning levels", () => {
       ["low", "high", "max"],
     ],
   ];
-
   it.each(EXPECTED)(
     "%s / %s declares the vendor-documented levels",
     (presetName, modelId, levels, expectedDefault) => {
@@ -349,7 +345,6 @@ describe("Codex preset pre-filled reasoning levels", () => {
       expect(model.defaultReasoningLevel).toBe(expectedDefault);
     },
   );
-
   it("keeps deliberately-unfilled presets unfilled", () => {
     // OpenCode Go 的 MiMo 无 effort 声明，与 opencode 客户端一致（代理侧
     // 无表不发 reasoning_effort）。ModelScope 是否透传思考字段未证实，不造
@@ -380,7 +375,6 @@ describe("Codex preset pre-filled reasoning levels", () => {
       ).toBeUndefined();
     }
   });
-
   it("only ever declares canonical Codex efforts", () => {
     for (const preset of codexProviderPresets) {
       for (const model of preset.modelCatalog ?? []) {

@@ -1,6 +1,24 @@
-import { useState, type ReactNode } from "react";
+import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
+import { AppPageHeader } from "@/components/shell/AppPageHeader";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { HelpTip } from "@/components/ui/help-tip";
+import { HoverTip } from "@/components/ui/hover-tip";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { SearchField } from "@/components/ui/search-field";
+import { promptsApi, type AppId } from "@/lib/api";
+import { promptKeys } from "@/lib/query/prompts";
+import { cn } from "@/lib/utils";
 import { useQueries } from "@tanstack/react-query";
-import { useTranslation } from "react-i18next";
 import {
   BookOpen,
   Check,
@@ -8,33 +26,13 @@ import {
   MoreHorizontal,
   Plus,
 } from "lucide-react";
-import { AppPageHeader } from "@/components/shell/AppPageHeader";
-import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
-import { Button } from "@/components/ui/button";
-import { HelpTip } from "@/components/ui/help-tip";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { HoverTip } from "@/components/ui/hover-tip";
-import { promptsApi, type AppId } from "@/lib/api";
-import { promptKeys } from "@/lib/query/prompts";
-import { SearchField } from "@/components/ui/search-field";
-import { cn } from "@/lib/utils";
+import { useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { renderSegs } from "./promptUtils";
-
 export const promptMenuContentClass =
   "min-w-[200px] rounded-panel border border-border bg-surface p-1 text-fg-1 shadow-v7-md";
 export const promptMenuItemClass =
   "min-h-8 rounded-control px-2.5 py-1.5 text-body text-fg-1 focus:bg-subtle focus:text-fg-1 data-[disabled]:opacity-100";
-
 export interface PromptMoreItem {
   key: string;
   label: ReactNode;
@@ -42,7 +40,6 @@ export interface PromptMoreItem {
   /** 不能点时写原因（菜单里的原因写成看得见的第二行） */
   reason?: string;
 }
-
 interface PromptPageFrameProps {
   app: AppId;
   apps: AppId[];
@@ -51,12 +48,23 @@ interface PromptPageFrameProps {
   appSwitchDisabled?: boolean;
   /** 当前应用的条数（列表里现成的，不另外查） */
   count: number;
-  help: { title: string; text: string };
-  primary?: { label: string; onClick: () => void; disabled?: boolean } | null;
+  help: {
+    title: string;
+    text: string;
+  };
+  primary?: {
+    label: string;
+    onClick: () => void;
+    disabled?: boolean;
+  } | null;
   moreItems: PromptMoreItem[];
   /** 应用下拉右边的附加控件（Pi 的三段分段） */
   segments?: ReactNode;
-  target?: { label: string; path: string; meta?: string } | null;
+  target?: {
+    label: string;
+    path: string;
+    meta?: string;
+  } | null;
   search?: {
     value: string;
     onChange: (value: string) => void;
@@ -69,7 +77,6 @@ interface PromptPageFrameProps {
   notices?: ReactNode;
   children: ReactNode;
 }
-
 /** 提示词全局页的页头 + 工具行（Prompts.dc.html 第 48–137 行）。 */
 export function PromptPageFrame({
   app,
@@ -87,7 +94,6 @@ export function PromptPageFrame({
   children,
 }: PromptPageFrameProps) {
   const { t } = useTranslation();
-
   return (
     <>
       <AppPageHeader
@@ -188,7 +194,6 @@ export function PromptPageFrame({
     </>
   );
 }
-
 function PromptSearch({
   value,
   onChange,
@@ -217,7 +222,6 @@ function PromptSearch({
     </div>
   );
 }
-
 function PromptAppPicker({
   app,
   apps,
@@ -241,7 +245,6 @@ function PromptAppPicker({
       enabled: open,
     })),
   });
-
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>

@@ -3,8 +3,7 @@
 //! Handles importing provider configurations via ccswitch:// URLs.
 
 use super::codex_link::{self, CodexLinkConfig};
-use super::grok_link::GrokLinkProfile;
-use super::utils::{decode_base64_param, infer_homepage_from_endpoint};
+use super::utils::{decode_base64_param, infer_homepage_from_endpoint, validate_url};
 use super::DeepLinkImportRequest;
 use crate::error::AppError;
 use crate::provider::{ClaudeDesktopMode, Provider, ProviderMeta, UsageScript};
@@ -100,25 +99,7 @@ pub fn import_provider_from_deeplink(
     // Build provider configuration based on app type
     let mut provider = build_provider_from_request(&app_type, &merged_request)?;
 
-    provider.id = if matches!(app_type, AppType::OpenCode) {
-        // Display names may be Unicode, but new OpenCode IDs must pass the editor's slug validation.
-        let slug = name
-            .split(|c: char| !c.is_ascii_alphanumeric())
-            .filter(|part| !part.is_empty())
-            .collect::<Vec<_>>()
-            .join("-")
-            .to_ascii_lowercase();
-        let slug = if slug.is_empty() { "provider" } else { &slug };
-        format!("{slug}-{}", uuid::Uuid::new_v4().simple())
-    } else {
-        let timestamp = chrono::Utc::now().timestamp_millis();
-        let sanitized_name = name
-            .chars()
-            .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
-            .collect::<String>()
-            .to_lowercase();
-        format!("{sanitized_name}-{timestamp}")
-    };
+    provider.id = new_provider_id(&app_type, &name);
 
     let provider_id = provider.id.clone();
 
@@ -166,6 +147,27 @@ pub fn import_provider_from_deeplink(
     Ok(provider_id)
 }
 
+fn new_provider_id(app_type: &AppType, name: &str) -> String {
+    if matches!(app_type, AppType::OpenCode) {
+        // Display names may be Unicode, but new OpenCode IDs must pass the editor's slug validation.
+        let slug = name
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("-")
+            .to_ascii_lowercase();
+        let slug = if slug.is_empty() { "provider" } else { &slug };
+        format!("{slug}-{}", uuid::Uuid::new_v4().simple())
+    } else {
+        let sanitized_name = name
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+            .collect::<String>()
+            .to_lowercase();
+        format!("{sanitized_name}-{}", uuid::Uuid::new_v4())
+    }
+}
+
 /// 链接声明的接口格式（`apiFormat`）。站长只学这一套词，各应用换算成自己的字段。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ApiFormat {
@@ -200,26 +202,17 @@ impl ApiFormat {
         use ApiFormat::*;
         match (app_type, self) {
             (AppType::Claude, Anthropic) => Some("anthropic"),
-            (AppType::Claude | AppType::Codex | AppType::GrokBuild, OpenAiChat) => {
-                Some("openai_chat")
+            (AppType::Claude | AppType::Codex, OpenAiChat) => Some("openai_chat"),
+            (AppType::Claude | AppType::Codex, OpenAiResponses) => Some("openai_responses"),
+            (AppType::Claude | AppType::Codex | AppType::Agy, GeminiNative) => {
+                Some("gemini_native")
             }
-            (AppType::Claude | AppType::Codex | AppType::GrokBuild, OpenAiResponses) => {
-                Some("openai_responses")
-            }
-            (AppType::Claude, GeminiNative) => Some("gemini_native"),
-            (AppType::Codex | AppType::GrokBuild, Anthropic) => Some("anthropic"),
-            (AppType::Gemini | AppType::Agy, GeminiNative) => Some("gemini_native"),
+            (AppType::Codex, Anthropic) => Some("anthropic"),
             (AppType::OpenCode, Anthropic) => Some("@ai-sdk/anthropic"),
             (AppType::OpenCode, OpenAiChat) => Some("@ai-sdk/openai-compatible"),
             (AppType::OpenCode, OpenAiResponses) => Some("@ai-sdk/openai"),
             (AppType::OpenCode, GeminiNative) => Some("@ai-sdk/google"),
-            (AppType::OpenClaw | AppType::Pi, Anthropic) => Some("anthropic-messages"),
-            (AppType::OpenClaw | AppType::Pi, OpenAiChat) => Some("openai-completions"),
-            (AppType::OpenClaw | AppType::Pi, OpenAiResponses) => Some("openai-responses"),
-            (AppType::OpenClaw | AppType::Pi, GeminiNative) => Some("google-generative-ai"),
-            (AppType::Hermes, Anthropic) => Some("anthropic_messages"),
-            (AppType::Hermes, OpenAiChat) => Some("chat_completions"),
-            (AppType::Hermes, OpenAiResponses) => Some("codex_responses"),
+
             _ => None,
         }
     }
@@ -227,9 +220,9 @@ impl ApiFormat {
     /// 链接没写 `apiFormat` 时各应用用的格式（保持旧链接的行为）。
     fn default_for(app_type: &AppType) -> Self {
         match app_type {
-            AppType::Claude | AppType::ClaudeDesktop => Self::Anthropic,
-            AppType::Codex | AppType::GrokBuild => Self::OpenAiResponses,
-            AppType::Gemini | AppType::Agy => Self::GeminiNative,
+            AppType::Claude => Self::Anthropic,
+            AppType::Codex => Self::OpenAiResponses,
+            AppType::Agy => Self::GeminiNative,
             _ => Self::OpenAiChat,
         }
     }
@@ -286,7 +279,6 @@ pub(super) fn check_link_values(
     if !app_type.is_additive_mode() {
         return Ok(());
     }
-    let is_pi = matches!(app_type, AppType::Pi);
     let fields = [
         ("name", request.name.as_deref()),
         ("endpoint", request.endpoint.as_deref()),
@@ -295,8 +287,7 @@ pub(super) fn check_link_values(
     ];
     for (field, value) in fields {
         let Some(value) = value else { continue };
-        let command = is_pi && field == "apiKey" && value.trim_start().starts_with('!');
-        if command || has_dynamic_reference(value, is_pi) {
+        if has_dynamic_reference(value) {
             return Err(AppError::InvalidInput(format!(
                 "The link's '{field}' uses syntax that {} would expand into a command, an \
                  environment variable or a local file; it cannot be imported from a link. Add the \
@@ -310,18 +301,8 @@ pub(super) fn check_link_values(
 
 /// 值里有没有环境变量或文件引用。`${` 和 OpenCode 的 `{env:` / `{file:` 对所有累加式应用
 /// 都拒绝；Pi 还会展开不带花括号的 `$NAME`。
-fn has_dynamic_reference(value: &str, is_pi: bool) -> bool {
-    if value.contains("${") || value.contains("{env:") || value.contains("{file:") {
-        return true;
-    }
-    is_pi
-        && value.char_indices().any(|(index, ch)| {
-            ch == '$'
-                && value[index + 1..]
-                    .chars()
-                    .next()
-                    .is_some_and(|next| next == '_' || next.is_ascii_alphabetic())
-        })
+fn has_dynamic_reference(value: &str) -> bool {
+    value.contains("${") || value.contains("{env:") || value.contains("{file:")
 }
 
 /// Build a Provider structure from a deep link request
@@ -332,31 +313,19 @@ pub(crate) fn build_provider_from_request(
     let api_format = link_api_format(app_type, request)?;
     check_link_values(app_type, request)?;
     let settings_config = match app_type {
-        AppType::Claude | AppType::ClaudeDesktop => build_claude_settings(request),
+        AppType::Claude => build_claude_settings(request),
         AppType::Codex => build_codex_settings(request)?,
-        AppType::Gemini => build_gemini_settings(request),
-        AppType::GrokBuild => build_grokbuild_settings(request)?,
+
         AppType::OpenCode => build_opencode_settings(request, api_format),
-        AppType::OpenClaw => build_additive_app_settings(request, api_format),
-        AppType::Hermes => build_hermes_settings(request, api_format),
-        AppType::Pi => build_pi_settings(request, api_format)?,
+
         AppType::Dsh => {
             return Err(AppError::InvalidInput(
                 "Add DeepSeek Harness providers from the DeepSeek Harness page".into(),
             ));
         }
-        AppType::Kimi => {
-            return Err(AppError::InvalidInput(
-                "Add Kimi Code providers from the Kimi Code page".into(),
-            ))
-        }
-        AppType::Mcode => {
-            return Err(AppError::InvalidInput(
-                "Add MCode providers from the MCode page".into(),
-            ))
-        }
+
         AppType::Agy => {
-            let mut settings = build_gemini_settings(request);
+            let mut settings = build_agy_base_settings(request);
             settings["env"]
                 .as_object_mut()
                 .unwrap()
@@ -366,25 +335,13 @@ pub(crate) fn build_provider_from_request(
             }
             settings
         }
-        AppType::Omp => {
-            return Err(AppError::InvalidInput(
-                "Oh My Pi providers must be added from the Oh My Pi provider page".to_string(),
-            ));
-        }
     };
 
     // Build usage script configuration if provided
     let mut meta = build_provider_meta(app_type, request)?;
-    if matches!(app_type, AppType::ClaudeDesktop) {
-        meta.get_or_insert_with(ProviderMeta::default)
-            .claude_desktop_mode = Some(ClaudeDesktopMode::Direct);
-    }
     // Claude Code、Codex、Grok Build 的格式记在 meta 上：非原生格式的卡片会带「需要路由」，
     // 切过去时由本地路由转换。链接没写时不加这个字段，和旧链接导入的行一致。
-    if matches!(
-        app_type,
-        AppType::Claude | AppType::Codex | AppType::GrokBuild
-    ) {
+    if matches!(app_type, AppType::Claude | AppType::Codex) {
         if let Some(value) = api_format.and_then(|format| format.native_value(app_type)) {
             meta.get_or_insert_with(ProviderMeta::default).api_format = Some(value.to_string());
         }
@@ -735,62 +692,6 @@ requires_openai_auth = true
     }))
 }
 
-/// Build Gemini settings configuration
-fn build_gemini_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
-    let mut env = serde_json::Map::new();
-    env.insert("GEMINI_API_KEY".to_string(), json!(request.api_key));
-    env.insert(
-        "GOOGLE_GEMINI_BASE_URL".to_string(),
-        json!(get_primary_endpoint(request)),
-    );
-
-    // Add model if provided
-    if let Some(model) = &request.model {
-        env.insert("GEMINI_MODEL".to_string(), json!(model));
-    }
-
-    json!({ "env": env })
-}
-
-/// 链接附带了 `config.toml` 时，按白名单收下选中的那张模型表（[`grok_link`]）；没带时用
-/// 固定模板。模板的字节由 golden 测试锁住（降级后旧版会把行里的 config 整份写进 live）。
-fn build_grokbuild_settings(
-    request: &DeepLinkImportRequest,
-) -> Result<serde_json::Value, AppError> {
-    let model = request
-        .model
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(crate::grok_config::DEFAULT_MODEL)
-        .trim();
-    let name = request
-        .name
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or("custom")
-        .trim();
-    let endpoint = get_primary_endpoint(request).trim().to_string();
-    let api_key = request.api_key.as_deref().unwrap_or("").trim();
-
-    if let Some(config) = decode_link_config(request)? {
-        let profile = GrokLinkProfile::parse(&grokbuild_config_text(&config)?)?;
-        return Ok(json!({ "config": profile.render(name, model, &endpoint, api_key) }));
-    }
-
-    let model_value = toml_edit::Value::from(model).to_string();
-    let name_value = toml_edit::Value::from(name).to_string();
-    let endpoint_value = toml_edit::Value::from(endpoint.as_str()).to_string();
-    let api_key_value = toml_edit::Value::from(api_key).to_string();
-
-    Ok(json!({
-        "config": format!(
-            "[models]\ndefault = {model_value}\n\n[model.{model_value}]\nmodel = {model_value}\nbase_url = {endpoint_value}\nname = {name_value}\napi_key = {api_key_value}\napi_backend = \"{}\"\ncontext_window = {}\n",
-            crate::grok_config::DEFAULT_API_BACKEND,
-            crate::grok_config::DEFAULT_CONTEXT_WINDOW,
-        )
-    }))
-}
-
 /// Build OpenCode settings configuration
 fn build_opencode_settings(
     request: &DeepLinkImportRequest,
@@ -819,125 +720,6 @@ fn build_opencode_settings(
         "options": options,
         "models": models
     })
-}
-
-/// Build settings for OpenClaw (camelCase live config).
-/// Format: { baseUrl, apiKey, api, models }
-fn build_additive_app_settings(
-    request: &DeepLinkImportRequest,
-    api_format: Option<ApiFormat>,
-) -> serde_json::Value {
-    let endpoint = get_primary_endpoint(request);
-
-    let mut config = serde_json::Map::new();
-
-    if !endpoint.is_empty() {
-        config.insert("baseUrl".to_string(), json!(endpoint));
-    }
-
-    if let Some(api_key) = &request.api_key {
-        config.insert("apiKey".to_string(), json!(api_key));
-    }
-
-    config.insert(
-        "api".to_string(),
-        json!(native_protocol(&AppType::OpenClaw, api_format)),
-    );
-
-    if let Some(model) = &request.model {
-        config.insert(
-            "models".to_string(),
-            json!([{ "id": model, "name": model }]),
-        );
-    }
-
-    json!(config)
-}
-
-/// Build Hermes provider settings (snake_case YAML-native fields).
-///
-/// Hermes' `custom_providers:` entries use `base_url` / `api_key` / `api_mode`
-/// (see `_VALID_CUSTOM_PROVIDER_FIELDS` in upstream `hermes_cli/config.py`).
-/// Emitting camelCase here — as the OpenClaw path does — would poison the
-/// YAML with unknown root fields the Hermes runtime ignores.
-///
-/// `api_mode` is always written explicitly. Deeplinks have no field to carry
-/// it, so we default to `chat_completions` (the most widely compatible
-/// protocol) and let the user adjust via the UI after import. We never rely
-/// on Hermes' built-in URL heuristics, which only recognize a handful of
-/// official endpoints.
-fn build_hermes_settings(
-    request: &DeepLinkImportRequest,
-    api_format: Option<ApiFormat>,
-) -> serde_json::Value {
-    let endpoint = get_primary_endpoint(request);
-
-    let mut config = serde_json::Map::new();
-
-    if let Some(name) = request.name.as_deref().filter(|s| !s.is_empty()) {
-        config.insert("name".to_string(), json!(name));
-    }
-
-    if !endpoint.is_empty() {
-        config.insert("base_url".to_string(), json!(endpoint));
-    }
-
-    if let Some(api_key) = &request.api_key {
-        config.insert("api_key".to_string(), json!(api_key));
-    }
-
-    config.insert(
-        "api_mode".to_string(),
-        json!(native_protocol(&AppType::Hermes, api_format)),
-    );
-
-    if let Some(model) = &request.model {
-        config.insert(
-            "models".to_string(),
-            json!([{ "id": model, "name": model }]),
-        );
-    }
-
-    json!(config)
-}
-
-/// Pi 的 `models.json` 供应商节点，形状同 Pi 页面的表单：显示名、地址、Key、协议和模型列表。
-///
-/// 节点名是供应商 ID（名称加时间戳），不会和 Pi 内置供应商重名。模型必填：没有模型的节点
-/// 在 Pi 里选不到任何模型，导入了也用不上。
-fn build_pi_settings(
-    request: &DeepLinkImportRequest,
-    api_format: Option<ApiFormat>,
-) -> Result<serde_json::Value, AppError> {
-    let model = request
-        .model
-        .as_deref()
-        .map(str::trim)
-        .filter(|model| !model.is_empty())
-        .ok_or_else(|| {
-            AppError::InvalidInput("Pi providers need a model; add 'model' to the link".to_string())
-        })?;
-
-    let mut config = serde_json::Map::new();
-    if let Some(name) = request.name.as_deref().filter(|name| !name.is_empty()) {
-        config.insert("name".to_string(), json!(name));
-    }
-    let endpoint = get_primary_endpoint(request);
-    if !endpoint.is_empty() {
-        config.insert("baseUrl".to_string(), json!(endpoint));
-    }
-    if let Some(api_key) = &request.api_key {
-        config.insert("apiKey".to_string(), json!(api_key));
-    }
-    config.insert(
-        "api".to_string(),
-        json!(native_protocol(&AppType::Pi, api_format)),
-    );
-    config.insert(
-        "models".to_string(),
-        json!([{ "id": model, "name": model }]),
-    );
-    Ok(json!(config))
 }
 
 // =============================================================================
@@ -986,6 +768,7 @@ pub fn parse_and_merge_config(
     request: &DeepLinkImportRequest,
 ) -> Result<DeepLinkImportRequest, AppError> {
     let Some(config_value) = decode_link_config(request)? else {
+        validate_provider_urls(request)?;
         return Ok(request.clone());
     };
 
@@ -1000,9 +783,9 @@ pub fn parse_and_merge_config(
     match request.app.as_deref().unwrap_or("") {
         "claude" => merge_claude_config(&mut merged, &config_value)?,
         "codex" => merge_codex_config(&mut merged, &config_value)?,
-        "gemini" => merge_gemini_config(&mut merged, &config_value)?,
+
         "agy" => merge_agy_config(&mut merged, &config_value)?,
-        "grokbuild" => merge_grokbuild_config(&mut merged, &config_value)?,
+
         // Additive mode apps use JSON config directly; pass through as-is
         "openclaw" | "opencode" | "hermes" | "pi" => {
             merge_additive_config(&mut merged, &config_value)?;
@@ -1023,7 +806,33 @@ pub fn parse_and_merge_config(
         }
     }
 
+    validate_provider_urls(&merged)?;
     Ok(merged)
+}
+
+// Config-derived values and direct IPC requests must obey the same URL rules as URL parameters.
+fn validate_provider_urls(request: &DeepLinkImportRequest) -> Result<(), AppError> {
+    if request.resource != "provider" {
+        return Ok(());
+    }
+    for (field, value) in [
+        ("homepage", &request.homepage),
+        ("usageBaseUrl", &request.usage_base_url),
+    ] {
+        if let Some(value) = value.as_deref().filter(|value| !value.trim().is_empty()) {
+            validate_url(value, field)?;
+        }
+    }
+    if let Some(endpoints) = &request.endpoint {
+        for endpoint in endpoints
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            validate_url(endpoint, "endpoint")?;
+        }
+    }
+    Ok(())
 }
 
 /// Merge Claude configuration from config file
@@ -1172,125 +981,7 @@ fn merge_agy_config(
             .and_then(|value| value.as_str())
             .map(str::to_string);
     }
-    merge_gemini_config(request, env)
-}
-
-/// Merge Gemini configuration from config file
-fn merge_gemini_config(
-    request: &mut DeepLinkImportRequest,
-    config: &serde_json::Value,
-) -> Result<(), AppError> {
-    // Gemini uses flat env structure
-    if request.api_key.as_ref().is_none_or(|s| s.is_empty()) {
-        if let Some(api_key) = config.get("GEMINI_API_KEY").and_then(|v| v.as_str()) {
-            request.api_key = Some(api_key.to_string());
-        }
-    }
-
-    if request.endpoint.as_ref().is_none_or(|s| s.is_empty()) {
-        if let Some(base_url) = config
-            .get("GOOGLE_GEMINI_BASE_URL")
-            .or_else(|| config.get("GEMINI_BASE_URL"))
-            .and_then(|v| v.as_str())
-        {
-            request.endpoint = Some(base_url.to_string());
-        }
-    }
-
-    if request.model.is_none() {
-        request.model = config
-            .get("GEMINI_MODEL")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-    }
-
-    // Auto-fill homepage from endpoint
-    if request.homepage.as_ref().is_none_or(|s| s.is_empty()) {
-        if let Some(endpoint) = request.endpoint.as_ref().filter(|s| !s.is_empty()) {
-            request.homepage = infer_homepage_from_endpoint(endpoint);
-            if request.homepage.is_none() {
-                request.homepage = Some("https://ai.google.dev".to_string());
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// 链接 config 参数里的 Grok Build `config.toml` 文本：`{"config": "<toml 文本>"}`，或者
-/// 整份就是 config.toml（`configFormat=toml`，或 JSON 写的同一份内容）。
-fn grokbuild_config_text(config: &serde_json::Value) -> Result<String, AppError> {
-    if let Some(config_toml) = config.get("config").and_then(|v| v.as_str()) {
-        return Ok(config_toml.to_string());
-    }
-    let toml_value: toml::Value = serde_json::from_value(config.clone())
-        .map_err(|error| AppError::InvalidInput(format!("Invalid Grok Build config: {error}")))?;
-    toml::to_string(&toml_value)
-        .map_err(|error| AppError::InvalidInput(format!("Invalid Grok Build config: {error}")))
-}
-
-fn merge_grokbuild_config(
-    request: &mut DeepLinkImportRequest,
-    config: &serde_json::Value,
-) -> Result<(), AppError> {
-    // 先过白名单：拒绝的键在确认框打开时就报出来，而不是点了导入才失败
-    let profile = GrokLinkProfile::parse(&grokbuild_config_text(config)?)?;
-
-    if request
-        .api_key
-        .as_ref()
-        .is_none_or(|value| value.is_empty())
-    {
-        // Only inline an explicitly-declared `api_key`. Do NOT resolve `env_key`
-        // (or any process env var) into a plaintext value here: a deeplink is
-        // untrusted input, and resolving+inlining would silently persist the
-        // victim's environment secret into the imported provider's config.toml
-        // and ship it to whatever `base_url` the link declares. `env_key` is an
-        // indirection that must stay a name, not a resolved secret, on import.
-        request.api_key = profile.api_key();
-
-        // An `env_key`-only link is not importable at all, and saying so beats
-        // falling through to the generic "API key is required" (which reads like
-        // a malformed link and invites a "just carry the name over" fix).
-        // Carrying the name over is exactly what must not happen: the forwarder
-        // and the usage query both resolve `env_key` at request time, so the
-        // victim's environment secret would still reach the link's `base_url`
-        // — the same leak, merely deferred.
-        if request
-            .api_key
-            .as_ref()
-            .is_none_or(|value| value.is_empty())
-            && profile.declares_env_key
-        {
-            return Err(AppError::InvalidInput(
-                "This link supplies its API key indirectly through `env_key`, which cannot be \
-                 imported from an untrusted link. Add the provider manually and enter the key \
-                 yourself."
-                    .to_string(),
-            ));
-        }
-    }
-    if request
-        .endpoint
-        .as_ref()
-        .is_none_or(|value| value.is_empty())
-    {
-        request.endpoint = profile.base_url();
-    }
-    if request.model.is_none() {
-        request.model = profile.model();
-    }
-    if request
-        .homepage
-        .as_ref()
-        .is_none_or(|value| value.is_empty())
-    {
-        if let Some(endpoint) = request.endpoint.as_deref() {
-            request.homepage = infer_homepage_from_endpoint(endpoint);
-        }
-    }
-
-    Ok(())
+    merge_agy_env_config(request, env)
 }
 
 /// Merge configuration for additive mode apps (OpenClaw, OpenCode)
@@ -1336,176 +1027,20 @@ fn merge_additive_config(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rapid_same_name_imports_have_independent_ids() {
+        for app in [
+            crate::AppType::Claude,
+            crate::AppType::Codex,
+            crate::AppType::OpenCode,
+        ] {
+            let ids: std::collections::HashSet<_> = (0..1000)
+                .map(|_| super::new_provider_id(&app, "Same name"))
+                .collect();
+            assert_eq!(ids.len(), 1000);
+        }
+    }
     use super::*;
-
-    fn hermes_request() -> DeepLinkImportRequest {
-        DeepLinkImportRequest {
-            resource: "provider".to_string(),
-            app: Some("hermes".to_string()),
-            name: Some("MyHermes".to_string()),
-            endpoint: Some("https://api.example.com/v1".to_string()),
-            api_key: Some("sk-test".to_string()),
-            model: Some("anthropic/claude-opus-4-8".to_string()),
-            ..Default::default()
-        }
-    }
-
-    /// deeplink 同时声明 `api_key` 与 `env_key` 时，导入结果只保留用户可见的
-    /// `api_key`：既不能带上解析后的明文环境变量，也不能把 `env_key` 这个间接
-    /// 引用本身写进供应商配置。
-    ///
-    /// 后者容易被误当成「应该补上的功能」，但恰恰不能补：deeplink 是不可信输入，
-    /// 攻击者可以让 `env_key` 指向 `XAI_API_KEY`、`base_url` 指向自己的服务器。
-    /// 密钥虽然导入时没落盘，却会在转发/用量查询调用 `extract_credentials` 时
-    /// 被现场解析并发给攻击者——等于把已修掉的泄露换成延迟触发的版本。
-    /// 手工建供应商的表单路径不受影响，那里的 env_key 是用户自己输入的。
-    #[test]
-    #[serial_test::serial]
-    fn grokbuild_deeplink_never_carries_env_key_or_resolved_secret() {
-        let original = std::env::var_os("CC_SWITCH_DEEPLINK_ENV_PROBE");
-        std::env::set_var("CC_SWITCH_DEEPLINK_ENV_PROBE", "secret-must-not-leak");
-
-        let mut request = DeepLinkImportRequest {
-            resource: "provider".to_string(),
-            app: Some("grokbuild".to_string()),
-            name: Some("Attacker".to_string()),
-            ..Default::default()
-        };
-        let config = serde_json::json!({
-            "config": concat!(
-                "[models]\ndefault = \"grok-env\"\n\n",
-                "[model.\"grok-env\"]\nmodel = \"grok-4.5\"\n",
-                "base_url = \"https://attacker.example/v1\"\nname = \"Attacker\"\n",
-                "api_key = \"sk-declared-by-link\"\n",
-                "env_key = \"CC_SWITCH_DEEPLINK_ENV_PROBE\"\n",
-                "api_backend = \"responses\"\ncontext_window = 500000\n",
-            )
-        });
-
-        merge_grokbuild_config(&mut request, &config).expect("merge should succeed");
-        let settings = build_grokbuild_settings(&request).unwrap();
-        let rendered = settings["config"].as_str().expect("config string");
-
-        assert!(
-            !rendered.contains("secret-must-not-leak"),
-            "the environment secret must never be inlined: {rendered}"
-        );
-        assert!(
-            !rendered.contains("env_key"),
-            "the env_key indirection must not be carried over from an untrusted link: {rendered}"
-        );
-        assert!(
-            rendered.contains("api_key = \"sk-declared-by-link\""),
-            "only the explicitly declared api_key should survive: {rendered}"
-        );
-
-        match original {
-            Some(value) => std::env::set_var("CC_SWITCH_DEEPLINK_ENV_PROBE", value),
-            None => std::env::remove_var("CC_SWITCH_DEEPLINK_ENV_PROBE"),
-        }
-    }
-
-    /// `env_key` 独苗的链接必须在**公开入口**上被明确拒绝。
-    ///
-    /// 这条走 `parse_and_merge_config` 而不是内部 helper：真实失败路径在这里，
-    /// 而且报错必须指名 `env_key`——否则用户只看到泛化的 "API key is required"，
-    /// 读起来像链接坏了，下一步就会有人「顺手把 env_key 透传过去」，把泄露改成
-    /// 延迟触发的版本。
-    #[test]
-    #[serial_test::serial]
-    fn grokbuild_env_key_only_link_is_rejected_at_the_public_entry() {
-        use base64::prelude::*;
-
-        // 探针变量必须**真的设上**。若它在环境里不存在，旧代码的
-        // `extract_credentials` 回退也解析不出东西，api_key 同样留空、同样触发
-        // 拒绝——测试就退化成只覆盖"没有 key 时报错"，对"不得解析环境变量"这条
-        // 真正的安全属性零覆盖。设上之后，一旦有人恢复回退解析，api_key 会变成
-        // 非空、拒绝不再触发，这条断言立刻变红。
-        let original = std::env::var_os("CC_SWITCH_DEEPLINK_ENV_PROBE");
-        std::env::set_var("CC_SWITCH_DEEPLINK_ENV_PROBE", "secret-must-not-leak");
-
-        let config_toml = concat!(
-            "[models]\ndefault = \"grok-env\"\n\n",
-            "[model.\"grok-env\"]\nmodel = \"grok-4.5\"\n",
-            "base_url = \"https://attacker.example/v1\"\nname = \"Attacker\"\n",
-            "env_key = \"CC_SWITCH_DEEPLINK_ENV_PROBE\"\n",
-            "api_backend = \"responses\"\ncontext_window = 500000\n",
-        );
-        let request = DeepLinkImportRequest {
-            resource: "provider".to_string(),
-            app: Some("grokbuild".to_string()),
-            name: Some("Attacker".to_string()),
-            config: Some(BASE64_STANDARD.encode(config_toml)),
-            config_format: Some("toml".to_string()),
-            ..Default::default()
-        };
-
-        let result = parse_and_merge_config(&request);
-
-        match original {
-            Some(value) => std::env::set_var("CC_SWITCH_DEEPLINK_ENV_PROBE", value),
-            None => std::env::remove_var("CC_SWITCH_DEEPLINK_ENV_PROBE"),
-        }
-
-        let err = result.expect_err(
-            "an env_key-only link must not be importable, and its env var must never be resolved",
-        );
-        assert!(
-            err.to_string().contains("env_key"),
-            "the rejection must name env_key so it is not mistaken for a malformed link: {err}"
-        );
-    }
-
-    #[test]
-    fn build_hermes_settings_emits_snake_case() {
-        let settings = build_hermes_settings(&hermes_request(), None);
-        let obj = settings.as_object().expect("settings must be object");
-
-        assert_eq!(obj.get("name").unwrap(), "MyHermes");
-        assert_eq!(obj.get("base_url").unwrap(), "https://api.example.com/v1");
-        assert_eq!(obj.get("api_key").unwrap(), "sk-test");
-
-        // camelCase and legacy fields must NOT be present
-        assert!(obj.get("baseUrl").is_none(), "no camelCase baseUrl");
-        assert!(obj.get("apiKey").is_none(), "no camelCase apiKey");
-        assert!(obj.get("api").is_none(), "no legacy 'api' field");
-
-        // models array with the deeplink model id
-        let models = obj.get("models").unwrap().as_array().unwrap();
-        assert_eq!(models.len(), 1);
-        assert_eq!(models[0]["id"], "anthropic/claude-opus-4-8");
-    }
-
-    #[test]
-    fn build_hermes_settings_writes_default_api_mode() {
-        let settings = build_hermes_settings(&hermes_request(), None);
-        assert_eq!(
-            settings.as_object().unwrap().get("api_mode").unwrap(),
-            "chat_completions",
-            "api_mode must be written explicitly so Hermes never falls back to URL auto-detection"
-        );
-    }
-
-    #[test]
-    fn build_hermes_settings_skips_missing_optional_fields() {
-        let request = DeepLinkImportRequest {
-            resource: "provider".to_string(),
-            app: Some("hermes".to_string()),
-            name: Some("Minimal".to_string()),
-            endpoint: None,
-            api_key: None,
-            model: None,
-            ..Default::default()
-        };
-        let settings = build_hermes_settings(&request, None);
-        let obj = settings.as_object().unwrap();
-
-        assert_eq!(obj.get("name").unwrap(), "Minimal");
-        assert!(obj.get("base_url").is_none());
-        assert!(obj.get("api_key").is_none());
-        assert!(obj.get("models").is_none());
-        assert_eq!(obj.get("api_mode").unwrap(), "chat_completions");
-    }
 
     #[test]
     fn build_codex_settings_uses_custom_key_and_preserves_display_name() {
@@ -1547,22 +1082,60 @@ mod tests {
             Some("https://api.example.com/v1")
         );
     }
+}
 
-    #[test]
-    fn openclaw_still_uses_camel_case() {
-        // OpenClaw's live config natively uses camelCase; guard against a
-        // refactor accidentally flipping it to snake_case.
-        let request = DeepLinkImportRequest {
-            resource: "provider".to_string(),
-            app: Some("openclaw".to_string()),
-            name: Some("c".to_string()),
-            endpoint: Some("https://api.example.com".to_string()),
-            api_key: Some("k".to_string()),
-            ..Default::default()
-        };
-        let settings = build_additive_app_settings(&request, None);
-        let obj = settings.as_object().unwrap();
-        assert!(obj.contains_key("baseUrl"));
-        assert!(obj.contains_key("apiKey"));
+fn build_agy_base_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    let mut env = serde_json::Map::new();
+    env.insert("GEMINI_API_KEY".to_string(), json!(request.api_key));
+    env.insert(
+        "GOOGLE_GEMINI_BASE_URL".to_string(),
+        json!(get_primary_endpoint(request)),
+    );
+
+    // Add model if provided
+    if let Some(model) = &request.model {
+        env.insert("GEMINI_MODEL".to_string(), json!(model));
     }
+
+    json!({ "env": env })
+}
+fn merge_agy_env_config(
+    request: &mut DeepLinkImportRequest,
+    config: &serde_json::Value,
+) -> Result<(), AppError> {
+    // Gemini uses flat env structure
+    if request.api_key.as_ref().is_none_or(|s| s.is_empty()) {
+        if let Some(api_key) = config.get("GEMINI_API_KEY").and_then(|v| v.as_str()) {
+            request.api_key = Some(api_key.to_string());
+        }
+    }
+
+    if request.endpoint.as_ref().is_none_or(|s| s.is_empty()) {
+        if let Some(base_url) = config
+            .get("GOOGLE_GEMINI_BASE_URL")
+            .or_else(|| config.get("GEMINI_BASE_URL"))
+            .and_then(|v| v.as_str())
+        {
+            request.endpoint = Some(base_url.to_string());
+        }
+    }
+
+    if request.model.is_none() {
+        request.model = config
+            .get("GEMINI_MODEL")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+    }
+
+    // Auto-fill homepage from endpoint
+    if request.homepage.as_ref().is_none_or(|s| s.is_empty()) {
+        if let Some(endpoint) = request.endpoint.as_ref().filter(|s| !s.is_empty()) {
+            request.homepage = infer_homepage_from_endpoint(endpoint);
+            if request.homepage.is_none() {
+                request.homepage = Some("https://ai.google.dev".to_string());
+            }
+        }
+    }
+
+    Ok(())
 }

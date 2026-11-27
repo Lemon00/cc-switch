@@ -1,7 +1,6 @@
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import { useTranslation } from "react-i18next";
 import { formatHitRatePercent, formatTokensShort } from "./format";
-import { useMoneyFormat } from "@/hooks/useMoneyFormat";
-
 interface UsageTooltipCardProps {
   heading: string;
   tokens: number;
@@ -11,7 +10,6 @@ interface UsageTooltipCardProps {
   /** 传了才多显示一行缓存命中率（0–1）；null 表示没有输入、无从算起 */
   hitRate?: number | null;
 }
-
 /** 热力图格子、趋势柱的悬停卡片：同一时间段的 Token、请求数和费用一起看。 */
 export function UsageTooltipCard({
   heading,
@@ -45,7 +43,6 @@ export function UsageTooltipCard({
           },
         ]),
   ];
-
   return (
     <div className="min-w-[180px] rounded-[10px] border border-border bg-surface px-4 py-3 shadow-v7-lg">
       <p className="m-0 mb-2 whitespace-nowrap text-body font-semibold text-fg-1">

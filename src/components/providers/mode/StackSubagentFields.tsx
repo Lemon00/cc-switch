@@ -1,8 +1,4 @@
-import { useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
-import type { Settings } from "@/types";
-import type { ProxyStackSubagentModel } from "@/types/proxy";
-import { settingsApi } from "@/lib/api";
+import { SettingsSwitchRow } from "@/components/settings/SettingsLayout";
 import {
   Select,
   SelectContent,
@@ -10,21 +6,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { SettingsSwitchRow } from "@/components/settings/SettingsLayout";
-
+import { settingsApi } from "@/lib/api";
+import type { Settings } from "@/types";
+import type { ProxyStackSubagentModel } from "@/types/proxy";
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 // Radix Select 不收空值：这两个哨兵代表「不写这个键」。
 const FOLLOW_MAIN = "__follow_main__";
 const MODEL_DEFAULT = "__model_default__";
-
 const warningClass =
   "rounded-control bg-warning-soft px-3 py-2 text-caption text-warning-text";
-
 export interface StackSubagentValue {
   model?: string;
   effort?: string;
   classic: boolean;
 }
-
 /** 子代理设置 → settings.json 字段（未设置的键写 undefined，保存时去掉）。 */
 export function stackSubagentSettings(
   value: StackSubagentValue,
@@ -35,7 +31,6 @@ export function stackSubagentSettings(
     codexStackClassicTools: value.classic,
   };
 }
-
 /** settings.json → 子代理设置。 */
 export function stackSubagentValue(settings?: Settings): StackSubagentValue {
   return {
@@ -44,7 +39,6 @@ export function stackSubagentValue(settings?: Settings): StackSubagentValue {
     classic: settings?.codexStackClassicTools ?? true,
   };
 }
-
 export function sameStackSubagent(
   a: StackSubagentValue,
   b: StackSubagentValue,
@@ -53,15 +47,13 @@ export function sameStackSubagent(
     a.model === b.model && a.effort === b.effort && a.classic === b.classic
   );
 }
-
 interface StackSubagentFieldsProps {
-  /** 能选的模型：已去掉默认那家（它不发布 `ccs-*` 模型） */
+  /** 已发布的公共模型和账号独有模型，包含默认账号。 */
   models: ProxyStackSubagentModel[];
   value: StackSubagentValue;
   onChange: (next: StackSubagentValue) => void;
   disabled?: boolean;
 }
-
 /**
  * Codex 聚合的子代理模型、推理强度和经典子代理开关。聚合设置面板（改了就保存）和切换到
  * 聚合的确认框（确认时一起保存）共用。
@@ -75,10 +67,13 @@ export function StackSubagentFields({
   const { t } = useTranslation();
   const [forcesMultiAgentV2, setForcesMultiAgentV2] = useState(false);
   const { model, effort, classic } = value;
-  const selected = models.find((candidate) => candidate.id === model);
-  // 选过的模型不在名单里了（成员移除、模型不再发布、成了默认那家）：后端不写，跟随主模型
+  const selected = models.find(
+    (candidate) =>
+      candidate.id === model ||
+      (model !== undefined && candidate.aliases?.includes(model)),
+  );
+  // 成员移除或不再发布模型时，后端不写覆盖，跟随主模型。
   const unavailable = model !== undefined && selected === undefined;
-
   // config.toml 用 [features] multi_agent_v2 强制了新版工具时，经典开关不生效
   useEffect(() => {
     if (!classic) {
@@ -96,7 +91,6 @@ export function StackSubagentFields({
       cancelled = true;
     };
   }, [classic]);
-
   const handleModelChange = (next: string) => {
     if (next === FOLLOW_MAIN) {
       onChange({ ...value, model: undefined, effort: undefined });
@@ -110,18 +104,15 @@ export function StackSubagentFields({
         : undefined;
     onChange({ ...value, model: next, effort: keepEffort });
   };
-
   const handleEffortChange = (next: string) => {
     onChange({ ...value, effort: next === MODEL_DEFAULT ? undefined : next });
   };
-
   const modelLabel = t("mode.stackSettings.subagentModel");
   const effortLabel = t("mode.stackSettings.subagentEffort");
   const effortValue =
     effort !== undefined && selected?.efforts.includes(effort)
       ? effort
       : MODEL_DEFAULT;
-
   return (
     <div className="space-y-3">
       <div className="space-y-1.5">
@@ -129,7 +120,7 @@ export function StackSubagentFields({
           {modelLabel}
         </label>
         <Select
-          value={model ?? FOLLOW_MAIN}
+          value={selected?.id ?? model ?? FOLLOW_MAIN}
           onValueChange={handleModelChange}
           disabled={disabled}
         >

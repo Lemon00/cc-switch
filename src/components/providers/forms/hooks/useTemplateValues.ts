@@ -1,20 +1,17 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
 import type {
   ProviderPreset,
   TemplateValueConfig,
 } from "@/config/claudeProviderPresets";
 import type { CodexProviderPreset } from "@/config/codexProviderPresets";
-import { applyTemplateValues } from "@/utils/providerConfigUtils";
 import { deepClone } from "@/utils/deepClone";
-
+import { applyTemplateValues } from "@/utils/providerConfigUtils";
+import { useCallback, useEffect, useMemo, useState } from "react";
 type TemplatePath = Array<string | number>;
 type TemplateValueMap = Record<string, TemplateValueConfig>;
-
 interface PresetEntry {
   id: string;
   preset: ProviderPreset | CodexProviderPreset;
 }
-
 interface UseTemplateValuesProps {
   selectedPresetId: string | null;
   presetEntries: PresetEntry[];
@@ -26,7 +23,6 @@ interface UseTemplateValuesProps {
    */
   getSettingsConfig?: () => string;
 }
-
 /**
  * 收集配置中包含模板占位符的路径
  */
@@ -45,23 +41,19 @@ const collectTemplatePaths = (
     }
     return acc;
   }
-
   if (Array.isArray(source)) {
     source.forEach((item, index) =>
       collectTemplatePaths(item, templateKeys, [...currentPath, index], acc),
     );
     return acc;
   }
-
   if (source && typeof source === "object") {
     Object.entries(source).forEach(([key, value]) =>
       collectTemplatePaths(value, templateKeys, [...currentPath, key], acc),
     );
   }
-
   return acc;
 };
-
 /**
  * 根据路径获取值
  */
@@ -73,7 +65,6 @@ const getValueAtPath = (source: any, path: TemplatePath) => {
     return acc[key as keyof typeof acc];
   }, source);
 };
-
 /**
  * 根据路径设置值
  */
@@ -85,14 +76,11 @@ const setValueAtPath = (
   if (path.length === 0) {
     return value;
   }
-
   let current = target;
-
   for (let i = 0; i < path.length - 1; i++) {
     const key = path[i];
     const nextKey = path[i + 1];
     const isNextIndex = typeof nextKey === "number";
-
     if (current[key as keyof typeof current] === undefined) {
       current[key as keyof typeof current] = isNextIndex ? [] : {};
     } else {
@@ -106,15 +94,12 @@ const setValueAtPath = (
         current[key as keyof typeof current] = {};
       }
     }
-
     current = current[key as keyof typeof current];
   }
-
   const finalKey = path[path.length - 1];
   current[finalKey as keyof typeof current] = value;
   return target;
 };
-
 /**
  * 应用模板值到配置字符串（只更新模板占位符所在的字段）
  */
@@ -128,9 +113,7 @@ const applyTemplateValuesToConfigString = (
   if (templateKeys.length === 0) {
     return JSON.stringify(replacedConfig, null, 2);
   }
-
   const placeholderPaths = collectTemplatePaths(presetConfig, templateKeys);
-
   try {
     const parsedConfig = currentConfigString.trim()
       ? JSON.parse(currentConfigString)
@@ -143,13 +126,10 @@ const applyTemplateValuesToConfigString = (
     } else {
       targetConfig = {};
     }
-
     if (placeholderPaths.length === 0) {
       return JSON.stringify(targetConfig, null, 2);
     }
-
     let mutatedConfig = targetConfig;
-
     for (const path of placeholderPaths) {
       const nextValue = getValueAtPath(replacedConfig, path);
       if (path.length === 0) {
@@ -158,13 +138,11 @@ const applyTemplateValuesToConfigString = (
         setValueAtPath(mutatedConfig, path, nextValue);
       }
     }
-
     return JSON.stringify(mutatedConfig, null, 2);
   } catch {
     return JSON.stringify(replacedConfig, null, 2);
   }
 };
-
 /**
  * 管理模板变量的状态和逻辑
  */
@@ -176,7 +154,6 @@ export function useTemplateValues({
   getSettingsConfig,
 }: UseTemplateValuesProps) {
   const [templateValues, setTemplateValues] = useState<TemplateValueMap>({});
-
   // 获取当前选中的预设
   const selectedPreset = useMemo(() => {
     if (!selectedPresetId || selectedPresetId === "custom") {
@@ -189,7 +166,6 @@ export function useTemplateValues({
     }
     return null;
   }, [selectedPresetId, presetEntries]);
-
   // 获取模板变量条目
   const templateValueEntries = useMemo(() => {
     if (!selectedPreset?.templateValues) {
@@ -199,7 +175,6 @@ export function useTemplateValues({
       [string, TemplateValueConfig]
     >;
   }, [selectedPreset]);
-
   // 当选择预设时，初始化模板值
   useEffect(() => {
     if (selectedPreset?.templateValues) {
@@ -218,19 +193,16 @@ export function useTemplateValues({
       setTemplateValues((prev) => (Object.keys(prev).length === 0 ? prev : {}));
     }
   }, [selectedPreset]);
-
   // 处理模板值变化
   const handleTemplateValueChange = useCallback(
     (key: string, value: string) => {
       if (!selectedPreset?.templateValues) {
         return;
       }
-
       const config = selectedPreset.templateValues[key];
       if (!config) {
         return;
       }
-
       setTemplateValues((prev) => {
         const prevEntry = prev[key];
         const nextEntry: TemplateValueConfig = {
@@ -242,7 +214,6 @@ export function useTemplateValues({
           ...prev,
           [key]: nextEntry,
         };
-
         // 应用模板值到配置
         try {
           const configString = applyTemplateValuesToConfigString(
@@ -254,22 +225,22 @@ export function useTemplateValues({
         } catch (err) {
           console.error("更新模板值失败:", err);
         }
-
         return nextValues;
       });
     },
     [selectedPreset, getSettingsConfig, settingsConfig, onConfigChange],
   );
-
   // 验证所有模板值是否已填写
   const validateTemplateValues = useCallback((): {
     isValid: boolean;
-    missingField?: { key: string; label: string };
+    missingField?: {
+      key: string;
+      label: string;
+    };
   } => {
     if (templateValueEntries.length === 0) {
       return { isValid: true };
     }
-
     for (const [key, config] of templateValueEntries) {
       const entry = templateValues[key];
       const resolvedValue = (
@@ -285,10 +256,8 @@ export function useTemplateValues({
         };
       }
     }
-
     return { isValid: true };
   }, [templateValueEntries, templateValues]);
-
   return {
     templateValues,
     templateValueEntries,

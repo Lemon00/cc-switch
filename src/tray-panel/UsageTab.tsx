@@ -1,21 +1,3 @@
-import { useMemo, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
-import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import { Loader2 } from "lucide-react";
-import { usageApi } from "@/lib/api";
-import { useMoneyFormat } from "@/hooks/useMoneyFormat";
-import { useSettingsQuery } from "@/lib/query";
-import { resolveUsageRange, getUsageRangePresetLabel } from "@/lib/usageRange";
 import {
   fmtInt,
   formatHitRatePercent,
@@ -29,20 +11,35 @@ import {
   formatUsageTrendTokenTickLabel,
   type UsageTrendChartPoint,
 } from "@/components/usage/UsageTrendChart";
-import type { DailyStats, UsageSummary } from "@/types/usage";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
+import { usageApi } from "@/lib/api";
+import { useSettingsQuery } from "@/lib/query";
+import { getUsageRangePresetLabel, resolveUsageRange } from "@/lib/usageRange";
 import { cn } from "@/lib/utils";
-
+import type { DailyStats, UsageSummary } from "@/types/usage";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Loader2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 const RANGES = ["today", "7d", "30d", "all"] as const;
 type Range = (typeof RANGES)[number];
 const METRICS = ["tokens", "requests", "cost"] as const;
 type Metric = (typeof METRICS)[number];
-
 const RANGE_KEY = "cc-switch-tray-usage-range";
 const METRIC_KEY = "cc-switch-tray-usage-metric";
 /** 柱子最多这么多根，再多就把相邻的几天并成一根 */
 const MAX_BARS = 31;
 const DAY_SECONDS = 24 * 60 * 60;
-
 function remembered<T extends string>(
   key: string,
   options: readonly T[],
@@ -58,7 +55,6 @@ function remembered<T extends string>(
   }
   return fallback;
 }
-
 function remember(key: string, value: string) {
   try {
     window.localStorage.setItem(key, value);
@@ -66,14 +62,12 @@ function remember(key: string, value: string) {
     // 记不住也不影响使用
   }
 }
-
 interface UsageData {
   summary: UsageSummary | null;
   trends: DailyStats[];
   startDate: number;
   endDate: number;
 }
-
 /** 「全部」从最早有记录的那天算起（按 0 起算后端会按天铺满几十年）。 */
 async function loadUsage(range: Range): Promise<UsageData> {
   const resolved = resolveUsageRange({ preset: range });
@@ -93,7 +87,6 @@ async function loadUsage(range: Range): Promise<UsageData> {
   ]);
   return { summary, trends, startDate, endDate };
 }
-
 /** 相邻几根并成一根，标签用第一根的。 */
 function bucketize(
   points: UsageTrendChartPoint[],
@@ -125,7 +118,6 @@ function bucketize(
   }
   return merged;
 }
-
 function Segmented<T extends string>({
   value,
   options,
@@ -134,7 +126,10 @@ function Segmented<T extends string>({
   size = "md",
 }: {
   value: T;
-  options: { value: T; label: string }[];
+  options: {
+    value: T;
+    label: string;
+  }[];
   onChange: (value: T) => void;
   label: string;
   size?: "sm" | "md";
@@ -166,7 +161,6 @@ function Segmented<T extends string>({
     </div>
   );
 }
-
 function Stat({
   label,
   value,
@@ -191,7 +185,6 @@ function Stat({
     </div>
   );
 }
-
 export function UsageTab({
   refreshKey,
   visible,
@@ -215,15 +208,20 @@ export function UsageTab({
   const locale = getLocaleFromLanguage(
     i18n.resolvedLanguage || i18n.language || "en",
   );
-
-  const { data, isLoading } = useQuery({
-    queryKey: ["tray-panel-usage", range, refreshKey],
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    if (visible)
+      void queryClient.invalidateQueries({
+        queryKey: ["tray-panel-usage", range],
+      });
+  }, [visible, refreshKey, range, queryClient]);
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: ["tray-panel-usage", range],
     queryFn: () => loadUsage(range),
     enabled: visible,
-    refetchInterval: visible ? 60_000 : false,
+    refetchInterval: visible ? 60000 : false,
     placeholderData: (previous) => previous,
   });
-
   const tickFormatter = useMemo(
     () => createUsageTrendTokenTickFormatter(locale),
     [locale],
@@ -242,7 +240,6 @@ export function UsageTab({
       costShown: point.cost == null ? null : point.cost * rate,
     }));
   }, [data, locale, rate]);
-
   const summary = data?.summary;
   // 显示币种的符号（从 0 的刻度里取，跟着设置里的币种）
   const currencySymbol = moneyTick(0).replace(/[\d.,\s-]/g, "");
@@ -259,7 +256,6 @@ export function UsageTab({
       : metric === "requests"
         ? fmtInt(point.requests, locale)
         : formatTokensCompact(point.tokens, locale);
-
   return (
     <div className="flex flex-col gap-2.5 px-3 pb-3">
       <Segmented
@@ -275,6 +271,18 @@ export function UsageTab({
         }))}
       />
 
+      {isError && (
+        <div role="alert" className="text-sm text-danger-text">
+          {t("common.loadFailed", { defaultValue: "加载失败" })}
+          <button
+            type="button"
+            className="ml-2 underline"
+            onClick={() => void refetch()}
+          >
+            {t("common.retry", { defaultValue: "重试" })}
+          </button>
+        </div>
+      )}
       {!summary && isLoading ? (
         <div className="flex h-40 items-center justify-center text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />

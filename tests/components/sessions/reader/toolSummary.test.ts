@@ -103,9 +103,9 @@ describe("状态", () => {
   });
 
   it("statusGlyph：unknown 用成功符号", () => {
-    const gemini = AGENT_READER_STYLES.gemini;
-    expect(statusGlyph("unknown", gemini)).toBe("✓");
-    expect(statusGlyph("pending", gemini)).toBe("o");
+    const claude = AGENT_READER_STYLES.claude;
+    expect(statusGlyph("unknown", claude)).toBe("⏺");
+    expect(statusGlyph("pending", claude)).toBe("⏺");
   });
 });
 
@@ -244,17 +244,6 @@ describe("formatStepTitle · 五家 fixture", () => {
     ]);
   });
 
-  it("Gemini：Shell / ReadFile / GoogleSearch", () => {
-    expect(fixtureTitles("gemini")).toEqual([
-      "ReadFile src/main.ts",
-      "Shell npm run build",
-      "Edit src/config.ts",
-      "GoogleSearch Node 22 top-level await ESM pitfalls",
-      "Todos 2 项",
-      "Shell npm run build",
-    ]);
-  });
-
   it("OpenCode：符号前缀", () => {
     expect(fixtureTitles("opencode")).toEqual([
       "$ bunx biome --version",
@@ -266,17 +255,6 @@ describe("formatStepTitle · 五家 fixture", () => {
       "⚙ Todos 2 项",
       "→ Asked 要删除 .eslintrc 吗？",
       "⚙ invalid",
-    ]);
-  });
-
-  it("Pi：小写动词，read 带行范围", () => {
-    expect(fixtureTitles("pi")).toEqual([
-      "read src/components/LoginButton.tsx:10-40",
-      "bash pnpm test -- LoginButton",
-      "edit src/components/LoginButton.tsx",
-      "read docs/screens/login-dark.png",
-      "bash pnpm test -- LoginButton",
-      "grep text-gray-800 in src",
     ]);
   });
 

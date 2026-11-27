@@ -3,8 +3,6 @@
 //! Implements manifest-based synchronization on top of the S3 transport
 //! primitives in [`super::s3`]. Artifact set: `db.sql` + `skills.zip`.
 
-use std::collections::BTreeMap;
-
 use chrono::Utc;
 use serde_json::Value;
 
@@ -15,10 +13,10 @@ use crate::settings::{update_s3_sync_status, S3SyncSettings, WebDavSyncStatus};
 // 本分支 GUI commands 仍经此重导出拿锁；上游已改为直接用 sync_protocol。
 pub use super::sync_protocol::run_with_sync_lock;
 use super::sync_protocol::{
-    apply_snapshot, build_local_snapshot, localized, persist_sync_success_best_effort, sha256_hex,
-    validate_artifact_size_limit, validate_manifest_compat, verify_artifact, ArtifactMeta,
-    RemoteLayout, SyncManifest, DB_COMPAT_VERSION, MAX_MANIFEST_BYTES, MAX_SYNC_ARTIFACT_BYTES,
-    PROTOCOL_VERSION, REMOTE_DB_SQL, REMOTE_MANIFEST, REMOTE_SKILLS_ZIP,
+    apply_snapshot, artifact_path, build_local_snapshot, localized, persist_sync_success_best_effort, sha256_hex,
+    validate_artifact_size_limit, validate_manifest_compat, verify_artifact, PublishCondition,
+    RemoteLayout, SyncManifest, DB_COMPAT_VERSION, MAX_MANIFEST_BYTES, STORAGE_VERSION,
+    REMOTE_DB_SQL, REMOTE_MANIFEST, REMOTE_SKILLS_ZIP,
 };
 
 #[cfg(any(test, feature = "test-support"))]
@@ -27,6 +25,27 @@ pub fn sync_mutex() -> &'static tokio::sync::Mutex<()> {
 }
 
 // ─── Public API ──────────────────────────────────────────────
+
+pub async fn auto_upload(
+    db: &crate::database::Database,
+    settings: &mut S3SyncSettings,
+) -> Result<Value, AppError> {
+    settings.validate()?;
+    let remote = s3::get_object(
+        &creds_for(settings),
+        &s3_key(settings, REMOTE_MANIFEST),
+        MAX_MANIFEST_BYTES,
+    )
+    .await?;
+    super::sync_protocol::validate_auto_upload_revision(
+        settings.status.last_remote_manifest_hash.as_deref(),
+        remote.as_ref().map(|(bytes, _)| bytes.as_slice()),
+    )?;
+    let condition = PublishCondition::from_remote(
+        remote.as_ref().and_then(|(_, etag)| etag.as_deref()), remote.is_some(),
+    )?;
+    upload_with_condition(db, settings, &condition).await
+}
 
 /// Check S3 connectivity by issuing a HEAD request against the bucket.
 pub async fn check_connection(settings: &S3SyncSettings) -> Result<(), AppError> {
@@ -40,35 +59,35 @@ pub async fn upload(
     db: &crate::database::Database,
     settings: &mut S3SyncSettings,
 ) -> Result<Value, AppError> {
+    upload_with_condition(db, settings, &PublishCondition::Overwrite).await
+}
+
+async fn upload_with_condition(
+    db: &crate::database::Database,
+    settings: &mut S3SyncSettings,
+    condition: &PublishCondition,
+) -> Result<Value, AppError> {
     settings.validate()?;
     let creds = creds_for(settings);
 
     let snapshot = build_local_snapshot(db)?;
 
-    // Upload order: artifacts first, manifest last (best-effort consistency)
-    let db_key = s3_key(settings, REMOTE_DB_SQL);
+    // Immutable artifacts keep the last committed snapshot readable after any failed PUT.
+    let db_key = s3_key(settings, &format!("{}/{REMOTE_DB_SQL}", snapshot.artifact_dir));
     s3::put_object(&creds, &db_key, snapshot.db_sql, "application/sql").await?;
 
-    let skills_key = s3_key(settings, REMOTE_SKILLS_ZIP);
+    let skills_key = s3_key(settings, &format!("{}/{REMOTE_SKILLS_ZIP}", snapshot.artifact_dir));
     s3::put_object(&creds, &skills_key, snapshot.skills_zip, "application/zip").await?;
 
     let manifest_key = s3_key(settings, REMOTE_MANIFEST);
-    s3::put_object(
+    let etag = s3::put_object_conditional(
         &creds,
         &manifest_key,
         snapshot.manifest_bytes,
         "application/json",
+        condition,
     )
     .await?;
-
-    // Fetch etag (best-effort, don't fail the upload)
-    let etag = match s3::head_object(&creds, &manifest_key).await {
-        Ok(e) => e,
-        Err(e) => {
-            log::debug!("[S3] Failed to fetch ETag after upload: {e}");
-            None
-        }
-    };
 
     let _persisted = persist_sync_success_best_effort(
         settings,
@@ -107,9 +126,9 @@ pub async fn download(
     validate_manifest_compat(&manifest, RemoteLayout::Current)?;
 
     // Download and verify artifacts
-    let db_sql = download_and_verify(settings, &creds, REMOTE_DB_SQL, &manifest.artifacts).await?;
+    let db_sql = download_and_verify(settings, &creds, REMOTE_DB_SQL, &manifest).await?;
     let skills_zip =
-        download_and_verify(settings, &creds, REMOTE_SKILLS_ZIP, &manifest.artifacts).await?;
+        download_and_verify(settings, &creds, REMOTE_SKILLS_ZIP, &manifest).await?;
 
     // Apply snapshot
     apply_snapshot(db, &db_sql, &skills_zip)?;
@@ -178,9 +197,9 @@ async fn download_and_verify(
     settings: &S3SyncSettings,
     creds: &S3Credentials,
     artifact_name: &str,
-    artifacts: &BTreeMap<String, ArtifactMeta>,
+    manifest: &SyncManifest,
 ) -> Result<Vec<u8>, AppError> {
-    let meta = artifacts.get(artifact_name).ok_or_else(|| {
+    let meta = manifest.artifacts.get(artifact_name).ok_or_else(|| {
         localized(
             "s3.sync.manifest_missing_artifact",
             format!("manifest 中缺少 artifact: {artifact_name}"),
@@ -189,8 +208,8 @@ async fn download_and_verify(
     })?;
     validate_artifact_size_limit(artifact_name, meta.size)?;
 
-    let key = s3_key(settings, artifact_name);
-    let (bytes, _) = s3::get_object(creds, &key, MAX_SYNC_ARTIFACT_BYTES as usize)
+    let key = s3_key(settings, &artifact_path(manifest, artifact_name)?);
+    let (bytes, _) = s3::get_object(creds, &key, meta.size as usize)
         .await?
         .ok_or_else(|| {
             localized(
@@ -208,19 +227,19 @@ async fn download_and_verify(
 
 /// Build the S3 object key for a given artifact.
 ///
-/// Format: `{remote_root}/v{PROTOCOL_VERSION}/db-v{DB_COMPAT_VERSION}/{profile}/{artifact}`
+/// Format: `{remote_root}/v{STORAGE_VERSION}/db-v{DB_COMPAT_VERSION}/{profile}/{artifact}`
 /// Example: `cc-switch-sync/v2/db-v6/default/manifest.json`
 fn s3_key(settings: &S3SyncSettings, artifact: &str) -> String {
     format!(
         "{}/v{}/db-v{}/{}/{}",
-        settings.remote_root, PROTOCOL_VERSION, DB_COMPAT_VERSION, settings.profile, artifact
+        settings.remote_root, STORAGE_VERSION, DB_COMPAT_VERSION, settings.profile, artifact
     )
 }
 
 fn s3_dir_display(settings: &S3SyncSettings) -> String {
     format!(
         "{}/v{}/db-v{}/{}",
-        settings.remote_root, PROTOCOL_VERSION, DB_COMPAT_VERSION, settings.profile
+        settings.remote_root, STORAGE_VERSION, DB_COMPAT_VERSION, settings.profile
     )
 }
 

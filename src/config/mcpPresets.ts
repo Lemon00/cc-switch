@@ -1,15 +1,16 @@
-import { McpServer, McpServerSpec } from "../types";
 import { isWindows } from "@/lib/platform";
-
+import { McpServer, McpServerSpec } from "../types";
 export type McpPreset = Omit<McpServer, "enabled" | "description">;
-
 // 创建跨平台 npx 命令配置
 // Windows 需要使用 cmd /c wrapper 来执行 npx.cmd
 // Mac/Linux 可以直接执行 npx
 const createNpxCommand = (
   packageName: string,
   extraArgs: string[] = [],
-): { command: string; args: string[] } => {
+): {
+  command: string;
+  args: string[];
+} => {
   if (isWindows()) {
     return {
       command: "cmd",
@@ -22,7 +23,6 @@ const createNpxCommand = (
     };
   }
 };
-
 // 预设 MCP（逻辑简化版）：
 // - 仅包含最常用、可快速落地的 stdio 模式示例
 // - 不涉及分类/模板/测速等复杂逻辑，默认以 disabled 形式"回种"到 config.json
@@ -90,7 +90,6 @@ export const mcpPresets: McpPreset[] = [
     docs: "https://github.com/upstash/context7/blob/master/README.md",
   },
 ];
-
 // 获取带国际化描述的预设
 export const getMcpPresetWithDescription = (
   preset: McpPreset,
@@ -102,5 +101,4 @@ export const getMcpPresetWithDescription = (
     description: t(descriptionKey),
   } as McpServer;
 };
-
 export default mcpPresets;
