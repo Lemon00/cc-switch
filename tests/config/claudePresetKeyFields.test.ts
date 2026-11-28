@@ -44,7 +44,7 @@ describe("Claude presets project an endpoint and a credential", () => {
     if (preset.category === "official") return;
     const env = presetEnv(preset.settingsConfig);
     const keys = Object.keys(env);
-    // 托管 OAuth（Copilot、Codex、xAI）不带 Key：本地路由按请求注入登录凭据。
+    // 托管 ChatGPT OAuth不带 Key：本地路由按请求注入登录凭据。
     if (isOAuthProviderType(preset.providerType)) {
       expect(keys).toContain("ANTHROPIC_BASE_URL");
       return;

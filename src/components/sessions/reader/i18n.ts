@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import type { Translate } from "./toolSummary";
+import type { Translate } from "@/lib/sessions/toolSummary";
 /**
  * 阅读页文案（`sessionManager.reader.*`）。
  * 这里的简体中文是各 key 的 defaultValue：语言包缺 key（含单测）时仍有可读文案。

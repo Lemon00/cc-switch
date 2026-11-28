@@ -29,7 +29,23 @@ use std::time::Duration;
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
-use super::copilot_auth::{GitHubAccount, GitHubDeviceCodeResponse};
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodexDeviceCodeResponse {
+    pub device_code: String,
+    pub user_code: String,
+    pub verification_uri: String,
+    pub expires_in: u64,
+    pub interval: u64,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodexAccountSummary {
+    pub id: String,
+    pub login: String,
+    pub avatar_url: Option<String>,
+    pub authenticated_at: i64,
+    #[serde(default)]
+    pub reauth_required: bool,
+}
 
 pub mod browser;
 
@@ -287,10 +303,10 @@ struct CodexAccountData {
     pub token_updated_at_ms: i64,
 }
 
-/// 公开的账号信息（返回给前端，复用 GitHubAccount 结构）
-impl From<&CodexAccountData> for GitHubAccount {
+/// 公开的账号信息（返回给前端，复用 CodexAccountSummary 结构）
+impl From<&CodexAccountData> for CodexAccountSummary {
     fn from(data: &CodexAccountData) -> Self {
-        GitHubAccount {
+        CodexAccountSummary {
             id: data.account_id.clone(),
             // 用 email 作为显示名（若无则用上游 workspace ID）
             login: data.email.clone().unwrap_or_else(|| {
@@ -303,7 +319,6 @@ impl From<&CodexAccountData> for GitHubAccount {
             }),
             avatar_url: None,
             authenticated_at: data.authenticated_at,
-            github_domain: "github.com".to_string(),
             // 旧账号可能缺少 id_token 或独立的上游 workspace 字段；两者都需要
             // 重新登录后才能安全参与本地 ID → workspace 的托管绑定。
             reauth_required: data
@@ -432,14 +447,14 @@ impl CodexOAuthManager {
 
     /// 启动 Device Code 流程
     ///
-    /// 返回 GitHubDeviceCodeResponse 复用现有前端结构，但字段含义对应 OpenAI 的字段：
+    /// 返回 CodexDeviceCodeResponse 复用现有前端结构，但字段含义对应 OpenAI 的字段：
     /// - device_code = device_auth_id
     /// - user_code = user_code
     /// - verification_uri = https://auth.openai.com/codex/device
     pub async fn start_device_flow(
         &self,
         target_account_id: Option<&str>,
-    ) -> Result<GitHubDeviceCodeResponse, CodexOAuthError> {
+    ) -> Result<CodexDeviceCodeResponse, CodexOAuthError> {
         log::info!("[CodexOAuth] 启动 Device Code 流程");
         let (login_epoch, target_account_id, target_generation) =
             self.prepare_login_target(target_account_id).await?;
@@ -482,7 +497,7 @@ impl CodexOAuthManager {
 
         log::info!("[CodexOAuth] 获取 Device Code 成功");
 
-        Ok(GitHubDeviceCodeResponse {
+        Ok(CodexDeviceCodeResponse {
             device_code: device.device_auth_id,
             user_code: device.user_code,
             verification_uri: DEVICE_VERIFICATION_URL.to_string(),
@@ -572,7 +587,7 @@ impl CodexOAuthManager {
         &self,
         device_code: &str,
         before_commit: BeforeCommit,
-    ) -> Result<Option<GitHubAccount>, CodexOAuthError>
+    ) -> Result<Option<CodexAccountSummary>, CodexOAuthError>
     where
         BeforeCommit: FnOnce() -> CommitFuture,
         CommitFuture: std::future::Future<Output = CommitGuard>,
@@ -653,7 +668,7 @@ impl CodexOAuthManager {
         tokens: OAuthTokenResponse,
         device_code: &str,
         entry: &PendingDeviceCode,
-    ) -> Result<GitHubAccount, CodexOAuthError> {
+    ) -> Result<CodexAccountSummary, CodexOAuthError> {
         let refresh_token = tokens.refresh_token.clone().ok_or_else(|| {
             CodexOAuthError::TokenFetchFailed("响应缺少 refresh_token".to_string())
         })?;
@@ -1393,7 +1408,7 @@ impl CodexOAuthManager {
 
     // ==================== 多账号管理 ====================
 
-    pub async fn list_accounts(&self) -> Vec<GitHubAccount> {
+    pub async fn list_accounts(&self) -> Vec<CodexAccountSummary> {
         let accounts = self.accounts.read().await.clone();
         let default_id = self.resolve_default_account_id().await;
         Self::sorted_accounts(&accounts, default_id.as_deref())
@@ -1554,7 +1569,7 @@ impl CodexOAuthManager {
         !accounts.is_empty()
     }
 
-    /// 获取认证状态摘要（与 Copilot 的格式保持一致，便于复用前端）
+    /// 获取认证状态摘要（供授权中心与代理共享）
     pub async fn get_status(&self) -> CodexOAuthStatus {
         let accounts_map = self.accounts.read().await.clone();
         let default_id = self.resolve_default_account_id().await;
@@ -1686,7 +1701,7 @@ impl CodexOAuthManager {
         id_token: Option<String>,
         initial_access_token: Option<CachedAccessToken>,
         context: AccountLoginContext<'_>,
-    ) -> Result<GitHubAccount, CodexOAuthError> {
+    ) -> Result<CodexAccountSummary, CodexOAuthError> {
         let _lifecycle = self.lifecycle_lock.read().await;
         let target_account_id = context
             .target_account_id
@@ -1772,7 +1787,7 @@ impl CodexOAuthManager {
             token_updated_at_ms: now_ms,
         };
 
-        let account = GitHubAccount::from(&data);
+        let account = CodexAccountSummary::from(&data);
 
         // Linearize cancel/newer-flow against the actual commit, after waiting
         // for the account lock. Holding both guards through persistence means
@@ -1886,8 +1901,9 @@ impl CodexOAuthManager {
     fn sorted_accounts(
         accounts: &HashMap<String, CodexAccountData>,
         default_account_id: Option<&str>,
-    ) -> Vec<GitHubAccount> {
-        let mut list: Vec<GitHubAccount> = accounts.values().map(GitHubAccount::from).collect();
+    ) -> Vec<CodexAccountSummary> {
+        let mut list: Vec<CodexAccountSummary> =
+            accounts.values().map(CodexAccountSummary::from).collect();
         list.sort_by(|a, b| {
             let a_default = default_account_id == Some(a.id.as_str());
             let b_default = default_account_id == Some(b.id.as_str());
@@ -2057,7 +2073,7 @@ impl CodexOAuthManager {
 /// Codex OAuth 状态摘要
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodexOAuthStatus {
-    pub accounts: Vec<GitHubAccount>,
+    pub accounts: Vec<CodexAccountSummary>,
     pub default_account_id: Option<String>,
     pub authenticated: bool,
     pub username: Option<String>,

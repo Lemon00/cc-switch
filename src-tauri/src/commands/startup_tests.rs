@@ -8,7 +8,6 @@ use tauri::Manager;
 use crate::app_config::AppType;
 use crate::database::Database;
 use crate::provider::{Provider, UniversalProvider};
-use crate::services::model_pricing::ModelPricingInfo;
 use crate::store::AppState;
 
 pub(super) struct TestHome {

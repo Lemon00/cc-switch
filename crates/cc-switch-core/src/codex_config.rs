@@ -218,10 +218,7 @@ impl CodexLiveStateSnapshot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodexCatalogToolProfile {
     ProxyChat,
-    /// Copilot selects Responses or Chat per model, but both paths run through
-    /// the local proxy. Keep proxy-compatible tools while disabling Codex's
-    /// hosted web-search endpoint, which Copilot does not expose.
-    Copilot,
+
     NativeResponses,
     /// Codex talks (through cc-switch's proxy) to a native Anthropic Messages
     /// gateway. Like `NativeResponses` it must suppress Codex's freeform custom
@@ -1374,10 +1371,7 @@ fn codex_catalog_model_entry(
         )),
     );
 
-    if !matches!(
-        profile,
-        CodexCatalogToolProfile::ProxyChat | CodexCatalogToolProfile::Copilot
-    ) {
+    if !matches!(profile, CodexCatalogToolProfile::ProxyChat) {
         // Native `/responses` and Anthropic gateways reject / drop Codex's freeform
         // `apply_patch` (type=="custom") tool. Strip any key that would make Codex
         // emit a custom/freeform tool, and rely on shell_type="shell_command" for
@@ -1410,20 +1404,9 @@ fn codex_catalog_model_entry(
             entry_obj.insert("supports_parallel_tool_calls".to_string(), json!(parallel));
         }
     }
-    if profile == CodexCatalogToolProfile::Copilot {
-        entry_obj.insert(
-            "supports_parallel_tool_calls".to_string(),
-            json!(spec.supports_parallel_tool_calls.unwrap_or(false)),
-        );
-    }
+    {}
 
-    if matches!(
-        profile,
-        CodexCatalogToolProfile::ProxyChat | CodexCatalogToolProfile::Copilot
-    ) {
-        // Codex's `original` image detail (full-resolution) is rejected by
-        // strict Chat gateways with `400 invalid_request_error`, param
-        // `messages.N.content`. Copilot can also select Chat per model, so
+    if matches!(profile, CodexCatalogToolProfile::ProxyChat) {
         // neither proxy profile may advertise it; Codex keeps to auto/high.
         entry_obj.insert("supports_image_detail_original".to_string(), json!(false));
     }
@@ -1449,8 +1432,6 @@ struct CodexCatalogModelSpec {
     /// `model_context_window` (or 128k) — except official vendor catalog
     /// entries, which keep the vendor's declared window.
     context_window: Option<u64>,
-    /// Per-row override for `supports_parallel_tool_calls` on native and
-    /// Anthropic profiles, and Copilot's conservative false default.
     supports_parallel_tool_calls: Option<bool>,
     /// Hidden per-row capability declaration from built-in provider metadata.
     /// When omitted, all catalog profiles consult the shared text-only model
@@ -2036,7 +2017,6 @@ fn codex_native_row_is_valid(row: &Value) -> bool {
     has_slug && has_required && has_instructions
 }
 
-/// 经典工具契约模板：ProxyChat / Copilot 给第三方模型生成目录条目时复制的骨架。取自 Codex
 /// 自带的 gpt-5.5 条目，借的是它那套工具形态（freeform apply_patch、unified_exec、没有
 /// `tool_mode` 和 v2 子代理），转换层就是照它写的；名字、窗口、可见性都会被改写，跟调用哪个
 /// 模型无关。只用仓库里这份，不读 `models_cache.json` 也不跑 `codex`：官方改了那边的条目
@@ -2489,23 +2469,17 @@ fn codex_catalog_from_specs_for_row(
     let configured_context_window = windows.window;
     let default_context_window = configured_context_window.unwrap_or(128_000);
 
-    // Native providers use the bundled clean template (no freeform apply_patch);
-    // ProxyChat and Copilot clone the bundled classic tool template so their
     // proxy paths retain custom<->function tool support.
     let template = match profile {
         CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::Anthropic => {
             load_codex_native_responses_template()
         }
-        CodexCatalogToolProfile::ProxyChat | CodexCatalogToolProfile::Copilot => {
-            load_codex_classic_tool_template()
-        }
+        CodexCatalogToolProfile::ProxyChat => load_codex_classic_tool_template(),
     };
-    // 命中 OpenAI 官方条目的行照搬官方（写了目录之后 Codex 只认文件里的条目，通用模板
-    // 会顶掉 GPT 自己的提示词），其余行照旧按模板生成。Responses→Anthropic 的转换会丢掉
-    // 官方条目里的 custom 工具，这条路不照搬。Copilot 仍按自身的目录配置生成，
+
     // 保留账号模型的上下文窗口和并行工具能力，而不是套用官方 GPT 的能力。
     let official = match profile {
-        CodexCatalogToolProfile::Anthropic | CodexCatalogToolProfile::Copilot => Vec::new(),
+        CodexCatalogToolProfile::Anthropic => Vec::new(),
         CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::ProxyChat => {
             codex_openai_official_models()
         }
@@ -2562,7 +2536,6 @@ pub struct CodexCatalogPlan {
     pub catalog: Option<Value>,
 }
 
-/// 要不要关掉 web_search：Responses→Anthropic 的转换会丢掉这个内置工具，Copilot 也不
 /// 提供这个托管工具，两者一律关；原生
 /// Responses 网关按拒收名单判定（MiMo、LongCat、MiniMax 等按域名或模型品牌，Qwen3-Coder
 /// 按模型）；其余保持 Codex 的默认。只在有模型目录时才看名单。
@@ -2572,7 +2545,7 @@ pub fn codex_disables_web_search(
     profile: CodexCatalogToolProfile,
 ) -> bool {
     match profile {
-        CodexCatalogToolProfile::Anthropic | CodexCatalogToolProfile::Copilot => true,
+        CodexCatalogToolProfile::Anthropic => true,
         CodexCatalogToolProfile::NativeResponses => {
             !codex_catalog_model_specs(settings).is_empty()
                 && codex_native_gateway_rejects_web_search(config_text)
@@ -2943,16 +2916,30 @@ pub fn read_codex_model_catalog_simplified_from_live() -> Result<Option<Value>, 
 }
 
 /// 安全地读取文件为字符串，并在超过字节上限时返回错误。
-pub fn read_limited_string(path: &Path, max_bytes: u64) -> Result<String, AppError> {
-    let metadata = fs::metadata(path).map_err(|error| AppError::io(path, error))?;
-    if metadata.len() > max_bytes {
+fn read_limited_string(path: &Path, max_bytes: u64) -> Result<String, AppError> {
+    use std::io::Read;
+
+    // Limit the actual read, including files that grow after opening or report
+    // an inaccurate length. Read one extra byte to distinguish a full file from
+    // a truncated prefix, and validate UTF-8 only after checking the limit.
+    let file = fs::File::open(path).map_err(|error| AppError::io(path, error))?;
+    let mut bytes = Vec::new();
+    file.take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| AppError::io(path, error))?;
+    if bytes.len() as u64 > max_bytes {
         return Err(AppError::Config(format!(
             "文件 {} 超过大小上限 {} 字节",
             path.display(),
             max_bytes
         )));
     }
-    fs::read_to_string(path).map_err(|error| AppError::io(path, error))
+    String::from_utf8(bytes).map_err(|error| {
+        AppError::io(
+            path,
+            std::io::Error::new(std::io::ErrorKind::InvalidData, error),
+        )
+    })
 }
 
 /// Read the cc-switch Codex model catalog file with a size cap.
@@ -4665,7 +4652,6 @@ experimental_bearer_token = "stale-table-key"
 
         for profile in [
             CodexCatalogToolProfile::ProxyChat,
-            CodexCatalogToolProfile::Copilot,
             CodexCatalogToolProfile::NativeResponses,
             CodexCatalogToolProfile::Anthropic,
         ] {
@@ -4933,7 +4919,6 @@ wire_api = "responses"
 
         for profile in [
             CodexCatalogToolProfile::ProxyChat,
-            CodexCatalogToolProfile::Copilot,
             CodexCatalogToolProfile::Anthropic,
         ] {
             assert!(
@@ -4980,10 +4965,7 @@ wire_api = "responses"
         let mut proxy_template = template.clone();
         proxy_template["apply_patch_tool_type"] = json!("freeform");
         proxy_template["supports_image_detail_original"] = json!(true);
-        for profile in [
-            CodexCatalogToolProfile::ProxyChat,
-            CodexCatalogToolProfile::Copilot,
-        ] {
+        for profile in [CodexCatalogToolProfile::ProxyChat] {
             let catalog = codex_model_catalog_from_specs(&specs, &proxy_template, profile, 128_000);
             assert_eq!(
                 catalog["models"][0]["apply_patch_tool_type"],
@@ -4993,69 +4975,6 @@ wire_api = "responses"
                 catalog["models"][0]["supports_image_detail_original"],
                 json!(false)
             );
-        }
-    }
-
-    #[test]
-    fn catalog_web_search_policy_keeps_copilot_and_anthropic_disabled_without_models() {
-        let config = "model = \"MiniMax-M3\"\n";
-        for (settings, has_catalog) in [
-            (json!({}), false),
-            (
-                json!({"modelCatalog": {"models": [{"model": "MiniMax-M3"}]}}),
-                true,
-            ),
-        ] {
-            for (profile, disabled) in [
-                (CodexCatalogToolProfile::Copilot, true),
-                (CodexCatalogToolProfile::Anthropic, true),
-                (CodexCatalogToolProfile::ProxyChat, false),
-                (CodexCatalogToolProfile::NativeResponses, has_catalog),
-            ] {
-                assert_eq!(
-                    codex_disables_web_search(&settings, config, profile),
-                    disabled,
-                    "{profile:?}, catalog={has_catalog}"
-                );
-                if !has_catalog {
-                    assert!(plan_codex_model_catalog(&settings, config, profile)
-                        .unwrap()
-                        .catalog
-                        .is_none());
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn copilot_catalog_preserves_context_and_explicit_parallel_capabilities() {
-        let settings = json!({
-            "modelCatalog": {
-                "models": [
-                    { "model": "claude-sonnet-5", "contextWindow": 400000 },
-                    { "model": "parallel-model", "supportsParallelToolCalls": true },
-                    { "model": "serial-model", "supports_parallel_tool_calls": false }
-                ]
-            }
-        });
-        let template = load_codex_classic_tool_template();
-        assert_eq!(template["supports_parallel_tool_calls"], json!(true));
-        let catalog = codex_model_catalog_from_specs(
-            &codex_catalog_model_specs(&settings),
-            &template,
-            CodexCatalogToolProfile::Copilot,
-            128_000,
-        );
-        let models = catalog["models"].as_array().unwrap();
-        assert_eq!(models.len(), 3);
-        assert_eq!(models[0]["context_window"], json!(400000));
-        assert_eq!(models[0]["max_context_window"], json!(400000));
-        for (entry, parallel) in models.iter().zip([false, true, false]) {
-            assert_eq!(entry["supports_parallel_tool_calls"], json!(parallel));
-            assert!(entry["base_instructions"].is_string());
-            for key in CODEX_CATALOG_PARSER_REQUIRED_FIELDS {
-                assert!(entry.get(*key).is_some(), "{key} is required by Codex");
-            }
         }
     }
 
@@ -6750,6 +6669,20 @@ model_catalog_json = "cc-switch-model-catalog.json"
             result.is_err(),
             "file larger than MAX_CODEX_CATALOG_BYTES must be rejected"
         );
+    }
+
+    #[test]
+    fn limited_string_checks_byte_boundary_before_decoding_utf8() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("catalog.json");
+        fs::write(&path, "模型").unwrap();
+        assert_eq!(read_limited_string(&path, 6).unwrap(), "模型");
+        assert!(matches!(
+            read_limited_string(&path, 4),
+            Err(AppError::Config(_))
+        ));
+        fs::write(&path, [0xff]).unwrap();
+        assert!(read_limited_string(&path, 1).is_err());
     }
 
     fn desktop_cli(applications: &Path, bundle: &str, layout: &str) -> PathBuf {

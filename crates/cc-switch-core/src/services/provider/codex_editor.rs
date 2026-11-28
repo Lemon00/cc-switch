@@ -234,7 +234,6 @@ fn project_for_save(input: &RowInput<'_>) -> Result<CodexProjection, AppError> {
     let mut projection = CodexProjection::of(&RowInput {
         settings: &settings,
         official: input.official,
-        proxy_injected_oauth: input.proxy_injected_oauth,
     })
     .map_err(|_| error)?;
     if let Route::Custom { table, .. } = &mut projection.route {
@@ -350,7 +349,7 @@ pub fn plan_save(
     base: &Value,
     origin: &Origin,
     official: bool,
-    proxy_injected_oauth: bool,
+
     on_conflict: ConflictPolicy,
 ) -> Result<CodexEditorPlan, AppError> {
     let edited_doc = parse_text(config_text(edited), "edited")?;
@@ -358,7 +357,6 @@ pub fn plan_save(
     let mut projection = project_for_save(&RowInput {
         settings: edited,
         official,
-        proxy_injected_oauth,
     })?;
 
     let rendered = |doc: &DocumentMut, key: &str| doc.get(key).map(render);
@@ -616,7 +614,6 @@ mod tests {
             &edited,
             &Origin::row(&stored).unwrap(),
             false,
-            false,
             ConflictPolicy::Refuse,
         )
         .unwrap();
@@ -657,7 +654,6 @@ mod tests {
             &stored,
             &stored,
             &Origin::row(&stored).unwrap(),
-            false,
             false,
             ConflictPolicy::Refuse,
         )

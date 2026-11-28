@@ -1,19 +1,3 @@
-//! Claude 路由经 OpenAI Chat / Responses 转发时，给上游发哪一档思考强度（#9062）。
-//!
-//! 转换层只给认得的模型（[`super::transform::supports_reasoning_effort`]：o 系、
-//! GPT-5+、Grok 4.5+）写档位，其余模型在这里接着判断：
-//! - 供应商设了 `meta.claudeReasoningEffort`，按设置来：不发，或客户端要哪档原样发哪档。
-//! - 没设时按供应商名、地址、模型名认厂商（与 Codex Responses → Chat 共用
-//!   [`super::codex::infer_chat_reasoning_config`]）：认出不收档位的（Kimi、GLM、Qwen…）
-//!   不发；认出有专门档位的（DeepSeek、OpenRouter…）按它的换算发。
-//! - 已知不收档位的模型（GPT-3.5 / GPT-4 系、Llama）不发；Mistral 开推理后的响应格式
-//!   转换层还不解析，也不发。
-//! - 都认不出时只发 low / medium / high：这三档是 OpenAI 的标准档，收档位字段的上游
-//!   基本都认；xhigh / max 折成 high，免得发出对方不认的值被 400。
-//!
-//! 关思考（`thinking` 缺省或 disabled）时不发档位，交给上游默认。托管账号（Copilot、
-//! Codex / xAI OAuth）的模型和参数由平台限定，自动模式下保持转换层的结果。
-
 use crate::provider::Provider;
 use serde_json::{json, Value};
 
@@ -129,11 +113,8 @@ fn override_mode(provider: &Provider) -> Option<&str> {
         .filter(|mode| OVERRIDE_MODES.contains(mode))
 }
 
-fn is_managed_account(provider: &Provider, base_url: &str) -> bool {
-    provider.is_github_copilot()
-        || provider.is_codex_oauth()
-        || provider.is_xai_oauth()
-        || base_url.contains("githubcopilot.com")
+fn is_managed_account(provider: &Provider, _base_url: &str) -> bool {
+    provider.is_codex_oauth()
 }
 
 /// 客户端要的档位，不按目标模型折算。关思考时为 `None`。
@@ -447,16 +428,6 @@ mod tests {
         );
         assert_eq!(
             plan(&body("grok-4.6", Some("high")), &p, RELAY),
-            EffortPlan::Unchanged
-        );
-
-        let copilot = provider("Copilot", None);
-        assert_eq!(
-            plan(
-                &body("gemini-3-pro", Some("high")),
-                &copilot,
-                "https://api.githubcopilot.com"
-            ),
             EffortPlan::Unchanged
         );
     }

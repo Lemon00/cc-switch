@@ -439,7 +439,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
       iconName="openai"
       help={t("authCenter.group.chatgptHelp", {
         defaultValue:
-          "用于 Claude Code、Claude Desktop 的 ChatGPT 预设，以及 Codex 官方登录绑定。没指定账号的供应商用「默认」账号。",
+          "用于 Claude Code 的 ChatGPT 预设，以及 Codex 官方登录绑定。没指定账号的供应商用「默认」账号。",
       })}
       helpSide={helpSide}
       accounts={rows}

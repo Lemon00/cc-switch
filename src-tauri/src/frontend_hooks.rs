@@ -5,12 +5,10 @@
 
 use cc_switch_core::events::{EventSink, FrontendHooks, OAuthStateProvider};
 use cc_switch_core::proxy::providers::codex_oauth_auth::CodexOAuthManager;
-use cc_switch_core::proxy::providers::copilot_auth::CopilotAuthManager;
-use cc_switch_core::proxy::providers::xai_oauth_auth::XaiOAuthManager;
+
 use cc_switch_core::store::AppState;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
-use tokio::sync::RwLock;
 
 /// 把核心事件转发给前端（app.emit）。
 pub struct TauriEventSink(pub tauri::AppHandle);
@@ -21,26 +19,13 @@ impl EventSink for TauriEventSink {
     }
 }
 
-/// 从 Tauri State 里读 OAuth 管理器（forwarder 经此拿到 Codex/Copilot/xAI
-/// 的 OAuth 凭据；这些 State 结构体本身只是核心管理器的 Arc 包装）。
+/// 从桌面 State 读取受支持的托管 OAuth 凭据。
 pub struct TauriOAuthStateProvider(pub tauri::AppHandle);
 
 impl OAuthStateProvider for TauriOAuthStateProvider {
     fn codex_oauth(&self) -> Option<Arc<CodexOAuthManager>> {
         self.0
             .try_state::<crate::commands::codex_oauth::CodexOAuthState>()
-            .map(|s| s.0.clone())
-    }
-
-    fn copilot_oauth(&self) -> Option<Arc<RwLock<CopilotAuthManager>>> {
-        self.0
-            .try_state::<crate::commands::copilot::CopilotAuthState>()
-            .map(|s| s.0.clone())
-    }
-
-    fn xai_oauth(&self) -> Option<Arc<RwLock<XaiOAuthManager>>> {
-        self.0
-            .try_state::<crate::commands::xai_oauth::XaiOAuthState>()
             .map(|s| s.0.clone())
     }
 }

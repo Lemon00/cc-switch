@@ -132,6 +132,21 @@ fn read_text(path: &Path) -> Result<String, AppError> {
     }
 }
 
+fn read_config_bytes(path: &Path) -> Result<Option<Vec<u8>>, AppError> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(AppError::io(path, error)),
+    }
+}
+
+fn external_edit_conflict(path: &Path) -> AppError {
+    AppError::Config(format!(
+        "DeepSeek Harness configuration changed on disk; the external edit was preserved. Reload and retry: {}",
+        path.display()
+    ))
+}
+
 const INVALID_PROFILE_YAML: &str = "Invalid DeepSeek Harness profile YAML";
 
 pub fn entries(text: &str) -> Result<Vec<Yaml>, AppError> {
@@ -374,7 +389,8 @@ fn restore(path: &Path, previous: Option<Vec<u8>>) -> Result<(), AppError> {
 
 /// Edit several native files as one change: each file holds its own DSH `<file>.lock` through
 /// the database commit. `plan` maps every file's current text to its next text, so an invalid
-/// edit writes nothing; a failed write or commit restores every file already written.
+/// edit writes nothing; a failed write or commit restores files still containing our write.
+/// External writers need not honor DSH's lock, so recheck bytes before write and rollback.
 fn edit_files_and_commit<T>(
     paths: &[PathBuf],
     plan: impl FnOnce(&[String]) -> Result<Vec<String>, AppError>,
@@ -391,12 +407,15 @@ fn edit_files_and_commit<T>(
     let mut previous = Vec::with_capacity(paths.len());
     let mut current = Vec::with_capacity(paths.len());
     for path in paths {
-        previous.push(if path.exists() {
-            Some(fs::read(path).map_err(|error| AppError::io(path, error))?)
-        } else {
-            None
-        });
-        current.push(read_text(path)?);
+        let bytes = read_config_bytes(path)?;
+        let text = String::from_utf8(bytes.clone().unwrap_or_default()).map_err(|error| {
+            AppError::io(
+                path,
+                std::io::Error::new(std::io::ErrorKind::InvalidData, error),
+            )
+        })?;
+        previous.push(bytes);
+        current.push(text);
     }
     let next = plan(&current).map_err(|error| name_invalid_profile(paths, &current, error))?;
     // plan 少给或多给一个文件都意味着某一处改动会被静默丢掉：宁可整体失败。
@@ -415,6 +434,9 @@ fn edit_files_and_commit<T>(
         .enumerate()
         .filter(|(_, ((_, current), next))| current != next)
         .try_for_each(|(index, ((path, _), next))| {
+            if read_config_bytes(path)? != previous[index] {
+                return Err(external_edit_conflict(path));
+            }
             atomic_write_private(path, next.as_bytes())?;
             written.push(index);
             Ok(())
@@ -427,7 +449,14 @@ fn edit_files_and_commit<T>(
                 .into_iter()
                 .rev()
                 .filter_map(|index| {
-                    restore(&paths[index], previous[index].take())
+                    let path = &paths[index];
+                    read_config_bytes(path)
+                        .and_then(|bytes| {
+                            if bytes.as_deref() != Some(next[index].as_bytes()) {
+                                return Err(external_edit_conflict(path));
+                            }
+                            restore(path, previous[index].take())
+                        })
                         .err()
                         .map(|rollback| rollback.to_string())
                 })
@@ -1688,6 +1717,46 @@ fn mcp_edit(text: &str, id: &str, spec: Option<&Value>) -> Result<String, AppErr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn external_edits_during_planning_are_preserved() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cordis.patch.yml");
+        fs::write(&path, "[]\n").unwrap();
+        let result = edit_files_and_commit(
+            std::slice::from_ref(&path),
+            |_| {
+                fs::write(&path, "# external edit\n[]\n").unwrap();
+                Ok(vec!["# planned\n[]\n".into()])
+            },
+            || -> Result<(), AppError> { panic!("must not commit after conflict") },
+        );
+        assert!(result.is_err());
+        assert_eq!(read_text(&path).unwrap(), "# external edit\n[]\n");
+    }
+
+    #[test]
+    fn rollback_preserves_external_edits_and_restores_unchanged_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("first.yml");
+        let second = dir.path().join("second.yml");
+        for path in [&first, &second] {
+            fs::write(path, "[]\n").unwrap();
+        }
+        let result = edit_files_and_commit(
+            &[first.clone(), second.clone()],
+            |_| Ok(vec!["# planned\n[]\n".into(); 2]),
+            || -> Result<(), AppError> {
+                fs::write(&second, "# external edit\n[]\n").unwrap();
+                Err(AppError::Message("commit failed".into()))
+            },
+        );
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("commit failed"));
+        assert!(error.contains("external edit was preserved"));
+        assert_eq!(read_text(&first).unwrap(), "[]\n");
+        assert_eq!(read_text(&second).unwrap(), "# external edit\n[]\n");
+    }
 
     // @deepseek-ai/dsh-app-boot@0.2.1-rc.2 PROFILE_PATCH_TEMPLATE.
     const FACTORY_PROFILE: &str = "# Your patch layer for this dsh profile, applied after every bundle layer:\n# a top-level YAML array of loader patch entries (id-targeted config\n# overrides, disables, and insert lists; `!!js` expressions allowed).\n[]\n";

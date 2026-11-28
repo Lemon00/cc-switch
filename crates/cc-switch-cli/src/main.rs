@@ -40,10 +40,8 @@ use std::time::{Duration, Instant};
 use cc_switch_core::events::{EventSink, FrontendHooks, OAuthStateProvider};
 use cc_switch_core::process_output::output_with_timeout;
 use cc_switch_core::proxy::providers::codex_oauth_auth::CodexOAuthManager;
-use cc_switch_core::proxy::providers::copilot_auth::CopilotAuthManager;
-use cc_switch_core::proxy::providers::xai_oauth_auth::XaiOAuthManager;
-use cc_switch_core::{config, frontend_apps, AppState, AppType, Database, ProviderService};
-use tokio::sync::RwLock;
+
+use cc_switch_core::{config, frontend_apps, AppState, AppType, ProviderService};
 
 mod tui;
 
@@ -97,7 +95,7 @@ fn help() -> String {
         "  cc-switch-cli --app agy launch <id> --exec -- --model foo  # 透传额外 agy 参数",
         "",
         "通用:",
-        "  cc-switch-cli [--app codex|agy] tui  # 交互编辑供应商和 CLI 设置",
+        "  cc-switch-cli [--app codex|agy] tui  # 供应商、MCP、提示词、技能、代理与用量管理",
         "  cc-switch-cli version / --version / -V",
         "  cc-switch-cli config path",
     ]
@@ -489,16 +487,13 @@ fn cmd_proxy_control(app: AppType, action: &str) {
 
     // disable：进程停止与客户端分离拆成独立幂等步骤。PID 缺失/陈旧时仍尝试
     // detach——守护进程崩溃后客户端可能仍指向无人监听的端口。
-    let mut require_detach = false;
     match read_proxy_pid() {
         None => {
             println!("后台代理未在运行（无 pid 文件）；仍尝试分离客户端配置");
-            require_detach = true;
         }
         Some(pid) if !pid_alive(pid) || !pid_is_our_daemon(pid) => {
             remove_proxy_pid();
             println!("后台代理未在运行（已清理陈旧的 pid 文件）；仍尝试分离客户端配置");
-            require_detach = true;
         }
         Some(pid) => {
             #[cfg(unix)]
@@ -531,7 +526,6 @@ fn cmd_proxy_control(app: AppType, action: &str) {
                 }
             }
             remove_proxy_pid();
-            require_detach = true;
             println!("后台代理已停止（pid {pid}）");
         }
     }
@@ -546,18 +540,13 @@ fn cmd_proxy_control(app: AppType, action: &str) {
                 Ok(rt) => {
                     match rt.block_on(cc_switch_core::mode::controller::detach_app(&state, &app)) {
                         Ok(()) => println!("客户端配置已分离（指回直连）"),
-                        Err(e) if require_detach => err(&format!("客户端配置分离失败: {e}")),
-                        Err(e) => println!("警告: 客户端配置分离失败: {e}"),
+                        Err(e) => err(&format!("客户端配置分离失败: {e}")),
                     }
                 }
-                Err(e) if require_detach => {
-                    err(&format!("客户端配置保持接上（建运行时失败: {e}）"))
-                }
-                Err(e) => println!("警告: 客户端配置保持接上（建运行时失败: {e}）"),
+                Err(e) => err(&format!("客户端配置保持接上（建运行时失败: {e}）")),
             }
         }
-        Err(e) if require_detach => err(&format!("客户端配置保持接上（{e}）")),
-        Err(e) => println!("警告: 客户端配置保持接上（{e}）"),
+        Err(e) => err(&format!("客户端配置保持接上（{e}）")),
     }
 }
 
@@ -719,8 +708,6 @@ impl EventSink for QuietEventSink {
     }
 }
 
-/// CLI 的 OAuth 来源：Codex 用 AppState 自带的 manager（OAuth 路由的供应商
-/// 因此能正常拿凭据）；Copilot/xAI 没有登录流程，保持 None。
 ///
 /// 存 `Weak`：hooks 挂在 `AppState::proxy_service` 上，这里持强引用会和
 /// 核心故障转移执行器一样避免 Arc 环。
@@ -731,14 +718,6 @@ impl OAuthStateProvider for CliOAuthStateProvider {
         self.0
             .upgrade()
             .map(|state| state.codex_oauth_manager.clone())
-    }
-
-    fn copilot_oauth(&self) -> Option<Arc<RwLock<CopilotAuthManager>>> {
-        None
-    }
-
-    fn xai_oauth(&self) -> Option<Arc<RwLock<XaiOAuthManager>>> {
-        None
     }
 }
 

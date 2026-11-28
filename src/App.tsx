@@ -797,11 +797,16 @@ function App() {
     appConfigTarget?: AppId,
   ) => {
     if (managementBusyRef.current) return;
+    // The settings form stays mounted between sections. Do not discard its
+    // leave guard when a shortcut or tray action only changes the section.
+    if (currentViewRef.current === "settings") {
+      setSettingsSection(section);
+      setAppConfigScrollTarget(appConfigTarget);
+      return;
+    }
     if (confirmLeave(() => openSettings(section, appConfigTarget))) return;
     closeProviderPanels();
-    if (currentViewRef.current !== "settings") {
-      settingsReturnViewRef.current = currentViewRef.current;
-    }
+    settingsReturnViewRef.current = currentViewRef.current;
     setSettingsSection(section);
     setAppConfigScrollTarget(appConfigTarget);
     setCurrentView("settings");
@@ -851,12 +856,12 @@ function App() {
   };
   useTrayAppPageSeen(currentView === "providers" ? activeApp : null);
   useTrayNavigation((navigation) => {
+    if (navigation.section) {
+      openSettings(navigation.section);
+      return;
+    }
     const navigate = () => {
       if (managementBusyRef.current) return;
-      if (navigation.section) {
-        openSettings(navigation.section);
-        return;
-      }
       if (!navigation.app) return;
       if (!selectApp(navigation.app)) return;
       // 托盘先换应用：新应用那格还没报上来，按它实际生效的模式
@@ -1531,7 +1536,6 @@ function App() {
           <SessionManagerPage
             key={sharedFeatureApp}
             appId={sharedFeatureApp}
-            fromApp={activeApp}
             onOpenTerminalSettings={() => openSettings("general")}
           />
         );

@@ -100,15 +100,9 @@ pub(super) async fn get_single_tool_version_impl(
         }
         "codex" => fetch_npm_latest_for_tool(&client, "@openai/codex", tool, local).await,
 
-        "grok" => fetch_npm_latest_for_tool(&client, "@xai-official/grok", tool, local).await,
         "opencode" => {
-            if let Some(version) =
-                fetch_npm_latest_for_tool(&client, "opencode-ai", tool, local).await
-            {
-                Some(version)
-            } else {
-                fetch_github_latest_version(&client, "anomalyco/opencode").await
-            }
+            let package = npm_package_for_version(tool, local).expect("OpenCode package");
+            fetch_npm_latest_for_tool(&client, package.name, tool, local).await
         }
 
         "dsh" => fetch_npm_latest_for_tool(&client, "@deepseek-ai/dsh", tool, local).await,
@@ -144,11 +138,6 @@ pub(super) async fn get_single_tool_version_impl(
 /// patch 用 u64 以容纳 codex 的 `0.1.2505172116` 时间戳式版本而不溢出。
 pub(super) fn parse_semver(v: &str) -> Option<([u64; 3], Vec<String>)> {
     let v = v.trim();
-    // `+local` 段命中开发构建形态(git describe `238.g<sha>`,或含 canary /
-    // nightly / dev 等开发通道标识,如 Hermes main/canary 自报的
-    // `0.22.1+238.g<sha>`)时,版本号可能低于最新 release、内容反而更新,与
-    // release 不可比 —— 返回 None,调用方据此保守处理。普通 semver build
-    // metadata(如 `1.0.0+linux.1`)按 semver 规范忽略后照常比较。
     if let Some((_, local)) = v.split_once('+') {
         if is_dev_local(local) {
             return None;
@@ -250,12 +239,6 @@ pub(super) fn pick_latest_version(
     Some(best)
 }
 
-/// npm 包 dist-tags 专用端点的 URL。
-///
-/// 该端点的响应体就是 dist-tags 对象本身(几十到几千字节);而 `/{package}` 返回的是
-/// 含每个历史版本元数据的完整 packument,codex / opencode / openclaw 这类高频发版的包
-/// 已有十几到二十几 MB,一次刷新要下几十 MB(#7339)。scoped 包名的 `/` 按 registry
-/// 约定转义成 `%2f`。
 pub(super) fn npm_dist_tags_url(package: &str) -> String {
     format!(
         "https://registry.npmjs.org/-/package/{}/dist-tags",
@@ -265,7 +248,7 @@ pub(super) fn npm_dist_tags_url(package: &str) -> String {
 
 /// 拉取 npm 包的完整 dist-tags(单次请求即含 latest/next/beta/...)。
 ///
-/// 与 GitHub / PyPI 两条来源一样套 `LATEST_PROBE_TIMEOUT`:取不到就返回 None,由调用方
+/// 使用 `LATEST_PROBE_TIMEOUT`:取不到就返回 None,由调用方
 /// 显示「未知」,而不是沿用全局客户端的 600s 总超时让卡片一直「加载中」。包不存在时
 /// 端点返回 404 与一个 JSON 字符串体,解析成 Map 失败,同样落到 None。
 pub(super) async fn fetch_npm_dist_tags(
@@ -292,15 +275,31 @@ async fn fetch_npm_latest_for_tool(
     local_version: Option<&str>,
 ) -> Option<String> {
     let dist_tags = fetch_npm_dist_tags(client, package).await?;
+    if tool == "opencode" {
+        return pick_opencode_latest(
+            (package == "opencode-ai").then_some(&dist_tags),
+            (package == "@opencode/cli").then_some(&dist_tags),
+            local_version,
+        );
+    }
     pick_latest_version(&dist_tags, npm_prerelease_tags(tool), local_version)
 }
 
-/// 版本探测请求的请求级超时。全局客户端是给代理转发用的（总超时 600s / 连接 30s），
-/// 探测 latest 若沿用它，api.github.com / pypi.org 被阻断或握手后挂起时，Hermes 卡片
-/// 与「刷新 / 全部升级」按钮会一直等；探测拿不到就退到下一来源或显示未知即可。
+/// OpenCode 的「最新版本」跟着本地那条线走：装的是 2.x 看 `@opencode/cli`，否则（含没装、
+/// 版本认不出）看 1.x 的 `opencode-ai`。2.x 用户若拿 1.x 的 latest 比，永远「已是最新」。
+fn pick_opencode_latest(
+    v1: Option<&serde_json::Map<String, serde_json::Value>>,
+    v2: Option<&serde_json::Map<String, serde_json::Value>>,
+    local_version: Option<&str>,
+) -> Option<String> {
+    if local_version.is_some_and(is_opencode_v2_version) {
+        return v2.and_then(|tags| pick_latest_version(tags, &[], local_version));
+    }
+    v1.and_then(|tags| pick_latest_version(tags, npm_prerelease_tags("opencode"), local_version))
+}
+
 pub(super) const LATEST_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
-/// Helper function to fetch latest version from GitHub releases
 /// Antigravity CLI 的 installer 和自升级共用的发布清单：`manifests/<平台>.json` 的 `version`。
 async fn fetch_agy_latest_version(client: &reqwest::Client) -> Option<String> {
     let os = match std::env::consts::OS {
@@ -331,40 +330,6 @@ async fn fetch_agy_latest_version(client: &reqwest::Client) -> Option<String> {
         .and_then(release_display_version)
 }
 
-async fn fetch_github_latest_version(client: &reqwest::Client, repo: &str) -> Option<String> {
-    let url = format!("https://api.github.com/repos/{repo}/releases/latest");
-    let resp = client
-        .get(&url)
-        .header("User-Agent", "cc-switch")
-        .header("Accept", "application/vnd.github+json")
-        .timeout(LATEST_PROBE_TIMEOUT)
-        .send()
-        .await
-        .ok()?;
-    let json = resp.json::<serde_json::Value>().await.ok()?;
-    github_release_version_from_json(&json)
-}
-
-/// 从 GitHub latest release 的 JSON 中提取展示用版本号。
-///
-/// 优先取 release `name` 里能解析为语义版本的数字，其次才是 `tag_name`（去 `v` 前缀）：
-/// Hermes 的 tag 是日历式（`v2026.8.31`），CLI 自报的语义版本 `0.21.0` 只出现在
-/// name（"Hermes Agent v0.21.0 (v2026.8.31)"）里。两条路都经 `release_display_version`
-/// 过滤——日历式数字若被当成版本号，前端三段解析会成功（2026 > 0）并永久判定
-/// "有可用更新"，点升级后版本不变又触发"版本未变"误报；拿不到语义版本宁可返回
-/// None，让调用方退到别的来源。限流（403 JSON 只有 message）同样落到 None。
-pub(super) fn github_release_version_from_json(json: &serde_json::Value) -> Option<String> {
-    let from_name = json
-        .get("name")
-        .and_then(|v| v.as_str())
-        .and_then(|name| release_display_version(&extract_version(name)));
-    from_name.or_else(|| {
-        json.get("tag_name")
-            .and_then(|v| v.as_str())
-            .and_then(|tag| release_display_version(tag.strip_prefix('v').unwrap_or(tag)))
-    })
-}
-
 /// 只接受能按语义版本解析、且首段不像年份（< 1000）的字符串作展示版本。
 fn release_display_version(candidate: &str) -> Option<String> {
     match parse_semver(candidate) {
@@ -373,41 +338,6 @@ fn release_display_version(candidate: &str) -> Option<String> {
     }
 }
 
-/// 兜底来源给出的 latest 若已被本地版本严格超过，则不展示（返回 None）——
-/// 展示一个比当前还旧的"最新版本"只会复现用户报告的"最新 < 当前"矛盾。
-/// 任一侧无法解析时按"未领先"保守处理，照常展示。
-pub(super) fn drop_latest_behind_local(
-    latest: Option<String>,
-    local_version: Option<&str>,
-) -> Option<String> {
-    let latest = latest?;
-    let local_leads = local_version
-        .and_then(|local| compare_semver(local, &latest))
-        .is_some_and(|ord| ord == std::cmp::Ordering::Greater);
-    (!local_leads).then_some(latest)
-}
-
-/// Helper function to fetch latest version from PyPI
-async fn fetch_pypi_latest_version(client: &reqwest::Client, package: &str) -> Option<String> {
-    let url = format!("https://pypi.org/pypi/{package}/json");
-    match client.get(&url).timeout(LATEST_PROBE_TIMEOUT).send().await {
-        Ok(resp) => {
-            if let Ok(json) = resp.json::<serde_json::Value>().await {
-                json.get("info")
-                    .and_then(|info| info.get("version"))
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-            } else {
-                None
-            }
-        }
-        Err(_) => None,
-    }
-}
-
-/// 预编译的版本号正则表达式。末尾的 `(\+[\w.-]+)?` 保留 PEP 440 local version
-/// 段(git describe 风格,如 Hermes main/canary 开发构建 `0.22.1+238.g<sha>`),
-/// 让前端能据此识别开发构建,避免把"版本号更低但内容更新"误报成"有新版本"。
 pub(super) static VERSION_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\d+\.\d+\.\d+(-[\w.]+)?(\+[\w.-]+)?").expect("Invalid version regex")
 });

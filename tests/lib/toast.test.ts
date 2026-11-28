@@ -39,4 +39,13 @@ describe("toast", () => {
     expect(sonner.error.mock.calls[1]).toEqual(["另一个错误"]);
     expect(sonner.success.mock.calls[0]).toEqual(["保存失败"]);
   });
+  it("evicts old messages from a burst while still deduplicating recent ones", () => {
+    const first = toast.info("burst-first", { duration: Infinity });
+    let latest: string | number = first;
+    for (let index = 0; index < 200; index++) {
+      latest = toast.info(`burst-${index}`, { duration: Infinity });
+    }
+    expect(toast.info("burst-199", { duration: Infinity })).toBe(latest);
+    expect(toast.info("burst-first", { duration: Infinity })).not.toBe(first);
+  });
 });

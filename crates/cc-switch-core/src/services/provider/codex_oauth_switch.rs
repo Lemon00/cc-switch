@@ -12,10 +12,7 @@ use crate::store::AppState;
 ///
 /// 只处理本机账号：从别的设备同步过来、绑定在对方设备上的行保持不动。
 pub async fn logout_codex_oauth_with_switch_lock(state: &AppState) -> Result<(), String> {
-    let _switch_guard = state
-        .operations
-        .lock_for_app(AppType::Codex.as_str())
-        .await;
+    let _switch_guard = state.operations.lock_for_app(AppType::Codex.as_str()).await;
     // Only this device's accounts: rows synced from another device stay bound there.
     let removed: Vec<String> = state
         .codex_oauth_manager
@@ -49,10 +46,7 @@ pub async fn remove_codex_oauth_account_with_switch_lock(
     state: &AppState,
     account_id: &str,
 ) -> Result<(), String> {
-    let _switch_guard = state
-        .operations
-        .lock_for_app(AppType::Codex.as_str())
-        .await;
+    let _switch_guard = state.operations.lock_for_app(AppType::Codex.as_str()).await;
     state
         .codex_oauth_manager
         .remove_account(account_id)

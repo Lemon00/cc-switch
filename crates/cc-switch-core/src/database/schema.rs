@@ -4,7 +4,7 @@
 
 use super::{lock_conn, Database, SCHEMA_VERSION};
 use crate::error::AppError;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -323,6 +323,9 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_model_pricing_nocase ON model_pricing(model_id COLLATE NOCASE)", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 12. Stream Check Logs 表
         conn.execute("CREATE TABLE IF NOT EXISTS stream_check_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT, provider_id TEXT NOT NULL, provider_name TEXT NOT NULL,
@@ -534,7 +537,7 @@ impl Database {
                         Self::set_user_version(conn, 5)?;
                     }
                     5 => {
-                        log::info!("迁移数据库从 v5 到 v6（使用量聚合表 + Copilot 模板类型统一）");
+                        log::info!("迁移数据库从 v5 到 v6（使用量聚合表）");
                         Self::migrate_v5_to_v6(conn)?;
                         Self::set_user_version(conn, 6)?;
                     }
@@ -1302,7 +1305,7 @@ impl Database {
         Ok(())
     }
 
-    /// v5 -> v6 迁移：添加使用量日聚合表 + 统一 Copilot 模板类型
+    /// v5 -> v6 迁移：添加使用量日聚合表
     fn migrate_v5_to_v6(conn: &Connection) -> Result<(), AppError> {
         // 1. 添加使用量日聚合表
         conn.execute(
@@ -1325,55 +1328,7 @@ impl Database {
         )
         .map_err(|e| AppError::Database(format!("创建 usage_daily_rollups 表失败: {e}")))?;
 
-        // 2. 统一 Copilot 模板类型为 github_copilot
-        let mut stmt = conn
-            .prepare("SELECT id, app_type, meta FROM providers")
-            .map_err(|e| AppError::Database(e.to_string()))?;
-
-        let rows = stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
-            })
-            .map_err(|e| AppError::Database(e.to_string()))?;
-
-        let mut updates = Vec::new();
-        for row in rows {
-            let (id, app_type, meta_str) = row.map_err(|e| AppError::Database(e.to_string()))?;
-
-            if let Ok(mut meta) = serde_json::from_str::<serde_json::Value>(&meta_str) {
-                let mut updated = false;
-
-                if let Some(usage_script) = meta.get_mut("usage_script") {
-                    if let Some(template_type) = usage_script.get_mut("template_type") {
-                        if template_type == "copilot" {
-                            *template_type =
-                                serde_json::Value::String("github_copilot".to_string());
-                            updated = true;
-                        }
-                    }
-                }
-
-                if updated {
-                    let new_meta_str = serde_json::to_string(&meta)
-                        .map_err(|e| AppError::Database(e.to_string()))?;
-                    updates.push((id, app_type, new_meta_str));
-                }
-            }
-        }
-
-        for (id, app_type, new_meta) in updates {
-            conn.execute(
-                "UPDATE providers SET meta = ?1 WHERE id = ?2 AND app_type = ?3",
-                params![new_meta, id, app_type],
-            )
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        }
-
-        log::info!("v5 -> v6 迁移完成：已添加使用量日聚合表，统一 copilot 模板类型");
+        log::info!("v5 -> v6 迁移完成：已添加使用量日聚合表");
         Ok(())
     }
 
@@ -2876,7 +2831,6 @@ impl Database {
             ("qwq-plus", "QwQ Plus", "0.80", "2.40", "0", "0"),
             ("qwq-32b", "QwQ 32B", "0.20", "0.60", "0", "0"),
             ("qwen3-32b", "Qwen3 32B", "0.16", "0.64", "0", "0"),
-            // Grok 系列 (xAI)
             // 4.5/4.6/4.7 均为分档计价：prompt ≥200K 时单价翻倍（4/12，cached 亦翻倍）。
             // 本表无档位列，统一取基础档（<200K），与其它分档厂商口径一致
             ("grok-4.7", "Grok 4.7", "2", "6", "0.50", "0"),
@@ -3267,7 +3221,6 @@ impl Database {
             (
                 "glm-4.6", "GLM-4.6", "0.6", "2.2", "0.11", "0", "0.28", "1.11", "0.03", "0",
             ),
-            // Grok 4.20：xAI 已降价 2/6 → 1.25/2.50
             (
                 "grok-4.20-0309-reasoning",
                 "Grok 4.20 Reasoning",

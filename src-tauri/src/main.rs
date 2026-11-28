@@ -25,6 +25,12 @@ fn main() {
     // 参考: https://github.com/tauri-apps/tauri/issues/9394
     #[cfg(target_os = "linux")]
     {
+        // WebViews already use software rendering. Disable GTK's separate GL
+        // context before GTK initializes, so tray-only startup does not load
+        // Mesa/LLVM just to probe an unused renderer. Respect explicit overrides.
+        if std::env::var_os("GDK_GL").is_none() {
+            std::env::set_var("GDK_GL", "disable");
+        }
         if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
             std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
         }

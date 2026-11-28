@@ -160,29 +160,13 @@ pub struct McpRoot {
     /// 旧的分应用存储（v3.6.x 及以前，保留用于迁移）
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
     pub claude: McpConfig,
-    #[serde(
-        rename = "claude-desktop",
-        alias = "claudeDesktop",
-        alias = "claude_desktop",
-        default,
-        skip_serializing_if = "McpConfig::is_empty"
-    )]
-    pub claude_desktop: McpConfig,
+
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
     pub codex: McpConfig,
-    #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
-    pub gemini: McpConfig,
-    #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
-    pub grokbuild: McpConfig,
+
     /// OpenCode MCP 配置（v4.0.0+，实际使用 opencode.json）
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
     pub opencode: McpConfig,
-    /// OpenClaw MCP 配置（v4.1.0+，实际使用 openclaw.json）
-    #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
-    pub openclaw: McpConfig,
-    /// Hermes MCP 配置（实际使用 config.yaml）
-    #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
-    pub hermes: McpConfig,
 }
 
 impl Default for McpRoot {
@@ -192,13 +176,10 @@ impl Default for McpRoot {
             servers: Some(HashMap::new()),
             // 旧结构保持空，仅用于反序列化旧配置时的迁移
             claude: McpConfig::default(),
-            claude_desktop: McpConfig::default(),
+
             codex: McpConfig::default(),
-            gemini: McpConfig::default(),
-            grokbuild: McpConfig::default(),
+
             opencode: McpConfig::default(),
-            openclaw: McpConfig::default(),
-            hermes: McpConfig::default(),
         }
     }
 }
@@ -215,25 +196,12 @@ pub struct PromptConfig {
 pub struct PromptRoot {
     #[serde(default)]
     pub claude: PromptConfig,
-    #[serde(
-        rename = "claude-desktop",
-        alias = "claudeDesktop",
-        alias = "claude_desktop",
-        default
-    )]
-    pub claude_desktop: PromptConfig,
+
     #[serde(default)]
     pub codex: PromptConfig,
-    #[serde(default)]
-    pub gemini: PromptConfig,
-    #[serde(default)]
-    pub grokbuild: PromptConfig,
+
     #[serde(default)]
     pub opencode: PromptConfig,
-    #[serde(default)]
-    pub openclaw: PromptConfig,
-    #[serde(default)]
-    pub hermes: PromptConfig,
 }
 
 use crate::config::{copy_file, get_app_config_dir, get_app_config_path, write_json_file};
@@ -253,16 +221,7 @@ pub struct CommonConfigSnippets {
     pub codex: Option<String>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gemini: Option<String>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opencode: Option<String>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub openclaw: Option<String>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub hermes: Option<String>,
 }
 
 impl CommonConfigSnippets {
@@ -298,7 +257,7 @@ impl CommonConfigSnippets {
 pub struct MultiAppConfig {
     #[serde(default = "default_version")]
     pub version: u32,
-    /// 应用管理器（claude/codex）
+    /// 应用管理器（键使用 AppType 的规范标识）
     #[serde(flatten)]
     pub apps: HashMap<String, ProviderManager>,
     /// MCP 配置（按客户端分治）
@@ -326,13 +285,9 @@ impl Default for MultiAppConfig {
     fn default() -> Self {
         let mut apps = HashMap::new();
         apps.insert("claude".to_string(), ProviderManager::default());
-        apps.insert("claude-desktop".to_string(), ProviderManager::default());
         apps.insert("codex".to_string(), ProviderManager::default());
-        apps.insert("gemini".to_string(), ProviderManager::default());
-        apps.insert("grokbuild".to_string(), ProviderManager::default());
         apps.insert("opencode".to_string(), ProviderManager::default());
-        apps.insert("openclaw".to_string(), ProviderManager::default());
-        apps.insert("hermes".to_string(), ProviderManager::default());
+        apps.insert("dsh".to_string(), ProviderManager::default());
         apps.insert("agy".to_string(), ProviderManager::default());
 
         Self {
@@ -414,12 +369,17 @@ impl MultiAppConfig {
             }
         }
 
-        // 确保 gemini 应用存在（兼容旧配置文件）
-        if !config.apps.contains_key("gemini") {
-            config
-                .apps
-                .insert("gemini".to_string(), ProviderManager::default());
-            updated = true;
+        // 旧配置只迁入当前支持的客户端；save 会先备份原文件。
+        let app_count = config.apps.len();
+        config
+            .apps
+            .retain(|key, _| AppType::all().any(|app| app.as_str() == key));
+        updated |= config.apps.len() != app_count;
+        for app in AppType::all() {
+            if !config.apps.contains_key(app.as_str()) {
+                config.ensure_app(&app);
+                updated = true;
+            }
         }
 
         // 执行 MCP 迁移（v3.6.x → v3.7.0）
@@ -513,13 +473,8 @@ impl MultiAppConfig {
     fn maybe_auto_import_prompts_for_existing_config(&mut self) -> Result<bool, AppError> {
         // 如果任一应用已经有提示词配置，说明用户已经在使用 Prompt 功能，避免再次自动导入
         if !self.prompts.claude.prompts.is_empty()
-            || !self.prompts.claude_desktop.prompts.is_empty()
             || !self.prompts.codex.prompts.is_empty()
-            || !self.prompts.gemini.prompts.is_empty()
-            || !self.prompts.grokbuild.prompts.is_empty()
             || !self.prompts.opencode.prompts.is_empty()
-            || !self.prompts.openclaw.prompts.is_empty()
-            || !self.prompts.hermes.prompts.is_empty()
         {
             return Ok(false);
         }
@@ -741,7 +696,6 @@ impl MultiAppConfig {
         // 清空旧的分应用配置
         self.mcp.claude = McpConfig::default();
         self.mcp.codex = McpConfig::default();
-        self.mcp.gemini = McpConfig::default();
 
         Ok(true)
     }
@@ -754,6 +708,13 @@ mod tests {
     use std::env;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn default_config_contains_only_supported_apps() {
+        let mut actual: Vec<_> = MultiAppConfig::default().apps.into_keys().collect();
+        actual.sort();
+        assert_eq!(actual, ["agy", "claude", "codex", "dsh", "opencode"]);
+    }
 
     struct TempHome {
         #[allow(dead_code)] // 字段通过 Drop trait 管理临时目录生命周期
@@ -808,6 +769,38 @@ mod tests {
             fs::create_dir_all(parent).expect("create parent dir");
         }
         fs::write(path, content).expect("write prompt");
+    }
+
+    #[test]
+    #[serial]
+    fn loading_legacy_config_keeps_only_supported_apps_and_backs_up_original() {
+        let _home = TempHome::new();
+        let config_path = crate::config::get_app_config_path();
+        let original = serde_json::json!({
+            "version": 2,
+            "claude": {"providers": {}, "current": "existing"},
+            "gemini": {"providers": {}, "current": "retired"},
+            "omp": {"providers": {}, "current": "retired"}
+        });
+        write_json_file(&config_path, &original).unwrap();
+
+        for _ in 0..2 {
+            let loaded = MultiAppConfig::load().unwrap();
+            let mut apps: Vec<_> = loaded.apps.keys().map(String::as_str).collect();
+            apps.sort();
+            assert_eq!(apps, ["agy", "claude", "codex", "dsh", "opencode"]);
+            assert_eq!(loaded.apps["claude"].current, "existing");
+        }
+        let saved: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+        assert!(saved.get("gemini").is_none());
+        assert!(saved.get("omp").is_none());
+        let backup: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(crate::config::get_app_config_dir().join("config.json.bak"))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(backup, original);
     }
 
     #[test]

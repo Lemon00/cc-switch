@@ -6,7 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
  */
 /**
  * 检查指定应用的环境变量冲突
- * @param appType 应用类型 ("claude" | "codex" | "gemini" | "grokbuild")
+ * @param appType 应用类型 ("claude" | "codex")
  * @returns 环境变量冲突列表
  */
 export async function checkEnvConflicts(
@@ -50,7 +50,7 @@ function envCheckErrorMessage(error: unknown): string {
 export async function checkAllEnvConflicts(): Promise<
   Record<string, EnvConflictCheckResult>
 > {
-  const apps = ["claude", "codex", "gemini", "grokbuild"];
+  const apps = ["claude", "codex"];
   const entries = await Promise.all(
     apps.map(async (app) => {
       try {

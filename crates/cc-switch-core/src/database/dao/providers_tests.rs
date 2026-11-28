@@ -316,3 +316,175 @@ fn failover_queue_skips_an_unreadable_member() {
         .collect();
     assert_eq!(ids, ["b"]);
 }
+
+#[test]
+fn failover_queue_hides_retired_services_but_keeps_unreadable_rows_removable() {
+    let db = Database::memory().unwrap();
+    for app in [AppType::Claude, AppType::Codex] {
+        for id in ["supported", "broken", "retired"] {
+            db.save_provider(&app, &provider(id)).unwrap();
+            db.add_to_failover_queue(&app, id).unwrap();
+        }
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE providers SET meta = '{' WHERE id = 'broken' AND app_type = ?1",
+                [&app],
+            )
+            .unwrap();
+            conn.execute("UPDATE providers SET meta = '{\"providerType\":\"github_copilot\"}' WHERE id = 'retired' AND app_type = ?1", [&app]).unwrap();
+        }
+        let queue = db.get_failover_queue(&app).unwrap();
+        assert_eq!(
+            queue
+                .iter()
+                .map(|item| item.provider_id.as_str())
+                .collect::<Vec<_>>(),
+            ["broken", "supported"]
+        );
+        let routable = db.get_failover_providers(&app).unwrap();
+        assert_eq!(
+            routable
+                .iter()
+                .map(|provider| provider.id.as_str())
+                .collect::<Vec<_>>(),
+            ["supported"]
+        );
+        db.remove_from_failover_queue(&app, "broken").unwrap();
+        assert_eq!(db.get_failover_queue(&app).unwrap().len(), 1);
+    }
+}
+
+#[test]
+fn rename_to_retired_service_keeps_the_original_row_and_endpoints() {
+    let db = Database::memory().unwrap();
+    db.save_provider(&AppType::OpenCode, &provider("original"))
+        .unwrap();
+    db.add_custom_endpoint(&AppType::OpenCode, "original", "https://relay.example")
+        .unwrap();
+    let mut retired = provider("renamed");
+    retired.meta = Some(ProviderMeta {
+        provider_type: Some("github_copilot".into()),
+        ..Default::default()
+    });
+    assert!(db
+        .replace_provider_id(&AppType::OpenCode, "original", &retired)
+        .is_err());
+    assert!(db.provider_exists("original", &AppType::OpenCode).unwrap());
+    assert!(!db.provider_exists("renamed", &AppType::OpenCode).unwrap());
+    assert_eq!(
+        db.conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT provider_id FROM provider_endpoints", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .unwrap(),
+        "original"
+    );
+}
+
+#[test]
+fn current_omo_provider_hides_retired_service() {
+    let db = Database::memory().unwrap();
+    for category in ["omo", "omo-slim"] {
+        let mut provider = provider(category);
+        provider.category = Some(category.into());
+        db.save_provider(&AppType::OpenCode, &provider).unwrap();
+        db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE providers SET is_current = 1 WHERE id = ?1",
+                [category],
+            )
+            .unwrap();
+        assert!(db
+            .get_current_omo_provider(&AppType::OpenCode, category)
+            .unwrap()
+            .is_some());
+        db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE providers SET meta = '{\"providerType\":\"xai_oauth\"}' WHERE id = ?1",
+                [category],
+            )
+            .unwrap();
+        assert!(db
+            .get_current_omo_provider(&AppType::OpenCode, category)
+            .unwrap()
+            .is_none());
+    }
+}
+
+#[test]
+fn retired_services_are_not_loadable_or_saveable() {
+    let db = Database::memory().unwrap();
+    for service in ["github_copilot", "xai_oauth"] {
+        let mut provider =
+            Provider::with_id(service.into(), service.into(), serde_json::json!({}), None);
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some(service.into()),
+            ..Default::default()
+        });
+        assert!(db.save_provider(&AppType::Claude, &provider).is_err());
+        db.conn.lock().unwrap().execute("INSERT INTO providers(id, app_type, name, settings_config, meta) VALUES (?1, 'claude', ?1, '{}', ?2)", rusqlite::params![service, serde_json::to_string(&provider.meta).unwrap()]).unwrap();
+        assert!(db
+            .get_provider_by_id(service, &AppType::Claude)
+            .unwrap()
+            .is_none());
+        assert!(db
+            .read_provider(&AppType::Claude, service)
+            .unwrap()
+            .is_none());
+    }
+    assert!(db.get_all_providers(&AppType::Claude).unwrap().is_empty());
+}
+
+#[test]
+fn retired_endpoint_cards_are_rejected_without_matching_url_text_or_models() {
+    let db = Database::memory().unwrap();
+    for url in [
+        "https://api.githubcopilot.com",
+        "https://api.individual.githubcopilot.com",
+        "https://api.x.ai/v1",
+        "https://grok.com/rest",
+    ] {
+        let provider = Provider::with_id(
+            "old".into(),
+            "Old".into(),
+            serde_json::json!({"env": {"ANTHROPIC_BASE_URL": url}}),
+            None,
+        );
+        assert!(
+            db.save_provider(&AppType::Claude, &provider).is_err(),
+            "{url}"
+        );
+        let provider = Provider::with_id(
+            "old".into(),
+            "Old".into(),
+            serde_json::json!({"config": format!("model_provider = 'custom'\n[model_providers.custom]\nbase_url = '{url}'")}),
+            None,
+        );
+        assert!(
+            db.save_provider(&AppType::Codex, &provider).is_err(),
+            "{url}"
+        );
+    }
+    for url in [
+        "https://relay.example/api.x.ai",
+        "https://api.x.ai.example/v1",
+    ] {
+        let provider = Provider::with_id(
+            "custom".into(),
+            "Custom".into(),
+            serde_json::json!({"env": {"ANTHROPIC_BASE_URL": url, "ANTHROPIC_MODEL": "grok-4"}}),
+            None,
+        );
+        assert!(
+            db.save_provider(&AppType::Claude, &provider).is_ok(),
+            "{url}"
+        );
+    }
+}

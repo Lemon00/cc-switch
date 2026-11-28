@@ -24,7 +24,7 @@ use std::time::Instant;
 use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::provider::Provider;
-use crate::proxy::providers::{get_adapter, ClaudeAdapter, GeminiAdapter, ProviderAdapter};
+use crate::proxy::providers::{get_adapter, GeminiAdapter, ProviderAdapter};
 
 /// Google Gemini 默认端点（agy 未配置自定义端点时使用）。
 const DEFAULT_GEMINI_BASE_URL: &str = "https://generativelanguage.googleapis.com";
@@ -79,9 +79,6 @@ pub struct StreamCheckResult {
 pub struct StreamCheckService;
 
 impl StreamCheckService {
-    /// 执行连通性检查（仅对超时类失败重试）。
-    ///
-    /// `base_url_override`：用于 Copilot 等需要从 OAuth 管理器动态解析端点的供应商，
     /// 由命令层预先解析后传入；其余供应商传 `None`，由本服务从 `settings_config` 提取。
     pub async fn check_with_retry(
         app_type: &AppType,

@@ -3,7 +3,7 @@ import { decodeBase64Utf8 } from "@/lib/utils/base64";
 import { isSensitiveConfigKey, maskSensitiveValue } from "@/utils/deeplinkRisk";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 export interface ParsedDeepLinkConfig {
-  type: "claude" | "codex" | "gemini" | "grokbuild" | "agy";
+  type: "claude" | "codex" | "agy";
   env?: Record<string, string>;
   model?: string;
   auth?: Record<string, string>;

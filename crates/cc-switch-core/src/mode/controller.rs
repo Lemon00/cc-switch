@@ -176,9 +176,7 @@ impl LiveNow {
 
 fn claude_proxy_auth(provider: &Provider) -> ProxyAuth {
     if provider.uses_managed_account_auth() {
-        ProxyAuth::Managed {
-            auth_token: !provider.is_github_copilot() || !provider.claude_uses_api_key_field(),
-        }
+        ProxyAuth::Managed { auth_token: true }
     } else {
         ProxyAuth::AuthToken
     }
@@ -1179,6 +1177,25 @@ async fn switch_route_checked(
     switch_route_locked(state, app, &target).await.map(|_| ())
 }
 
+/// Caller holds lock_settled until the failover toggle has been persisted.
+pub async fn switch_route_for_failover_locked(
+    state: &AppState,
+    app: &AppType,
+    provider_id: &str,
+) -> Result<(), String> {
+    require_proxy_app(app)?;
+    let target =
+        provider(state, app, provider_id)?.ok_or_else(|| format!("供应商不存在: {provider_id}"))?;
+    reject_unsupported_official(app, &target)?;
+    if current::is_proxy(app) && settled_stack(app)?.enabled {
+        return Err(
+            "聚合模式已按公共模型自动轮询和故障转移；要使用账号队列，请先换回路由模式 (Aggregation automatically rotates and fails over within each shared model pool; switch to routing mode to use the provider queue)"
+                .to_string(),
+        );
+    }
+    switch_route_locked(state, app, &target).await.map(|_| ())
+}
+
 /// 指定代理路由（聚合模式下是默认那家），不管现在是什么模式。直连模式下只记下指针，下次进入
 /// 路由 / 聚合模式时用它，客户端文件和模式都不动；已经在代理模式时就是换路由，当场生效。
 pub async fn set_route(
@@ -1692,8 +1709,19 @@ pub async fn record_failover_route(
     state: &AppState,
     app: &AppType,
     provider_id: &str,
+    route_revision: u64,
 ) -> Result<bool, String> {
     let _guard = lock_settled(state, app).await.map_err(|e| e.to_string())?;
+    if state.db.route_revision(app) != route_revision
+        || !state
+            .db
+            .get_proxy_config_for_app(app)
+            .await
+            .map_err(|e| e.to_string())?
+            .auto_failover_enabled
+    {
+        return Ok(false);
+    }
     let mode = current::mode_state(app);
     if !mode.is_proxy() || mode.proxy_route.as_deref() == Some(provider_id) {
         return Ok(false);
@@ -2109,120 +2137,6 @@ mod tests {
     }
 
     #[test]
-    fn managed_account_claude_takeover_uses_auth_token_placeholder() {
-        let mut provider = Provider::with_id(
-            "copilot".to_string(),
-            "GitHub Copilot".to_string(),
-            json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com",
-                    "ANTHROPIC_MODEL": "claude-haiku-4.5"
-                }
-            }),
-            None,
-        );
-        provider.meta = Some(ProviderMeta {
-            provider_type: Some("github_copilot".to_string()),
-            ..Default::default()
-        });
-
-        let mut live_config = provider.settings_config.clone();
-        live_config = takeover(&live_config, &provider);
-
-        let env = live_config
-            .get("env")
-            .and_then(|value| value.as_object())
-            .expect("env should exist");
-        assert_eq!(
-            env.get("ANTHROPIC_AUTH_TOKEN")
-                .and_then(|value| value.as_str()),
-            Some(PROXY_TOKEN_PLACEHOLDER)
-        );
-        assert!(
-            env.get("ANTHROPIC_API_KEY").is_none(),
-            "API_KEY placeholders trigger Claude Code's custom-key approval prompt (defaults to No), landing users in Not logged in"
-        );
-    }
-
-    #[test]
-    fn managed_account_claude_takeover_sources_copilot_models_from_provider() {
-        let mut provider = Provider::with_id(
-            "copilot".to_string(),
-            "GitHub Copilot".to_string(),
-            json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com",
-                    "ANTHROPIC_MODEL": "claude-sonnet-4.6",
-                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4.5",
-                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4.6",
-                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-sonnet-4.6",
-                    "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-4.6[1M]"
-                }
-            }),
-            None,
-        );
-        provider.meta = Some(ProviderMeta {
-            provider_type: Some("github_copilot".to_string()),
-            ..Default::default()
-        });
-
-        let mut live_config = json!({
-            "env": {
-                "ANTHROPIC_BASE_URL": "https://stale.example.com",
-                "ANTHROPIC_API_KEY": "stale-key",
-                "ANTHROPIC_MODEL": "stale-model",
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "stale-haiku",
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "Stale Haiku",
-                "ANTHROPIC_DEFAULT_SONNET_MODEL": "stale-sonnet",
-                "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Stale Sonnet",
-                "ANTHROPIC_DEFAULT_OPUS_MODEL": "stale-opus",
-                "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "Stale Opus",
-                "CLAUDE_CODE_SUBAGENT_MODEL": "stale-subagent"
-            }
-        });
-        live_config = takeover(&live_config, &provider);
-
-        let env = live_config
-            .get("env")
-            .and_then(|value| value.as_object())
-            .expect("env should exist");
-        assert_env_str(env, "ANTHROPIC_MODEL", None);
-        assert_env_str(
-            env,
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-            Some("claude-haiku-5-5"),
-        );
-        assert_env_str(
-            env,
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
-            Some("claude-haiku-4.5"),
-        );
-        assert_env_str(
-            env,
-            "ANTHROPIC_DEFAULT_SONNET_MODEL",
-            Some("claude-sonnet-5"),
-        );
-        assert_env_str(
-            env,
-            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
-            Some("claude-sonnet-4.6"),
-        );
-        assert_env_str(env, "ANTHROPIC_DEFAULT_OPUS_MODEL", Some("claude-opus-5"));
-        assert_env_str(
-            env,
-            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
-            Some("claude-sonnet-4.6"),
-        );
-        assert_env_str(
-            env,
-            "CLAUDE_CODE_SUBAGENT_MODEL",
-            Some("claude-sonnet-4.6[1M]"),
-        );
-        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
-        assert_env_str(env, "ANTHROPIC_API_KEY", None);
-    }
-
-    #[test]
     fn managed_account_claude_takeover_removes_stale_subagent_model_when_provider_omits_it() {
         let mut provider = Provider::with_id(
             "codex".to_string(),
@@ -2350,42 +2264,6 @@ mod tests {
     }
 
     #[test]
-    fn managed_account_claude_takeover_xai_keeps_one_auth_key() {
-        let mut provider = Provider::with_id(
-            "xai".to_string(),
-            "xAI".to_string(),
-            json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": "https://api.x.ai/v1"
-                }
-            }),
-            None,
-        );
-        provider.meta = Some(ProviderMeta {
-            provider_type: Some("xai_oauth".to_string()),
-            ..Default::default()
-        });
-
-        let mut live_config = json!({
-            "env": {
-                "ANTHROPIC_AUTH_TOKEN": "old-token",
-                "ANTHROPIC_API_KEY": "old-key",
-                "OPENAI_API_KEY": "old-openai-key"
-            }
-        });
-        live_config = takeover(&live_config, &provider);
-
-        let env = live_config
-            .get("env")
-            .and_then(Value::as_object)
-            .expect("env should exist");
-        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
-        assert_env_str(env, "ANTHROPIC_API_KEY", None);
-        // Claude Code 不读这个键：不是关键字段，归用户，契约不碰。
-        assert_env_str(env, "OPENAI_API_KEY", Some("old-openai-key"));
-    }
-
-    #[test]
     fn managed_account_claude_takeover_codex_by_base_url_keeps_auth_token() {
         // 无 provider_type meta、仅凭 base_url 识别为受管 codex 的供应商，
         // 也必须保留 AUTH_TOKEN 占位符（与策略选择共用同一判定族）。
@@ -2446,79 +2324,6 @@ mod tests {
             .expect("env should exist");
         assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
         assert_env_str(env, "ANTHROPIC_API_KEY", None);
-    }
-
-    #[test]
-    fn managed_account_claude_takeover_copilot_defaults_to_auth_token() {
-        let mut provider = Provider::with_id(
-            "copilot".to_string(),
-            "GitHub Copilot".to_string(),
-            json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com"
-                }
-            }),
-            None,
-        );
-        provider.meta = Some(ProviderMeta {
-            provider_type: Some("github_copilot".to_string()),
-            ..Default::default()
-        });
-
-        let mut live_config = json!({
-            "env": {
-                "ANTHROPIC_BASE_URL": "https://stale.example.com",
-                "ANTHROPIC_AUTH_TOKEN": "stale-token",
-                "ANTHROPIC_API_KEY": "stale-key"
-            }
-        });
-        live_config = takeover(&live_config, &provider);
-
-        let env = live_config
-            .get("env")
-            .and_then(|value| value.as_object())
-            .expect("env should exist");
-        // Default Copilot takeover injects AUTH_TOKEN: the API_KEY placeholder
-        // triggers Claude Code's custom-key approval prompt (defaults to
-        // "No (recommended)"), which lands users in "Not logged in".
-        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
-        assert_env_str(env, "ANTHROPIC_API_KEY", None);
-    }
-
-    #[test]
-    fn managed_account_claude_takeover_copilot_honors_api_key_field_choice() {
-        let mut provider = Provider::with_id(
-            "copilot".to_string(),
-            "GitHub Copilot".to_string(),
-            json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com"
-                }
-            }),
-            None,
-        );
-        provider.meta = Some(ProviderMeta {
-            provider_type: Some("github_copilot".to_string()),
-            api_key_field: Some("ANTHROPIC_API_KEY".to_string()),
-            ..Default::default()
-        });
-
-        let mut live_config = json!({
-            "env": {
-                "ANTHROPIC_BASE_URL": "https://stale.example.com",
-                "ANTHROPIC_AUTH_TOKEN": "stale-token"
-            }
-        });
-        live_config = takeover(&live_config, &provider);
-
-        let env = live_config
-            .get("env")
-            .and_then(|value| value.as_object())
-            .expect("env should exist");
-        // Explicit API-key-field choice keeps the API_KEY placeholder to avoid
-        // conflicting with the /login-managed key (#1049).
-        assert_env_str(env, "ANTHROPIC_API_KEY", Some(PROXY_TOKEN_PLACEHOLDER));
-        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", None);
     }
 
     #[test]
@@ -3248,11 +3053,23 @@ mod mode_tests {
         )
         .await;
         enter(&state, &AppType::Claude, false).await.expect("enter");
+        let mut config = state
+            .db
+            .get_proxy_config_for_app(&AppType::Claude)
+            .await
+            .unwrap();
+        config.auto_failover_enabled = true;
+        state.db.update_proxy_config_for_app(config).await.unwrap();
         let before = settled_bytes();
 
-        assert!(record_failover_route(&state, &AppType::Claude, "b")
-            .await
-            .expect("record failover"));
+        assert!(record_failover_route(
+            &state,
+            &AppType::Claude,
+            "b",
+            state.db.route_revision(&AppType::Claude)
+        )
+        .await
+        .expect("record failover"));
         assert_eq!(settled_bytes(), before);
         assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("b"));
         assert_eq!(direct(&state, &AppType::Claude).as_deref(), Some("a"));
@@ -5033,33 +4850,6 @@ model_provider = "c"
         );
     }
 
-    // ===== Gemini CLI =====
-
-    const GEMINI_USER_ENV: &str = "# my notes\nGEMINI_SANDBOX=docker\nGEMINI_API_KEY=key-a\nDEBUG=1\nGOOGLE_GEMINI_BASE_URL=https://a.example\nGEMINI_MODEL=m-a\n";
-    const GEMINI_USER_SETTINGS: &str = r#"{
-  "model": {
-    "name": "m-a",
-    "compressionThreshold": 0.5
-  },
-  "security": {
-    "auth": {
-      "selectedType": "gemini-api-key"
-    }
-  },
-  "mcpServers": {
-    "fs": {
-      "command": "fs"
-    }
-  }
-}
-"#;
-
-    // ===== Grok Build =====
-
-    const GROK_USER_LIVE: &str = "# mine\n[ui]\ntheme = \"dark\"\n\n[model.mine]\nmodel = \"m\"\nname = \"Mine\"\n\n[mcp_servers.fs]\ncommand = \"fs\"\n";
-
-    /// live 里的 `[model.*]` 表名（排好序）。
-
     // ---------- 新增对话框：和编辑器同一套规则 ----------
 
     async fn state_without_providers() -> AppState {
@@ -5590,37 +5380,6 @@ model_provider = "c"
         assert_eq!(stack_state().members, vec!["kimi", "a"], "the list stays");
     }
 
-    /// Claude Desktop 的配置目录在 Linux 跟 `XDG_CONFIG_HOME`、在 Windows 跟 `LOCALAPPDATA`：
-    /// 测试里一并指到临时目录，别写到真实的 Desktop 配置。
-    struct DesktopDirs {
-        saved: Vec<(&'static str, Option<OsString>)>,
-    }
-
-    impl DesktopDirs {
-        fn under(home: &Home) -> Self {
-            let saved = ["XDG_CONFIG_HOME", "LOCALAPPDATA"]
-                .into_iter()
-                .map(|key| {
-                    let old = std::env::var_os(key);
-                    std::env::set_var(key, home.dir.path());
-                    (key, old)
-                })
-                .collect();
-            Self { saved }
-        }
-    }
-
-    impl Drop for DesktopDirs {
-        fn drop(&mut self) {
-            for (key, old) in self.saved.drain(..) {
-                match old {
-                    Some(value) => std::env::set_var(key, value),
-                    None => std::env::remove_var(key),
-                }
-            }
-        }
-    }
-
     #[tokio::test]
     #[serial]
     async fn changing_the_main_page_switch_with_nothing_to_exit_keeps_the_server() {
@@ -5645,9 +5404,14 @@ model_provider = "c"
         let before = settled_bytes();
 
         // 进入 Stack 模式之前发出的路由请求，这时才转移到 kimi 成功。
-        assert!(!record_failover_route(&state, &AppType::Claude, "kimi")
-            .await
-            .expect("record failover"));
+        assert!(!record_failover_route(
+            &state,
+            &AppType::Claude,
+            "kimi",
+            state.db.route_revision(&AppType::Claude)
+        )
+        .await
+        .expect("record failover"));
         assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("a"));
         assert_eq!(stack_state().members, vec!["a"]);
         assert_eq!(settled_bytes(), before);
@@ -6706,47 +6470,6 @@ model_provider = "c"
             .await
             .expect("detach");
         assert_eq!(notice, Some("routeOwnsCatalog"));
-    }
-
-    /// 假的进程表和时钟（见 `codex_client_catalog::Env`），结束时换回真的。
-    struct FakeClients {
-        now_ms: Arc<std::sync::atomic::AtomicU64>,
-        table: Arc<std::sync::Mutex<String>>,
-    }
-
-    impl FakeClients {
-        const START_MS: u64 = 1_800_000_000_000;
-
-        fn install() -> Self {
-            let now_ms = Arc::new(std::sync::atomic::AtomicU64::new(Self::START_MS));
-            let table = Arc::new(std::sync::Mutex::new(String::new()));
-            let (clock, rows) = (now_ms.clone(), table.clone());
-            codex_client_catalog::set_test_env(codex_client_catalog::Env {
-                process_table: Box::new(move || Some(rows.lock().unwrap().clone())),
-                daemon_started: Box::new(|| None),
-                now_ms: Box::new(move || clock.load(std::sync::atomic::Ordering::SeqCst)),
-                restart: Box::new(|_| Err("not in tests".to_string())),
-            });
-            Self { now_ms, table }
-        }
-
-        fn advance(&self, ms: u64) {
-            self.now_ms
-                .fetch_add(ms, std::sync::atomic::Ordering::SeqCst);
-        }
-    }
-
-    impl Drop for FakeClients {
-        fn drop(&mut self) {
-            codex_client_catalog::reset_test_env();
-        }
-    }
-
-    async fn stale_clients_of(state: &AppState) -> Option<codex_client_catalog::StaleClients> {
-        stack_view_with_clients(state, &AppType::Codex)
-            .await
-            .expect("stack view")
-            .stale_clients
     }
 
     /// 手写进 config.toml 的指针挡不住聚合：进入时换上包含默认账号的合并目录。
@@ -7872,5 +7595,51 @@ model_provider = "c"
             .unwrap()
             .is_none());
         assert_eq!(codex_text(), before);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn stale_failover_cannot_overwrite_manual_route_or_reenabled_failover() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let app = AppType::Claude;
+        let state = state_with(
+            app.clone(),
+            &[
+                claude("a", "https://a.example", json!({})),
+                claude("b", "https://b.example", json!({})),
+                claude("c", "https://c.example", json!({})),
+            ],
+            "a",
+        )
+        .await;
+        enter(&state, &app, false).await.unwrap();
+        let mut config = state.db.get_proxy_config_for_app(&app).await.unwrap();
+        config.auto_failover_enabled = true;
+        state
+            .db
+            .update_proxy_config_for_app(config.clone())
+            .await
+            .unwrap();
+        let started = state.db.route_revision(&app);
+        switch_route_for_failover(&state, &app, "c").await.unwrap();
+        assert!(!record_failover_route(&state, &app, "b", started)
+            .await
+            .unwrap());
+        assert_eq!(in_use(&state, &app).as_deref(), Some("c"));
+        let started = state.db.route_revision(&app);
+        config.auto_failover_enabled = false;
+        state
+            .db
+            .update_proxy_config_for_app(config.clone())
+            .await
+            .unwrap();
+        config.auto_failover_enabled = true;
+        state.db.update_proxy_config_for_app(config).await.unwrap();
+        assert!(!record_failover_route(&state, &app, "b", started)
+            .await
+            .unwrap());
+        assert_eq!(in_use(&state, &app).as_deref(), Some("c"));
+        exit(&state, &app).await.unwrap();
     }
 }

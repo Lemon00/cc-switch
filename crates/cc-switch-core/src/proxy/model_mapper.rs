@@ -104,9 +104,9 @@ impl ModelMapping {
             // `claude-opus-5-5`）。那一档没配时下面的默认模型会把它吞掉，所以目录形态
             // 也要认成同一个子代理模型，送回行里配置的原值。
             if strip_one_m_suffix_for_upstream(original_model)
-                == strip_one_m_suffix_for_upstream(
-                    &crate::model_names::client_model_for_subagent(m),
-                )
+                == strip_one_m_suffix_for_upstream(&crate::model_names::client_model_for_subagent(
+                    m,
+                ))
             {
                 return m.clone();
             }

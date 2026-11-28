@@ -111,12 +111,12 @@ pub struct CircuitBreaker {
 /// 熔断器放行结果
 ///
 /// `used_half_open_permit` 表示本次放行是否占用了 HalfOpen 探测名额。
-/// 调用方应在请求结束后把该值传回 `record_success` / `record_failure` 用于正确释放名额。
+/// 记录结果时必须传回完整放行结果；名额只由 guard 归还。
 #[derive(Debug, Clone, Copy)]
 pub struct AllowResult {
     pub allowed: bool,
     pub used_half_open_permit: bool,
-    /// 名额属于第几轮 HalfOpen（只在 `used_half_open_permit` 时有意义）
+    /// 请求所属的状态轮次；Closed 请求也记录，防止旧结果污染恢复后的状态。
     pub(crate) half_open_round: u32,
 }
 
@@ -139,7 +139,7 @@ impl HalfOpenPermitGuard {
 
 impl Drop for HalfOpenPermitGuard {
     fn drop(&mut self) {
-        self.breaker.release_half_open_slot(Some(self.round));
+        self.breaker.release_half_open_slot(self.round);
     }
 }
 
@@ -190,13 +190,6 @@ impl CircuitBreaker {
         *self.config.write().await = new_config;
     }
 
-    /// 判断当前 Provider 是否“可被纳入候选链路”
-    ///
-    /// 与 [`Self::is_selectable`] 相同；保留此名称以兼容既有调用点。
-    pub async fn is_available(&self) -> bool {
-        self.is_selectable().await
-    }
-
     /// 路由选择阶段的可用性判断（不占用 HalfOpen 探测名额）：
     /// - Closed：可选
     /// - Open：超时到达后切到 HalfOpen，再按探测余量判断
@@ -232,31 +225,38 @@ impl CircuitBreaker {
     }
 
     /// 检查是否允许请求通过
-    pub async fn allow_request(&self) -> AllowResult {
+    pub async fn allow_request(&self, bypass: bool) -> AllowResult {
         let state = self.state_for_request().await;
+        let round = split_half_open_slots(self.half_open_slots.load(Ordering::SeqCst)).0;
+        if bypass {
+            return AllowResult {
+                allowed: true,
+                used_half_open_permit: false,
+                half_open_round: round,
+            };
+        }
         match *state {
             CircuitState::Closed => AllowResult {
                 allowed: true,
                 used_half_open_permit: false,
-                half_open_round: 0,
+                half_open_round: round,
             },
             CircuitState::Open => AllowResult {
                 allowed: false,
                 used_half_open_permit: false,
-                half_open_round: 0,
+                half_open_round: round,
             },
             CircuitState::HalfOpen => self.allow_half_open_probe(),
         }
     }
 
     /// 记录成功
-    pub async fn record_success(&self, used_half_open_permit: bool) {
-        if used_half_open_permit {
-            self.release_half_open_permit();
-        }
-
+    pub async fn record_success(&self, permit: &AllowResult) -> bool {
         let config = self.config.read().await.clone();
         let mut state_guard = self.state.write().await;
+        if !self.accepts_outcome(*state_guard, permit) {
+            return false;
+        }
 
         self.consecutive_failures.store(0, Ordering::SeqCst);
         self.total_requests.fetch_add(1, Ordering::SeqCst);
@@ -274,6 +274,7 @@ impl CircuitBreaker {
                         self.label
                     );
                     *state_guard = CircuitState::Closed;
+                    self.advance_round();
                     self.consecutive_failures.store(0, Ordering::SeqCst);
                     self.consecutive_successes.store(0, Ordering::SeqCst);
                     self.total_requests.store(0, Ordering::SeqCst);
@@ -283,16 +284,16 @@ impl CircuitBreaker {
             }
             CircuitState::Open => {}
         }
+        true
     }
 
     /// 记录失败
-    pub async fn record_failure(&self, used_half_open_permit: bool) {
-        if used_half_open_permit {
-            self.release_half_open_permit();
-        }
-
+    pub async fn record_failure(&self, permit: &AllowResult) -> bool {
         let config = self.config.read().await.clone();
         let mut state_guard = self.state.write().await;
+        if !self.accepts_outcome(*state_guard, permit) {
+            return false;
+        }
 
         let failures = self.consecutive_failures.fetch_add(1, Ordering::SeqCst) + 1;
         self.total_requests.fetch_add(1, Ordering::SeqCst);
@@ -347,6 +348,7 @@ impl CircuitBreaker {
             self.consecutive_successes.store(0, Ordering::SeqCst);
             self.reset_error_rate_window();
         }
+        true
     }
 
     /// 获取当前状态
@@ -400,7 +402,7 @@ impl CircuitBreaker {
             }
         } else {
             // 超过限额，回退计数，拒绝请求
-            self.release_half_open_slot(Some(round));
+            self.release_half_open_slot(round);
             AllowResult {
                 allowed: false,
                 used_half_open_permit: false,
@@ -409,29 +411,39 @@ impl CircuitBreaker {
         }
     }
 
-    /// 仅释放 HalfOpen permit，不影响健康统计
-    ///
-    /// 用于整流器等场景：请求结果不应计入 Provider 健康度，
-    /// 但仍需释放占用的探测名额，避免 HalfOpen 状态卡死
-    pub fn release_half_open_permit(&self) {
-        self.release_half_open_slot(None);
+    /// Check under the state lock, before touching counters. A normal request
+    /// cannot stand in for a recovery probe, or undo a subsequent manual reset.
+    fn accepts_outcome(&self, state: CircuitState, permit: &AllowResult) -> bool {
+        let round = split_half_open_slots(self.half_open_slots.load(Ordering::SeqCst)).0;
+        permit.allowed
+            && permit.half_open_round == round
+            && match state {
+                CircuitState::Closed => !permit.used_half_open_permit,
+                CircuitState::HalfOpen => permit.used_half_open_permit,
+                CircuitState::Open => false,
+            }
     }
 
-    /// 归还一个名额。`round` 给定时只在仍是那一轮时归还；计数已为 0 时不动。
-    fn release_half_open_slot(&self, round: Option<u32>) {
+    fn release_half_open_slot(&self, round: u32) {
         let _ = self
             .half_open_slots
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |slots| {
                 let (current_round, count) = split_half_open_slots(slots);
-                if count == 0 || round.is_some_and(|round| round != current_round) {
-                    None
-                } else {
-                    Some(slots - 1)
-                }
+                (count > 0 && round == current_round).then(|| slots - 1)
+            });
+    }
+
+    fn advance_round(&self) {
+        let _ = self
+            .half_open_slots
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |slots| {
+                let (round, _) = split_half_open_slots(slots);
+                Some(u64::from(round.wrapping_add(1)) << 32)
             });
     }
 
     /// 转换到打开状态
+    #[cfg(test)]
     async fn transition_to_open(&self) {
         let mut state = self.state.write().await;
         *state = CircuitState::Open;
@@ -442,6 +454,7 @@ impl CircuitBreaker {
     }
 
     /// 转换到半开状态
+    #[cfg(test)]
     async fn transition_to_half_open(&self) {
         let mut state = self.state.write().await;
         self.enter_half_open(&mut state);
@@ -454,19 +467,14 @@ impl CircuitBreaker {
 
         *state = CircuitState::HalfOpen;
         self.consecutive_successes.store(0, Ordering::SeqCst);
-        // 进入新一轮：轮次加一、名额计数清零（上一轮没还的名额就此作废）
-        let _ = self
-            .half_open_slots
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |slots| {
-                let (round, _) = split_half_open_slots(slots);
-                Some(u64::from(round.wrapping_add(1)) << 32)
-            });
+        self.advance_round();
     }
 
     /// 转换到关闭状态
     async fn transition_to_closed(&self) {
         let mut state = self.state.write().await;
         *state = CircuitState::Closed;
+        self.advance_round();
         self.consecutive_failures.store(0, Ordering::SeqCst);
         self.consecutive_successes.store(0, Ordering::SeqCst);
         // 重置计数器
@@ -496,6 +504,19 @@ pub struct CircuitBreakerStats {
 mod tests {
     use super::*;
 
+    async fn record(breaker: &CircuitBreaker, success: bool) {
+        let permit = breaker.allow_request(false).await;
+        assert!(permit.allowed);
+        if success {
+            assert!(breaker.record_success(&permit).await);
+        } else {
+            assert!(breaker.record_failure(&permit).await);
+        }
+        if permit.used_half_open_permit {
+            breaker.release_half_open_slot(permit.half_open_round);
+        }
+    }
+
     #[tokio::test]
     async fn maximum_configured_sample_count_can_open_the_circuit() {
         let breaker = CircuitBreaker::new(CircuitBreakerConfig {
@@ -505,12 +526,12 @@ mod tests {
             ..Default::default()
         });
         for _ in 0..49 {
-            breaker.record_success(false).await;
-            breaker.record_failure(false).await;
+            record(&breaker, true).await;
+            record(&breaker, false).await;
         }
-        breaker.record_success(false).await;
+        record(&breaker, true).await;
         assert_eq!(breaker.get_state().await, CircuitState::Closed);
-        breaker.record_failure(false).await;
+        record(&breaker, false).await;
         assert_eq!(breaker.get_state().await, CircuitState::Open);
     }
 
@@ -559,16 +580,16 @@ mod tests {
 
         // 初始状态应该是关闭
         assert_eq!(breaker.get_state().await, CircuitState::Closed);
-        assert!(breaker.allow_request().await.allowed);
+        assert!(breaker.allow_request(false).await.allowed);
 
         // 记录 3 次失败
         for _ in 0..3 {
-            breaker.record_failure(false).await;
+            record(&breaker, false).await;
         }
 
         // 应该转换到打开状态
         assert_eq!(breaker.get_state().await, CircuitState::Open);
-        assert!(!breaker.allow_request().await.allowed);
+        assert!(!breaker.allow_request(false).await.allowed);
     }
 
     #[tokio::test]
@@ -581,8 +602,8 @@ mod tests {
         let breaker = CircuitBreaker::new(config);
 
         // 打开熔断器
-        breaker.record_failure(false).await;
-        breaker.record_failure(false).await;
+        record(&breaker, false).await;
+        record(&breaker, false).await;
         assert_eq!(breaker.get_state().await, CircuitState::Open);
 
         // 手动转换到半开状态
@@ -590,8 +611,8 @@ mod tests {
         assert_eq!(breaker.get_state().await, CircuitState::HalfOpen);
 
         // 记录 2 次成功
-        breaker.record_success(false).await;
-        breaker.record_success(false).await;
+        record(&breaker, true).await;
+        record(&breaker, true).await;
 
         // 应该转换到关闭状态
         assert_eq!(breaker.get_state().await, CircuitState::Closed);
@@ -606,13 +627,13 @@ mod tests {
         let breaker = CircuitBreaker::new(config);
 
         breaker.transition_to_open().await;
-        let first = breaker.allow_request().await;
+        let first = breaker.allow_request(false).await;
         assert!(first.allowed);
         assert!(first.used_half_open_permit);
         assert_eq!(breaker.get_state().await, CircuitState::HalfOpen);
         assert!(!breaker.is_selectable().await);
 
-        breaker.release_half_open_permit();
+        breaker.release_half_open_slot(first.half_open_round);
         assert!(breaker.is_selectable().await);
     }
 
@@ -626,7 +647,7 @@ mod tests {
 
         // 进入 Open，然后由于 timeout_seconds=0，allow_request 会立即切换到 HalfOpen 并占用探测名额
         breaker.transition_to_open().await;
-        let first = breaker.allow_request().await;
+        let first = breaker.allow_request(false).await;
         assert!(first.allowed);
         assert!(first.used_half_open_permit);
         assert_eq!(breaker.get_state().await, CircuitState::HalfOpen);
@@ -635,7 +656,7 @@ mod tests {
         breaker.transition_to_half_open().await;
 
         // 由于名额仍被占用，第二次请求应被拒绝
-        let second = breaker.allow_request().await;
+        let second = breaker.allow_request(false).await;
         assert!(!second.allowed);
         assert!(!second.used_half_open_permit);
     }
@@ -652,12 +673,12 @@ mod tests {
 
         // 先填满窗口的成功样本，再集中失败：窗口内 50%，全量累计仅约 33%
         for _ in 0..ERROR_RATE_WINDOW_CAP {
-            breaker.record_success(false).await;
+            record(&breaker, true).await;
         }
         assert_eq!(breaker.get_state().await, CircuitState::Closed);
 
         for _ in 0..ERROR_RATE_WINDOW_CAP / 2 {
-            breaker.record_failure(false).await;
+            record(&breaker, false).await;
         }
         assert_eq!(breaker.get_state().await, CircuitState::Open);
     }
@@ -671,13 +692,13 @@ mod tests {
         let breaker = CircuitBreaker::new(config);
 
         // 打开熔断器
-        breaker.record_failure(false).await;
-        breaker.record_failure(false).await;
+        record(&breaker, false).await;
+        record(&breaker, false).await;
         assert_eq!(breaker.get_state().await, CircuitState::Open);
 
         // 重置
         breaker.reset().await;
         assert_eq!(breaker.get_state().await, CircuitState::Closed);
-        assert!(breaker.allow_request().await.allowed);
+        assert!(breaker.allow_request(false).await.allowed);
     }
 }

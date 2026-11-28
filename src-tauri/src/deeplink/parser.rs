@@ -172,6 +172,20 @@ mod tests {
     }
 
     #[test]
+    fn retired_provider_links_report_unsupported_apps() {
+        for app in [
+            "gemini", "omp", "ohmypi", "oh-my-pi", "oh_my_pi", "copilot", "xai",
+        ] {
+            let error =
+                parse_deeplink_url(&LINK.replace("app=claude", &format!("app={app}"))).unwrap_err();
+            assert!(
+                error.to_string().contains("Invalid provider app type"),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
     fn skill_enabled_parameter_is_preserved() {
         let request =
             parse_deeplink_url("ccswitch://v1/import?resource=skill&repo=owner/repo&enabled=false")
@@ -182,7 +196,7 @@ mod tests {
     #[test]
     fn validates_config_derived_and_direct_ipc_urls() {
         use base64::Engine;
-        for app in ["claude", "gemini", "openclaw"] {
+        for app in ["claude", "opencode", "dsh"] {
             let config = match app {
                 "claude" => serde_json::json!({"env": {"ANTHROPIC_BASE_URL": "file:///private"}}),
 
@@ -229,17 +243,7 @@ fn parse_provider_deeplink(
         .ok_or_else(|| AppError::InvalidInput("Missing 'app' parameter".to_string()))?
         .clone();
 
-    // Validate app type.
-    //
-    // Oh My Pi is refused with the same guidance as the import path
-    // (`deeplink/provider.rs`): a models.yml entry needs its models listed, which
-    // the Oh My Pi provider form composes. Accepting the link here would only
-    // fail later with a generic "invalid app" error.
-    if matches!(app.as_str(), "omp" | "ohmypi" | "oh-my-pi" | "oh_my_pi") {
-        return Err(AppError::InvalidInput(
-            "Oh My Pi providers must be added from the Oh My Pi provider page".to_string(),
-        ));
-    }
+    // Validate app type against the shared supported-client list.
     if app.parse::<crate::AppType>().is_err() {
         return Err(AppError::InvalidInput(format!(
             "Invalid provider app type: '{app}'"
@@ -382,24 +386,7 @@ fn parse_prompt_deeplink(
         .ok_or_else(|| AppError::InvalidInput("Missing 'app' parameter for prompt".to_string()))?
         .clone();
 
-    // Validate app type
-    if !matches!(
-        app.as_str(),
-        "claude"
-            | "codex"
-            | "gemini"
-            | "agy"
-            | "grokbuild"
-            | "opencode"
-            | "openclaw"
-            | "hermes"
-            | "pi"
-            | "mcode"
-    ) {
-        return Err(AppError::InvalidInput(format!(
-            "Invalid app type: must be 'claude', 'codex', 'gemini', 'agy', 'grokbuild', 'opencode', 'openclaw', 'hermes', 'pi', or 'mcode', got '{app}'"
-        )));
-    }
+    app.parse::<crate::AppType>()?;
 
     let name = params
         .get("name")
@@ -463,33 +450,7 @@ fn parse_mcp_deeplink(
         .ok_or_else(|| AppError::InvalidInput("Missing 'apps' parameter for MCP".to_string()))?
         .clone();
 
-    // Validate apps format. Keep this list in step with `parse_mcp_apps`
-    // (`deeplink/mcp.rs`), which is what actually maps the names onto `McpApps`:
-    // rejecting a name here makes the importer's arm for it unreachable.
-    for app in apps.split(',') {
-        let trimmed = app.trim();
-        if !matches!(
-            trimmed,
-            "claude"
-                | "codex"
-                | "gemini"
-                | "agy"
-                | "grokbuild"
-                | "grok"
-                | "opencode"
-                | "openclaw"
-                | "hermes"
-                | "mcode"
-                | "pi"
-                | "kimi"
-                | "dsh"
-                | "omp"
-        ) {
-            return Err(AppError::InvalidInput(format!(
-                "Invalid app in 'apps': must be 'claude', 'codex', 'gemini', 'agy', 'grokbuild', 'opencode', 'openclaw', 'hermes', 'pi', 'kimi', 'dsh', 'mcode', or 'omp', got '{trimmed}'"
-            )));
-        }
-    }
+    super::mcp::parse_mcp_apps(&apps)?;
 
     let config = params
         .get("config")

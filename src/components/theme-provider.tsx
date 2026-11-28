@@ -51,9 +51,13 @@ export function ThemeProvider({
     if (typeof window === "undefined") {
       return defaultTheme;
     }
-    const stored = window.localStorage.getItem(storageKey) as Theme | null;
-    if (stored === "light" || stored === "dark" || stored === "system") {
-      return stored;
+    try {
+      const stored = window.localStorage.getItem(storageKey);
+      if (stored === "light" || stored === "dark" || stored === "system") {
+        return stored;
+      }
+    } catch {
+      // A blocked/full storage area must not prevent the interface from mounting.
     }
     return defaultTheme;
   };
@@ -62,7 +66,11 @@ export function ThemeProvider({
     if (typeof window === "undefined") {
       return;
     }
-    window.localStorage.setItem(storageKey, theme);
+    try {
+      window.localStorage.setItem(storageKey, theme);
+    } catch {
+      // Keep the selected theme in memory when persistence is unavailable.
+    }
   }, [theme, storageKey]);
   useEffect(() => {
     if (typeof window === "undefined") {

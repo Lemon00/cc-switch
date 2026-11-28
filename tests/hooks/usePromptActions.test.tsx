@@ -61,6 +61,26 @@ function renderPromptActions(initialAppId: AppId) {
   });
 }
 describe("usePromptActions reload concurrency", () => {
+  it("keeps imported prototype-like IDs during an optimistic toggle", async () => {
+    const initialPrompts = makePrompts("__proto__", "Imported Prompt");
+    mocks.getPrompts.mockResolvedValue(initialPrompts);
+    const enable = createDeferred<void>();
+    mocks.enablePrompt.mockReturnValueOnce(enable.promise);
+    const { result } = renderPromptActions("claude");
+    await act(async () => {
+      await result.current.reload();
+    });
+    let toggled!: Promise<boolean>;
+    act(() => {
+      toggled = result.current.toggleEnabled("__proto__", true);
+    });
+    expect(Object.keys(result.current.prompts)).toEqual(["__proto__"]);
+    expect(result.current.prompts["__proto__"].enabled).toBe(true);
+    await act(async () => {
+      enable.resolve();
+      await toggled;
+    });
+  });
   beforeEach(() => {
     // 提示词列表有本地缓存（先显示上次的结果），用例之间不能互相带过去
     localStorage.clear();

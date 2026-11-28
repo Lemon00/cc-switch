@@ -37,6 +37,7 @@ impl FailoverExecutor for StateFailoverExecutor {
                 &request.app_type,
                 &request.provider_id,
                 &request.provider_name,
+                request.route_revision,
             )
             .await
         })

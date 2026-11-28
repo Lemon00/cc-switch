@@ -4,7 +4,7 @@
 //!
 //! ## 认证模式
 //! - **Gemini**: API Key 认证 (x-goog-api-key)
-//! - **GeminiCli**: OAuth Bearer 认证 (用于 Gemini CLI)
+//! - **GeminiOAuth**: OAuth Bearer 认证 (用于 Gemini OAuth)
 
 use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
 use crate::provider::Provider;
@@ -44,17 +44,17 @@ impl GeminiAdapter {
     /// 获取供应商类型
     ///
     /// 根据 API Key 格式检测：
-    /// - GeminiCli: access_token (ya29. 开头) 或 JSON 格式凭证
+    /// - GeminiOAuth: access_token (ya29. 开头) 或 JSON 格式凭证
     /// - Gemini: 普通 API Key
     pub fn provider_type(&self, provider: &Provider) -> ProviderType {
         if let Some(key) = self.extract_key_raw(provider) {
             // OAuth access_token 以 ya29. 开头
             if key.starts_with("ya29.") {
-                return ProviderType::GeminiCli;
+                return ProviderType::GeminiOAuth;
             }
             // JSON 格式的 OAuth 凭证
             if key.starts_with('{') {
-                return ProviderType::GeminiCli;
+                return ProviderType::GeminiOAuth;
             }
         }
         ProviderType::Gemini
@@ -63,7 +63,7 @@ impl GeminiAdapter {
     /// 检测认证类型
     pub fn detect_auth_type(&self, provider: &Provider) -> AuthStrategy {
         match self.provider_type(provider) {
-            ProviderType::GeminiCli => AuthStrategy::GoogleOAuth,
+            ProviderType::GeminiOAuth => AuthStrategy::GoogleOAuth,
             _ => AuthStrategy::Google,
         }
     }
@@ -360,7 +360,7 @@ mod tests {
         }));
         assert_eq!(
             adapter.provider_type(&oauth_provider),
-            ProviderType::GeminiCli
+            ProviderType::GeminiOAuth
         );
 
         // OAuth JSON
@@ -371,7 +371,7 @@ mod tests {
         }));
         assert_eq!(
             adapter.provider_type(&oauth_json_provider),
-            ProviderType::GeminiCli
+            ProviderType::GeminiOAuth
         );
     }
 

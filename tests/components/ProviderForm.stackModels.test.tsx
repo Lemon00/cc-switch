@@ -38,9 +38,8 @@ vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
   };
   return {
     ...actual,
-    useCopilotAuth: () => signedOut,
+
     useCodexOauth: () => signedOut,
-    useXaiOauth: () => signedOut,
   };
 });
 const CLAUDE_ENV = {

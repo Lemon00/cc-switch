@@ -3,8 +3,6 @@ import { toast } from "@/lib/toast";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import type { TFunction } from "i18next";
 import { Fragment, type ReactNode } from "react";
-/** MiniMax Code 的全局说明上限（后端 validate_prompt_content，按 UTF-8 字节算）。 */
-export const MCODE_PROMPT_LIMIT = 32 * 1024;
 /** 带「撤销」的 toast 停 10 秒（悬停时 sonner 自动暂停计时），不带的用默认时长。 */
 const UNDO_TOAST_DURATION = 10000;
 const PROMPT_FILE_NAME: Partial<Record<AppId, string>> = {

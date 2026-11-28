@@ -17,6 +17,21 @@ import {
   reportFrontendError,
 } from "@/lib/frontendLogger";
 describe("frontendLogger", () => {
+  it("redacts nested, quoted and truncated credential containers in prefixed errors", () => {
+    for (const input of [
+      'Failed: {"auth":{"nested":{"value":"short-private"}},"status":400}',
+      'Failed: {"tokens":[["short-private"],{"value":"other-private"}],"status":400}',
+      'Failed: {"credentials":{"value":"bracket } ] short-private"},"status":400}',
+      'Failed: {"auth":{"value":"short-private',
+    ]) {
+      reportFrontendError("test", new Error(input));
+      const message = writeErrorLog.mock.calls.at(-1)![0];
+      expect(message).not.toContain("short-private");
+      expect(message).not.toContain("other-private");
+      expect(message).toContain("Failed:");
+      if (input.endsWith("400}")) expect(message).toContain('"status":400');
+    }
+  });
   beforeEach(() => {
     writeErrorLog.mockClear();
   });

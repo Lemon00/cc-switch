@@ -2,7 +2,6 @@ import { invalidateQueriesAfterChange } from "@/lib/query/invalidation";
 /**
  * 代理服务状态管理 Hook
  */
-import { getAppLabel } from "@/config/appCapabilities";
 import { proxyApi } from "@/lib/api/proxy";
 import {
   proxyKeys,
@@ -10,6 +9,8 @@ import {
   useProxyTakeoverStatus,
 } from "@/lib/query/proxy";
 import { toast } from "@/lib/toast";
+import { refreshProviderTray } from "@/lib/query/providerActions";
+import { claudeLoginQueryKeys } from "@/lib/query/providerCache";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -20,11 +21,9 @@ export function useProxyStatus() {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
   // 查询状态（自动轮询）
-  const { data: status, isPending: isProxyStatusPending } =
-    useProxyStatusQuery();
+  const { data: status } = useProxyStatusQuery();
   // 查询各应用接管状态
-  const { data: takeoverStatus, isPending: isTakeoverStatusPending } =
-    useProxyTakeoverStatus(false);
+  const { data: takeoverStatus } = useProxyTakeoverStatus(false);
   // 启动服务器（总开关：仅启动服务，不接管）
   const startProxyServerMutation = useMutation({
     mutationFn: () => proxyApi.startProxyServer(),
@@ -89,16 +88,6 @@ export function useProxyStatus() {
         }),
         { closeButton: true },
       );
-      // 彻底删除所有供应商健康状态缓存（后端已清空数据库记录）
-      queryClient.removeQueries({ queryKey: ["providerHealth"] });
-      // 彻底删除所有熔断器统计缓存（代理停止后熔断器状态已重置）
-      queryClient.removeQueries({ queryKey: ["circuitBreakerStats"] });
-      // 注意：故障转移队列和开关状态会保留，不需要刷新
-      return Promise.all(
-        [proxyKeys.status, proxyKeys.takeoverStatus, ["providers"]].map(
-          (queryKey) => invalidateQueriesAfterChange(queryClient, { queryKey }),
-        ),
-      );
     },
     onError: (error: Error) => {
       const detail =
@@ -111,111 +100,34 @@ export function useProxyStatus() {
         }),
       );
     },
-  });
-  // 按应用开启/关闭接管。stack 为真时进入的是 Stack 模式（和路由模式二选一）
-  const setTakeoverForAppMutation = useMutation({
-    mutationFn: ({
-      appType,
-      enabled,
-      stack = false,
-    }: {
-      appType: string;
-      enabled: boolean;
-      stack?: boolean;
-    }) => proxyApi.setProxyTakeoverForApp(appType, enabled, stack),
-    onSuccess: (_data, variables) => {
-      const appLabel = getAppLabel(variables.appType);
-      toast.success(
-        variables.enabled
-          ? variables.stack
-            ? t("proxy.stackMode.enabled", { app: appLabel })
-            : t("proxy.takeover.enabled", {
-                app: appLabel,
-                defaultValue: `已接管 ${appLabel} 配置（请求将走本地代理）`,
-              })
-          : t("proxy.takeover.disabled", {
-              app: appLabel,
-              defaultValue: `已恢复 ${appLabel} 配置`,
-            }),
-        { closeButton: true },
-      );
-      // 路由模式下「当前」是路由到的那家，进出路由都要刷新。
-      return Promise.all(
+    onSettled: async () => {
+      // Restoring apps is not atomic: even a rejected command can have restored
+      // one client. Keep observers subscribed and read back the resulting state.
+      await Promise.all(
         [
           proxyKeys.status,
           proxyKeys.takeoverStatus,
-          ["providers", variables.appType],
+          ["providers"],
+          ["providerHealth"],
+          ...claudeLoginQueryKeys,
         ].map((queryKey) =>
           invalidateQueriesAfterChange(queryClient, { queryKey }),
         ),
       );
-    },
-    onError: (error: Error) => {
-      const detail =
-        extractErrorMessage(error) ||
-        t("common.unknown", { defaultValue: "未知错误" });
-      toast.error(
-        t("proxy.takeover.failed", {
-          detail,
-          defaultValue: `操作失败: ${detail}`,
-        }),
-      );
-    },
-  });
-  // 设置里在路由和 Stack 之间换时：处于另一种模式的 Claude Code、Codex 先退回直连
-  const exitAppsInModeMutation = useMutation({
-    mutationFn: (stack: boolean) => proxyApi.exitProxyAppsInMode(stack),
-    onSuccess: (apps) => {
-      if (apps.length > 0) {
-        toast.success(
-          t("proxy.stackMode.exitedToDirect", {
-            apps: apps.map(getAppLabel).join(" / "),
-          }),
-          { closeButton: true },
-        );
-      }
-      return Promise.all(
-        [
-          proxyKeys.status,
-          proxyKeys.takeoverStatus,
-          ...apps.map((app) => ["providers", app]),
-        ].map((queryKey) =>
-          invalidateQueriesAfterChange(queryClient, { queryKey }),
-        ),
-      );
-    },
-    onError: (error: Error) => {
-      const detail =
-        extractErrorMessage(error) ||
-        t("common.unknown", { defaultValue: "未知错误" });
-      toast.error(
-        t("proxy.takeover.failed", {
-          detail,
-          defaultValue: `操作失败: ${detail}`,
-        }),
-      );
+      await refreshProviderTray();
     },
   });
   return {
     status,
     isRunning: status?.running,
     takeoverStatus,
-    isInitialStatusPending: isProxyStatusPending || isTakeoverStatusPending,
     // 启动/停止（总开关）
     startProxyServer: startProxyServerMutation.mutateAsync,
     stopProxyServer: stopProxyServerMutation.mutateAsync,
     stopWithRestore: stopWithRestoreMutation.mutateAsync,
-    // 按应用接管开关
-    setTakeoverForApp: setTakeoverForAppMutation.mutateAsync,
-    exitAppsInMode: exitAppsInModeMutation.mutateAsync,
-    // 加载状态
-    isStarting: startProxyServerMutation.isPending,
-    isStoppingServer: stopProxyServerMutation.isPending,
     isPending:
       startProxyServerMutation.isPending ||
       stopProxyServerMutation.isPending ||
-      stopWithRestoreMutation.isPending ||
-      setTakeoverForAppMutation.isPending ||
-      exitAppsInModeMutation.isPending,
+      stopWithRestoreMutation.isPending,
   };
 }

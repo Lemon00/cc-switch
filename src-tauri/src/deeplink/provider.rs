@@ -6,7 +6,7 @@ use super::codex_link::{self, CodexLinkConfig};
 use super::utils::{decode_base64_param, infer_homepage_from_endpoint, validate_url};
 use super::DeepLinkImportRequest;
 use crate::error::AppError;
-use crate::provider::{ClaudeDesktopMode, Provider, ProviderMeta, UsageScript};
+use crate::provider::{Provider, ProviderMeta, UsageScript};
 use crate::services::ProviderService;
 use crate::store::AppState;
 use crate::AppType;
@@ -787,7 +787,7 @@ pub fn parse_and_merge_config(
         "agy" => merge_agy_config(&mut merged, &config_value)?,
 
         // Additive mode apps use JSON config directly; pass through as-is
-        "openclaw" | "opencode" | "hermes" | "pi" => {
+        "opencode" | "dsh" => {
             merge_additive_config(&mut merged, &config_value)?;
             // 从 config 里补来的地址和 Key 同样要查，让确认框当场报错
             if let Ok(app_type) = AppType::from_str(request.app.as_deref().unwrap_or("")) {

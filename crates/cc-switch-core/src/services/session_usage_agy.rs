@@ -1,9 +1,9 @@
 //! Exact counters exported by agy; absent models remain unknown (never use today's provider).
 //! Amounts are the matching Gemini API prices, like every other session-log import.
-use super::{
-    session_usage::{cost_columns, load_sync_cursors, metadata_modified_nanos, SessionSyncResult},
-    sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH,
+use super::session_usage::{
+    cost_columns, load_sync_cursors, metadata_modified_nanos, SessionSyncResult,
 };
+use crate::database::sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH;
 use crate::proxy::usage::calculator::ModelPricing;
 use crate::proxy::usage::parser::TokenUsage;
 use crate::{
@@ -37,7 +37,12 @@ fn sync_agy_usage_from_files(
     if files.is_empty() {
         return Ok(result);
     }
-    let cursors = load_sync_cursors(db)?;
+    let cursors = load_sync_cursors(
+        db,
+        files
+            .iter()
+            .map(|(_, path)| format!("agy:{}", path.to_string_lossy())),
+    )?;
     for (session_id, path) in files {
         result.files_scanned += 1;
         let cursor_key = format!("agy:{}", path.to_string_lossy());
@@ -124,7 +129,7 @@ fn costs(
     };
     let pricing = pricing_cache
         .entry(model.to_string())
-        .or_insert_with(|| crate::services::usage_stats::find_model_pricing(conn, model));
+        .or_insert_with(|| crate::database::usage::find_model_pricing(conn, model));
     cost_columns("agy", &usage, pricing.as_ref(), rust_decimal::Decimal::ONE)
 }
 

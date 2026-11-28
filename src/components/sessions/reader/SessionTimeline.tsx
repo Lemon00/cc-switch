@@ -4,7 +4,11 @@ import { cn } from "@/lib/utils";
 import { ChevronRight, Copy } from "lucide-react";
 import { memo } from "react";
 import { useReaderT } from "./i18n";
-import { formatDuration, formatTokens, type TurnSummary } from "./toolSummary";
+import {
+  formatDuration,
+  formatTokens,
+  type TurnSummary,
+} from "@/lib/sessions/toolSummary";
 export interface SessionTimelineProps {
   turnKey: string;
   summary: TurnSummary;

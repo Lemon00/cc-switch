@@ -9,7 +9,7 @@ use crate::proxy::{
     extract_session_id,
     forwarder::RequestForwarder,
     server::ProxyState,
-    types::{AppProxyConfig, CopilotOptimizerConfig, OptimizerConfig, RectifierConfig},
+    types::{AppProxyConfig, OptimizerConfig, RectifierConfig},
     ProxyError,
 };
 use axum::http::HeaderMap;
@@ -47,6 +47,7 @@ pub struct RequestContext {
     /// 这里使用本地 settings 的设备级 current provider。
     /// 代理模式下如果实际使用的 provider 与此不一致，会触发切换以确保 UI 始终准确。
     pub current_provider_id: String,
+    pub(crate) route_revision: u64,
     /// 请求中的模型名称
     pub request_model: String,
     /// 实际发往上游的模型名（路由接管/模型映射后的真值，forward 成功后回填）。
@@ -69,8 +70,7 @@ pub struct RequestContext {
     pub rectifier_config: RectifierConfig,
     /// 优化器配置
     pub optimizer_config: OptimizerConfig,
-    /// Copilot 优化器配置
-    pub copilot_optimizer_config: CopilotOptimizerConfig,
+
     /// 已解析的聚合模型：固定账号或公共模型池；始终保留所选模型，不改默认账号。
     pub is_stack: bool,
 }
@@ -99,6 +99,7 @@ impl RequestContext {
         stack: Option<StackTarget>,
     ) -> Result<Self, ProxyError> {
         let start_time = Instant::now();
+        let route_revision = state.db.route_revision(&app_type);
 
         // 从数据库读取应用级代理配置（per-app）
         let mut app_config = state
@@ -110,7 +111,6 @@ impl RequestContext {
         // 从数据库读取整流器配置
         let rectifier_config = state.db.get_rectifier_config().unwrap_or_default();
         let optimizer_config = state.db.get_optimizer_config().unwrap_or_default();
-        let copilot_optimizer_config = state.db.get_copilot_optimizer_config().unwrap_or_default();
 
         // 提取 Session ID
         let session_result = extract_session_id(headers, body, app_type_str);
@@ -232,6 +232,7 @@ impl RequestContext {
             provider,
             providers,
             current_provider_id,
+            route_revision,
             request_model,
             outbound_model: None,
             tag,
@@ -241,7 +242,7 @@ impl RequestContext {
             session_client_provided: session_result.client_provided,
             rectifier_config,
             optimizer_config,
-            copilot_optimizer_config,
+
             is_stack,
         })
     }
@@ -300,7 +301,6 @@ impl RequestContext {
             state.current_providers.clone(),
             state.gemini_shadow.clone(),
             state.codex_chat_history.clone(),
-            state.failover_manager.clone(),
             state.hooks.clone(),
             self.current_provider_id.clone(),
             self.session_id.clone(),
@@ -309,11 +309,11 @@ impl RequestContext {
             idle_timeout,
             self.rectifier_config.clone(),
             self.optimizer_config.clone(),
-            self.copilot_optimizer_config.clone(),
             max_retries,
         )
         .stack_request(self.is_stack)
         .failover_chain(self.app_config.auto_failover_enabled)
+        .route_revision(self.route_revision)
     }
 
     /// 获取 Provider 列表（用于故障转移）

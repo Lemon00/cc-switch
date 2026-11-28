@@ -16,11 +16,7 @@ export interface AppNavStatus {
   alert: boolean;
 }
 const TODAY: UsageRangeSelection = { preset: "today" };
-const MANAGED_AUTH_PROVIDERS: ManagedAuthProvider[] = [
-  "github_copilot",
-  "codex_oauth",
-  "xai_oauth",
-];
+const MANAGED_AUTH_PROVIDERS: ManagedAuthProvider[] = ["codex_oauth"];
 /**
  * 侧栏需要的状态：每个应用的模式标签和提醒、今日花费与 Token、授权中心是否有账号要重新登录。
  */

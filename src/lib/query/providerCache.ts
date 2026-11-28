@@ -42,7 +42,7 @@ export async function invalidateProviderCaches(
         keys.push([category, "provider-count"]);
       }
     }
-  } else;
+  }
   if (change === "switch" || change === "mode") {
     keys.push(proxyKeys.status, proxyKeys.takeoverStatus);
   }

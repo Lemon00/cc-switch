@@ -13,15 +13,11 @@ vi.mock("@/lib/api/dsh", () => ({
     loginCancel: vi.fn(),
   },
 }));
-vi.mock("@/components/providers/forms/CopilotAuthSection", () => ({
-  CopilotAuthSection: () => null,
-}));
+
 vi.mock("@/components/providers/forms/CodexOAuthSection", () => ({
   CodexOAuthSection: () => null,
 }));
-vi.mock("@/components/providers/forms/XaiOAuthSection", () => ({
-  XaiOAuthSection: () => null,
-}));
+
 vi.mock("@/components/providers/forms/AgyOAuthSection", () => ({
   AgyOAuthSection: () => null,
 }));

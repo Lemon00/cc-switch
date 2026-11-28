@@ -758,16 +758,16 @@ describe("SwitchModePanel — tray needs-route request", () => {
   it("opens the same needs-routing dialog once the provider is there", async () => {
     mockMode("direct", null);
     const onHandled = vi.fn();
-    const copilot: Provider = {
-      ...provider("copilot"),
-      meta: { providerType: "github_copilot" },
+    const chatgpt: Provider = {
+      ...provider("chatgpt"),
+      meta: { providerType: "codex_oauth" },
     };
     const queryClient = createTestQueryClient();
     render(
       <QueryClientProvider client={queryClient}>
         <SwitchModePanel
           app="claude"
-          providers={{ accountB: provider("accountB"), copilot }}
+          providers={{ accountB: provider("accountB"), chatgpt }}
           currentProviderId="accountB"
           isLoading={false}
           onSwitch={vi.fn()}
@@ -776,7 +776,7 @@ describe("SwitchModePanel — tray needs-route request", () => {
           onDelete={vi.fn()}
           onDuplicate={vi.fn()}
           onOpenWebsite={vi.fn()}
-          needsRouteRequest={{ providerId: "copilot", nonce: 1 }}
+          needsRouteRequest={{ providerId: "chatgpt", nonce: 1 }}
           onNeedsRouteHandled={onHandled}
         />
       </QueryClientProvider>,

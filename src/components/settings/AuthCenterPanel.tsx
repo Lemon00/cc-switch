@@ -2,8 +2,7 @@ import { DshAccountLogin } from "@/components/providers/DshAccount";
 import { AgyOAuthSection } from "@/components/providers/forms/AgyOAuthSection";
 import { ClaudeOfficialSection } from "@/components/providers/forms/ClaudeOfficialSection";
 import { CodexOAuthSection } from "@/components/providers/forms/CodexOAuthSection";
-import { CopilotAuthSection } from "@/components/providers/forms/CopilotAuthSection";
-import { XaiOAuthSection } from "@/components/providers/forms/XaiOAuthSection";
+
 import { Switch } from "@/components/ui/switch";
 import type { AuthCenterTarget } from "@/lib/api";
 import { useAuthOpenBrowser, writeAuthOpenBrowser } from "@/lib/authLoginLink";
@@ -65,11 +64,7 @@ function findScrollContainer(element: HTMLElement): HTMLElement | null {
   }
   return null;
 }
-/**
- * 授权中心：Claude 官方账号、GitHub Copilot、ChatGPT、xAI、DeepSeek Harness，一组一张卡片；
- * macOS 上另有 Antigravity 一组（切 agy 的官方登录，目前只实现了 macOS 钥匙串）。
- * 侧栏的「授权中心」页和供应商表单里「管理账号」打开的全屏页共用。
- */
+
 export function AuthCenterPanel({
   authScrollTarget,
   showIntro = true,
@@ -77,9 +72,9 @@ export function AuthCenterPanel({
   const { t } = useTranslation();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const claudeOfficialSectionRef = useRef<HTMLDivElement | null>(null);
-  const copilotSectionRef = useRef<HTMLDivElement | null>(null);
+
   const codexOauthSectionRef = useRef<HTMLDivElement | null>(null);
-  const xaiOauthSectionRef = useRef<HTMLDivElement | null>(null);
+
   const agyOauthSectionRef = useRef<HTMLDivElement | null>(null);
   const dshAccountSectionRef = useRef<HTMLDivElement | null>(null);
   const showAgy = isMac();
@@ -92,13 +87,11 @@ export function AuthCenterPanel({
         ? dshAccountSectionRef
         : authScrollTarget === "claude_official"
           ? claudeOfficialSectionRef
-          : authScrollTarget === "github_copilot"
-            ? copilotSectionRef
-            : authScrollTarget === "codex_oauth"
-              ? codexOauthSectionRef
-              : authScrollTarget === "agy_oauth"
-                ? agyOauthSectionRef
-                : xaiOauthSectionRef;
+          : authScrollTarget === "codex_oauth"
+            ? codexOauthSectionRef
+            : authScrollTarget === "agy_oauth"
+              ? agyOauthSectionRef
+              : codexOauthSectionRef;
     const target = sectionRef.current;
     const container = findScrollContainer(root);
     if (!target || !container) return;
@@ -176,15 +169,11 @@ export function AuthCenterPanel({
       <div ref={claudeOfficialSectionRef}>
         <ClaudeOfficialSection helpSide="bottom" />
       </div>
-      <div ref={copilotSectionRef}>
-        <CopilotAuthSection />
-      </div>
+      <></>
       <div ref={codexOauthSectionRef}>
         <CodexOAuthSection showAccountQuota />
       </div>
-      <div ref={xaiOauthSectionRef}>
-        <XaiOAuthSection mode="manage" helpSide="bottom" />
-      </div>
+      <></>
       <div ref={dshAccountSectionRef}>
         <DshAccountLogin helpSide={showAgy ? "bottom" : "top"} />
       </div>

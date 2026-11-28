@@ -75,7 +75,7 @@ pub fn checked_child_path(root: &Path, relative: &Path) -> Result<PathBuf, AppEr
     Ok(path)
 }
 
-pub fn validate_prompt_content(app: &AppType, content: &str) -> Result<(), AppError> {
+pub fn validate_prompt_content(_app: &AppType, content: &str) -> Result<(), AppError> {
     validate_text_size(content)?;
 
     Ok(())

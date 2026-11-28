@@ -22,11 +22,11 @@ type OmoProviderRow = (
     String,
 );
 
-const PROVIDER_SELECT: &str = "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue FROM providers";
+pub(super) const PROVIDER_SELECT: &str = "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue FROM providers";
 
 /// 按 [`PROVIDER_SELECT`] 的列序（`id, name, settings_config, website_url, category, created_at, sort_index, notes, icon,
 /// icon_color, meta, in_failover_queue`）读一行供应商。
-fn row_to_provider(row: &rusqlite::Row<'_>) -> rusqlite::Result<Provider> {
+pub(super) fn row_to_provider(row: &rusqlite::Row<'_>) -> rusqlite::Result<Provider> {
     let id: String = row.get(0)?;
     let entry = format!("供应商 {id}");
     Ok(Provider {
@@ -171,6 +171,9 @@ impl Database {
             |row| super::read_row(row, row_to_provider),
         )
         .optional()
+        .map(|row| {
+            row.filter(|entry| !matches!(entry, Ok(provider) if provider.is_retired_service()))
+        })
         .map_err(|e| AppError::Database(e.to_string()))
     }
 
@@ -224,6 +227,9 @@ impl Database {
                     continue;
                 }
             };
+            if provider.is_retired_service() {
+                continue;
+            }
             if let Some(meta) = &mut provider.meta {
                 // The endpoint table is authoritative, including when it is empty.
                 meta.custom_endpoints.clear();
@@ -313,7 +319,7 @@ impl Database {
         );
 
         match result {
-            Ok(provider) => Ok(Some(provider)),
+            Ok(provider) => Ok((!provider.is_retired_service()).then_some(provider)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(AppError::Database(e.to_string())),
         }
@@ -341,6 +347,7 @@ impl Database {
     }
 
     pub fn save_provider(&self, app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
+        provider.validate_service_support()?;
         let mut conn = lock_conn!(self.conn);
         let tx = conn
             .transaction()
@@ -480,6 +487,7 @@ impl Database {
         original_id: &str,
         provider: &Provider,
     ) -> Result<(), AppError> {
+        provider.validate_service_support()?;
         if original_id == provider.id {
             return self.save_provider(app_type, provider);
         }
@@ -802,7 +810,7 @@ impl Database {
             })?
         };
 
-        Ok(Some(Provider {
+        let provider = Provider {
             id,
             name,
             settings_config,
@@ -815,7 +823,8 @@ impl Database {
             icon: None,
             icon_color: None,
             in_failover_queue: false,
-        }))
+        };
+        Ok((!provider.is_retired_service()).then_some(provider))
     }
 
     /// 判断 providers 表是否为空（全 app_type 一起算）。

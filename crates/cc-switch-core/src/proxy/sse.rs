@@ -80,6 +80,41 @@ impl<'a> Iterator for SseBlocks<'a> {
 /// 单个未完成 SSE 事件（及 pending 总缓冲）的字节上限，防止恶意/异常上游无分隔符灌爆内存。
 pub(crate) const MAX_SSE_PENDING_BYTES: usize = 16 * 1024 * 1024;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SkipDelimiterState {
+    Normal,
+    AfterLf,
+    AfterLfCr,
+}
+
+impl SkipDelimiterState {
+    fn from_pending(text: &str, utf8_remainder: &[u8]) -> Self {
+        if !utf8_remainder.is_empty() {
+            return Self::Normal;
+        }
+        let bytes = text.as_bytes();
+        if bytes.ends_with(b"\n") {
+            Self::AfterLf
+        } else if bytes.ends_with(b"\n\r") {
+            Self::AfterLfCr
+        } else {
+            Self::Normal
+        }
+    }
+
+    fn advance_until_delimiter(&mut self, bytes: &[u8]) -> Option<usize> {
+        for (idx, &byte) in bytes.iter().enumerate() {
+            match (*self, byte) {
+                (Self::AfterLf | Self::AfterLfCr, b'\n') => return Some(idx + 1),
+                (Self::AfterLf, b'\r') => *self = Self::AfterLfCr,
+                (_, b'\n') => *self = Self::AfterLf,
+                _ => *self = Self::Normal,
+            }
+        }
+        None
+    }
+}
+
 /// Incremental SSE framer for a streamed body.
 ///
 /// Events are handed out as slices of the internal buffer; consumed text is
@@ -94,41 +129,104 @@ pub(crate) struct SseBuffer {
     consumed: usize,
     /// Where the next delimiter scan starts; always `>= consumed`.
     scan_from: usize,
+    /// Start of the current unterminated event in `self.text` (tracked when
+    /// `max_pending_bytes` is set); always `>= consumed` and `<= text.len()`.
+    current_event_start: usize,
+    max_pending_bytes: Option<usize>,
+    skip_delimiter_state: Option<SkipDelimiterState>,
+    dropped_oversized_events: usize,
 }
 
 impl SseBuffer {
     pub(crate) fn new() -> Self {
-        Self::default()
+        Self::with_max_pending_bytes(MAX_SSE_PENDING_BYTES)
     }
 
-    fn ensure_budget(&self, incoming: usize) -> Result<(), std::io::Error> {
-        let pending = self.text.len().saturating_sub(self.consumed) + self.utf8_remainder.len();
-        if pending.saturating_add(incoming) > MAX_SSE_PENDING_BYTES {
+    pub(crate) fn with_max_pending_bytes(max_pending_bytes: usize) -> Self {
+        Self {
+            max_pending_bytes: Some(max_pending_bytes),
+            ..Self::default()
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn dropped_oversized_events(&self) -> usize {
+        self.dropped_oversized_events
+    }
+
+    /// Append raw bytes; multi-byte characters split across chunks are held
+    /// back until complete (see [`append_utf8_safe`]).
+    pub(crate) fn inspect_bytes(&mut self, mut bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        self.compact();
+        let Some(max_pending_bytes) = self.max_pending_bytes else {
+            append_utf8_safe(&mut self.text, &mut self.utf8_remainder, bytes);
+            return;
+        };
+
+        while !bytes.is_empty() {
+            if let Some(mut state) = self.skip_delimiter_state {
+                match state.advance_until_delimiter(bytes) {
+                    Some(next_offset) => {
+                        self.skip_delimiter_state = None;
+                        bytes = &bytes[next_offset..];
+                        continue;
+                    }
+                    None => {
+                        self.skip_delimiter_state = Some(state);
+                        return;
+                    }
+                }
+            }
+
+            let mut state = SkipDelimiterState::from_pending(
+                &self.text[self.current_event_start..],
+                &self.utf8_remainder,
+            );
+            match state.advance_until_delimiter(bytes) {
+                Some(next_offset) => {
+                    if self.event_would_overflow(next_offset, max_pending_bytes) {
+                        self.discard_current_event();
+                    } else {
+                        append_utf8_safe(
+                            &mut self.text,
+                            &mut self.utf8_remainder,
+                            &bytes[..next_offset],
+                        );
+                        self.current_event_start = self.text.len();
+                    }
+                    bytes = &bytes[next_offset..];
+                }
+                None => {
+                    if self.event_would_overflow(bytes.len(), max_pending_bytes) {
+                        self.discard_current_event();
+                        self.skip_delimiter_state = Some(state);
+                    } else {
+                        append_utf8_safe(&mut self.text, &mut self.utf8_remainder, bytes);
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Conversion must fail on overflow instead of silently losing tool arguments.
+    pub(crate) fn push_bytes(&mut self, bytes: &[u8]) -> Result<(), std::io::Error> {
+        let dropped = self.dropped_oversized_events;
+        self.inspect_bytes(bytes);
+        if self.dropped_oversized_events != dropped {
             Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                "SSE pending buffer exceeded",
+                "SSE event exceeded size limit",
             ))
         } else {
             Ok(())
         }
     }
-
-    /// Append raw bytes; multi-byte characters split across chunks are held
-    /// back until complete (see [`append_utf8_safe`]).
-    /// 超过 [`MAX_SSE_PENDING_BYTES`] 时返回错误，不追加本次数据。
-    pub(crate) fn push_bytes(&mut self, bytes: &[u8]) -> Result<(), std::io::Error> {
-        self.compact();
-        self.ensure_budget(bytes.len())?;
-        append_utf8_safe(&mut self.text, &mut self.utf8_remainder, bytes);
-        Ok(())
-    }
-
-    /// 同 [`Self::push_bytes`]，字符串入口。
     pub(crate) fn push_str(&mut self, text: &str) -> Result<(), std::io::Error> {
-        self.compact();
-        self.ensure_budget(text.len())?;
-        self.text.push_str(text);
-        Ok(())
+        self.push_bytes(text.as_bytes())
     }
 
     /// Next complete event (without its delimiter), or `None` until more data
@@ -159,6 +257,7 @@ impl SseBuffer {
         self.text.clear();
         self.consumed = 0;
         self.scan_from = 0;
+        self.current_event_start = 0;
     }
 
     /// End of stream: the pending text plus any incomplete UTF-8 tail,
@@ -170,13 +269,32 @@ impl SseBuffer {
             self.text.push_str(&String::from_utf8_lossy(&remainder));
         }
         self.scan_from = 0;
+        self.current_event_start = 0;
         std::mem::take(&mut self.text)
+    }
+
+    fn event_would_overflow(&self, incoming_len: usize, max_pending_bytes: usize) -> bool {
+        self.text
+            .len()
+            .saturating_sub(self.current_event_start)
+            .saturating_add(self.utf8_remainder.len())
+            .saturating_add(incoming_len)
+            > max_pending_bytes
+    }
+
+    fn discard_current_event(&mut self) {
+        self.dropped_oversized_events += 1;
+        self.text.truncate(self.current_event_start);
+        self.text.shrink_to_fit();
+        self.utf8_remainder.clear();
+        self.scan_from = self.scan_from.min(self.current_event_start);
     }
 
     fn compact(&mut self) {
         if self.consumed > 0 {
             self.text.drain(..self.consumed);
             self.scan_from -= self.consumed;
+            self.current_event_start = self.current_event_start.saturating_sub(self.consumed);
             self.consumed = 0;
         }
     }
@@ -579,6 +697,39 @@ mod tests {
         assert_eq!(
             replacement_count, 4,
             "each invalid byte should produce one U+FFFD"
+        );
+    }
+
+    #[test]
+    fn limits_apply_per_event_and_inspection_recovers_after_overflow() {
+        let small = b"data: ok
+
+";
+        let mut stream = SseBuffer::with_max_pending_bytes(16);
+        let batch = small.repeat(100);
+        stream.push_bytes(&batch).unwrap();
+        let mut count = 0;
+        while stream.next_block().is_some() {
+            count += 1;
+        }
+        assert_eq!(count, 100);
+        stream.inspect_bytes(b"data: this event is too large");
+        stream.inspect_bytes(
+            b"\r
+",
+        );
+        stream.inspect_bytes(
+            b"\r
+data: ok
+
+",
+        );
+        assert_eq!(stream.dropped_oversized_events(), 1);
+        assert_eq!(stream.next_block(), Some("data: ok"));
+        assert!(stream.next_block().is_none());
+        assert!(
+            stream.push_bytes(&[b'x'; 17]).is_err(),
+            "conversion cannot drop tool arguments silently"
         );
     }
 }

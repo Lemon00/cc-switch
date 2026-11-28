@@ -1,8 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 export type ManagedAuthProvider =
-  | "github_copilot"
   | "codex_oauth"
-  | "xai_oauth"
   | "agy_oauth"
   | "claude_official";
 export type CodexLoginMethod = "browser" | "device_code";
@@ -21,10 +19,9 @@ export interface ManagedAuthAccount {
   avatar_url: string | null;
   authenticated_at: number;
   is_default: boolean;
-  github_domain: string;
   /** Codex-only: the account lacks identity or workspace metadata required for binding. */
   reauth_required?: boolean;
-  /** xAI-only: the refresh credential is invalid and the account is unusable. */
+
   requires_reauth: boolean;
   /** Claude official only: when the sign-in of an account not in Claude Code's default slot expires (ms, as last recorded). */
   login_expires_at?: number | null;
@@ -52,13 +49,11 @@ export interface ManagedAuthDeviceCodeResponse {
 }
 export async function authStartLogin(
   authProvider: ManagedAuthProvider,
-  githubDomain?: string,
   targetAccountId?: string,
   loginMethod?: ManagedLoginMethod,
 ): Promise<ManagedAuthDeviceCodeResponse> {
   return invoke<ManagedAuthDeviceCodeResponse>("auth_start_login", {
     authProvider,
-    githubDomain: githubDomain || null,
     targetAccountId: targetAccountId || null,
     ...(loginMethod ? { loginMethod } : {}),
   });
@@ -66,12 +61,10 @@ export async function authStartLogin(
 export async function authPollForAccount(
   authProvider: ManagedAuthProvider,
   deviceCode: string,
-  githubDomain?: string,
 ): Promise<ManagedAuthAccount | null> {
   return invoke<ManagedAuthAccount | null>("auth_poll_for_account", {
     authProvider,
     deviceCode,
-    githubDomain: githubDomain || null,
   });
 }
 export async function authCancelLogin(

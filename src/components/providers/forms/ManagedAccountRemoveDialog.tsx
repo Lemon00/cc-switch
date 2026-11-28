@@ -23,7 +23,7 @@ export type ManagedAccountRemoveTarget =
     };
 interface ManagedAccountRemoveDialogProps {
   target: ManagedAccountRemoveTarget | null;
-  /** 服务名：GitHub Copilot / ChatGPT / xAI */
+
   serviceName: string;
   /** 在用要删的账号的供应商（findManagedAccountUsers 的结果） */
   users: ManagedAccountUser[];

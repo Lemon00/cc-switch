@@ -2,6 +2,7 @@
 //!
 //! 管理代理模式下的故障转移队列（基于 providers 表的 in_failover_queue 字段）
 
+use super::providers::{row_to_provider, PROVIDER_SELECT};
 use crate::app_config::AppType;
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
@@ -29,28 +30,31 @@ impl Database {
         let conn = lock_conn!(self.conn);
 
         let mut stmt = conn
-            .prepare(
-                "SELECT id, name, sort_index, notes
-                 FROM providers
+            .prepare(&format!(
+                "{PROVIDER_SELECT}
                  WHERE app_type = ?1 AND in_failover_queue = 1
-                 ORDER BY COALESCE(sort_index, 999999), id ASC",
-            )
+                 ORDER BY COALESCE(sort_index, 999999), id ASC"
+            ))
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let items = stmt
             .query_map([app_type], |row| {
-                Ok(FailoverQueueItem {
+                // 不支持的服务不进入队列 UI；损坏的行仍可展示并由用户移除。
+                if row_to_provider(row).is_ok_and(|provider| provider.is_retired_service()) {
+                    return Ok(None);
+                }
+                Ok(Some(FailoverQueueItem {
                     provider_id: row.get(0)?,
                     provider_name: row.get(1)?,
-                    sort_index: row.get(2)?,
-                    provider_notes: row.get(3)?,
-                })
+                    sort_index: row.get(6)?,
+                    provider_notes: row.get(7)?,
+                }))
             })
             .map_err(|e| AppError::Database(e.to_string()))?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| AppError::Database(e.to_string()))?;
 
-        Ok(items)
+        Ok(items.into_iter().flatten().collect())
     }
 
     /// 获取故障转移队列中的供应商（完整 Provider 信息，与队列的排序一致）

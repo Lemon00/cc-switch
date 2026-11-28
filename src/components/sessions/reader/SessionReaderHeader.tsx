@@ -54,8 +54,8 @@ import {
 } from "../utils";
 import { useReaderT } from "./i18n";
 import { PathChip } from "./PathChip";
-import { formatDuration } from "./toolSummary";
-import type { ReaderFilter } from "./turns";
+import { formatDuration } from "@/lib/sessions/toolSummary";
+import type { ReaderFilter } from "@/lib/sessions/turns";
 export const readerIconButton =
   "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-40";
 // ─── 页头：返回、标题、上一个 / 下一个、恢复、⋯ ───────────────────────────
@@ -341,19 +341,17 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
         >
           {t("sessionManager.deleteEllipsis", { defaultValue: "删除…" })}
         </DropdownMenuItem>
-        {!deletable && ["mcode", "dsh", "agy"].includes(session.providerId) && (
+        {!deletable && ["dsh", "agy"].includes(session.providerId) && (
           <p className="px-2.5 pb-1.5 text-caption text-fg-2">
             {t(
               session.providerId === "dsh"
                 ? "dsh.deleteSessionHint"
-                : session.providerId === "agy"
-                  ? "sessionManager.agyDeleteHint"
-                  : "sessionManager.mcodeDeleteHint",
+                : "sessionManager.agyDeleteHint",
               {
                 defaultValue:
                   session.providerId === "agy"
                     ? "请在 Antigravity 中删除"
-                    : "请在 MiniMax Code 中删除",
+                    : "请在 DeepSeek Harness 中删除",
               },
             )}
           </p>

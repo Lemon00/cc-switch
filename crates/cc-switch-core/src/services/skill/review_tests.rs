@@ -9,6 +9,83 @@ fn repo_skill(directory: &str) -> InstalledSkill {
 }
 
 #[test]
+fn metadata_reads_only_bounded_front_matter() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("SKILL.md");
+    let mut bytes = b"\xef\xbb\xbf---\nname: bounded\n---\n".to_vec();
+    // Body encoding and size must not affect valid YAML metadata.
+    bytes.extend(vec![0xff; 2 * 1024 * 1024]);
+    fs::write(&path, bytes).unwrap();
+    assert_eq!(
+        SkillService::parse_skill_metadata_static(&path)
+            .unwrap()
+            .name
+            .as_deref(),
+        Some("bounded")
+    );
+    fs::write(
+        &path,
+        format!("---\nname: {}\n---\n", "a".repeat(2 * 1024 * 1024)),
+    )
+    .unwrap();
+    assert!(SkillService::parse_skill_metadata_static(&path)
+        .unwrap()
+        .name
+        .is_none());
+}
+
+#[test]
+fn deployment_verification_includes_hidden_files_and_empty_directories() {
+    let source = tempdir().unwrap();
+    let destination = tempdir().unwrap();
+    for path in [source.path(), destination.path()] {
+        write_skill(path, "same");
+        fs::write(path.join(".env"), "original").unwrap();
+    }
+    assert!(
+        SkillService::inspect_skill_destination(source.path(), destination.path(), "skill").is_ok()
+    );
+    fs::write(destination.path().join(".env"), "user-edited").unwrap();
+    assert_eq!(
+        SkillService::compute_dir_hash(source.path()).unwrap(),
+        SkillService::compute_dir_hash(destination.path()).unwrap()
+    );
+    assert!(
+        SkillService::inspect_skill_destination(source.path(), destination.path(), "skill")
+            .is_err()
+    );
+    fs::write(destination.path().join(".env"), "original").unwrap();
+    fs::create_dir(destination.path().join(".private")).unwrap();
+    assert!(
+        SkillService::inspect_skill_destination(source.path(), destination.path(), "skill")
+            .is_err()
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn migration_does_not_discard_a_source_with_different_hidden_files() {
+    let home = tempdir().unwrap();
+    let guard = TestHomeGuard::set(home.path());
+    let _location = StorageLocationGuard::set(&guard, SkillStorageLocation::CcSwitch);
+    let db = Arc::new(Database::memory().unwrap());
+    db.save_skill(&poisoned_skill("skill", "skill")).unwrap();
+    let source = SkillService::get_ssot_dir().unwrap().join("skill");
+    let destination = home.path().join(".agents/skills/skill");
+    write_skill(&source, "same");
+    write_skill(&destination, "same");
+    fs::write(source.join(".env"), "source-only").unwrap();
+    let result = SkillService::migrate_storage(&db, SkillStorageLocation::Unified).unwrap();
+    assert!(!result.location_changed);
+    assert!(!result.errors.is_empty());
+    assert_eq!(
+        fs::read_to_string(source.join(".env")).unwrap(),
+        "source-only"
+    );
+    assert!(!destination.join(".env").exists());
+}
+
+#[test]
 #[serial_test::serial]
 fn migration_conflict_preserves_every_old_source_and_setting() {
     let home = tempdir().unwrap();

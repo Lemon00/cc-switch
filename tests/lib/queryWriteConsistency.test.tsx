@@ -1,5 +1,5 @@
 import type { PropsWithChildren } from "react";
-import { act, cleanup, renderHook } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import {
   QueryClient,
   QueryClientProvider,
@@ -36,6 +36,7 @@ import {
 } from "@/lib/query/proxy";
 import {
   useAddToFailoverQueue,
+  useAutoFailoverEnabled,
   useRemoveFromFailoverQueue,
   useResetCircuitBreaker,
   useSetAutoFailoverEnabled,
@@ -314,6 +315,44 @@ const cases: Array<{
   },
 ];
 describe("persisted writes racing the initial query", () => {
+  it("reads back failover state after a cold optimistic toggle fails", async () => {
+    let finishRead!: (value: boolean) => void;
+    let rejectWrite!: (error: Error) => void;
+    let reads = 0;
+    ipc.mockImplementation((command) => {
+      if (command === "get_auto_failover_enabled") {
+        if (++reads === 1)
+          return new Promise((resolve) => (finishRead = resolve));
+        return Promise.resolve(false);
+      }
+      if (command === "set_auto_failover_enabled") {
+        return new Promise((_, reject) => (rejectWrite = reject));
+      }
+      return Promise.resolve(undefined);
+    });
+    const { client, wrapper } = setup();
+    const { result: state } = renderHook(
+      () => useAutoFailoverEnabled("claude"),
+      { wrapper },
+    );
+    const { result } = renderHook(() => useSetAutoFailoverEnabled(), {
+      wrapper,
+    });
+    let pending!: Promise<unknown>;
+    await act(async () => {
+      pending = result.current.mutateAsync(member).catch((error) => error);
+    });
+    await waitFor(() => expect(state.current.data).toBe(true));
+    await act(async () => {
+      rejectWrite(new Error("write failed"));
+      await pending;
+      finishRead(true);
+    });
+    await waitFor(() => expect(state.current.data).toBe(false));
+    expect(reads).toBe(2);
+    expect(client.getQueryData(["autoFailoverEnabled", "claude"])).toBe(false);
+  });
+
   it.each(cases)(
     "$name discards all pre-write snapshots",
     async ({ useOperation, keys }) => {

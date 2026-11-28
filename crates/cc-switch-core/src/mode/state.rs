@@ -426,9 +426,7 @@ pub fn stack_view(store: &DeviceStore, app: &str) -> Result<StackView, AppError>
         stack: app_state
             .map(|state| state.stack.clone())
             .unwrap_or_default(),
-        mode_state: app_state
-            .map(AppLiveState::mode_state)
-            .unwrap_or_default(),
+        mode_state: app_state.map(AppLiveState::mode_state).unwrap_or_default(),
     })
 }
 

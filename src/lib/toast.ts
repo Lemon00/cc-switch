@@ -8,6 +8,7 @@ type Kind = "success" | "error" | "info" | "warning";
 type Message = Parameters<typeof sonnerToast.success>[0];
 /** 和 <Toaster duration> 一致 */
 const DEFAULT_DURATION = 2000;
+const MAX_DEDUP_ENTRIES = 128;
 const active = new Map<
   string,
   {
@@ -18,6 +19,9 @@ const active = new Map<
 function show(kind: Kind, message: Message, options?: ExternalToast) {
   const key = typeof message === "string" ? `${kind}:${message}` : undefined;
   const now = Date.now();
+  for (const [entryKey, entry] of active) {
+    if (entry.until <= now) active.delete(entryKey);
+  }
   const previous = key ? active.get(key) : undefined;
   const reuse =
     previous &&
@@ -31,10 +35,14 @@ function show(kind: Kind, message: Message, options?: ExternalToast) {
     : sonnerToast[kind](message);
   if (key) {
     const duration = options?.duration ?? DEFAULT_DURATION;
+    active.delete(key);
     active.set(key, {
       id: reuse?.id ?? id,
       until: Number.isFinite(duration) ? now + duration : Infinity,
     });
+    while (active.size > MAX_DEDUP_ENTRIES) {
+      active.delete(active.keys().next().value!);
+    }
   }
   return id;
 }

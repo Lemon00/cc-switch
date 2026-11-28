@@ -80,6 +80,15 @@ impl AppType {
                 | "oh-my-pi"
                 | "oh_my_pi"
                 | "ohmypi"
+                | "copilot"
+                | "github_copilot"
+                | "xai"
+                | "xai_oauth"
+                | "codebuddy"
+                | "workbuddy"
+                | "zcode"
+                | "qwen"
+                | "qoder"
         )
     }
 }

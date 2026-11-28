@@ -28,22 +28,6 @@ export interface OpenTerminalOptions {
   /** 追加在生成的参数后面，后端按空白拆分、引号括起的算一个 */
   extraArgs?: string;
 }
-export interface ClaudeDesktopStatus {
-  supported: boolean;
-  /** 本机装了 Claude Desktop（按它的数据目录或 macOS 应用包推断；接入了也算） */
-  installed: boolean;
-  configured: boolean;
-  appliedId?: string | null;
-  profilePath?: string | null;
-  configLibraryPath?: string | null;
-  mode?: "direct" | "proxy" | null;
-  expectedBaseUrl?: string | null;
-  actualBaseUrl?: string | null;
-  proxyRunning: boolean;
-  staleRawModels: boolean;
-  missingRouteMappings: boolean;
-  gatewayTokenConfigured: boolean;
-}
 /** 编辑器保存时，live 里的键在编辑期间被别的程序改过怎么办。 */
 export type EditorConflictPolicy = "refuse" | "keepMine" | "keepTheirs";
 /** 编辑器保存随供应商一起提交：打开时显示的完整配置，用来三方比较。 */
@@ -62,11 +46,6 @@ export interface ProviderEditorInactiveField {
 export interface ProviderEditorView {
   settings: Record<string, unknown>;
   inactive: ProviderEditorInactiveField[];
-}
-export interface ClaudeDesktopDefaultRoute {
-  routeId: string;
-  envKey: string;
-  supports1m: boolean;
 }
 export const providersApi = {
   async getAll(appId: AppId): Promise<Record<string, Provider>> {
@@ -105,10 +84,7 @@ export const providersApi = {
       ...(editorSave ? { editorSave } : {}),
     });
   },
-  /**
-   * 切换式应用的编辑器显示内容。编辑已有供应商时传 `providerId`：后端按库里那一行认
-   * 官方卡。`meta` 保留 Codex Copilot 等供应商的认证和协议身份，新增时取当前预设。
-   */
+
   async getEditorView(
     appId: AppId,
     settingsConfig: Record<string, unknown>,
@@ -144,24 +120,6 @@ export const providersApi = {
   },
   async importDefault(appId: AppId): Promise<boolean> {
     return await invoke("import_default_config", { app: appId });
-  },
-  async importClaudeDesktopFromClaude(): Promise<number> {
-    return await invoke("import_claude_desktop_providers_from_claude");
-  },
-  async ensureClaudeDesktopOfficialProvider(): Promise<boolean> {
-    return await invoke("ensure_claude_desktop_official_provider");
-  },
-  async ensureCodexOfficialProvider(): Promise<boolean> {
-    return await invoke("ensure_codex_official_provider");
-  },
-  async ensureGrokBuildOfficialProvider(): Promise<boolean> {
-    return await invoke("ensure_grokbuild_official_provider");
-  },
-  async getClaudeDesktopStatus(): Promise<ClaudeDesktopStatus> {
-    return await invoke("get_claude_desktop_status");
-  },
-  async getClaudeDesktopDefaultRoutes(): Promise<ClaudeDesktopDefaultRoute[]> {
-    return await invoke("get_claude_desktop_default_routes");
   },
   async updateTrayMenu(): Promise<boolean> {
     return await invoke("update_tray_menu");

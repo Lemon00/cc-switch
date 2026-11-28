@@ -16,6 +16,10 @@
 
 use crate::codex_config::get_codex_config_dir;
 use crate::codex_rollout_file;
+use crate::database::sql_helpers::INPUT_TOKEN_SEMANTICS_TOTAL;
+use crate::database::usage::{
+    find_model_pricing, has_suspected_codex_session_duplicate, should_skip_session_insert, DedupKey,
+};
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::ModelPricing;
@@ -26,14 +30,10 @@ use crate::services::session_common::{
     parse_timestamp_millis, update_sync_state, update_sync_state_on_conn, EstimatedTiming,
     SessionSyncResult,
 };
-use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_TOTAL;
-use crate::services::usage_stats::{
-    find_model_pricing, has_suspected_codex_session_duplicate, should_skip_session_insert, DedupKey,
-};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::BufRead;
 #[cfg(unix)]
@@ -682,50 +682,52 @@ fn token_snapshot_source(payload: &serde_json::Value) -> Option<String> {
 /// - `pricing`：模型定价 pass 级缓存。定价表在 pass 进行中被修改时本 pass
 ///   仍用旧价，下一个同步 pass 生效。
 struct CodexSyncPass {
-    cursors: HashMap<String, (i64, i64)>,
+    cursors: HashMap<String, (i64, i64, Option<i64>)>,
     /// rollout 逻辑文件名（去掉 `.zst`）→ 记过游标的路径，供游标继承按名查找
     rollout_cursor_paths: HashMap<String, Vec<String>>,
-    byte_offsets: HashMap<String, Option<i64>>,
     pricing: HashMap<String, Option<ModelPricing>>,
 }
 
 impl CodexSyncPass {
-    fn load(db: &Database) -> Result<Self, AppError> {
+    fn load(db: &Database, files: &[PathBuf]) -> Result<Self, AppError> {
+        let paths: HashSet<_> = files.iter().map(|path| path.to_string_lossy()).collect();
+        let names: HashSet<_> = paths
+            .iter()
+            .map(|path| codex_rollout_file::logical_file_name(path))
+            .filter(|name| is_rollout_filename(name))
+            .collect();
+        let mut pass = Self {
+            cursors: HashMap::new(),
+            rollout_cursor_paths: HashMap::new(),
+            pricing: HashMap::new(),
+        };
+        if files.is_empty() {
+            return Ok(pass);
+        }
         let conn = lock_conn!(db.conn);
-        let mut stmt = conn
-            .prepare("SELECT file_path, last_modified, last_line_offset FROM session_log_sync")
-            .map_err(|e| AppError::Database(format!("预载同步游标失败: {e}")))?;
-        let cursors = stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    (row.get::<_, i64>(1)?, row.get::<_, i64>(2)?),
-                ))
-            })
-            .and_then(|rows| rows.collect::<Result<HashMap<_, _>, _>>())
-            .map_err(|e| AppError::Database(format!("预载同步游标失败: {e}")))?;
-        let mut stmt = conn.prepare("SELECT file_path, last_byte_offset FROM session_log_sync")?;
-        let byte_offsets = stmt
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?))
-            })?
-            .collect::<Result<HashMap<_, _>, _>>()?;
-        let mut rollout_cursor_paths: HashMap<String, Vec<String>> = HashMap::new();
-        for path in cursors.keys() {
-            let name = codex_rollout_file::logical_file_name(path);
-            if is_rollout_filename(name) {
-                rollout_cursor_paths
-                    .entry(name.to_string())
+        // Keep archived/compressed aliases for current rollouts, including aliases
+        // outside today's root. Both offsets come from the same row and snapshot.
+        let mut stmt = conn.prepare(
+            "SELECT file_path, last_modified, last_line_offset, last_byte_offset FROM session_log_sync",
+        )?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let path: String = row.get(0)?;
+            let name = codex_rollout_file::logical_file_name(&path);
+            let inherited = names.contains(name);
+            if !inherited && !paths.contains(path.as_str()) {
+                continue;
+            }
+            if inherited {
+                pass.rollout_cursor_paths
+                    .entry(name.to_owned())
                     .or_default()
                     .push(path.clone());
             }
+            pass.cursors
+                .insert(path, (row.get(1)?, row.get(2)?, row.get(3)?));
         }
-        Ok(Self {
-            cursors,
-            rollout_cursor_paths,
-            byte_offsets,
-            pricing: HashMap::new(),
-        })
+        Ok(pass)
     }
 }
 
@@ -741,7 +743,11 @@ fn get_codex_sync_state(
     pass: &CodexSyncPass,
 ) -> Result<(i64, i64), AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
-    let state = pass.cursors.get(&file_path_str).copied().unwrap_or((0, 0));
+    let state = pass
+        .cursors
+        .get(&file_path_str)
+        .map(|&(modified, offset, _)| (modified, offset))
+        .unwrap_or((0, 0));
     let logical_name = codex_rollout_file::logical_file_name(&file_path_str);
     let Some(paths) = pass.rollout_cursor_paths.get(logical_name) else {
         return Ok(state);
@@ -752,7 +758,7 @@ fn get_codex_sync_state(
         .iter()
         .filter(|path| path.as_str() != file_path_str)
         .filter_map(|path| pass.cursors.get(path))
-        .map(|&(modified, offset)| (offset, modified))
+        .map(|&(modified, offset, _)| (offset, modified))
         .max();
 
     match inherited {
@@ -963,7 +969,7 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     let codex_dir = get_codex_config_dir();
     let files = collect_codex_session_files(&codex_dir);
     let rollout_index = build_rollout_index(&files);
-    let mut pass = CodexSyncPass::load(db)?;
+    let mut pass = CodexSyncPass::load(db, &files)?;
 
     let mut result = SessionSyncResult {
         imported: 0,
@@ -2225,7 +2231,7 @@ fn sync_single_codex_file(
 
     // Windows may keep mtime unchanged while Codex holds its write handle open.
     // Legacy cursors have no byte offset: rescan once to catch up and persist it.
-    let last_byte_offset = pass.byte_offsets.get(&file_path_str).copied().flatten();
+    let last_byte_offset = pass.cursors.get(&file_path_str).and_then(|cursor| cursor.2);
     if file_modified == last_modified && last_byte_offset == i64::try_from(file_size).ok() {
         return Ok(CodexFileSyncResult::default());
     }
@@ -2637,6 +2643,49 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cursor_snapshot_keeps_archived_aliases_and_skips_unrelated_state() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let name = "rollout-2026-11-28T00-00-00-12345678-1234-1234-1234-123456789abc.jsonl";
+        let current = format!("/current/{name}");
+        let archived = format!("/old-root/{name}.zst");
+        {
+            let conn = lock_conn!(db.conn);
+            for (path, modified, line, bytes) in [
+                (current.as_str(), 10, 2, 20),
+                (archived.as_str(), 11, 9, 90),
+                ("/current/plain.jsonl", 12, 5, 50),
+            ] {
+                conn.execute(
+                    "INSERT INTO session_log_sync (file_path,last_modified,last_line_offset,last_synced_at,last_byte_offset)
+                     VALUES (?1,?2,?3,0,?4)",
+                    rusqlite::params![path,modified,line,bytes],
+                )?;
+            }
+            conn.execute(
+                "INSERT INTO session_log_sync (file_path,last_modified,last_line_offset,last_synced_at)
+                 VALUES ('dsh:unrelated','invalid',0,0)",
+                [],
+            )?;
+        }
+        let files = [
+            PathBuf::from(&current),
+            PathBuf::from("/current/plain.jsonl"),
+        ];
+        let pass = CodexSyncPass::load(&db, &files)?;
+        assert_eq!(pass.cursors.len(), 3);
+        assert_eq!(pass.cursors[&current].2, Some(20));
+        assert_eq!(pass.cursors["/current/plain.jsonl"].2, Some(50));
+        assert_eq!(
+            get_codex_sync_state(&db, Path::new(&current), &pass)?,
+            (11, 9)
+        );
+        lock_conn!(db.conn).execute("DROP TABLE session_log_sync", [])?;
+        assert!(CodexSyncPass::load(&db, &[]).is_ok());
+        assert!(CodexSyncPass::load(&db, &files).is_err());
+        Ok(())
+    }
+
+    #[test]
     fn cumulative_delta_saturates_large_counters() {
         let huge = u64::from(u32::MAX) + 1;
         let usage = CumulativeTokens {
@@ -2654,9 +2703,9 @@ mod tests {
         }
     }
     // `session_usage` 被 session-monitor feature 门控；只有门控内的测试用它。
+    use crate::database::sql_helpers::INPUT_TOKEN_SEMANTICS_LEGACY;
     #[cfg(feature = "session-monitor")]
     use crate::services::session_usage::get_sync_state;
-    use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_LEGACY;
     use tempfile::tempdir;
 
     #[test]
@@ -3249,7 +3298,7 @@ mod tests {
             .iter()
             .map(|path| path.to_path_buf())
             .collect::<Vec<_>>();
-        let mut pass = CodexSyncPass::load(db)?;
+        let mut pass = CodexSyncPass::load(db, &files)?;
         sync_single_codex_file(db, file, &build_rollout_index(&files), &mut pass)
     }
 
@@ -4280,7 +4329,7 @@ mod tests {
         assert_eq!(sync_test_file(&db, &file, &[&file])?.imported, 1);
 
         let conn = lock_conn!(db.conn);
-        let fresh_input = crate::services::sql_helpers::fresh_input_sql("");
+        let fresh_input = crate::database::sql_helpers::fresh_input_sql("");
         let (fresh, cache_read, cache_creation, cache_creation_cost, total_cost): (
             i64,
             i64,

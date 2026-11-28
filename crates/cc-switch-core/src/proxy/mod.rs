@@ -10,7 +10,7 @@ pub mod classifier_guard;
 mod codex_models_passthrough;
 pub mod codex_quota_protection;
 pub mod content_encoding;
-pub mod copilot_optimizer;
+
 pub mod error;
 pub mod error_mapper;
 pub mod failover_switch;

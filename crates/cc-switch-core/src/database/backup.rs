@@ -31,7 +31,7 @@ fn validate_backup_basename(filename: &str) -> Result<(), AppError> {
         path.components().collect::<Vec<_>>().as_slice(),
         [std::path::Component::Normal(_)]
     );
-    if filename.is_empty()
+    if filename.len() <= 3
         || !filename.ends_with(".db")
         || filename.contains('\0')
         || filename.contains("..")
@@ -94,11 +94,8 @@ const IMPORT_ALLOWED_PRAGMAS: &[&str] = &["foreign_keys", "user_version"];
 /// 大小写、换行绕过，还漏掉 `VACUUM INTO`。authorizer 在 prepare 阶段按**解析结果**
 /// 回调，绕不过语法层。
 ///
-/// 为什么是「拒绝越界动作」而不是「只放行 dump_sql 的语句」：这段 SQL 跑在
-/// `NamedTempFile` 建的一次性库上，而那个库的全部内容本来就由这份 SQL 决定。
-/// 因此 `DELETE` / `DROP` / `UPDATE` 给不了攻击者任何新东西——**唯一有意义的边界
-/// 是那个临时文件本身**。按 dump_sql 的产物做严格白名单只会带来误伤风险（用户
-/// 库里出现一种没预料到的对象就恢复不了备份），却不多挡任何攻击。
+/// 生产 schema 不含 trigger/view；外部导入禁止持久化这些可执行对象。
+/// SQL 与二进制恢复均在暂存库验证后才替换真实数据。
 ///
 /// 越界动作是实测出来的，不是推断的：
 /// - `ATTACH DATABASE 'x'`、`VACUUM INTO 'x'`、裸 `VACUUM` **三者都**报
@@ -112,6 +109,14 @@ fn import_authorizer(context: rusqlite::hooks::AuthContext<'_>) -> rusqlite::hoo
     let escapes_temp_db = match context.action {
         AuthAction::Attach { .. } | AuthAction::Detach { .. } => true,
         AuthAction::CreateVtable { .. } | AuthAction::DropVtable { .. } => true,
+        AuthAction::CreateTrigger { .. }
+        | AuthAction::CreateTempTrigger { .. }
+        | AuthAction::DropTrigger { .. }
+        | AuthAction::DropTempTrigger { .. }
+        | AuthAction::CreateView { .. }
+        | AuthAction::CreateTempView { .. }
+        | AuthAction::DropView { .. }
+        | AuthAction::DropTempView { .. } => true,
         AuthAction::Unknown { .. } => true,
         AuthAction::Pragma { pragma_name, .. } => !IMPORT_ALLOWED_PRAGMAS
             .iter()
@@ -312,7 +317,7 @@ impl Database {
                 .map_err(|e| AppError::Database(e.to_string()))?;
             Self::complete_backup(&backup, "替换主数据库")?;
             drop(backup);
-            self.invalidate_log_count_cache();
+            self.invalidate_state_after_replacement();
             backup_path
         };
 
@@ -764,6 +769,17 @@ impl Database {
     /// from being completed by `create_tables_on_conn`, while allowing a valid
     /// backup whose user-owned configuration tables happen to contain no rows.
     fn validate_imported_schema(conn: &Connection) -> Result<(), AppError> {
+        let disallowed: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type IN ('trigger', 'view')",
+            [],
+            |row| row.get(0),
+        )?;
+        if disallowed > 0 {
+            return Err(AppError::InvalidInput(
+                "Imported database contains disallowed trigger or view objects".into(),
+            ));
+        }
+
         const REQUIRED_TABLES: &[&str] = &[
             "providers",
             "provider_endpoints",
@@ -1182,7 +1198,7 @@ impl Database {
                 .map_err(|e| AppError::Database(e.to_string()))?;
             Self::complete_backup(&backup, "恢复主数据库")?;
             drop(backup);
-            self.invalidate_log_count_cache();
+            self.invalidate_state_after_replacement();
             safety_backup
         };
         let safety_id = safety_backup
@@ -1428,19 +1444,34 @@ mod tests {
         let _test_home = TestHomeGuard::new();
         let observer = Arc::new(Recorder::default());
         let db = Database::init_with_observer(observer.clone())?;
+        let revisions = || {
+            crate::app::AppType::all()
+                .map(|app| db.route_revision(&app))
+                .collect::<Vec<_>>()
+        };
+        let original_revisions = revisions();
         db.set_setting("observer-value", "original")?;
         assert!(db.import_sql_string("invalid SQL").is_err());
         assert_eq!(observer.replacements.load(Ordering::SeqCst), 0);
+        assert_eq!(revisions(), original_revisions);
         let remote = Database::memory()?;
         remote.set_setting("observer-value", "imported")?;
         let safety_id = db.import_sql_string(&remote.export_sql_string()?)?;
         assert_eq!(observer.replacements.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            revisions(),
+            original_revisions.iter().map(|n| n + 1).collect::<Vec<_>>()
+        );
         assert_eq!(
             db.get_setting("observer-value")?.as_deref(),
             Some("imported")
         );
         db.restore_from_backup(&format!("{safety_id}.db"))?;
         assert_eq!(observer.replacements.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            revisions(),
+            original_revisions.iter().map(|n| n + 2).collect::<Vec<_>>()
+        );
         assert_eq!(
             db.get_setting("observer-value")?.as_deref(),
             Some("original")
@@ -3723,6 +3754,54 @@ mod tests {
             t.elapsed()
         );
 
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn import_rejects_views_and_triggers_before_replacing_live_data() -> Result<(), AppError> {
+        let _home = TestHomeGuard::new();
+        let source = Database::memory()?;
+        let sql = source.export_sql_string()?;
+        let target = Database::memory()?;
+        target.conn.lock().unwrap().execute(
+            "INSERT INTO settings(key, value) VALUES ('sentinel', 'kept')",
+            [],
+        )?;
+        for object in [
+        "CREATE VIEW injected_view AS SELECT * FROM settings;",
+        "CREATE TRIGGER injected_trigger AFTER INSERT ON settings BEGIN DELETE FROM providers; END;"
+    ] {
+        assert!(target.import_sql_string(&format!("{sql}\n{object}")).is_err());
+        assert_eq!(target.conn.lock().unwrap().query_row("SELECT value FROM settings WHERE key = 'sentinel'", [], |r| r.get::<_, String>(0))?, "kept");
+        let staged = Connection::open_in_memory()?;
+        staged.execute_batch(&sql)?;
+        staged.execute_batch(object)?;
+        assert!(Database::validate_imported_schema(&staged).is_err(), "binary restores must reject the same objects");
+    }
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn binary_restore_rejects_views_and_triggers_without_changing_live_data() -> Result<(), AppError>
+    {
+        let _home = TestHomeGuard::new();
+        let db = Database::init()?;
+        db.set_setting("restore-sentinel", "kept")?;
+        for object in [
+            "CREATE VIEW injected_view AS SELECT * FROM settings;",
+            "CREATE TRIGGER injected_trigger AFTER INSERT ON settings BEGIN DELETE FROM providers; END;",
+        ] {
+            let backup = db.backup_database_file()?.expect("file-backed backup");
+            let staged = Connection::open(&backup)?;
+            staged.execute_batch(object)?;
+            drop(staged);
+            let before = db.export_sql_string()?;
+            assert!(db.restore_from_backup(backup.file_name().unwrap().to_str().unwrap()).is_err());
+            assert_eq!(db.export_sql_string()?, before);
+            std::fs::remove_file(&backup).map_err(|error| AppError::io(&backup, error))?;
+        }
         Ok(())
     }
 }

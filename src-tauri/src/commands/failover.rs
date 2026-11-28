@@ -10,8 +10,7 @@ use std::str::FromStr;
 use tauri::Emitter;
 
 fn require_failover_app(app_type: &str) -> Result<AppType, String> {
-    let app = AppType::from_str(app_type)
-        .map_err(|error| format!("无效的应用类型: {error}"))?;
+    let app = AppType::from_str(app_type).map_err(|error| format!("无效的应用类型: {error}"))?;
     if !app.supports_local_proxy() {
         return Err(format!("{} 不支持故障转移", app.as_str()));
     }
@@ -211,6 +210,9 @@ pub async fn set_auto_failover_enabled(
         "[Failover] Setting auto_failover_enabled: app_type='{app_type}', enabled={enabled}"
     );
 
+    let _guard = crate::mode::controller::lock_settled(&state, &app_enum)
+        .await
+        .map_err(|e| e.to_string())?;
     // 读取当前配置
     let mut config = state
         .db
@@ -294,7 +296,7 @@ pub async fn set_auto_failover_enabled(
     // 避免 P1 不可切换（例如 official provider）时留下“开关已开但目标未切”的脏状态。
     // Stack 模式不做故障转移，切换在锁内拒绝（见 `switch_route_for_failover`）。
     if enabled {
-        if let Err(e) = crate::mode::controller::switch_route_for_failover(
+        if let Err(e) = crate::mode::controller::switch_route_for_failover_locked(
             state.inner(),
             &app_enum,
             &p1_provider_id,

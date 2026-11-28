@@ -229,63 +229,6 @@ pub fn should_convert_codex_responses_to_gemini(provider: &Provider, endpoint: &
         == Some("gemini_native")
 }
 
-/// Whether a native-Responses Codex upstream needs Codex `namespace`/plugin
-/// tool declarations flattened before forwarding, plus xAI schema sanitization.
-///
-/// Codex 0.142+ emits ChatGPT-backend-private `{"type":"namespace",…}` tool
-/// shapes that strict third-party Responses gateways reject with
-/// `422 unknown variant "namespace"`. xAI also rejects root `oneOf`/`anyOf`
-/// function schemas (notably `mcp__codex_app__automation_update`). The
-/// Chat/Anthropic transform paths already unwrap namespaces, so this only
-/// fires on native Responses passthrough.
-///
-/// Covers managed xAI OAuth *and* API-key providers whose live upstream is
-/// `api.x.ai` with `wire_api = "responses"`, plus Grok models served by managed
-/// Copilot. Call only on native Responses paths, with the resolved outbound
-/// model: a Copilot card can serve both Grok and non-Grok models.
-/// See farion1231/cc-switch#6815.
-pub fn provider_needs_responses_namespace_flatten(
-    provider: &Provider,
-    outbound_model: Option<&str>,
-) -> bool {
-    provider.is_xai_oauth()
-        || provider_is_xai_native_responses(provider)
-        || (provider.is_github_copilot()
-            && outbound_model.is_some_and(|model| {
-                model
-                    .trim()
-                    .as_bytes()
-                    .get(..5)
-                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"grok-"))
-            }))
-}
-
-/// True when this Codex provider talks native Responses to first-party xAI
-/// (`api.x.ai`), including API-key Grok cards that are not `xai_oauth`.
-fn provider_is_xai_native_responses(provider: &Provider) -> bool {
-    let config_text = provider
-        .settings_config
-        .get("config")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-
-    let Some(wire_api) = extract_codex_wire_api_from_toml(config_text) else {
-        return false;
-    };
-    if !wire_api.eq_ignore_ascii_case("responses") {
-        return false;
-    }
-
-    extract_codex_base_url(config_text)
-        .map(|url| url.to_ascii_lowercase())
-        .is_some_and(|url| url.contains("api.x.ai"))
-}
-
-/// 原生 Responses 透传的响应要不要补迟到的函数调用参数（见 `responses_late_arguments`）：
-/// 官方以外的上游都补。触发条件是协议违规本身（结束事件参数为空、增量排在后面，实测
-/// MiniMax），不按厂商名：转发 MiniMax 原生流的中转站同样会带过来。顺序正常的流原样放行。
-///
-/// 只在转 Chat / 转 Anthropic / xAI 改写之外的原生透传分支里调用。
 pub fn provider_needs_responses_late_arguments_repair(provider: &Provider) -> bool {
     !is_codex_official_provider(provider)
 }
@@ -349,14 +292,10 @@ pub fn resolve_codex_catalog_tool_profile(
     if is_codex_official_provider(provider) {
         return CodexCatalogToolProfile::NativeResponses;
     }
-    // xAI OAuth pins the native Responses profile regardless of editable
+
     // api_format, mirroring the Claude-side managed-provider invariant.
-    if provider.is_xai_oauth() {
-        return CodexCatalogToolProfile::NativeResponses;
-    }
-    if provider.is_github_copilot() {
-        return CodexCatalogToolProfile::Copilot;
-    }
+    {}
+    {}
     if codex_provider_uses_anthropic(provider)
         || should_convert_codex_responses_to_gemini(provider, "/responses")
     {
@@ -483,15 +422,12 @@ pub fn codex_stack_upstream_rejects_web_search(
     provider: &Provider,
     request_model: Option<&str>,
 ) -> bool {
-    if provider.is_github_copilot() {
-        return true;
-    }
+    {}
 
     let projected =
         crate::live::project::codex::CodexProjection::of(&crate::live::project::codex::RowInput {
             settings: &provider.settings_config,
             official: false,
-            proxy_injected_oauth: provider.uses_proxy_injected_oauth(),
         })
         .map(|projection| projection.catalog_input_text());
     let config_text = match &projected {
@@ -539,8 +475,6 @@ pub fn strip_codex_hosted_web_search(body: &mut JsonValue) -> bool {
 /// 其余标记原样保留。
 const CODEX_PRIVATE_INCLUDE_MARKERS: &[&str] = &["output.encrypted_content"];
 
-/// 去掉 `include` 里的 Codex 私有标记：去完为空时整个键删掉；缺键、非数组、非对象
-/// 请求一律不动；数组里的非字符串项原样留着。返回是否改了请求。和 xAI 侧的白名单各管
 /// 一段，重复删无副作用。
 pub fn strip_codex_private_include_markers(body: &mut JsonValue) -> bool {
     let Some(obj) = body.as_object_mut() else {
@@ -1090,15 +1024,10 @@ impl ProviderAdapter for CodexAdapter {
             return Ok(super::CHATGPT_CODEX_BASE_URL.to_string());
         }
 
-        if provider.is_github_copilot() {
-            return Ok("https://api.githubcopilot.com".to_string());
-        }
+        {}
 
-        // xAI OAuth: ignore editable provider base URLs and always use the xAI
         // API origin associated with the managed token.
-        if provider.is_xai_oauth() {
-            return Ok(super::XAI_API_BASE_URL.to_string());
-        }
+        {}
 
         // 1. 尝试直接获取 base_url 字段
         if let Some(url) = provider
@@ -1153,21 +1082,9 @@ impl ProviderAdapter for CodexAdapter {
     }
 
     fn extract_auth(&self, provider: &Provider) -> Option<AuthInfo> {
-        if provider.is_github_copilot() {
-            return Some(AuthInfo::new(
-                "copilot_placeholder".to_string(),
-                AuthStrategy::GitHubCopilot,
-            ));
-        }
+        {}
 
-        // xAI OAuth (Grok subscription): placeholder credentials only; the real
-        // access_token is resolved per-request by the forwarder via XaiOAuthManager.
-        if provider.is_xai_oauth() {
-            return Some(AuthInfo::new(
-                "xai_oauth_placeholder".to_string(),
-                AuthStrategy::XaiOAuth,
-            ));
-        }
+        {}
 
         // Anthropic upstream: the auth field is chosen by the user in the UI (meta.apiKeyField).
         //   ANTHROPIC_API_KEY    → x-api-key (AuthStrategy::Anthropic)
@@ -1230,9 +1147,7 @@ impl ProviderAdapter for CodexAdapter {
         auth: &AuthInfo,
     ) -> Result<Vec<(http::HeaderName, http::HeaderValue)>, ProxyError> {
         use super::adapter::auth_header_value;
-        if auth.strategy == AuthStrategy::GitHubCopilot {
-            return super::copilot_auth::build_copilot_request_headers(&auth.api_key);
-        }
+        {}
         let bearer = format!("Bearer {}", auth.api_key);
         // Anthropic gateway: send only x-api-key (anthropic-version is filled in by
         // the forwarder). Mutually exclusive with Bearer to avoid a 401 from the
@@ -1253,7 +1168,6 @@ impl ProviderAdapter for CodexAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::ProviderMeta;
     use serde_json::json;
 
     fn create_provider(config: serde_json::Value) -> Provider {
@@ -1270,105 +1184,6 @@ mod tests {
             icon: None,
             icon_color: None,
             in_failover_queue: false,
-        }
-    }
-
-    fn create_copilot_provider() -> Provider {
-        let mut provider = create_provider(json!({}));
-        provider.meta = Some(ProviderMeta {
-            provider_type: Some("github_copilot".to_string()),
-            ..ProviderMeta::default()
-        });
-        provider
-    }
-
-    #[test]
-    fn codex_adapter_uses_managed_copilot_auth_and_endpoint() {
-        let adapter = CodexAdapter::new();
-        let provider = create_copilot_provider();
-
-        assert_eq!(
-            adapter.extract_base_url(&provider).unwrap(),
-            "https://api.githubcopilot.com"
-        );
-        let auth = adapter.extract_auth(&provider).unwrap();
-        assert_eq!(auth.strategy, AuthStrategy::GitHubCopilot);
-        let headers = adapter.get_auth_headers(&auth).unwrap();
-        assert!(headers
-            .iter()
-            .any(|(name, _)| name.as_str() == "copilot-integration-id"));
-    }
-
-    #[test]
-    fn stack_web_search_rejection_includes_managed_copilot() {
-        let copilot = create_copilot_provider();
-        assert!(codex_stack_upstream_rejects_web_search(&copilot, None));
-
-        let ordinary = create_provider(json!({
-            "config": r#"
-model_provider = "custom"
-[model_providers.custom]
-base_url = "https://relay.example.com/v1"
-wire_api = "responses"
-"#
-        }));
-        assert!(!codex_stack_upstream_rejects_web_search(&ordinary, None));
-        assert!(codex_stack_upstream_rejects_web_search(
-            &ordinary,
-            Some("MiniMaxAI/MiniMax-M3")
-        ));
-    }
-
-    #[test]
-    fn copilot_catalog_profile_survives_live_projection_and_format_overrides() {
-        use crate::codex_config::{codex_disables_web_search, CodexCatalogToolProfile};
-        use crate::live::project::codex::{CodexProjection, RowInput};
-
-        for base_url in ["https://api.githubcopilot.com", "http://localhost:15721/v1"] {
-            let mut provider = create_copilot_provider();
-            provider.settings_config = json!({
-                "auth": {},
-                "config": format!(
-                    "model = \"claude-sonnet-5\"\nmodel_provider = \"copilot\"\n\n[model_providers.copilot]\nbase_url = \"{base_url}\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n"
-                )
-            });
-            let projection = CodexProjection::of(&RowInput {
-                settings: &provider.settings_config,
-                official: is_codex_official_provider(&provider),
-                proxy_injected_oauth: provider.uses_proxy_injected_oauth(),
-            })
-            .unwrap();
-            let config = projection.catalog_input_text();
-            let parsed: TomlValue = toml::from_str(&config).unwrap();
-            assert_eq!(parsed["model_provider"].as_str(), Some("custom"));
-            let route = &parsed["model_providers"]["custom"];
-            assert_eq!(route["wire_api"].as_str(), Some("responses"));
-            assert!(route.get("requires_openai_auth").is_none());
-
-            for api_format in [
-                None,
-                Some("openai_chat"),
-                Some("openai_responses"),
-                Some("anthropic"),
-            ] {
-                for transport in [
-                    None,
-                    Some("auto"),
-                    Some("openai_responses"),
-                    Some("openai_chat"),
-                ] {
-                    let meta = provider.meta.as_mut().unwrap();
-                    meta.api_format = api_format.map(str::to_string);
-                    meta.codex_copilot_api_format = transport.map(str::to_string);
-                    let profile = resolve_codex_catalog_tool_profile(&provider);
-                    assert_eq!(profile, CodexCatalogToolProfile::Copilot);
-                    assert!(codex_disables_web_search(
-                        &provider.settings_config,
-                        &config,
-                        profile
-                    ));
-                }
-            }
         }
     }
 
@@ -1806,12 +1621,6 @@ wire_api = "anthropic"
         assert_eq!(
             resolve_codex_catalog_tool_profile(&chat),
             CodexCatalogToolProfile::ProxyChat
-        );
-
-        let copilot = create_copilot_provider();
-        assert_eq!(
-            resolve_codex_catalog_tool_profile(&copilot),
-            CodexCatalogToolProfile::Copilot
         );
 
         // Host fallback (#6944): a DB row saved while the Zhipu preset was still
@@ -2271,49 +2080,6 @@ wire_api = "chat"
     }
 
     #[test]
-    fn test_resolve_codex_chat_reasoning_repairs_enabled_none_effort_param() {
-        let mut provider = create_provider(json!({
-            "config": r#"
-model_provider = "copilot"
-model = "claude-opus-5.5"
-
-[model_providers.copilot]
-name = "GitHub Copilot"
-base_url = "https://api.githubcopilot.com"
-wire_api = "chat"
-"#
-        }));
-        provider.meta = Some(crate::provider::ProviderMeta {
-            codex_chat_reasoning: Some(CodexChatReasoningConfig {
-                supports_thinking: Some(true),
-                supports_effort: Some(true),
-                thinking_param: Some("none".to_string()),
-                effort_param: Some("none".to_string()),
-                effort_value_mode: Some("passthrough".to_string()),
-                output_format: Some("auto".to_string()),
-                effort_levels: None,
-            }),
-            ..Default::default()
-        });
-        let request = json!({
-            "model": "claude-opus-5.5",
-            "input": "hello",
-            "reasoning": { "effort": "max" }
-        });
-
-        let config = resolve_codex_chat_reasoning_config(&provider, &request).unwrap();
-        assert_eq!(config.effort_param.as_deref(), Some("reasoning_effort"));
-
-        let transformed = crate::proxy::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
-            request,
-            Some(&config),
-            true,
-        )
-        .unwrap();
-        assert_eq!(transformed["reasoning_effort"], "max");
-    }
-
-    #[test]
     fn test_resolve_codex_chat_reasoning_openrouter_platform_overrides_model() {
         let provider = create_provider(json!({
             "config": r#"
@@ -2629,126 +2395,6 @@ wire_api = "chat"
     }
 
     #[test]
-    fn xai_oauth_invariants_ignore_editable_base_url_and_auth() {
-        let adapter = CodexAdapter::new();
-        let mut provider = create_provider(json!({
-            "auth": { "OPENAI_API_KEY": "user-edited" },
-            "config": r#"
-model = "grok-4.5"
-
-[model_providers.custom]
-name = "xai"
-base_url = "https://attacker.example/v1"
-wire_api = "responses"
-"#
-        }));
-        provider.meta = Some(crate::provider::ProviderMeta {
-            provider_type: Some("xai_oauth".to_string()),
-            ..Default::default()
-        });
-
-        // 可编辑字段（base_url / auth key）不得影响托管路由：
-        // 端点硬定向 api.x.ai，凭据是占位符（真 token 由 forwarder 注入）。
-        assert_eq!(
-            adapter.extract_base_url(&provider).unwrap(),
-            super::super::XAI_API_BASE_URL
-        );
-        let auth = adapter
-            .extract_auth(&provider)
-            .expect("managed auth placeholder");
-        assert_eq!(auth.api_key, "xai_oauth_placeholder");
-        assert_eq!(auth.strategy, AuthStrategy::XaiOAuth);
-    }
-
-    #[test]
-    fn xai_oauth_pins_native_responses_catalog_profile() {
-        let mut provider = create_provider(json!({ "auth": {}, "config": "" }));
-        provider.meta = Some(crate::provider::ProviderMeta {
-            provider_type: Some("xai_oauth".to_string()),
-            // 即使 api_format 被改成 anthropic，catalog 画像也必须钉死原生 Responses
-            api_format: Some("anthropic".to_string()),
-            ..Default::default()
-        });
-
-        assert!(matches!(
-            resolve_codex_catalog_tool_profile(&provider),
-            crate::codex_config::CodexCatalogToolProfile::NativeResponses
-        ));
-    }
-
-    #[test]
-    fn namespace_flatten_gate_fires_for_xai_oauth_and_api_xai_responses() {
-        let mut xai = create_provider(json!({ "auth": {}, "config": "" }));
-        xai.meta = Some(crate::provider::ProviderMeta {
-            provider_type: Some("xai_oauth".to_string()),
-            ..Default::default()
-        });
-        assert!(provider_needs_responses_namespace_flatten(&xai, None));
-
-        // API-key Grok cards (no xai_oauth meta) still talk to api.x.ai Responses.
-        let grok_key = create_provider(json!({
-            "auth": { "OPENAI_API_KEY": "sk-x" },
-            "config": r#"
-model_provider = "custom"
-model = "grok-4.6"
-
-[model_providers.custom]
-name = "xai"
-base_url = "https://api.x.ai/v1"
-wire_api = "responses"
-"#
-        }));
-        assert!(provider_needs_responses_namespace_flatten(&grok_key, None));
-
-        // A non-xAI Responses provider must not be flattened.
-        let other = create_provider(json!({
-            "auth": { "OPENAI_API_KEY": "sk-x" },
-            "config": r#"
-[model_providers.custom]
-base_url = "https://api.deepseek.com"
-wire_api = "responses"
-"#
-        }));
-        assert!(!provider_needs_responses_namespace_flatten(&other, None));
-        assert!(!provider_needs_responses_namespace_flatten(
-            &other,
-            Some("grok-4.7")
-        ));
-    }
-
-    #[test]
-    fn copilot_namespace_compat_uses_only_the_outbound_grok_model() {
-        let mut copilot = create_copilot_provider();
-        copilot.settings_config = json!({
-            "config": "model = \"grok-4.7\"",
-            "modelCatalog": {"models": [{"model": "grok-4.7"}, {"model": "gpt-6.1-sol"}]}
-        });
-        for (model, expected) in [
-            (Some("grok-4.7"), true),
-            (Some("grok-4.5"), true),
-            (Some(" GROK-4.7-fast "), true),
-            (Some("gpt-6.1-sol"), false),
-            (Some("claude-sonnet-4.6"), false),
-            (Some("grokker"), false),
-            (Some("模型"), false),
-            (Some(""), false),
-            (None, false),
-        ] {
-            assert_eq!(
-                provider_needs_responses_namespace_flatten(&copilot, model),
-                expected,
-                "{model:?}"
-            );
-        }
-
-        copilot.meta = None;
-        assert!(!provider_needs_responses_namespace_flatten(
-            &copilot,
-            Some("grok-4.7")
-        ));
-    }
-
-    #[test]
     fn strip_private_include_markers_keeps_other_markers() {
         let mut body = json!({
             "include": ["reasoning.encrypted_content", "output.encrypted_content"]
@@ -2888,5 +2534,48 @@ wire_api = "responses"
         assert!(!strip_codex_openai_only_request_fields(&mut body));
         assert_eq!(body, once);
         assert_eq!(body, json!({ "input": [] }));
+    }
+
+    #[test]
+    fn test_resolve_codex_chat_reasoning_repairs_enabled_none_effort_param() {
+        let mut provider = create_provider(json!({
+            "config": r#"
+model_provider = "relay"
+model = "claude-opus-5.5"
+
+[model_providers.relay]
+name = "Relay"
+base_url = "https://relay.example"
+wire_api = "chat"
+"#
+        }));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            codex_chat_reasoning: Some(CodexChatReasoningConfig {
+                supports_thinking: Some(true),
+                supports_effort: Some(true),
+                thinking_param: Some("none".to_string()),
+                effort_param: Some("none".to_string()),
+                effort_value_mode: Some("passthrough".to_string()),
+                output_format: Some("auto".to_string()),
+                effort_levels: None,
+            }),
+            ..Default::default()
+        });
+        let request = json!({
+            "model": "claude-opus-5.5",
+            "input": "hello",
+            "reasoning": { "effort": "max" }
+        });
+
+        let config = resolve_codex_chat_reasoning_config(&provider, &request).unwrap();
+        assert_eq!(config.effort_param.as_deref(), Some("reasoning_effort"));
+
+        let transformed = crate::proxy::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+            request,
+            Some(&config),
+            true,
+        )
+        .unwrap();
+        assert_eq!(transformed["reasoning_effort"], "max");
     }
 }

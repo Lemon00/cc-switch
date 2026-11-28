@@ -513,7 +513,7 @@ mod tests {
             std::fs::create_dir_all(&gemini).unwrap();
             settings::update_settings(AppSettings {
                 codex_config_dir: Some(codex.to_string_lossy().into_owned()),
-                gemini_config_dir: Some(gemini.to_string_lossy().into_owned()),
+
                 ..AppSettings::default()
             })
             .unwrap();
@@ -540,6 +540,18 @@ mod tests {
             "apps": {"codex": enabled}
         }))
         .unwrap()
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn removing_absent_claude_server_does_not_rewrite_config() {
+        let _settings = TestSettings::new();
+        let path = crate::config::get_claude_mcp_path();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let original = b"{\n  \"keep\": true\n}\n";
+        std::fs::write(&path, original).unwrap();
+        mcp::remove_server_from_claude("absent").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), original);
     }
 
     #[test]

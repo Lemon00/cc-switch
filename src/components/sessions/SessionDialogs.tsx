@@ -186,8 +186,7 @@ export function SessionSourcesDialog({
             </DialogTitle>
             <DialogDescription className="text-body text-fg-2">
               {t("sessionManager.whereLead", {
-                defaultValue:
-                  "CC Switch 从这些位置读取会话。Claude Desktop 没有单独的会话记录。",
+                defaultValue: "CC Switch 从这些位置读取会话。",
               })}
             </DialogDescription>
           </div>

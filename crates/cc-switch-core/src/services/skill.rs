@@ -322,6 +322,8 @@ const FILE_ENTRY_BUDGET_COST: u64 = DIRECTORY_BUDGET_COST;
 const MAX_ARCHIVE_DOWNLOAD_BYTES: u64 = MAX_ARCHIVE_TOTAL_BYTES;
 
 /// 技能归档下载请求的 User-Agent。
+const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(60);
+const DOWNLOAD_TOTAL_TIMEOUT: Duration = Duration::from_secs(600);
 const SKILL_DOWNLOAD_USER_AGENT: &str = concat!("CC-Switch/", env!("CARGO_PKG_VERSION"));
 
 /// 技能元数据 (从 SKILL.md 解析)
@@ -551,8 +553,8 @@ impl SkillService {
             }
         } else if destination.is_dir() {
             if let (Ok(destination_hash), Ok(source_hash)) = (
-                Self::compute_dir_hash(destination),
-                Self::compute_dir_hash(source),
+                Self::compute_storage_hash(destination),
+                Self::compute_storage_hash(source),
             ) {
                 if destination_hash == source_hash {
                     return Ok(Some(SkillDeployment::Copy));
@@ -882,22 +884,7 @@ impl SkillService {
             };
 
             // 下载仓库
-            let (temp_guard, used_branch) = timeout(
-                std::time::Duration::from_secs(60),
-                self.download_repo(&repo),
-            )
-            .await
-            .map_err(|_| {
-                anyhow!(format_skill_error(
-                    "DOWNLOAD_TIMEOUT",
-                    &[
-                        ("owner", &repo.owner),
-                        ("name", &repo.name),
-                        ("timeout", "60")
-                    ],
-                    Some("checkNetwork"),
-                ))
-            })??;
+            let (temp_guard, used_branch) = self.download_repo_bounded(&repo).await?;
             let temp_dir = temp_guard.path();
             repo_branch = used_branch;
 
@@ -1225,6 +1212,54 @@ impl SkillService {
         Self::compute_dir_hash_with(dir, true)
     }
 
+    /// Destructive operations must compare every entry, including hidden files,
+    /// empty directories and symlinks. Update hashes deliberately ignore some of
+    /// these and cannot establish ownership or verify a complete backup.
+    fn compute_storage_hash(dir: &Path) -> Result<String> {
+        use sha2::{Digest, Sha256};
+
+        fn hash_tree(dir: &Path, hash: &mut Sha256) -> Result<()> {
+            let mut entries = fs::read_dir(dir)?.collect::<std::io::Result<Vec<_>>>()?;
+            entries.sort_by_key(|entry| entry.file_name());
+            for entry in entries {
+                let name = entry.file_name();
+                let name = name.as_encoded_bytes();
+                hash.update((name.len() as u64).to_le_bytes());
+                hash.update(name);
+                let path = entry.path();
+                let metadata = fs::symlink_metadata(&path)?;
+                if metadata.file_type().is_symlink() {
+                    hash.update(b"L");
+                    let target = fs::read_link(&path)?;
+                    let target = target.as_os_str().as_encoded_bytes();
+                    hash.update((target.len() as u64).to_le_bytes());
+                    hash.update(target);
+                } else if metadata.is_dir() {
+                    hash.update(b"D");
+                    hash_tree(&path, hash)?;
+                } else if metadata.is_file() {
+                    hash.update(b"F");
+                    hash.update(metadata.len().to_le_bytes());
+                    let copied = std::io::copy(&mut fs::File::open(&path)?, hash)?;
+                    if copied != metadata.len() {
+                        return Err(anyhow!(
+                            "Skill file changed during verification: {}",
+                            path.display()
+                        ));
+                    }
+                } else {
+                    return Err(anyhow!("Unsupported Skill file type: {}", path.display()));
+                }
+            }
+            hash.update(b"E");
+            Ok(())
+        }
+
+        let mut hash = Sha256::new();
+        hash_tree(dir, &mut hash)?;
+        Ok(format!("{:x}", hash.finalize()))
+    }
+
     /// 旧版算法：字节码也计入。库里在 #7772 修复前保存的 content_hash 是用它
     /// 算的；只给 check_updates 识别并迁移这类旧缓存用。
     fn compute_legacy_dir_hash(dir: &Path) -> Result<String> {
@@ -1385,24 +1420,11 @@ impl SkillService {
             };
 
             // 下载仓库 ZIP
-            let (temp_guard, _used_branch) = match timeout(
-                std::time::Duration::from_secs(60),
-                self.download_repo(&repo),
-            )
-            .await
-            {
-                Ok(Ok(result)) => result,
-                Ok(Err(e)) => {
+            let (temp_guard, _used_branch) = match self.download_repo_bounded(&repo).await {
+                Ok(result) => result,
+                Err(e) => {
                     log::warn!("检查更新时下载 {}/{} 失败: {e}", owner, name);
                     failures.push(Self::repo_failure(&repo, e.to_string()));
-                    continue;
-                }
-                Err(_) => {
-                    log::warn!("检查更新时下载 {}/{} 超时", owner, name);
-                    failures.push(Self::repo_failure(
-                        &repo,
-                        Self::download_timeout_error(&repo),
-                    ));
                     continue;
                 }
             };
@@ -1503,16 +1525,47 @@ impl SkillService {
         }
     }
 
+    fn download_stalled_error() -> anyhow::Error {
+        let seconds = DOWNLOAD_STALL_TIMEOUT.as_secs().to_string();
+        anyhow!(format_skill_error(
+            "DOWNLOAD_STALLED",
+            &[("timeout", &seconds)],
+            Some("checkNetwork"),
+        ))
+    }
+
+    fn open_downloaded_archive<R: std::io::Read + std::io::Seek>(
+        reader: R,
+    ) -> Result<zip::ZipArchive<R>> {
+        zip::ZipArchive::new(reader).map_err(|e| {
+            log::warn!("下载到的内容不是 ZIP 归档: {e}");
+            anyhow::anyhow!(format_skill_error(
+                "ARCHIVE_INVALID",
+                &[],
+                Some("checkRepoUrl"),
+            ))
+        })
+    }
+
     fn download_timeout_error(repo: &SkillRepo) -> String {
+        let seconds = DOWNLOAD_TOTAL_TIMEOUT.as_secs().to_string();
         format_skill_error(
             "DOWNLOAD_TIMEOUT",
             &[
                 ("owner", &repo.owner),
                 ("name", &repo.name),
-                ("timeout", "60"),
+                ("timeout", &seconds),
             ],
             Some("checkNetwork"),
         )
+    }
+
+    /// 下载仓库并套上总时长上限。停滞判定在 `download_and_extract` 里逐块做，
+    /// 这里只兜底「一直有零星数据却始终下不完」这种不该无限挂着的情况。
+    async fn download_repo_bounded(&self, repo: &SkillRepo) -> Result<(tempfile::TempDir, String)> {
+        timeout(DOWNLOAD_TOTAL_TIMEOUT, self.download_repo(repo))
+            .await
+            .map_err(|_| anyhow!(Self::download_timeout_error(repo)))?
     }
 
     /// 持久化更新后的 Skill 元数据，并重新读取数据库中的权威应用启用状态。
@@ -1563,18 +1616,7 @@ impl SkillService {
         };
 
         // 下载仓库
-        let (temp_guard, used_branch) = timeout(
-            std::time::Duration::from_secs(60),
-            self.download_repo(&repo),
-        )
-        .await
-        .map_err(|_| {
-            anyhow!(format_skill_error(
-                "DOWNLOAD_TIMEOUT",
-                &[("owner", &owner), ("name", &name), ("timeout", "60")],
-                Some("checkNetwork"),
-            ))
-        })??;
+        let (temp_guard, used_branch) = self.download_repo_bounded(&repo).await?;
         let temp_dir = temp_guard.path();
 
         // 在解压的仓库中查找 Skill 源目录
@@ -2339,20 +2381,6 @@ impl SkillService {
         })
     }
 
-    #[cfg(test)]
-    fn persist_and_sync_new_skill(
-        db: &Arc<Database>,
-        skill: &InstalledSkill,
-        app: &AppType,
-    ) -> Result<()> {
-        Self::install_prepared_skill(
-            db,
-            skill,
-            &Self::get_ssot_dir()?.join(&skill.directory),
-            app,
-        )
-    }
-
     fn link_points_to_managed_copy(resolved: &Path, source: &Path) -> bool {
         matches!(
             (resolved.canonicalize(), source.canonicalize()),
@@ -2865,16 +2893,14 @@ impl SkillService {
 
     /// 从仓库获取技能列表
     async fn fetch_repo_skills(&self, repo: &SkillRepo) -> Result<Vec<DiscoverableSkill>> {
-        let (temp_guard, resolved_branch) =
-            timeout(std::time::Duration::from_secs(60), self.download_repo(repo))
-                .await
-                .map_err(|_| anyhow!(Self::download_timeout_error(repo)))??;
+        let (temp_guard, resolved_branch) = self.download_repo_bounded(repo).await?;
 
         let mut skills = Vec::new();
         let scan_dir = temp_guard.path();
         let mut resolved_repo = repo.clone();
         resolved_repo.branch = resolved_branch;
         self.scan_dir_recursive(scan_dir, scan_dir, &resolved_repo, &mut skills)?;
+        Self::keep_one_per_install_name(&mut skills);
 
         Ok(skills)
     }
@@ -2956,11 +2982,14 @@ impl SkillService {
 
     /// 静态方法：解析技能元数据
     fn parse_skill_metadata_static(path: &Path) -> Result<SkillMetadata> {
-        let content = fs::read_to_string(path)?;
-        let content = content.trim_start_matches('\u{feff}');
-
-        let mut lines = content.lines();
-        if lines.next().map(str::trim) != Some("---") {
+        use std::io::{BufRead, Read};
+        // Only front matter is needed; never load the entire (possibly huge)
+        // document or an unbounded line from a downloaded repository.
+        const MAX_FRONT_MATTER_BYTES: u64 = 1024 * 1024;
+        let mut lines =
+            std::io::BufReader::new(fs::File::open(path)?.take(MAX_FRONT_MATTER_BYTES)).lines();
+        let first = lines.next().transpose()?.unwrap_or_default();
+        if first.trim_start_matches('\u{feff}').trim() != "---" {
             return Ok(SkillMetadata {
                 name: None,
                 description: None,
@@ -2969,11 +2998,12 @@ impl SkillService {
         let mut front_matter = String::new();
         let mut closed = false;
         for line in lines {
+            let line = line?;
             if matches!(line.trim(), "---" | "...") {
                 closed = true;
                 break;
             }
-            front_matter.push_str(line);
+            front_matter.push_str(&line);
             front_matter.push('\n');
         }
         let meta: SkillMetadata = serde_yaml::from_str(if closed { &front_matter } else { "" })
@@ -3388,6 +3418,25 @@ impl SkillService {
     }
 
     /// 去重技能列表（基于完整 key，不同仓库的同名 skill 分开显示）
+    fn keep_one_per_install_name(skills: &mut Vec<DiscoverableSkill>) {
+        let install_name = |skill: &DiscoverableSkill| {
+            skill
+                .directory
+                .rsplit('/')
+                .next()
+                .unwrap_or_default()
+                .to_lowercase()
+        };
+        skills.sort_by(|a, b| {
+            let depth = |skill: &DiscoverableSkill| skill.directory.matches('/').count();
+            depth(a)
+                .cmp(&depth(b))
+                .then_with(|| a.directory.cmp(&b.directory))
+        });
+        let mut seen = HashSet::new();
+        skills.retain(|skill| seen.insert(install_name(skill)));
+    }
+
     fn deduplicate_discoverable_skills(skills: &mut Vec<DiscoverableSkill>) {
         let mut seen = HashMap::new();
         skills.retain(|skill| {
@@ -3517,11 +3566,15 @@ impl SkillService {
     async fn download_and_extract(&self, url: &str, dest: &Path) -> Result<()> {
         let client = crate::proxy::http_client::get();
         // 共享客户端不带默认 User-Agent；GitHub 归档下载对无 UA 请求更容易被限流成 429（#8813）
-        let response = client
-            .get(url)
-            .header(reqwest::header::USER_AGENT, SKILL_DOWNLOAD_USER_AGENT)
-            .send()
-            .await?;
+        let response = timeout(
+            DOWNLOAD_STALL_TIMEOUT,
+            client
+                .get(url)
+                .header(reqwest::header::USER_AGENT, SKILL_DOWNLOAD_USER_AGENT)
+                .send(),
+        )
+        .await
+        .map_err(|_| Self::download_stalled_error())??;
         if !response.status().is_success() {
             let status = response.status().as_u16().to_string();
             return Err(anyhow::anyhow!(format_skill_error(
@@ -3543,7 +3596,10 @@ impl SkillService {
         let mut response = response;
         let mut body = std::io::BufWriter::new(tempfile::tempfile()?);
         let mut received: u64 = 0;
-        while let Some(chunk) = response.chunk().await? {
+        while let Some(chunk) = timeout(DOWNLOAD_STALL_TIMEOUT, response.chunk())
+            .await
+            .map_err(|_| Self::download_stalled_error())??
+        {
             received = received.saturating_add(chunk.len() as u64);
             if received > MAX_ARCHIVE_DOWNLOAD_BYTES {
                 let limit_mb = (MAX_ARCHIVE_DOWNLOAD_BYTES / 1024 / 1024).to_string();
@@ -3557,7 +3613,7 @@ impl SkillService {
         }
 
         let file = body.into_inner().map_err(|e| e.into_error())?;
-        let archive = zip::ZipArchive::new(file)?;
+        let archive = Self::open_downloaded_archive(file)?;
         Self::extract_repo_archive(archive, dest)
     }
 
@@ -3944,7 +4000,9 @@ impl SkillService {
         let write_backup = || -> Result<()> {
             let skill_backup_dir = backup_path.join("skill");
             Self::copy_dir_recursive(&source_path, &skill_backup_dir)?;
-            if Self::compute_dir_hash(&source_path)? != Self::compute_dir_hash(&skill_backup_dir)? {
+            if Self::compute_storage_hash(&source_path)?
+                != Self::compute_storage_hash(&skill_backup_dir)?
+            {
                 return Err(anyhow!(
                     "Skill backup is incomplete: {}",
                     source_path.display()
@@ -5243,6 +5301,37 @@ mod tests {
         .await;
         assert_eq!(attempted, ["main"]);
         assert_eq!(result.unwrap_err().to_string(), "operation timed out");
+    }
+
+    #[tokio::test]
+    async fn stalled_download_stops_branch_fallback_and_carries_repo_coordinates() {
+        // 下载停滞换个分支也不会好：不去试 master，停滞原因原样报出并补上坐标
+        let (result, attempted) =
+            run_branch_fallback(&branch_fallback_repo("main"), |branch| match branch {
+                "main" => Err(SkillService::download_stalled_error()),
+                _ => Err(http404_error()),
+            })
+            .await;
+        assert_eq!(attempted, ["main"]);
+        let err = error_json(&result.unwrap_err());
+        assert_eq!(err["code"], "DOWNLOAD_STALLED");
+        assert_eq!(err["context"]["owner"], "acme");
+        assert_eq!(err["context"]["name"], "skills");
+        assert_eq!(err["context"]["timeout"], "60");
+        assert_eq!(err["suggestion"], "checkNetwork");
+    }
+
+    #[test]
+    fn total_download_timeout_reports_the_real_ceiling() {
+        let err: serde_json::Value = serde_json::from_str(&SkillService::download_timeout_error(
+            &branch_fallback_repo("main"),
+        ))
+        .expect("structured skill error");
+        assert_eq!(err["code"], "DOWNLOAD_TIMEOUT");
+        assert_eq!(
+            err["context"]["timeout"],
+            DOWNLOAD_TOTAL_TIMEOUT.as_secs().to_string()
+        );
     }
 
     #[tokio::test]
@@ -6941,4 +7030,15 @@ mod tests {
 
     // OpenClaw 不支持 Skills，`~/.openclaw/skills` 归它自己：里面和受管 Skill 同名的
     // 真实目录不能被当成「已关掉的投影」删掉。
+
+    #[test]
+    fn downloaded_html_page_is_reported_as_invalid_archive() {
+        let page = std::io::Cursor::new(b"<!DOCTYPE html><html><body>app</body></html>".to_vec());
+        let err = SkillService::open_downloaded_archive(page).unwrap_err();
+        let value: serde_json::Value = serde_json::from_str(&err.to_string()).unwrap();
+        assert_eq!(value["code"], "ARCHIVE_INVALID");
+        assert_eq!(value["suggestion"], "checkRepoUrl");
+        // 不是 404，不能触发换分支重试
+        assert!(!SkillService::is_branch_not_found(&err));
+    }
 }

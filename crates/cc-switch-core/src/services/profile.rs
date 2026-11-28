@@ -132,27 +132,6 @@ pub struct ProfilePayload {
 }
 
 impl ProfilePayload {
-    /// 用另一份快照覆盖本载荷中某分组的槽位，其余分组原样保留
-    /// （"以当前状态更新"只更新发起页所属分组，避免把别的应用
-    /// 正处于其他项目的状态串进来）
-    pub fn merge_scope_from(&mut self, other: &ProfilePayload, scope: ProfileScope) {
-        for app in scope.apps() {
-            if let (Some(dst), Some(src)) = (self.providers.get_mut(app), other.providers.get(app))
-            {
-                *dst = src.clone();
-            }
-            if let (Some(dst), Some(src)) = (self.mcp.get_mut(app), other.mcp.get(app)) {
-                *dst = src.clone();
-            }
-            if let (Some(dst), Some(src)) = (self.skills.get_mut(app), other.skills.get(app)) {
-                *dst = src.clone();
-            }
-            if let (Some(dst), Some(src)) = (self.prompts.get_mut(app), other.prompts.get(app)) {
-                *dst = src.clone();
-            }
-        }
-    }
-
     /// 某分组是否拍过快照（任一槽位非 None 即视为拍过）
     pub fn scope_captured(&self, scope: ProfileScope) -> bool {
         scope.apps().iter().any(|app| {
@@ -641,50 +620,6 @@ mod tests {
 
         let empty: ProfilePayload = serde_json::from_str("{}").unwrap();
         assert_eq!(empty, ProfilePayload::default());
-    }
-
-    #[test]
-    fn test_merge_scope_from_only_touches_scope_slots() {
-        // 项目 A：两侧都已拍过快照
-        let mut payload = ProfilePayload {
-            providers: PerApp {
-                claude: Some("p1".into()),
-                claude_desktop: Some("d1".into()),
-                codex: Some("c1".into()),
-            },
-            mcp: PerApp {
-                claude: Some(ids(&["m1"])),
-                claude_desktop: Some(vec![]),
-                codex: Some(ids(&["m9"])),
-            },
-            ..Default::default()
-        };
-        // 在 Claude 页"以当前状态更新"：只覆盖 claude 组槽位
-        let fresh = ProfilePayload {
-            providers: PerApp {
-                claude: Some("p2".into()),
-                claude_desktop: None,
-                codex: Some("SHOULD-NOT-LEAK".into()),
-            },
-            mcp: PerApp {
-                claude: Some(ids(&["m2"])),
-                claude_desktop: Some(vec![]),
-                codex: None,
-            },
-            ..Default::default()
-        };
-        payload.merge_scope_from(&fresh, ProfileScope::Claude);
-
-        assert_eq!(payload.providers.claude, Some("p2".to_string()));
-        assert_eq!(
-            payload.providers.claude_desktop,
-            Some("d1".to_string()),
-            "claude-desktop slot is in its own scope, untouched by claude merge"
-        );
-        assert_eq!(payload.mcp.claude, Some(ids(&["m2"])));
-        // codex 侧完好：既没被覆盖也没被 fresh 的值污染
-        assert_eq!(payload.providers.codex, Some("c1".to_string()));
-        assert_eq!(payload.mcp.codex, Some(ids(&["m9"])));
     }
 
     #[test]

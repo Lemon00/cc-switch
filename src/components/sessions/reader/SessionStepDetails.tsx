@@ -4,15 +4,15 @@ import type { ContentRef, ToolCallBlock, ToolStatus } from "@/types";
 import { ChevronRight } from "lucide-react";
 import { memo, useMemo, useState, type ReactNode } from "react";
 import { highlightText } from "../utils";
-import type { AgentReaderStyle } from "./agentStyles";
+import type { AgentReaderStyle } from "@/lib/sessions/agentStyles";
 import { useReaderContext } from "./context";
 import { useReaderT } from "./i18n";
 import { PathChip } from "./PathChip";
 import { SessionCodeBlock } from "./SessionCodeBlock";
 import { buildInputDiff, SessionDiff } from "./SessionDiff";
 import { SessionImageGrid } from "./SessionImage";
-import { isFailureStatus, shortenPath } from "./toolSummary";
-import type { ToolStep } from "./turns";
+import { isFailureStatus, shortenPath } from "@/lib/sessions/toolSummary";
+import type { ToolStep } from "@/lib/sessions/turns";
 const linkButton =
   "rounded-[2px] text-caption text-fg-2 underline decoration-border-strong underline-offset-[3px] transition-colors hover:text-fg-1 hover:decoration-fg-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 /** 状态色：Gemini 的框线、Pi 的竖条用 */

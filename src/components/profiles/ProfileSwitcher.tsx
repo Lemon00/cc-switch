@@ -44,7 +44,6 @@ import { ProfileManageDialog } from "./ProfileManageDialog";
 import { APP_PROFILE_SCOPE, hasScopeSnapshot } from "./scope";
 const CURRENT_ID_KEY: Record<ProfileScope, keyof CurrentProfileIds> = {
   claude: "claude",
-  "claude-desktop": "claudeDesktop",
   codex: "codex",
 };
 interface ProfileSwitcherProps {
@@ -54,7 +53,7 @@ interface ProfileSwitcherProps {
  * 项目 Profile 切换器（header 左侧入口）
  *
  * 项目列表全应用共享（用户拥有的项目就那几个），但切换按分组进行：
- * Claude Code、Claude Desktop 与 Codex 各自指向自己的当前项目，
+ * Claude Code 与 Codex 各自指向自己的当前项目，
  * 只应用各自分组内的快照。
  * 与侧栏的应用列表（只切换查看的应用）语义不同。
  */

@@ -1,10 +1,10 @@
 import { screen } from "@testing-library/react";
 import { renderWithQueryClient as render } from "../../../utils/testQueryClient";
 import { describe, expect, it } from "vitest";
-import { getAgentReaderStyle } from "@/components/sessions/reader/agentStyles";
+import { getAgentReaderStyle } from "@/lib/sessions/agentStyles";
 import { transcriptToMarkdown } from "@/components/sessions/reader/exportMarkdown";
 import { StepMetaText } from "@/components/sessions/reader/rowStyles";
-import { buildTurns } from "@/components/sessions/reader/turns";
+import { buildTurns } from "@/lib/sessions/turns";
 import { formatMoneyCompact, USD_DISPLAY } from "@/components/usage/format";
 import { fixtures } from "./helpers";
 // 会话阅读页的费用只来自 OpenCode 的 step-finish，本机常常没有这类数据，

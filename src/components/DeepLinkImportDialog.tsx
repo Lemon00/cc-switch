@@ -118,26 +118,6 @@ export function DeepLinkImportDialog() {
       stale = true;
     };
   }, [request]);
-  // 容错判断：MCP 导入结果可能缺少 type 字段
-  const isMcpImportResult = (
-    value: unknown,
-  ): value is {
-    importedCount: number;
-    importedIds: string[];
-    failed: Array<{
-      id: string;
-      error: string;
-    }>;
-    type?: "mcp";
-  } => {
-    if (!value || typeof value !== "object") return false;
-    const v = value as Record<string, unknown>;
-    return (
-      typeof v.importedCount === "number" &&
-      Array.isArray(v.importedIds) &&
-      Array.isArray(v.failed)
-    );
-  };
   // effect 只随挂载/卸载运行，不能依赖 t：启动时校正语言会换掉 t，effect 一重建，
   // 正在处理的链接就被丢下。翻译函数从 ref 读最新值。
   const tRef = useRef(t);
@@ -361,20 +341,8 @@ export function DeepLinkImportDialog() {
             closeButton: true,
           });
         }
-      } else if (isMcpImportResult(result)) {
-        // 兜底处理：旧版本后端可能未返回 type 字段
-        await refreshMcp(result);
       } else {
-        // Legacy return type (string ID) - assume provider
-        if (request.app)
-          await invalidateProviderCaches(queryClient, request.app, "add");
-        await refreshTrayMenu();
-        toast.success(t("deeplink.importSuccess"), {
-          description: t("deeplink.importSuccessDescription", {
-            name: request.name,
-          }),
-          closeButton: true,
-        });
+        throw new Error("Unexpected deep link import response");
       }
       // Close dialog after all refreshes complete, unless a newer link replaced it meanwhile
       if (shownRequestRef.current === request) setIsOpen(false);
@@ -742,8 +710,7 @@ export function DeepLinkImportDialog() {
                             )}
 
                           {/* Codex config */}
-                          {(parsedConfig.type === "codex" ||
-                            parsedConfig.type === "grokbuild") && (
+                          {parsedConfig.type === "codex" && (
                             <div className="space-y-2">
                               {parsedConfig.type === "codex" &&
                                 parsedConfig.auth &&
@@ -784,28 +751,26 @@ export function DeepLinkImportDialog() {
                             </div>
                           )}
 
-                          {/* Gemini config */}
-                          {(parsedConfig.type === "gemini" ||
-                            parsedConfig.type === "agy") &&
-                            parsedConfig.env && (
-                              <div className="space-y-1.5">
-                                {parsedConfig.model && (
+                          {/* Antigravity config */}
+                          {parsedConfig.type === "agy" && parsedConfig.env && (
+                            <div className="space-y-1.5">
+                              {parsedConfig.model && (
+                                <EnvRow
+                                  envKey="model"
+                                  value={parsedConfig.model}
+                                />
+                              )}
+                              {Object.entries(parsedConfig.env).map(
+                                ([key, value]) => (
                                   <EnvRow
-                                    envKey="model"
-                                    value={parsedConfig.model}
+                                    key={key}
+                                    envKey={key}
+                                    value={String(value)}
                                   />
-                                )}
-                                {Object.entries(parsedConfig.env).map(
-                                  ([key, value]) => (
-                                    <EnvRow
-                                      key={key}
-                                      envKey={key}
-                                      value={String(value)}
-                                    />
-                                  ),
-                                )}
-                              </div>
-                            )}
+                                ),
+                              )}
+                            </div>
+                          )}
                         </div>
                       )}
 

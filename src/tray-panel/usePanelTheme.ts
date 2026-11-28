@@ -39,7 +39,7 @@ export function usePanelTheme(refreshKey: unknown): PanelTheme {
     const media = window.matchMedia?.("(prefers-color-scheme: dark)");
     media?.addEventListener("change", update);
     const onStorage = (event: StorageEvent) => {
-      if (event.key === THEME_STORAGE_KEY) update();
+      if (event.key === null || event.key === THEME_STORAGE_KEY) update();
     };
     window.addEventListener("storage", onStorage);
     return () => {

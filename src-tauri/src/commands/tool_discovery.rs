@@ -168,61 +168,6 @@ pub(super) fn opencode_extra_search_paths(
     paths.into_iter().collect()
 }
 
-/// Grok's official installer writes the launcher to `$GROK_BIN_DIR` or, by
-/// default, `~/.grok/bin`. Keep these ahead of generic npm/Node locations so
-/// version probing and anchored updates can see the native distribution even
-/// when the GUI process inherited a stale PATH.
-pub(super) fn grok_extra_search_paths(
-    home: &Path,
-    grok_bin_dir: Option<std::ffi::OsString>,
-) -> Vec<std::path::PathBuf> {
-    let mut paths = IndexSet::new();
-    push_env_single_dir(&mut paths, grok_bin_dir);
-    if !home.as_os_str().is_empty() {
-        push_unique_path(&mut paths, home.join(".grok").join("bin"));
-    }
-    paths.into_iter().collect()
-}
-
-/// PATHEXT 里 `.CMD` 是否排在 `.EXE` 之前。未设置或两者都不在时按 Windows 默认
-/// （`.EXE` 在前）处理。
-#[cfg(any(target_os = "windows", test))]
-pub(super) fn pathext_prefers_cmd_over_exe(pathext: Option<&str>) -> bool {
-    let Some(pathext) = pathext else {
-        return false;
-    };
-    let position = |ext: &str| {
-        pathext
-            .split(';')
-            .map(str::trim)
-            .position(|entry| entry.eq_ignore_ascii_case(ext))
-    };
-    match (position(".cmd"), position(".exe")) {
-        (Some(cmd), Some(exe)) => cmd < exe,
-        (Some(_), None) => true,
-        _ => false,
-    }
-}
-
-/// 同一目录里 `<tool>.cmd` 和 `<tool>.exe` 并存时，命令行敲 `<tool>` 只会按 PATHEXT
-/// 顺序命中其中一个，另一个被遮住。调用方只对已知是同一处安装多出来的入口用它
-/// （Hermes 换成 `.exe` 启动器后留下的旧 `hermes.cmd`，#8839）。
-#[cfg(any(target_os = "windows", test))]
-pub(super) fn shadowed_by_pathext_sibling(path: &Path, pathext: Option<&str>) -> bool {
-    let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
-        return false;
-    };
-    let cmd_first = pathext_prefers_cmd_over_exe(pathext);
-    let shadowing_ext = if ext.eq_ignore_ascii_case("cmd") && !cmd_first {
-        "exe"
-    } else if ext.eq_ignore_ascii_case("exe") && cmd_first {
-        "cmd"
-    } else {
-        return false;
-    };
-    path.with_extension(shadowing_ext).is_file()
-}
-
 pub(super) fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf> {
     #[cfg(target_os = "windows")]
     {
@@ -425,13 +370,6 @@ pub(super) fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
     // Preserve search priority without scanning all previous paths for every insertion.
     let mut search_paths = IndexSet::new();
 
-    if tool == "grok" {
-        let extra_paths = grok_extra_search_paths(&home, std::env::var_os("GROK_BIN_DIR"));
-        for path in extra_paths {
-            push_unique_path(&mut search_paths, path);
-        }
-    }
-
     if !home.as_os_str().is_empty() {
         push_unique_path(&mut search_paths, home.join(".local/bin"));
         push_unique_path(&mut search_paths, home.join(".npm-global/bin"));
@@ -440,8 +378,22 @@ pub(super) fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
         extend_mise_node_search_paths(&mut search_paths, &home);
     }
 
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Some(pnpm_home) = std::env::var_os("PNPM_HOME").filter(|value| !value.is_empty()) {
+            let pnpm_home = std::path::PathBuf::from(pnpm_home);
+            push_unique_path(&mut search_paths, pnpm_home.join("bin"));
+            push_unique_path(&mut search_paths, pnpm_home);
+        }
+    }
+
     #[cfg(target_os = "macos")]
     {
+        if !home.as_os_str().is_empty() {
+            let pnpm_home = home.join("Library").join("pnpm");
+            push_unique_path(&mut search_paths, pnpm_home.join("bin"));
+            push_unique_path(&mut search_paths, pnpm_home);
+        }
         push_unique_path(
             &mut search_paths,
             std::path::PathBuf::from("/opt/homebrew/bin"),
@@ -454,6 +406,11 @@ pub(super) fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
 
     #[cfg(target_os = "linux")]
     {
+        if !home.as_os_str().is_empty() {
+            let pnpm_home = home.join(".local/share/pnpm");
+            push_unique_path(&mut search_paths, pnpm_home.join("bin"));
+            push_unique_path(&mut search_paths, pnpm_home);
+        }
         push_unique_path(
             &mut search_paths,
             std::path::PathBuf::from("/usr/local/bin"),
@@ -571,44 +528,15 @@ pub(super) fn windows_runnable_sibling_for_extensionless_tool(
         .find(|candidate| candidate.is_file())
 }
 
-/// Pi ships only through npm, but PyPI has an unrelated Python 2 package also named
-/// `pi` whose console script lands in a Python `Scripts` dir as `pi.exe`. That file is
-/// never the Pi coding agent: probing it reports a Python traceback as "installed but
-/// broken", and uninstall would target it (#9267). Only pip's own layout is matched
-/// (`<tool>.exe` directly inside a `Scripts` dir); npm writes `.cmd` shims, so a custom
-/// npm prefix under some `Scripts` folder is left alone.
-#[cfg(any(target_os = "windows", test))]
-pub(super) fn is_foreign_pip_launcher(tool: &str, path: &Path) -> bool {
-    false
-}
-
-/// VS Code's `bin\copilot-shim\copilot.exe` is a placeholder that only prints
-/// "GitHub Copilot CLI was not found" when the real CLI is missing. It sits on PATH under
-/// the tool's own name but is never the CLI, so probing it reports "installed but broken"
-/// instead of "not installed". Matched by its directory, which covers `.exe` and `.cmd`.
-#[cfg(any(target_os = "windows", test))]
-pub(super) fn is_vscode_copilot_shim(tool: &str, path: &Path) -> bool {
-    tool == "copilot"
-        && path
-            .to_string_lossy()
-            .replace('\\', "/")
-            .to_ascii_lowercase()
-            .contains("/copilot-shim/")
-}
-
 /// OpenCode Desktop has shipped both root-level and Electron `resources/` CLI sidecars.
 /// Some Electron releases omitted the sidecar; `resources/app.asar` still identifies the
 /// Desktop bundle, so skip its GUI instead of probing `opencode.exe` with `--version`.
 /// A standalone OpenCode CLI install remains valid when no Desktop marker is present.
-/// Also skips launchers that only share the tool's name (`is_foreign_pip_launcher`).
 #[cfg(target_os = "windows")]
 pub(super) fn windows_preferred_tool_executable(
     tool: &str,
     path: &Path,
 ) -> Option<std::path::PathBuf> {
-    if is_foreign_pip_launcher(tool, path) || is_vscode_copilot_shim(tool, path) {
-        return None;
-    }
     if tool == "opencode"
         && path
             .file_name()
@@ -777,9 +705,6 @@ pub(super) fn scan_cli_version_in(tool: &str, search_paths: &[std::path::PathBuf
     #[cfg(not(target_os = "windows"))]
     let current_path = effective_path_os().unwrap_or_default();
 
-    // 记录"可执行文件存在、但 `--version` 非零退出"时的首个诊断信息。
-    // 典型场景：工具已安装但当前环境跑不起来（如 openclaw 要求 Node v22.19+）。
-    // 这类信息比笼统的 "not installed" 有用得多，循环结束未探到版本时回传。
     let mut exec_diagnostic: Option<String> = None;
     // 文件在、却启动失败或没有任何输出时的首个诊断。没有更具体的报错时才用它：
     // 文件在就不算没装（安装位置列表也会列出它）。
@@ -932,16 +857,6 @@ pub(super) fn first_abs_path_line(raw: &str) -> Option<&str> {
     raw.lines().map(str::trim).find(|l| l.starts_with('/'))
 }
 
-/// 从 `env` 输出里取 `PATH=` 那行的值。要求值以 `/` 开头——PATH 首段必是绝对路径，
-/// 这条约束顺带跳过"某个多行值的环境变量恰好有一行以 `PATH=` 开头"的污染，
-/// 与 `first_abs_path_line` 对交互式 shell 噪音的容错同理。
-#[cfg(not(target_os = "windows"))]
-pub(super) fn path_line_from_env_output(raw: &str) -> Option<&str> {
-    raw.lines()
-        .filter_map(|line| line.strip_prefix("PATH="))
-        .find(|value| value.starts_with('/'))
-}
-
 /// 合并两段 PATH：`primary` 全部保留在前，`extra` 中未出现过的段按序追加。
 /// 空段直接丢弃（`a::b` 里的空段在 POSIX 下语义是"当前目录"，注入时不该带上）。
 #[cfg(not(target_os = "windows"))]
@@ -957,32 +872,29 @@ pub(crate) fn merge_path_segments(primary: &str, extra: &str) -> String {
     merged.join(":")
 }
 
-/// 用与 `resolve_path_default` 相同的登录 shell 解析用户的真实 PATH，
-/// 供 `run_tool_lifecycle_silently` 注入给安装/升级脚本，也供
-/// `run_detected_tool_command_with_timeout` 注入给运行时调用的 CLI。
-///
-/// **要解决的不对称**：探测阶段（`try_get_version` / `resolve_path_default`）跑的是
-/// `$SHELL -lic`，会读 `.zshrc`/`.zprofile`，看得到 nvm / homebrew / volta；而执行阶段
-/// 是非登录 `bash -c`，继承的是 launchd 给 GUI App 的 PATH，通常只有
-/// `/usr/bin:/bin:/usr/sbin:/sbin`。锚定命令自己用绝对路径调用执行体，本不受这条影响
-/// ——但有两类漏网：
-/// 1. **执行体在内部再 spawn 第三方 CLI**：`grok update` 靠 `npm view` 查最新版本
-///    （见 `grok_native_update_command`），npm 又是 `#!/usr/bin/env node` 脚本；
-///    未来任何 self-update 内部调 node/git/python 同理。
-/// 2. **install 分支的 `<官方 installer> || npm i -g <pkg>@latest`**：`||` 右侧是裸命令，
-///    窄 PATH 下必然 exit 127，等于没有兜底。
-///
-/// 把执行阶段的 PATH 拉平到探测阶段的水平，一次消除这两类。
-///
-/// **用 `/usr/bin/env` 而不是 `echo $PATH`**：`$PATH` 在 fish 里是 list 类型，
-/// `"$PATH"` 展开成空格分隔而非冒号分隔；`env` 打印的则是子进程的真实环境，
-/// 任何 shell 下格式都正确。写绝对路径又绕过了 alias / function / PATH 三重不确定性
-/// （交互式 shell 会加载用户 alias）。
-///
-/// 解析不到（含超过 `deadline`）时返回 `None`，调用方保持原有行为（不注入），
-/// 不引入新的失败模式。
 #[cfg(not(target_os = "windows"))]
 pub(crate) fn login_shell_path(deadline: Option<CommandDeadline>) -> Option<String> {
+    login_shell_env(deadline)?.path
+}
+
+#[cfg(not(target_os = "windows"))]
+fn cached_login_shell_env() -> Option<LoginShellEnv> {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static CACHE: Mutex<Option<(Instant, Option<LoginShellEnv>)>> = Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap_or_else(|error| error.into_inner());
+    if let Some((loaded, env)) = cache.as_ref() {
+        if loaded.elapsed() < Duration::from_secs(30) {
+            return env.clone();
+        }
+    }
+    let env = login_shell_env(None);
+    *cache = Some((Instant::now(), env.clone()));
+    env
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(super) fn login_shell_env(deadline: Option<CommandDeadline>) -> Option<LoginShellEnv> {
     use std::process::{Command, Stdio};
     let shell = std::env::var("SHELL")
         .ok()
@@ -991,9 +903,14 @@ pub(crate) fn login_shell_path(deadline: Option<CommandDeadline>) -> Option<Stri
     let flag = default_flag_for_shell(&shell);
     let mut cmd = Command::new(shell);
     cmd.arg(flag)
-        .arg("/usr/bin/env")
-        // 与 `resolve_path_default` 相同：交互式 rc 不能读到继承来的 stdin，
-        // 也不能因持有控制终端被作业控制停住。
+        // ENVIRON includes exported variables and preserves fish's colon-separated PATH.
+        // NUL separates records even on macOS versions without env -0.
+        .arg(
+            r#"exec /usr/bin/env awk 'BEGIN {
+            printf "%c__CC_SWITCH_ENV__%c", 0, 0
+            for (key in ENVIRON) printf "%s=%s%c", key, ENVIRON[key], 0
+        }'"#,
+        )
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -1008,16 +925,16 @@ pub(crate) fn login_shell_path(deadline: Option<CommandDeadline>) -> Option<Stri
         return None;
     }
     let raw = decode_command_output(&out.stdout);
-    Some(path_line_from_env_output(&raw)?.to_string())
+    parse_login_shell_env(&raw)
 }
 
 /// 用与 `try_get_version` 相同的登录 shell 解析 PATH 默认命中的可执行文件路径，
 /// canonicalize 后作为"命令行默认 / 升级目标"的锚点（与升级会作用的那处对齐）。
 #[cfg(not(target_os = "windows"))]
-pub(super) fn resolve_path_default(
+pub(super) fn resolve_path_default_entry(
     tool: &str,
     deadline: Option<CommandDeadline>,
-) -> Result<Option<std::path::PathBuf>, String> {
+) -> Result<Option<ResolvedPathDefault>, String> {
     use std::process::{Command, Stdio};
 
     let shell = std::env::var("SHELL")
@@ -1027,7 +944,7 @@ pub(super) fn resolve_path_default(
     let flag = default_flag_for_shell(&shell);
     let mut cmd = Command::new(shell);
     cmd.arg(flag)
-        .arg(format!("command -v {tool}"))
+        .arg(format!("echo {COMMAND_V_MARKER}; command -v {tool}"))
         // 改 spawn 后 stdin 不再像 output() 那样默认置 null，须显式关闭：
         // 继承来的 stdin 可能是终端/管道，交互式 rc 里的读操作会永久阻塞。
         .stdin(Stdio::null())
@@ -1042,12 +959,24 @@ pub(super) fn resolve_path_default(
         return Ok(None);
     }
     let raw = decode_command_output(&out.stdout);
-    // 不能死取第一行：交互式 .zshrc 可能先打印欢迎语（如 "🚀 Welcome back"），
-    // command -v 的真实路径在其后；取第一个 `/` 开头的行才稳。
-    let Some(first) = first_abs_path_line(&raw) else {
+    let Some(first) = command_v_abs_path_line(&raw) else {
         return Ok(None);
     };
-    Ok(std::fs::canonicalize(first).ok())
+    let launcher = std::path::PathBuf::from(first);
+    let Some(real) = std::fs::canonicalize(&launcher).ok() else {
+        return Ok(None);
+    };
+    Ok(Some(ResolvedPathDefault { launcher, real }))
+}
+
+/// 用与 `try_get_version` 相同的登录 shell 解析 PATH 默认命中的可执行文件路径，
+/// canonicalize 后作为"命令行默认 / 升级目标"的锚点（与升级会作用的那处对齐）。
+#[cfg(not(target_os = "windows"))]
+pub(super) fn resolve_path_default(
+    tool: &str,
+    deadline: Option<CommandDeadline>,
+) -> Result<Option<std::path::PathBuf>, String> {
+    Ok(resolve_path_default_entry(tool, deadline)?.map(|entry| entry.real))
 }
 
 #[cfg(target_os = "windows")]
@@ -1079,10 +1008,10 @@ pub(super) fn windows_path_lookup_command(
 }
 
 #[cfg(target_os = "windows")]
-pub(super) fn resolve_path_default(
+pub(super) fn resolve_path_default_entry(
     tool: &str,
     deadline: Option<CommandDeadline>,
-) -> Result<Option<std::path::PathBuf>, String> {
+) -> Result<Option<ResolvedPathDefault>, String> {
     // Restrict `where` to the merged effective PATH. A bare `where {tool}` also
     // searches the current directory first, which would let a project-local
     // `codex.cmd` be executed by a passive version check. The `$PATH:pattern`
@@ -1103,13 +1032,48 @@ pub(super) fn resolve_path_default(
     let Some(preferred) = windows_preferred_path_default(tool, &raw) else {
         return Ok(None);
     };
-    Ok(std::fs::canonicalize(preferred).ok())
+    let Some(real) = std::fs::canonicalize(&preferred).ok() else {
+        return Ok(None);
+    };
+    Ok(Some(ResolvedPathDefault {
+        launcher: preferred,
+        real,
+    }))
+}
+
+#[cfg(target_os = "windows")]
+pub(super) fn resolve_path_default(
+    tool: &str,
+    deadline: Option<CommandDeadline>,
+) -> Result<Option<std::path::PathBuf>, String> {
+    Ok(resolve_path_default_entry(tool, deadline)?.map(|entry| entry.real))
 }
 
 /// 升级预检/冲突诊断的单条子进程探测预算。枚举会对每个工具开一次登录 shell、对每处
 /// 安装跑一次 `--version`，任何一条挂死（.zshrc 阻塞、nvm shim 指向已删除的 node 等）
 /// 都会卡住整个"全部升级"预检——到点整组击杀，该条按探测失败降级，预检继续。
 pub(super) const INSTALL_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// 安装枚举 `--version` 探测的基础 PATH（候选目录再前置在它前面）：登录 shell 的 PATH 在前、
+/// 继承的 PATH 垫底。Finder 启动时继承的是 launchd 的窄 PATH，`#!/usr/bin/env node` 的 npm
+/// 启动器只要所在目录里没有 node 就 exit 127，健康的安装被标成「无法运行」（#9810）；运行时
+/// 命令（#8653）、Codex 模型目录探测（#9764）早已这样补。解析不到登录 shell 时沿用继承的 PATH。
+/// 拼接用 `OsString`，继承 PATH 里的非 UTF-8 段原样保留。
+#[cfg(not(target_os = "windows"))]
+fn install_probe_base_path(
+    login_path: Option<&str>,
+    inherited: &std::ffi::OsStr,
+) -> std::ffi::OsString {
+    let Some(login_path) = login_path.filter(|path| !path.is_empty()) else {
+        return inherited.to_os_string();
+    };
+    let mut path = std::ffi::OsString::from(login_path);
+    if !inherited.is_empty() {
+        path.push(":");
+        path.push(inherited);
+    }
+    path
+}
 
 /// 带超时的 `--version` 探测（非 Windows）。与 `scan_cli_version` 的裸 `output()`
 /// 不同：stdin 显式置 null、经 `isolate_child_process_group` 进独立会话，超时可整组击杀。
@@ -1128,6 +1092,9 @@ pub(super) fn run_probe_version_command(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if let Some(env) = cached_login_shell_env() {
+        apply_login_shell_vars(&mut cmd, &env.vars);
+    }
     isolate_child_process_group(&mut cmd);
     let child = cmd.spawn().map_err(|e| e.to_string())?;
     wait_child_output(
@@ -1166,7 +1133,10 @@ pub(super) fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> 
     #[cfg(target_os = "windows")]
     let current_path = effective_path_string();
     #[cfg(not(target_os = "windows"))]
-    let current_path = effective_path_os().unwrap_or_default();
+    let current_path = install_probe_base_path(
+        cached_login_shell_env().and_then(|env| env.path).as_deref(),
+        &effective_path_os().unwrap_or_default(),
+    );
     // 必须带超时：deadline 传 None 时 wait_child_output 无限等，登录 shell 一挂
     // 整个预检就永久卡死（且前端此阶段无任何反馈）。定位失败仅丢失 is_path_default
     // 标记，非致命。
@@ -1179,8 +1149,6 @@ pub(super) fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> 
 
     let mut seen: std::collections::HashSet<std::path::PathBuf> = std::collections::HashSet::new();
     let mut installs: Vec<ToolInstallation> = Vec::new();
-    #[cfg(target_os = "windows")]
-    let pathext = std::env::var("PATHEXT").ok();
 
     for dir in &search_paths {
         #[cfg(target_os = "windows")]
@@ -1329,46 +1297,8 @@ pub(super) fn locate_default_tool(
     tool: &str,
     deadline: Option<CommandDeadline>,
 ) -> Result<std::path::PathBuf, String> {
-    let path_default = resolve_path_default(tool, deadline)?;
-
-    let mut seen = std::collections::HashSet::new();
-    let mut candidates = Vec::new();
-    for dir in build_tool_search_paths(tool) {
-        for candidate in tool_executable_candidates(tool, &dir) {
-            if !candidate.is_file() {
-                continue;
-            }
-            let real = std::fs::canonicalize(&candidate).unwrap_or_else(|_| candidate.clone());
-            if path_default.as_ref() == Some(&real) {
-                return Ok(candidate);
-            }
-            if seen.insert(real.clone()) {
-                candidates.push((candidate, real));
-            }
-        }
-    }
-
-    if let Some(path) = path_default {
-        return Ok(path);
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    if candidates.len() > 1 {
-        if let Some(target) = candidates
-            .iter()
-            .find_map(|(candidate, real)| mise_shim_target(tool, candidate, real, deadline))
-        {
-            return Ok(target);
-        }
-    }
-
-    match candidates.as_slice() {
-        [(only, _)] => Ok(only.clone()),
-        [] => Err(format!("{tool} is not installed")),
-        _ => Err(format!(
-            "{tool} is installed but its default installation is ambiguous"
-        )),
-    }
+    let path_default = resolve_path_default_entry(tool, deadline)?;
+    locate_default_tool_in(tool, path_default, &build_tool_search_paths(tool), deadline)
 }
 
 /// mise 的 shim 是指向 mise 本体的软链，canonicalize 后和它调度的真身不是同一个文件，
@@ -1408,4 +1338,72 @@ pub(super) fn mise_shim_target(
     let raw = decode_command_output(&out.stdout);
     let target = std::path::PathBuf::from(first_abs_path_line(&raw)?);
     target.is_file().then_some(target)
+}
+
+#[cfg(not(target_os = "windows"))]
+const COMMAND_V_MARKER: &str = "__CC_SWITCH_COMMAND_V__";
+#[cfg(not(target_os = "windows"))]
+fn command_v_abs_path_line(raw: &str) -> Option<&str> {
+    let lines: Vec<&str> = raw.lines().map(str::trim).collect();
+    let tail = match lines.iter().rposition(|&line| line == COMMAND_V_MARKER) {
+        Some(index) => &lines[index + 1..],
+        None => &lines[..],
+    };
+    tail.iter().copied().find(|line| line.starts_with('/'))
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ResolvedPathDefault {
+    pub(super) launcher: std::path::PathBuf,
+    pub(super) real: std::path::PathBuf,
+}
+
+fn locate_default_tool_in(
+    tool: &str,
+    path_default: Option<ResolvedPathDefault>,
+    search_paths: &[std::path::PathBuf],
+    #[cfg_attr(target_os = "windows", allow(unused_variables))] deadline: Option<CommandDeadline>,
+) -> Result<std::path::PathBuf, String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut candidates = Vec::new();
+    for dir in search_paths {
+        for candidate in tool_executable_candidates(tool, dir) {
+            if !candidate.is_file() {
+                continue;
+            }
+            let real = std::fs::canonicalize(&candidate).unwrap_or_else(|_| candidate.clone());
+            if path_default
+                .as_ref()
+                .is_some_and(|default| default.real == real)
+            {
+                return Ok(candidate);
+            }
+            if seen.insert(real.clone()) {
+                candidates.push((candidate, real));
+            }
+        }
+    }
+
+    if let Some(default) = path_default {
+        // 保留原始入口路径而非 canonicalize 后的真身：指向 multicall 二进制（如 pnpm/mise/volta）
+        // 的软链如果展开后直接执行，会丢失 `argv[0]` 身份导致跑成宿主工具本身（#9960）。
+        return Ok(default.launcher);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    if candidates.len() > 1 {
+        if let Some(target) = candidates
+            .iter()
+            .find_map(|(candidate, real)| mise_shim_target(tool, candidate, real, deadline))
+        {
+            return Ok(target);
+        }
+    }
+
+    match candidates.as_slice() {
+        [(only, _)] => Ok(only.clone()),
+        [] => Err(format!("{tool} is not installed")),
+        _ => Err(format!(
+            "{tool} is installed but its default installation is ambiguous"
+        )),
+    }
 }

@@ -38,7 +38,6 @@ pub fn check_env_conflicts(app: &str) -> Result<Vec<EnvConflict>, String> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EnvKeyword {
-    Exact(&'static str),
     Prefix(&'static str),
 }
 
@@ -47,11 +46,6 @@ fn get_keywords_for_app(app: &str) -> Vec<EnvKeyword> {
     match app.to_lowercase().as_str() {
         "claude" => vec![EnvKeyword::Prefix("ANTHROPIC")],
         "codex" => vec![EnvKeyword::Prefix("OPENAI")],
-
-        "grokbuild" | "grok" => vec![
-            EnvKeyword::Exact("XAI_API_KEY"),
-            EnvKeyword::Exact("GROK_DEFAULT_MODEL"),
-        ],
         _ => vec![],
     }
 }
@@ -59,7 +53,6 @@ fn get_keywords_for_app(app: &str) -> Vec<EnvKeyword> {
 fn matches_env_keyword(name: &str, keywords: &[EnvKeyword]) -> bool {
     let upper_name = name.to_uppercase();
     keywords.iter().any(|keyword| match keyword {
-        EnvKeyword::Exact(name) => upper_name == *name,
         EnvKeyword::Prefix(prefix) => upper_name.starts_with(prefix),
     })
 }
@@ -233,41 +226,13 @@ mod tests {
             get_keywords_for_app("codex"),
             vec![EnvKeyword::Prefix("OPENAI")]
         );
-        assert_eq!(
-            get_keywords_for_app("gemini"),
-            vec![
-                EnvKeyword::Prefix("GEMINI"),
-                EnvKeyword::Prefix("GOOGLE_GEMINI")
-            ]
-        );
-        assert_eq!(
-            get_keywords_for_app("grokbuild"),
-            vec![
-                EnvKeyword::Exact("XAI_API_KEY"),
-                EnvKeyword::Exact("GROK_DEFAULT_MODEL")
-            ]
-        );
+        assert!(get_keywords_for_app("gemini").is_empty());
+
         assert_eq!(
             get_keywords_for_app("grok"),
             get_keywords_for_app("grokbuild")
         );
         assert_eq!(get_keywords_for_app("unknown"), Vec::<EnvKeyword>::new());
-    }
-
-    #[test]
-    fn grok_keywords_only_match_credentials() {
-        let keywords = get_keywords_for_app("grokbuild");
-
-        assert!(matches_env_keyword("XAI_API_KEY", &keywords));
-        assert!(matches_env_keyword("xai_api_key", &keywords));
-        assert!(matches_env_keyword("GROK_DEFAULT_MODEL", &keywords));
-        assert!(matches_env_keyword("grok_default_model", &keywords));
-        assert!(!matches_env_keyword("MY_XAI_API_KEY", &keywords));
-        assert!(!matches_env_keyword("XAI_API_KEY_BACKUP", &keywords));
-        assert!(!matches_env_keyword("MY_GROK_DEFAULT_MODEL", &keywords));
-        assert!(!matches_env_keyword("GROK_DEFAULT_MODEL_BACKUP", &keywords));
-        assert!(!matches_env_keyword("GROK_BIN_DIR", &keywords));
-        assert!(!matches_env_keyword("GROK_HOME", &keywords));
     }
 
     #[test]

@@ -1,8 +1,8 @@
 //! 使用统计相关命令
 
+use crate::database::usage::*;
 use crate::error::AppError;
 use crate::services::model_pricing::{ModelPricingInfo, ModelsDevSyncConfig, ModelsDevSyncState};
-use crate::services::usage_stats::*;
 use crate::store::AppState;
 use tauri::State;
 
@@ -287,7 +287,7 @@ pub async fn check_provider_limits(
     state: State<'_, AppState>,
     provider_id: String,
     app_type: String,
-) -> Result<crate::services::usage_stats::ProviderLimitStatus, AppError> {
+) -> Result<crate::database::usage::ProviderLimitStatus, AppError> {
     run_db_query(&state, move |db| {
         db.check_provider_limits(&provider_id, &app_type)
     })

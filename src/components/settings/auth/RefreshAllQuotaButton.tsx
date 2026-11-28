@@ -11,9 +11,9 @@ import { useTranslation } from "react-i18next";
 /** 授权中心各组账号行的额度缓存：`[服务, "quota", 账号]` */
 const QUOTA_SERVICES = new Set([
   "claude_official",
-  "copilot",
+
   "codex_oauth",
-  "xai_oauth",
+
   "kimi_oauth",
   "agy_oauth",
 ]);

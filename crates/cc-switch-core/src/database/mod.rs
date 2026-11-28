@@ -127,6 +127,7 @@ impl RecoverPoisoned for Option<crate::database::usage::LogCountCache> {
 /// 使用 Mutex 包装 Connection 以支持在多线程环境（如 Tauri State）中共享。
 /// rusqlite::Connection 本身不是 Sync 的，因此需要这层包装。
 pub struct Database {
+    pub(crate) route_revisions: [std::sync::atomic::AtomicU64; 5],
     pub(crate) conn: Mutex<Connection>,
     /// 请求日志总数缓存，见 `usage::LogCountCache`
     pub(crate) log_count_cache: Mutex<Option<crate::database::usage::LogCountCache>>,
@@ -191,6 +192,23 @@ fn ensure_private_db_file(db_path: &std::path::Path, db_exists: bool) -> Result<
 }
 
 impl Database {
+    pub fn route_revision(&self, app: &crate::app::AppType) -> u64 {
+        self.route_revisions[app.clone() as usize].load(std::sync::atomic::Ordering::Acquire)
+    }
+    pub(crate) fn advance_route_revision(&self, app: &crate::app::AppType) {
+        self.route_revisions[app.clone() as usize]
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    }
+
+    /// Called while holding the connection lock after a successful whole-DB replacement.
+    /// Requests started against the previous database must not pass the revision gate.
+    fn invalidate_state_after_replacement(&self) {
+        for app in crate::app::AppType::all() {
+            self.advance_route_revision(&app);
+        }
+        self.invalidate_log_count_cache();
+    }
+
     /// 初始化数据库连接并创建表
     ///
     /// 数据库文件位于 `~/.cc-switch/cc-switch.db`
@@ -236,6 +254,7 @@ impl Database {
         let db = Self {
             conn: Mutex::new(conn),
             log_count_cache: Mutex::new(None),
+            route_revisions: Default::default(),
             change_observer,
         };
 
@@ -315,6 +334,7 @@ impl Database {
         let db = Self {
             conn: Mutex::new(conn),
             log_count_cache: Mutex::new(None),
+            route_revisions: Default::default(),
             change_observer,
         };
         {

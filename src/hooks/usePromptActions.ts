@@ -194,15 +194,11 @@ export function usePromptActions(
       const previousPrompts = visiblePrompts;
       const mutationGeneration = reloadGenerationRef.current;
       if (enabled) {
-        const updatedPrompts = Object.keys(visiblePrompts).reduce(
-          (acc, key) => {
-            acc[key] = {
-              ...visiblePrompts[key],
-              enabled: key === id,
-            };
-            return acc;
-          },
-          {} as Record<string, Prompt>,
+        const updatedPrompts = Object.fromEntries(
+          Object.entries(visiblePrompts).map(([key, prompt]) => [
+            key,
+            { ...prompt, enabled: key === id },
+          ]),
         );
         updatePromptsForApp(appId, () => updatedPrompts);
       } else {

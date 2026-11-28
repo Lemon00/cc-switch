@@ -162,6 +162,10 @@ impl ProxyServer {
 
         // 更新全局代理端口，用于系统代理检测
         crate::proxy::http_client::set_proxy_port(actual_port);
+        let active_listener_guard = crate::proxy::http_client::register_active_proxy_listener(
+            local_addr.ip().to_string(),
+            actual_port,
+        );
 
         // 更新状态
         let mut status = self.state.status.write().await;
@@ -177,6 +181,7 @@ impl ProxyServer {
         // 开启 preserve_header_case 以捕获客户端请求头的原始大小写
         let state = self.state.clone();
         let handle = tokio::spawn(async move {
+            let _active_listener_guard = active_listener_guard;
             let mut shutdown_rx = shutdown_rx;
             // 跟踪已接受连接，停止时 abort；accept 前拿 permit 限制并发。
             const MAX_INBOUND_CONNECTIONS: usize = 256;

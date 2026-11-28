@@ -10,19 +10,13 @@ import { useForm } from "react-hook-form";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ClaudeFormFields } from "@/components/providers/forms/ClaudeFormFields";
 import { Form } from "@/components/ui/form";
-const copilotApiMock = vi.hoisted(() => ({
-  copilotGetModels: vi.fn(),
-  copilotGetModelsForAccount: vi.fn(),
-}));
+
 const modelFetchApiMock = vi.hoisted(() => ({
   fetchCodexOauthModels: vi.fn(),
   fetchModelsForConfig: vi.fn(),
   showFetchModelsError: vi.fn(),
 }));
-vi.mock("@/lib/api/copilot", () => ({
-  copilotGetModels: copilotApiMock.copilotGetModels,
-  copilotGetModelsForAccount: copilotApiMock.copilotGetModelsForAccount,
-}));
+
 vi.mock("@/lib/api/model-fetch", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api/model-fetch")>();
   return {
@@ -32,9 +26,7 @@ vi.mock("@/lib/api/model-fetch", async (importOriginal) => {
     showFetchModelsError: modelFetchApiMock.showFetchModelsError,
   };
 });
-vi.mock("@/components/providers/forms/CopilotAuthSection", () => ({
-  CopilotAuthSection: () => <div data-testid="copilot-auth-section" />,
-}));
+
 vi.mock("@/components/providers/forms/CodexOAuthSection", () => ({
   CodexOAuthSection: () => <div data-testid="codex-oauth-section" />,
 }));
@@ -43,7 +35,7 @@ const FormShell = ({ children }: PropsWithChildren) => {
   const form = useForm();
   return <Form {...form}>{children}</Form>;
 };
-const renderCopilotForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) => {
+const renderClaudeForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) => {
   const props: ClaudeFormFieldsProps = {
     shouldShowApiKey: false,
     apiKey: "",
@@ -51,11 +43,9 @@ const renderCopilotForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) => {
     category: "official",
     shouldShowApiKeyLink: false,
     websiteUrl: "",
-    isCopilotPreset: true,
+
     usesOAuth: true,
-    isCopilotAuthenticated: true,
-    selectedGitHubAccountId: "gh-1",
-    onGitHubAccountSelect: vi.fn(),
+
     isCodexOauthPreset: false,
     isCodexOauthAuthenticated: false,
     selectedCodexAccountId: null,
@@ -111,10 +101,7 @@ const renderCopilotForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) => {
   );
 };
 const renderCodexOauthForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) =>
-  renderCopilotForm({
-    isCopilotPreset: false,
-    isCopilotAuthenticated: false,
-    selectedGitHubAccountId: null,
+  renderClaudeForm({
     isCodexOauthPreset: true,
     isCodexOauthAuthenticated: true,
     selectedCodexAccountId: "chatgpt-1",
@@ -122,62 +109,29 @@ const renderCodexOauthForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) =>
   });
 describe("ClaudeFormFields", () => {
   beforeEach(() => {
-    copilotApiMock.copilotGetModels.mockResolvedValue([]);
-    copilotApiMock.copilotGetModelsForAccount.mockResolvedValue([]);
     modelFetchApiMock.fetchCodexOauthModels.mockResolvedValue([]);
     modelFetchApiMock.fetchModelsForConfig.mockResolvedValue([]);
   });
-  it("不会在 Copilot 表单打开时自动获取模型列表", () => {
-    renderCopilotForm();
-    expect(copilotApiMock.copilotGetModels).not.toHaveBeenCalled();
-    expect(copilotApiMock.copilotGetModelsForAccount).not.toHaveBeenCalled();
-  });
-  it.each(["classic", "stack"] as const)(
-    "Copilot %s 布局显示自动协议并禁用无效的手选格式",
-    (variant) => {
-      renderCopilotForm({ variant, apiFormat: "openai_responses" });
-      const control = screen.getByRole("combobox", { name: "上游格式" });
-      expect(control).toBeDisabled();
-      expect(control).toHaveTextContent("copilot.automaticFormat");
-      expect(screen.getByText(/copilot.automaticFormatHint/)).toBeVisible();
-    },
-  );
+
   it.each(["classic", "stack"] as const)(
     "%s 布局只在转成 OpenAI 格式时显示思考档位",
     (variant) => {
-      const { unmount } = renderCopilotForm({
+      const { unmount } = renderClaudeForm({
         variant,
-        isCopilotPreset: false,
+
         apiFormat: "openai_chat",
       });
       expect(screen.getByRole("combobox", { name: "思考档位" })).toBeVisible();
       unmount();
-      renderCopilotForm({
+      renderClaudeForm({
         variant,
-        isCopilotPreset: false,
+
         apiFormat: "anthropic",
       });
       expect(screen.queryByRole("combobox", { name: "思考档位" })).toBeNull();
     },
   );
-  it("Copilot 卡不显示思考档位", () => {
-    renderCopilotForm({ apiFormat: "openai_chat" });
-    expect(screen.queryByRole("combobox", { name: "思考档位" })).toBeNull();
-  });
-  it("点击获取模型列表后才请求当前 Copilot 账号的模型", async () => {
-    renderCopilotForm();
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "providerForm.fetchModels",
-      }),
-    );
-    await waitFor(() => {
-      expect(copilotApiMock.copilotGetModelsForAccount).toHaveBeenCalledWith(
-        "gh-1",
-      );
-    });
-    expect(copilotApiMock.copilotGetModels).not.toHaveBeenCalled();
-  });
+
   it("不会在 Codex OAuth 表单打开时自动获取模型列表", () => {
     renderCodexOauthForm();
     expect(modelFetchApiMock.fetchCodexOauthModels).not.toHaveBeenCalled();
@@ -202,8 +156,7 @@ describe("ClaudeFormFields", () => {
       { id: "chat-model-a" },
       { id: "chat-model-b" },
     ]);
-    renderCopilotForm({
-      isCopilotPreset: false,
+    renderClaudeForm({
       usesOAuth: false,
       category: "aggregator",
       shouldShowApiKey: true,
@@ -240,8 +193,7 @@ describe("ClaudeFormFields", () => {
   });
   it("Gemini Native 拉取模型时用 Google 的 API Key 头", async () => {
     modelFetchApiMock.fetchModelsForConfig.mockResolvedValueOnce([]);
-    renderCopilotForm({
-      isCopilotPreset: false,
+    renderClaudeForm({
       usesOAuth: false,
       category: "custom",
       shouldShowApiKey: true,
@@ -266,7 +218,7 @@ describe("ClaudeFormFields", () => {
   });
   it("一键设置会同时写入 Subagent 模型", () => {
     const onModelChange = vi.fn();
-    renderCopilotForm({
+    renderClaudeForm({
       claudeModel: "shared-model[1M]",
       defaultSonnetModel: "",
       defaultSonnetModelName: "",
@@ -284,8 +236,7 @@ describe("ClaudeFormFields", () => {
   });
   it("Haiku 行也能勾 1M：勾选状态即模型名的 [1M] 后缀", () => {
     const onModelChange = vi.fn();
-    renderCopilotForm({
-      isCopilotPreset: false,
+    renderClaudeForm({
       usesOAuth: false,
       defaultHaikuModel: "glm-5.3-flash[1M]",
       defaultHaikuModelName: "",

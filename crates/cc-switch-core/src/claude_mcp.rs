@@ -248,7 +248,7 @@ pub fn validate_command_in_path(cmd: &str) -> Result<bool, AppError> {
     }
     // 如果包含路径分隔符，直接判断是否存在可执行文件
     if cmd.contains('/') || cmd.contains('\\') {
-        return Ok(Path::new(cmd).exists());
+        return Ok(Path::new(cmd).is_file());
     }
 
     let path_var = env::var_os("PATH").unwrap_or_default();
@@ -363,6 +363,18 @@ pub fn set_mcp_servers_map(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn command_path_validation_rejects_directories() {
+        let directory = tempfile::tempdir().unwrap();
+        assert!(!validate_command_in_path(&directory.path().to_string_lossy()).unwrap());
+        let file = directory.path().join("fixture.exe");
+        std::fs::write(&file, b"fixture").unwrap();
+        assert!(validate_command_in_path(&file.to_string_lossy()).unwrap());
+        assert!(
+            !validate_command_in_path(&directory.path().join("missing").to_string_lossy()).unwrap()
+        );
+    }
 
     /// 测试 Windows 命令包装功能
     /// 由于使用条件编译，在非 Windows 平台上测试的是空函数

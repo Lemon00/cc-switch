@@ -48,14 +48,6 @@ export interface DeepLinkImportRequest {
   usageUserId?: string;
   usageAutoInterval?: number;
 }
-export interface McpImportResult {
-  importedCount: number;
-  importedIds: string[];
-  failed: Array<{
-    id: string;
-    error: string;
-  }>;
-}
 export type ImportResult =
   | {
       type: "provider";

@@ -27,16 +27,14 @@
 //!   → 去重 → 费用计算 → proxy_request_logs 表
 //! ```
 
+use crate::database::sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH;
+use crate::database::usage::find_model_pricing;
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::parser::TokenUsage;
-use crate::services::{
-    session_usage::{
-        cost_columns, estimated_first_token_ms, estimated_latency_ms, load_sync_cursors,
-        metadata_modified_nanos, SessionSyncResult, SyncCursor,
-    },
-    sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH,
-    usage_stats::find_model_pricing,
+use crate::services::session_usage::{
+    cost_columns, estimated_first_token_ms, estimated_latency_ms, load_sync_cursors,
+    metadata_modified_nanos, SessionSyncResult, SyncCursor,
 };
 use rust_decimal::Decimal;
 use serde_json::Value;
@@ -100,7 +98,7 @@ pub fn dsh_sessions_root() -> PathBuf {
 /// [`sync_dsh_usage`] 的可注入根目录版本，测试用临时目录。
 pub fn sync_dsh_usage_from(db: &Database, root: &Path) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();
-    let cursors = load_sync_cursors(db)?;
+    let mut files = Vec::new();
     // 目录层级：sessions/<项目>/<会话>/session.v4.jsonl(.zstd)
     let Ok(projects) = fs::read_dir(root) else {
         return Ok(result);
@@ -125,14 +123,23 @@ pub fn sync_dsh_usage_from(db: &Database, root: &Path) -> Result<SessionSyncResu
                 if !is_session_log(&path) {
                     continue;
                 }
-                let key = format!("dsh:{}", path.to_string_lossy());
-                match sync_file(db, &path, &session_id, &key, &cursors) {
-                    Ok(part) => result.merge(part),
-                    Err(error) => result
-                        .errors
-                        .push(format!("DeepSeek Harness 会话 {}: {error}", path.display())),
-                }
+                files.push((session_id.clone(), path));
             }
+        }
+    }
+    let cursors = load_sync_cursors(
+        db,
+        files
+            .iter()
+            .map(|(_, path)| format!("dsh:{}", path.to_string_lossy())),
+    )?;
+    for (session_id, path) in files {
+        let key = format!("dsh:{}", path.to_string_lossy());
+        match sync_file(db, &path, &session_id, &key, &cursors) {
+            Ok(part) => result.merge(part),
+            Err(error) => result
+                .errors
+                .push(format!("DeepSeek Harness 会话 {}: {error}", path.display())),
         }
     }
     Ok(result)
@@ -1167,9 +1174,12 @@ mod tests {
         use std::io::Write;
         let open_db = |path: &Path| {
             let db = Database {
+                route_revisions: Default::default(),
                 conn: std::sync::Mutex::new(rusqlite::Connection::open(path).unwrap()),
                 log_count_cache: std::sync::Mutex::new(None),
-                change_observer: std::sync::Arc::new(crate::database::changes::NoOpDatabaseChangeObserver),
+                change_observer: std::sync::Arc::new(
+                    crate::database::changes::NoOpDatabaseChangeObserver,
+                ),
             };
             db.create_tables().unwrap();
             db

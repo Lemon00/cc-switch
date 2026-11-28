@@ -170,20 +170,22 @@ fn parse_callback(query: &str, state: &str) -> Option<Result<String, AgyOAuthErr
 async fn read_request_head(stream: &mut tokio::net::TcpStream) -> std::io::Result<String> {
     let mut buffer = Vec::with_capacity(1024);
     let mut chunk = [0u8; 1024];
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
-        let read = tokio::time::timeout(Duration::from_secs(10), stream.read(&mut chunk))
+        let read = tokio::time::timeout_at(deadline, stream.read(&mut chunk))
             .await
             .map_err(|_| std::io::Error::from(std::io::ErrorKind::TimedOut))??;
         if read == 0 {
-            break;
+            return Err(std::io::ErrorKind::UnexpectedEof.into());
         }
         buffer.extend_from_slice(&chunk[..read]);
-        if buffer.windows(4).any(|window| window == b"\r\n\r\n") || buffer.len() > MAX_REQUEST_BYTES
-        {
-            break;
+        if buffer.len() > MAX_REQUEST_BYTES {
+            return Err(std::io::ErrorKind::InvalidData.into());
+        }
+        if buffer.windows(4).any(|window| window == b"\r\n\r\n") {
+            return String::from_utf8(buffer).map_err(|_| std::io::ErrorKind::InvalidData.into());
         }
     }
-    Ok(String::from_utf8_lossy(&buffer).into_owned())
 }
 
 /// 从 `GET /oauth-callback?... HTTP/1.1` 里取出查询串；不是回调路径时返回 `None`。
@@ -265,10 +267,9 @@ async fn post_token(form: &[(&str, &str)]) -> Result<TokenResponse, AgyOAuthErro
         .send()
         .await?;
     let status = response.status();
-    let bytes = response.bytes().await?;
-    if bytes.len() > MAX_RESPONSE_BYTES {
-        return Err(AgyOAuthError::TokenExchange("响应过大".into()));
-    }
+    let bytes = crate::proxy::http_client::read_body_with_limit(response, MAX_RESPONSE_BYTES)
+        .await
+        .map_err(AgyOAuthError::TokenExchange)?;
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|_| AgyOAuthError::TokenExchange(format!("HTTP {status}，响应不是 JSON")))?;
     if !status.is_success() {
@@ -330,10 +331,9 @@ pub async fn fetch_identity(access_token: &str) -> Option<IdentityClaims> {
     if !response.status().is_success() {
         return None;
     }
-    let bytes = response.bytes().await.ok()?;
-    if bytes.len() > MAX_RESPONSE_BYTES {
-        return None;
-    }
+    let bytes = crate::proxy::http_client::read_body_with_limit(response, MAX_RESPONSE_BYTES)
+        .await
+        .ok()?;
     let claims: IdentityClaims = serde_json::from_slice(&bytes).ok()?;
     claims.sub.as_ref().filter(|sub| !sub.is_empty())?;
     Some(claims)
@@ -391,6 +391,26 @@ pub fn usable_access_token(credential: &Value, margin: Duration) -> Option<&str>
 
 #[cfg(test)]
 mod tests {
+
+    #[tokio::test]
+    async fn callback_rejects_truncated_and_oversized_headers() {
+        for request in [
+            "GET /callback?code=c&state=s HTTP/1.1\r\n".to_string(),
+            format!(
+                "GET / HTTP/1.1\r\nX: {}\r\n\r\n",
+                "x".repeat(MAX_REQUEST_BYTES)
+            ),
+        ] {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let mut sender = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
+                .await
+                .unwrap();
+            let (mut receiver, _) = listener.accept().await.unwrap();
+            sender.write_all(request.as_bytes()).await.unwrap();
+            sender.shutdown().await.unwrap();
+            assert!(read_request_head(&mut receiver).await.is_err());
+        }
+    }
     use super::*;
 
     #[test]

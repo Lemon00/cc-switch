@@ -87,9 +87,9 @@ const entries: PresetEntry[] = [
     preset: preset("AWS Bedrock", "cloud_provider", "https://aws.amazon.com"),
   },
   {
-    id: "copilot",
-    preset: preset("GitHub Copilot", "third_party", "https://github.com", {
-      providerType: "github_copilot",
+    id: "chatgpt",
+    preset: preset("ChatGPT", "third_party", "https://chatgpt.com", {
+      providerType: "codex_oauth",
     }),
   },
   {
@@ -186,8 +186,8 @@ describe("preset helpers", () => {
     ).toEqual([
       "alpha",
       "bedrock",
+      "chatgpt",
       "gamma",
-      "copilot",
       "huoshan",
       "ollama-local",
       "zhipu",
@@ -229,11 +229,11 @@ describe("preset families", () => {
     // 别名算整家命中
     expect(hits("moonshot")).toEqual([["family:kimi", []]]);
   });
-  it("merges Claude's visible presets into 111 rows", () => {
+  it("merges Claude's visible presets into 109 rows", () => {
     const claudeEntries = providerPresets
       .map((item, index) => ({ id: `claude-${index}`, preset: item }))
       .filter((entry) => !entry.preset.hidden);
-    expect(groupPresetRows(claudeEntries)).toHaveLength(111);
+    expect(groupPresetRows(claudeEntries)).toHaveLength(109);
   });
   it("orders plans and regions as the design does where a family says so", () => {
     const claudeEntries = providerPresets
@@ -314,7 +314,7 @@ describe("preset families", () => {
         (section) => [section.group, section.items.map(({ row }) => row.key)],
       );
     expect(sections("")).toEqual([
-      ["login", ["alpha", "copilot"]],
+      ["login", ["alpha", "chatgpt"]],
       ["vendor", ["huoshan", "family:kimi", "zhipu"]],
       ["thirdparty", ["gamma"]],
       ["cloud", ["bedrock"]],
@@ -442,7 +442,7 @@ describe("ProviderPresetSelector", () => {
       within(login)
         .getAllByRole("button")
         .map((button) => button.getAttribute("aria-label")),
-    ).toEqual(["GitHub Copilot", "preset.alpha"]);
+    ).toEqual(["ChatGPT", "preset.alpha"]);
     expect(
       within(
         within(host).getByRole("region", {
@@ -496,10 +496,10 @@ describe("ProviderPresetSelector", () => {
     await user.click(
       within(host).getByRole("button", { name: /providerPreset.group.login/ }),
     );
-    expect(within(host).getByText("GitHub Copilot")).toBeInTheDocument();
+    expect(within(host).getByText("ChatGPT")).toBeInTheDocument();
     expect(within(host).queryByText("Gamma")).not.toBeInTheDocument();
     expect(
-      within(host).getByText("providerPreset.loginWith.github"),
+      within(host).getByText("providerPreset.loginWith.chatgpt"),
     ).toBeInTheDocument();
     const search = within(host).getByRole("textbox", {
       name: "providerPreset.searchAriaLabel",

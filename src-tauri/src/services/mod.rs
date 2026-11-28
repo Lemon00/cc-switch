@@ -30,35 +30,31 @@ pub use cc_switch_core::services::prompt;
 pub use cc_switch_core::services::prompt::PromptService;
 pub use cc_switch_core::services::provider;
 pub use cc_switch_core::services::proxy;
-pub use cc_switch_core::services::s3;
 pub use cc_switch_core::services::s3_auto_sync;
 pub use cc_switch_core::services::s3_sync;
-pub use cc_switch_core::services::session_common;
 #[cfg(feature = "session-monitor")]
 // 核心同名模块受 session-monitor 门控，shim 也必须跟着门控，
 // 否则关掉 feature 时这里会重导出不存在的模块。
 pub use cc_switch_core::services::session_usage;
-#[cfg(feature = "session-monitor")]
+#[cfg(all(test, unix, feature = "session-monitor"))]
 pub use cc_switch_core::services::session_usage_agy;
 #[cfg(feature = "session-monitor")]
 pub use cc_switch_core::services::session_usage_codex;
-#[cfg(feature = "session-monitor")]
-pub use cc_switch_core::services::session_usage_dsh;
-#[cfg(feature = "session-monitor")]
-pub use cc_switch_core::services::session_usage_opencode;
 pub use cc_switch_core::services::skill;
-pub use cc_switch_core::services::sql_helpers;
 pub use cc_switch_core::services::subscription;
 pub use cc_switch_core::services::subscription_agy;
-pub use cc_switch_core::services::subscription_xai;
+
 pub use cc_switch_core::services::sync_protocol;
 pub use cc_switch_core::services::usage_cache;
 pub use cc_switch_core::services::usage_http;
-pub use cc_switch_core::services::usage_stats;
-pub use cc_switch_core::services::webdav;
 pub use cc_switch_core::services::webdav_auto_sync;
 pub use cc_switch_core::services::webdav_sync;
 
+#[allow(unused_imports)]
+pub use crate::database::usage::{
+    DailyStats, LogFilters, ModelStats, PaginatedLogs, ProviderLimitStatus, ProviderStats,
+    RequestLogDetail, UsageSummary, UsageSummaryByApp,
+};
 pub use config::ConfigService;
 pub use mcp::McpService;
 pub use omo::OmoService;
@@ -67,9 +63,3 @@ pub use proxy::ProxyService;
 #[allow(unused_imports)]
 pub use skill::{DiscoverableSkill, Skill, SkillRepo, SkillService};
 pub use speedtest::{EndpointLatency, SpeedtestService};
-pub use usage_cache::UsageCache;
-#[allow(unused_imports)]
-pub use usage_stats::{
-    DailyStats, LogFilters, ModelStats, PaginatedLogs, ProviderLimitStatus, ProviderStats,
-    RequestLogDetail, UsageSummary, UsageSummaryByApp,
-};

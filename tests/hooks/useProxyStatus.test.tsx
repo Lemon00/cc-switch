@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { proxyKeys } from "@/lib/query/proxy";
@@ -106,4 +107,68 @@ describe("useProxyStatus", () => {
     expect(invokeMock).toHaveBeenCalledWith("start_proxy_server");
     expect(invokeMock).toHaveBeenCalledWith("stop_proxy_server");
   });
+
+  it.each([false, true])(
+    "refreshes mode and health observers after restore (failure=%s)",
+    async (fails) => {
+      const { wrapper, queryClient } = createWrapper();
+      const failure = new Error("Codex config is locked");
+      let restored = false;
+      const defaultInvoke = invokeMock.getMockImplementation()!;
+      invokeMock.mockImplementation((command: string) => {
+        if (command === "stop_proxy_with_restore") {
+          restored = true;
+          return fails ? Promise.reject(failure) : Promise.resolve();
+        }
+        if (command === "get_proxy_takeover_status") {
+          return Promise.resolve({
+            claude: !restored,
+            codex: fails || !restored,
+          });
+        }
+        return defaultInvoke(command);
+      });
+      const health = renderHook(
+        () =>
+          useQuery({
+            queryKey: ["providerHealth", "p1", "claude"],
+            queryFn: async () => (restored && !fails ? null : "unhealthy"),
+          }),
+        { wrapper },
+      );
+      const { result } = renderHook(
+        () => ({
+          proxy: useProxyStatus(),
+          mode: useQuery({
+            queryKey: ["providers", "claude", "mode"],
+            queryFn: async () => (restored ? "direct" : "route"),
+          }),
+          auth: useQuery({
+            queryKey: ["managed-auth-status", "claude_official"],
+            queryFn: async () =>
+              restored ? "direct-account" : "route-account",
+          }),
+        }),
+        { wrapper },
+      );
+      await waitFor(() => expect(result.current.mode.data).toBe("route"));
+      await waitFor(() => expect(health.result.current.data).toBe("unhealthy"));
+      await act(async () => {
+        if (fails)
+          await expect(result.current.proxy.stopWithRestore()).rejects.toBe(
+            failure,
+          );
+        else await result.current.proxy.stopWithRestore();
+      });
+      await waitFor(() => {
+        expect(result.current.proxy.takeoverStatus?.claude).toBe(false);
+        expect(result.current.mode.data).toBe("direct");
+        expect(health.result.current.data).toBe(fails ? "unhealthy" : null);
+        expect(result.current.auth.data).toBe("direct-account");
+      });
+      expect(toastSuccessMock).toHaveBeenCalledTimes(fails ? 0 : 1);
+      expect(toastErrorMock).toHaveBeenCalledTimes(fails ? 1 : 0);
+      queryClient.clear();
+    },
+  );
 });

@@ -91,12 +91,7 @@ vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
     await importOriginal<typeof import("@/components/providers/forms/hooks")>();
   return {
     ...actual,
-    useCopilotAuth: () => ({
-      isAuthenticated: false,
-      isStatusSuccess: true,
-      isStatusError: false,
-      accounts: [],
-    }),
+
     useCodexOauth: () => ({
       isAuthenticated: true,
       isStatusSuccess: true,
@@ -111,10 +106,6 @@ vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
           requires_reauth: false,
         },
       ],
-    }),
-    useXaiOauth: () => ({
-      isAuthenticated: false,
-      accounts: [],
     }),
   };
 });

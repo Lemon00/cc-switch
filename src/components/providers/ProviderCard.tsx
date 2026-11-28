@@ -1,13 +1,13 @@
 import AgyAccountQuotaFooter from "@/components/AgyAccountQuotaFooter";
 import ClaudeAccountQuotaFooter from "@/components/ClaudeAccountQuotaFooter";
 import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
-import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
+
 import { ProviderIconBox } from "@/components/ProviderIconBox";
 import { ClaudeBoundAccountLine } from "@/components/providers/forms/ClaudeOfficialSection";
 import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
 import { HoverTip } from "@/components/ui/hover-tip";
 import UsageFooter from "@/components/UsageFooter";
-import XaiOauthQuotaFooter from "@/components/XaiOauthQuotaFooter";
+
 import { isProxyAppId } from "@/config/appConfig";
 import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import type { AppId } from "@/lib/api";
@@ -252,8 +252,7 @@ export function ProviderCard({
     provider.meta?.usage_script?.enabled ??
     (isBoundCodexOfficial || Boolean(claudeBoundAccountId));
   const supportsOfficialSubscription =
-    isOfficial &&
-    ["claude", "codex", "gemini", "grokbuild", "agy"].includes(appId);
+    isOfficial && ["claude", "codex", "agy"].includes(appId);
   const isOfficialSubscriptionUsage =
     provider.meta?.usage_script?.templateType ===
     TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;
@@ -275,11 +274,7 @@ export function ProviderCard({
         claudeDefaultPlan?.rateLimitTier,
       )
     : null;
-  const isCopilot =
-    provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
-    provider.meta?.usage_script?.templateType === "github_copilot";
-  // xAI OAuth (SuperGrok 反代)：额度经自管 OAuth token 自动显示，与 codex_oauth 同构
-  const isXaiOauth = provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH;
+
   // Antigravity 官方卡绑了授权中心的账号：额度查绑定的号（只有 macOS 能切号，其他平台忽略绑定）
   const agyBoundAccountId =
     appId === "agy" && isOfficial && isMac()
@@ -501,13 +496,7 @@ export function ProviderCard({
           {/* 额度列 136 宽，带重置倒计时时 194 宽（见 QuotaLines） */}
           <div className="max-w-[208px] text-end">
             <div className="flex items-center justify-end gap-1">
-              {isCopilot ? (
-                <CopilotQuotaFooter
-                  meta={provider.meta}
-                  inline={true}
-                  isCurrent={isCurrent}
-                />
-              ) : isCodexOauth ? (
+              {isCodexOauth ? (
                 !isBoundCodexOfficial || usageEnabled ? (
                   <CodexOauthQuotaFooter
                     meta={provider.meta}
@@ -520,12 +509,6 @@ export function ProviderCard({
                     }
                   />
                 ) : null
-              ) : isXaiOauth ? (
-                <XaiOauthQuotaFooter
-                  meta={provider.meta}
-                  inline={true}
-                  isCurrent={isCurrent}
-                />
               ) : claudeBoundAccountId ? (
                 usageEnabled ? (
                   <ClaudeAccountQuotaFooter
@@ -610,9 +593,7 @@ export function ProviderCard({
             isTesting={isTesting}
             onConfigureUsage={
               (isOfficial && !supportsOfficialSubscription) ||
-              isCopilot ||
-              (isCodexOauth && !isBoundCodexOfficial) ||
-              isXaiOauth
+              (isCodexOauth && !isBoundCodexOfficial)
                 ? undefined
                 : () => onConfigureUsage(provider)
             }

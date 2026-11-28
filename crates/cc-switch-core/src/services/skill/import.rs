@@ -91,7 +91,9 @@ impl SkillService {
                         if !strict {
                             return Ok(());
                         }
-                        if Self::compute_dir_hash(&native)? != Self::compute_dir_hash(&source)? {
+                        if Self::compute_storage_hash(&native)?
+                            != Self::compute_storage_hash(&source)?
+                        {
                             return Err(anyhow!("Skill 与托管副本内容不同，拒绝替换: {directory}"));
                         }
                         if !Self::is_symlink(&native) || Self::paths_alias(&native, &destination) {

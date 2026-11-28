@@ -14,9 +14,9 @@ vi.mock("@/components/SubscriptionQuotaFooter", () => ({
     <span data-testid="subscription-quota">{appId}</span>
   ),
 }));
-vi.mock("@/components/CopilotQuotaFooter", () => ({ default: () => null }));
+
 vi.mock("@/components/CodexOauthQuotaFooter", () => ({ default: () => null }));
-vi.mock("@/components/XaiOauthQuotaFooter", () => ({ default: () => null }));
+
 vi.mock("@/components/AgyAccountQuotaFooter", () => ({
   default: ({ accountId }: { accountId: string }) => (
     <span data-testid="agy-account-quota">{accountId}</span>

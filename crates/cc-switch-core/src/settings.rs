@@ -30,33 +30,13 @@ fn default_true() -> bool {
 pub struct VisibleApps {
     #[serde(default = "default_true")]
     pub claude: bool,
-    #[serde(
-        rename = "claude-desktop",
-        alias = "claudeDesktop",
-        alias = "claude_desktop",
-        default = "default_true"
-    )]
-    pub claude_desktop: bool,
+
     #[serde(default = "default_true")]
     pub codex: bool,
-    #[serde(default = "default_true")]
-    pub gemini: bool,
-    #[serde(default = "default_true")]
-    pub grokbuild: bool,
+
     #[serde(default = "default_true")]
     pub opencode: bool,
-    #[serde(default = "default_true")]
-    pub openclaw: bool,
-    #[serde(default)]
-    pub hermes: bool,
-    #[serde(default = "default_true")]
-    pub pi: bool,
-    #[serde(default)]
-    pub omp: bool,
-    #[serde(default = "default_true")]
-    pub mcode: bool,
-    #[serde(default = "default_true")]
-    pub kimi: bool,
+
     #[serde(default = "default_true")]
     pub dsh: bool,
     #[serde(default = "default_true")]
@@ -67,19 +47,13 @@ impl Default for VisibleApps {
     fn default() -> Self {
         Self {
             claude: true,
-            claude_desktop: true,
+
             codex: true,
-            gemini: true,
-            grokbuild: true,
+
             opencode: true,
-            openclaw: true,
-            hermes: false, // 默认不显示，需用户手动启用
-            pi: true,
-            mcode: true,
-            kimi: true,
+
             dsh: true,
             agy: true,
-            omp: true,
         }
     }
 }
@@ -685,46 +659,23 @@ pub struct AppSettings {
     pub claude_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_config_dir: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gemini_config_dir: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub grok_config_dir: Option<String>,
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opencode_config_dir: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub openclaw_config_dir: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub hermes_config_dir: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pi_config_dir: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub omp_config_dir: Option<String>,
 
     // ===== 当前供应商 ID（设备级）=====
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_claude: Option<String>,
-    /// 当前 Claude Desktop 供应商 ID（本地存储，优先于数据库 is_current）
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub current_provider_claude_desktop: Option<String>,
+
     /// 当前 Codex 供应商 ID（本地存储，优先于数据库 is_current）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_codex: Option<String>,
-    /// 当前 Gemini 供应商 ID（本地存储，优先于数据库 is_current）
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub current_provider_gemini: Option<String>,
-    /// 当前 Grok Build 供应商 ID（本地存储，优先于数据库 is_current）
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub current_provider_grokbuild: Option<String>,
+
     /// 当前 OpenCode 供应商 ID（本地存储，对 OpenCode 可能无意义，但保持结构一致）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_opencode: Option<String>,
-    /// 当前 OpenClaw 供应商 ID（本地存储，对 OpenClaw 可能无意义，但保持结构一致）
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub current_provider_openclaw: Option<String>,
-    /// 当前 Hermes 供应商 ID（本地存储，保持结构一致）
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub current_provider_hermes: Option<String>,
+
     /// 当前 Antigravity CLI 供应商 ID
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_agy: Option<String>,
@@ -835,21 +786,15 @@ impl Default for AppSettings {
             app_order: None,
             claude_config_dir: None,
             codex_config_dir: None,
-            gemini_config_dir: None,
-            grok_config_dir: None,
+
             opencode_config_dir: None,
-            openclaw_config_dir: None,
-            hermes_config_dir: None,
-            pi_config_dir: None,
-            omp_config_dir: None,
+
             current_provider_claude: None,
-            current_provider_claude_desktop: None,
+
             current_provider_codex: None,
-            current_provider_gemini: None,
-            current_provider_grokbuild: None,
+
             current_provider_opencode: None,
-            current_provider_openclaw: None,
-            current_provider_hermes: None,
+
             current_provider_agy: None,
             proxy_client_host: None,
             proxy_lan_token: None,
@@ -913,13 +858,7 @@ impl AppSettings {
         for dir in [
             &mut self.claude_config_dir,
             &mut self.codex_config_dir,
-            &mut self.gemini_config_dir,
-            &mut self.grok_config_dir,
             &mut self.opencode_config_dir,
-            &mut self.openclaw_config_dir,
-            &mut self.hermes_config_dir,
-            &mut self.pi_config_dir,
-            &mut self.omp_config_dir,
         ] {
             *dir = dir
                 .as_deref()
@@ -1756,7 +1695,6 @@ pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app_config::AppType;
 
     #[test]
     fn runtime_reload_preserves_last_good_settings_on_missing_invalid_or_unreadable_file() {
@@ -1881,17 +1819,7 @@ mod tests {
 
     #[test]
     fn every_directory_override_is_trimmed_and_a_blank_one_is_cleared() {
-        let keys = [
-            "claudeConfigDir",
-            "codexConfigDir",
-            "geminiConfigDir",
-            "grokConfigDir",
-            "opencodeConfigDir",
-            "openclawConfigDir",
-            "hermesConfigDir",
-            "piConfigDir",
-            "ompConfigDir",
-        ];
+        let keys = ["claudeConfigDir", "codexConfigDir", "opencodeConfigDir"];
         for key in keys {
             let mut padded: AppSettings =
                 serde_json::from_value(serde_json::json!({ key: "  /custom/dir \n" }))
@@ -2054,7 +1982,7 @@ mod tests {
     fn lenient_parse_keeps_valid_fields_when_one_is_invalid() {
         let content = serde_json::json!({
             "claudeConfigDir": r"\\wsl$\Ubuntu\home\me\.claude",
-            "visibleApps": { "hermes": true, "pi": false },
+            "visibleApps": { "dsh": true, "opencode": false },
             "backupIntervalHours": -1,
             "language": "zh"
         })
@@ -2067,8 +1995,8 @@ mod tests {
             Some(r"\\wsl$\Ubuntu\home\me\.claude")
         );
         let visible = settings.visible_apps.expect("visible apps kept");
-        assert!(visible.hermes);
-        assert!(!visible.pi);
+        assert!(visible.dsh);
+        assert!(!visible.opencode);
         assert_eq!(settings.language.as_deref(), Some("zh"));
         assert!(settings.backup_interval_hours.is_none());
     }
@@ -2080,7 +2008,7 @@ mod tests {
             "{}\n}}\n  \"tail\": true\n}}",
             serde_json::json!({
                 "claudeConfigDir": "/tmp/claude",
-                "visibleApps": { "claude-desktop": false, "gemini": false }
+                "visibleApps": { "claude": false, "opencode": false }
             })
         );
         assert!(serde_json::from_str::<AppSettings>(&content).is_err());
@@ -2092,8 +2020,8 @@ mod tests {
         );
         assert_eq!(settings.claude_config_dir.as_deref(), Some("/tmp/claude"));
         let visible = settings.visible_apps.expect("visible apps kept");
-        assert!(!visible.claude_desktop);
-        assert!(!visible.gemini);
+        assert!(!visible.claude);
+        assert!(!visible.opencode);
         assert!(visible.codex);
     }
 

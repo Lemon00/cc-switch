@@ -1,20 +1,12 @@
-//! Kimi For Coding / Moonshot / DeepSeek 原生 Responses：把工具调用组里夹着助手消息的历史
-//! 排列理顺。
-//!
-//! Kimi 有时在一次回复里先给出工具调用，再给出一条（多半是空文字的）助手消息。
-//! Codex 按收到的顺序记进历史，下一轮原样带回去，这条消息就夹在工具调用和它的结果
-//! 之间。Kimi 在内部转成 Chat 消息后校验，报「an assistant message with 'tool_calls'
-//! must be followed by tool messages」，整个线程从此每轮都失败；空文字的助手消息放在
-//! 别处也会被拒（「text content is empty」）。
-//!
-//! DeepSeek 的校验相同（报「No tool output found for tool call」）。它自己不吐这种排列，
-//! 但同一线程里别家（如 xAI Grok 在调用后补一句说明）留下的历史续到 DeepSeek 时就会中；
 //! 实测它收「推理→消息→调用→结果」，即下面的挪法。
 //!
 //! 只改这两种排列：夹在调用与结果之间的助手消息，有文字的挪到这组调用前面（先说话
 //! 再调工具），空文字的去掉；不在调用组里的空文字助手消息也去掉。改写是确定的，同一
 //! 段历史每轮得到同样的字节，缓存前缀不受影响；请求里没有这些排列时逐字节不变。
 
+use super::transform_codex_responses_reorder::{
+    call_id_of, is_user_message, tool_output_positions,
+};
 use serde_json::Value;
 use std::collections::HashSet;
 
@@ -41,36 +33,46 @@ pub fn repair_tool_history(body: &mut Value) -> bool {
 
     let mut changed = false;
     let mut output: Vec<Value> = Vec::with_capacity(input.len());
-    let mut pending: HashSet<String> = HashSet::new();
-    // 当前这组调用里，挪上来的消息该插的位置（组里第一个调用之前，按原顺序往后排）。
-    let mut hoist_at = 0;
+    let mut original = std::mem::take(input);
+    for turn in original.split_inclusive_mut(is_user_message) {
+        let output_positions = tool_output_positions(turn, |kind| OUTPUT_TYPES.contains(&kind));
+        let mut pending = HashSet::new();
+        // 当前这组调用里，挪上来的消息该插的位置（组里第一个调用之前，按原顺序往后排）。
+        let mut hoist_at = 0;
 
-    for item in std::mem::take(input) {
-        let item_type = item.get("type").and_then(Value::as_str).unwrap_or_default();
-        if is_assistant_message(&item) {
-            if is_empty_text_message(&item) {
-                changed = true;
-                continue;
+        for (index, slot) in turn.iter_mut().enumerate() {
+            let item = slot.take();
+            let item_type = item.get("type").and_then(Value::as_str).unwrap_or_default();
+            if is_assistant_message(&item) {
+                if is_empty_text_message(&item) {
+                    changed = true;
+                    continue;
+                }
+                if !pending.is_empty() {
+                    output.insert(hoist_at, item);
+                    hoist_at += 1;
+                    changed = true;
+                    continue;
+                }
+            } else if CALL_TYPES.contains(&item_type) {
+                if pending.is_empty() {
+                    hoist_at = output.len();
+                }
+                if let Some(id) = call_id_of(&item) {
+                    if output_positions
+                        .get(id)
+                        .is_some_and(|&output| output > index)
+                    {
+                        pending.insert(id.to_owned());
+                    }
+                }
+            } else if OUTPUT_TYPES.contains(&item_type) {
+                if let Some(id) = call_id_of(&item) {
+                    pending.remove(id);
+                }
             }
-            if !pending.is_empty() {
-                output.insert(hoist_at, item);
-                hoist_at += 1;
-                changed = true;
-                continue;
-            }
-        } else if CALL_TYPES.contains(&item_type) {
-            if pending.is_empty() {
-                hoist_at = output.len();
-            }
-            if let Some(call_id) = call_id(&item) {
-                pending.insert(call_id.to_string());
-            }
-        } else if OUTPUT_TYPES.contains(&item_type) {
-            if let Some(call_id) = call_id(&item) {
-                pending.remove(call_id);
-            }
+            output.push(item);
         }
-        output.push(item);
     }
 
     *input = output;
@@ -103,12 +105,6 @@ fn is_empty_text_message(item: &Value) -> bool {
         }
         _ => false,
     }
-}
-
-fn call_id(item: &Value) -> Option<&str> {
-    item.get("call_id")
-        .and_then(Value::as_str)
-        .filter(|id| !id.is_empty())
 }
 
 #[cfg(test)]

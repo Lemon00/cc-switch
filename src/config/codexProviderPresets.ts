@@ -38,7 +38,7 @@ export interface CodexProviderPreset extends PresetFamilyFields {
   // Codex API 格式
   apiFormat?: CodexApiFormat;
   // 仅用于区分托管认证来源；各 OAuth provider 的认证流程彼此独立。
-  providerType?: "codex_oauth" | "xai_oauth" | "github_copilot";
+  providerType?: "codex_oauth";
   // OAuth 预设：隐藏 API Key 输入，保存前要求已登录托管账号
   requiresOAuth?: boolean;
   // Codex Chat 本地路由模式下的模型目录
@@ -212,67 +212,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     icon: "openai",
     iconColor: "#00A67E",
   },
-  {
-    name: "GitHub Copilot",
-    websiteUrl: "https://github.com/features/copilot",
-    auth: {},
-    // Codex talks Responses to the local proxy. The proxy selects Copilot's
-    // native Responses or Chat Completions transport from model capabilities.
-    config: generateThirdPartyConfig(
-      "github-copilot",
-      "https://api.githubcopilot.com",
-      "gpt-6-astra",
-      { requiresOpenAiAuth: false },
-    ),
-    endpointCandidates: ["https://api.githubcopilot.com"],
-    providerType: "github_copilot",
-    requiresOAuth: true,
-    modelCatalog: modelCatalog([
-      {
-        model: "gpt-6-astra",
-        displayName: "GPT-6 Astra",
-        contextWindow: 272000,
-        reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
-        supportsParallelToolCalls: true,
-        inputModalities: ["text"],
-      },
-      {
-        model: "gpt-5.6-sol",
-        displayName: "GPT-5.6 Sol",
-        contextWindow: 272000,
-        reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
-        supportsParallelToolCalls: true,
-        inputModalities: ["text"],
-      },
-      {
-        model: "gpt-5.6-terra",
-        displayName: "GPT-5.6 Terra",
-        contextWindow: 272000,
-        reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
-        supportsParallelToolCalls: true,
-        inputModalities: ["text"],
-      },
-      {
-        model: "gpt-5.6-luna",
-        displayName: "GPT-5.6 Luna",
-        contextWindow: 200000,
-        reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
-        supportsParallelToolCalls: true,
-        inputModalities: ["text"],
-      },
-      {
-        model: "gpt-5.5",
-        displayName: "GPT-5.5",
-        contextWindow: 272000,
-        reasoningLevels: ["none", "low", "medium", "high", "xhigh"],
-        supportsParallelToolCalls: true,
-        inputModalities: ["text"],
-      },
-    ]),
-    category: "third_party",
-    icon: "github",
-    iconColor: "#000000",
-  },
+
   // ===== 赞助商预设：文件顺序与 README 赞助商表对齐（仅维护约定；应用内一律按显示名排序，不置顶）=====
   {
     name: "Kimi",
@@ -3422,92 +3362,7 @@ requires_openai_auth = true`,
     icon: "novita",
     iconColor: "#000000",
   },
-  {
-    name: "xAI (Grok)",
-    websiteUrl: "https://x.ai/api",
-    apiKeyUrl: "https://console.x.ai",
-    auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig("xai", "https://api.x.ai/v1", "grok-4.7"),
-    endpointCandidates: ["https://api.x.ai/v1"],
-    // xAI 官方以 /v1/responses 为一等端点（docs.x.ai api-reference）：Codex 硬依赖的
-    // store:false / include=["reasoning.encrypted_content"] / reasoning effort 均支持，
-    // 原生 Responses，无需路由接管转换
-    apiFormat: "openai_responses",
-    modelCatalog: modelCatalog([
-      // https://docs.x.ai/developers/models/grok-4.7（2026-09-23 收录；
-      // 2026-11-03 复核：官方默认 effort=high，子集最高档为 xhigh → 显式声明）
-      {
-        model: "grok-4.7",
-        displayName: "Grok 4.7",
-        contextWindow: 500000,
-        supportsParallelToolCalls: true,
-        inputModalities: ["text", "image"],
-        reasoningLevels: ["low", "medium", "high", "xhigh"],
-        defaultReasoningLevel: "high",
-      },
-      {
-        model: "grok-4.5",
-        displayName: "Grok 4.5",
-        contextWindow: 500000,
-        supportsParallelToolCalls: true,
-        inputModalities: ["text", "image"],
-        // 实测（2026-08-30，native /v1/responses 逐档探测）：grok-4.5 接受
-        // low/medium/high/xhigh，拒绝 max（HTTP 400 "Invalid reasoning
-        // effort"）；"Reasoning cannot be disabled" 故无 none 档。Codex 不按
-        // catalog clamp 越界档位（Desktop UI 选出的 max 会原样发出），此列表
-        // 必须与上游实收集合一致，勿凭文档增删。
-        // ⚠️ docs.x.ai/developers/grok-4-5 页面实际渲染的是 grok-4.6 内容勿引
-        reasoningLevels: ["low", "medium", "high", "xhigh"],
-      },
-    ]),
-    category: "third_party",
-    icon: "xai",
-    iconColor: "#000000",
-  },
-  {
-    name: "xAI (Grok) OAuth",
-    websiteUrl: "https://x.ai/grok",
-    auth: generateThirdPartyAuth(""),
-    // 托管 OAuth：真实 token 由本地代理按请求注入，CodexAdapter 硬定向
-    // api.x.ai；这里的 base_url / 空 auth 只是配置快照，转发时不生效。
-    // requires_openai_auth 必须是 false：keyless + true 会被后端安全闸
-    // 拒绝切换（后端写入层对存量卡也会强制归一为 false）。
-    config: generateThirdPartyConfig("xai", "https://api.x.ai/v1", "grok-4.7", {
-      requiresOpenAiAuth: false,
-    }),
-    apiFormat: "openai_responses",
-    providerType: "xai_oauth",
-    requiresOAuth: true,
-    modelCatalog: modelCatalog([
-      // 同 API-key 条目（docs.x.ai 2026-11-03 复核：官方默认 effort=high）
-      {
-        model: "grok-4.7",
-        displayName: "Grok 4.7",
-        contextWindow: 500000,
-        supportsParallelToolCalls: true,
-        inputModalities: ["text", "image"],
-        reasoningLevels: ["low", "medium", "high", "xhigh"],
-        defaultReasoningLevel: "high",
-      },
-      {
-        model: "grok-4.5",
-        displayName: "Grok 4.5",
-        contextWindow: 500000,
-        supportsParallelToolCalls: true,
-        inputModalities: ["text", "image"],
-        // 实测（2026-08-30，native /v1/responses 逐档探测）：grok-4.5 接受
-        // low/medium/high/xhigh，拒绝 max（HTTP 400 "Invalid reasoning
-        // effort"）；"Reasoning cannot be disabled" 故无 none 档。Codex 不按
-        // catalog clamp 越界档位（Desktop UI 选出的 max 会原样发出），此列表
-        // 必须与上游实收集合一致，勿凭文档增删。
-        // ⚠️ docs.x.ai/developers/grok-4-5 页面实际渲染的是 grok-4.6 内容勿引
-        reasoningLevels: ["low", "medium", "high", "xhigh"],
-      },
-    ]),
-    category: "third_party",
-    icon: "xai",
-    iconColor: "#000000",
-  },
+
   {
     name: "Nvidia",
     websiteUrl: "https://build.nvidia.com",

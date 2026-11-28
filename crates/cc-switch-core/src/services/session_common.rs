@@ -4,8 +4,11 @@
 
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
+#[cfg(feature = "session-monitor")]
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
+#[cfg(feature = "session-monitor")]
 use crate::proxy::usage::parser::TokenUsage;
+#[cfg(feature = "session-monitor")]
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -112,6 +115,7 @@ pub struct EstimatedTiming {
 /// 表示没有定价，不代表免费。
 ///
 /// 各会话 importer 共用相同的成本列和缓存 token 语义。
+#[cfg(feature = "session-monitor")]
 pub(crate) fn cost_columns(
     app_type: &str,
     usage: &TokenUsage,

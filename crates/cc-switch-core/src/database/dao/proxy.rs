@@ -261,6 +261,11 @@ impl Database {
 
         let conn = lock_conn!(self.conn);
 
+        let previous_failover = conn.query_row(
+            "SELECT auto_failover_enabled != 0 FROM proxy_config WHERE app_type = ?1",
+            [&config.app_type],
+            |row| row.get::<_, bool>(0),
+        )?;
         let updated = conn
             .execute(
                 "UPDATE proxy_config SET
@@ -301,6 +306,9 @@ impl Database {
             )));
         }
 
+        if previous_failover != config.auto_failover_enabled {
+            self.advance_route_revision(&config_app);
+        }
         Ok(())
     }
 
@@ -453,45 +461,6 @@ impl Database {
         .map_err(|e| AppError::Database(e.to_string()))?;
 
         Ok(())
-    }
-
-    /// 设置 Live 接管状态（兼容旧版本，更新 enabled 字段）
-    pub async fn set_live_takeover_active(&self, _active: bool) -> Result<(), AppError> {
-        // 不再使用此字段，由 enabled 字段替代
-        // 保留空实现以兼容旧代码
-        Ok(())
-    }
-
-    /// 检查是否处于 Live 接管模式
-    ///
-    /// 检查是否有任一 app 的 enabled = true
-    pub async fn is_live_takeover_active(&self) -> Result<bool, AppError> {
-        let conn = lock_conn!(self.conn);
-        let count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM proxy_config WHERE enabled = 1",
-                [],
-                |row| row.get(0),
-            )
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        Ok(count > 0)
-    }
-
-    /// 同步版本：检查是否有任一 app 的 enabled = true
-    ///
-    /// 用于 `ProfileService::apply` 等 sync 路径判断是否需要停止代理服务。
-    pub fn is_live_takeover_active_sync(&self) -> bool {
-        let conn = match lock_recovering(&self.conn) {
-            Ok(c) => c,
-            Err(_) => return false,
-        };
-        conn.query_row(
-            "SELECT COUNT(*) FROM proxy_config WHERE enabled = 1",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .unwrap_or(0)
-            > 0
     }
 
     // ==================== Provider Health ====================

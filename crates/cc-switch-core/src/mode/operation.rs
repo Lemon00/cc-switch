@@ -257,7 +257,7 @@ pub fn recover(
     }
 
     let mut skipped = elsewhere();
-    for (file, at) in pending.files.iter().zip(&positions) {
+    for (index, (file, at)) in pending.files.iter().zip(&positions).enumerate() {
         if !matches!(at, At::Pre) {
             continue;
         }
@@ -269,7 +269,12 @@ pub fn recover(
             skipped.push(file.path.clone());
             continue;
         }
+        failpoint::before_publish(index, &file.path);
         let current = read_current(&file.path)?;
+        if digest(current.as_deref()) != file.pre {
+            skipped.push(file.path.clone());
+            continue;
+        }
         ensure_first_write_backup(store, &file.path, current.as_deref())?;
         publish(file)?;
     }
@@ -451,18 +456,26 @@ pub fn commit_target(
     }
     // 模式、写入记录和 Stack 模型在同一次状态文件写入里落定。
     if target.state.is_some() || target.written.is_some() || target.stack.is_some() {
+        let mut route_changed = false;
         state::update(store, |live| {
             let entry = live.apps.entry(app.to_string()).or_default();
             if let Some(mode) = &target.state {
+                route_changed |= entry.mode != mode.mode
+                    || entry.attached != mode.attached
+                    || entry.proxy_route != mode.proxy_route;
                 entry.set_mode_state(mode.clone());
             }
             if let Some(written) = &target.written {
                 entry.written = Some(written.clone());
             }
             if let Some(stack) = &target.stack {
+                route_changed |= entry.stack.enabled != stack.enabled;
                 entry.stack = stack.clone();
             }
         })?;
+        if let (true, Ok(app)) = (route_changed, app.parse()) {
+            db.advance_route_revision(&app);
+        }
     }
     if let Some(mode) = &target.state {
         mirror_proxy_flag(db, app, mode.is_proxy())?;
@@ -907,6 +920,30 @@ mod tests {
         );
         assert!(fx.temp_files().is_empty());
         assert_eq!(state::pending(&fx.store, &fx.app).unwrap(), None);
+    }
+
+    #[test]
+    fn recovery_rechecks_files_changed_after_its_initial_scan() {
+        let fx = Fixture::new();
+        let pointer = RefCell::new(None);
+        failpoint::crash_at(Some("published:0"));
+        switch(&fx, &pointer).expect_err("crash");
+        let changed = fx.b.clone();
+        failpoint::on_before_publish(Some(Box::new(move |_, path| {
+            if path == changed {
+                fs::write(path, "{\"key\":\"external edit\"}").unwrap();
+            }
+        })));
+        let outcome = recover_now(&fx, &pointer);
+        failpoint::on_before_publish(None);
+        assert_eq!(
+            outcome,
+            Some(RecoveryOutcome::RolledForwardExcept {
+                paths: vec![fx.b.clone()]
+            })
+        );
+        assert_eq!(fx.read(&fx.b), json!({"key":"external edit"}));
+        assert!(fx.temp_files().is_empty());
     }
 
     #[test]

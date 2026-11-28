@@ -1,6 +1,6 @@
 {
   "name": "cc-switch",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Assistant for Claude Code, Codex, OpenCode, DeepSeek Harness and Antigravity",
   "type": "module",
   "scripts": {

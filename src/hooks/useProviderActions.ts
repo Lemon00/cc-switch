@@ -266,7 +266,7 @@ export function useProviderActions(
       ).map((model) => model.id);
       if (modelIds.length === 0) {
         toast.error(
-          t("notifications.openclawNoModels", {
+          t("notifications.opencodeNoModels", {
             defaultValue: "该供应商没有配置模型",
           }),
         );
@@ -275,7 +275,7 @@ export function useProviderActions(
       const selected = modelId ?? modelIds[0];
       if (!modelIds.includes(selected)) {
         toast.error(
-          t("notifications.openclawModelNotFound", {
+          t("notifications.opencodeModelNotFound", {
             defaultValue: "所选模型已不存在，请刷新后重试",
           }),
         );
@@ -289,7 +289,7 @@ export function useProviderActions(
           queryKey: ["opencodeDefaultModel"],
         });
         toast.success(
-          t("notifications.openclawDefaultModelSet", {
+          t("notifications.opencodeDefaultModelSet", {
             defaultValue: "已设为默认模型",
           }),
           { closeButton: true },
@@ -297,7 +297,7 @@ export function useProviderActions(
       } catch (error) {
         toast.error(
           extractErrorMessage(error) ||
-            t("notifications.openclawDefaultModelSetFailed", {
+            t("notifications.opencodeDefaultModelSetFailed", {
               defaultValue: "设置默认模型失败",
             }),
         );

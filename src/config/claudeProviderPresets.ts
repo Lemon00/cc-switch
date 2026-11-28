@@ -54,9 +54,9 @@ export interface ProviderPreset extends PresetFamilyFields {
     | "openai_responses"
     | "gemini_native";
   // 供应商类型标识（用于特殊供应商检测）
-  // - "github_copilot": GitHub Copilot 供应商（需要 OAuth 认证）
+
   // - "codex_oauth": OpenAI Codex via ChatGPT Plus/Pro 反代（需要 OAuth 认证）
-  providerType?: "github_copilot" | "codex_oauth" | "xai_oauth";
+  providerType?: "codex_oauth";
   // 是否需要 OAuth 认证（而非 API Key）
   requiresOAuth?: boolean;
   // 是否在 UI 中隐藏该预设（预设仍存在，仅不在列表中显示）
@@ -2726,25 +2726,7 @@ export const providerPresets: ProviderPreset[] = [
     },
     icon: "cloudflare",
   },
-  {
-    name: "GitHub Copilot",
-    websiteUrl: "https://github.com/features/copilot",
-    settingsConfig: {
-      env: {
-        ANTHROPIC_BASE_URL: "https://api.githubcopilot.com",
-        ANTHROPIC_MODEL: "claude-sonnet-5",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4.5",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-5",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-sonnet-5",
-      },
-    },
-    category: "third_party",
-    apiFormat: "openai_chat",
-    providerType: "github_copilot",
-    requiresOAuth: true,
-    icon: "github",
-    iconColor: "#000000",
-  },
+
   {
     name: "Codex",
     websiteUrl: "https://openai.com/chatgpt/pricing",
@@ -2777,29 +2759,7 @@ export const providerPresets: ProviderPreset[] = [
     icon: "openai",
     iconColor: "#000000",
   },
-  {
-    name: "xAI (Grok)",
-    websiteUrl: "https://x.ai/grok",
-    settingsConfig: {
-      env: {
-        // The proxy enforces both this origin and the Responses wire format.
-        ANTHROPIC_BASE_URL: "https://api.x.ai/v1",
-        ANTHROPIC_MODEL: "grok-4.7",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "grok-4.7",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "grok-4.7",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "grok-4.7",
-        // Claude Code falls back to 200K for non-Claude model ids; grok-4.7
-        // has a 500K window (same as grok_config::DEFAULT_CONTEXT_WINDOW).
-        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "500000",
-      },
-    },
-    category: "third_party",
-    apiFormat: "openai_responses",
-    providerType: "xai_oauth",
-    requiresOAuth: true,
-    icon: "xai",
-    iconColor: "#000000",
-  },
+
   {
     // OpenAI 平台 API Key（按量计费，和上面 ChatGPT 登录的「Codex」卡是两套额度），
     // 经路由转成 Responses 发往 /v1/responses。

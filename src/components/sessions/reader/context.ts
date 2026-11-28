@@ -1,5 +1,8 @@
 import { createContext, useContext } from "react";
-import { AGENT_READER_STYLES, type AgentReaderStyle } from "./agentStyles";
+import {
+  AGENT_READER_STYLES,
+  type AgentReaderStyle,
+} from "@/lib/sessions/agentStyles";
 /**
  * 阅读页各行组件共用的会话级信息。经 Context 下发，避免每一行都透传一长串 props；
  * 值在 SessionReader 里 useMemo，只有会话、查找词变化时才更新。

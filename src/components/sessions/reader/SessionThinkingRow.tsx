@@ -4,8 +4,8 @@ import { useReaderContext } from "./context";
 import { useReaderT } from "./i18n";
 import { GlyphCell, ROW_BUTTON, ROW_STATIC, stripBold } from "./rowStyles";
 import { BlockText } from "./SessionStepDetails";
-import { formatDuration, summarizeThinking } from "./toolSummary";
-import type { ThinkingStep } from "./turns";
+import { formatDuration, summarizeThinking } from "@/lib/sessions/toolSummary";
+import type { ThinkingStep } from "@/lib/sessions/turns";
 /** 字数显示：860 / 1.2k */
 const formatChars = (count: number) =>
   count >= 1000 ? `${Number((count / 1000).toFixed(1))}k` : String(count);

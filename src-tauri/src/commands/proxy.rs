@@ -330,6 +330,9 @@ pub async fn update_proxy_config_for_app(
 ) -> Result<(), String> {
     let db = &state.db;
     let app = require_proxy_app(&config.app_type)?;
+    let _guard = crate::mode::controller::lock_settled(&state, &app)
+        .await
+        .map_err(|e| e.to_string())?;
     let circuit_config = CircuitBreakerConfig::from(&config);
     // `enabled` / `auto_failover_enabled` 不由本接口改：前者跟模式走，后者只走
     // set_auto_failover_enabled。面板保存超时/熔断参数时若带上陈旧开关会误关故障转移。
@@ -459,6 +462,7 @@ pub async fn reset_circuit_breaker(
     app_type: String,
 ) -> Result<(), String> {
     let app = require_proxy_app(&app_type)?;
+    let route_revision = state.db.route_revision(&app);
     // 1. 重置数据库健康状态
     let db = &state.db;
     db.update_provider_health(&provider_id, &app, true, None)
@@ -533,6 +537,7 @@ pub async fn reset_circuit_breaker(
                         &app_type,
                         &provider_id,
                         &provider_name,
+                        route_revision,
                     )
                     .await
                     {

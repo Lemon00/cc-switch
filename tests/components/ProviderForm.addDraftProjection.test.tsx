@@ -38,12 +38,7 @@ vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
     await importOriginal<typeof import("@/components/providers/forms/hooks")>();
   return {
     ...actual,
-    useCopilotAuth: () => ({
-      isAuthenticated: false,
-      isStatusSuccess: true,
-      isStatusError: false,
-      accounts: [],
-    }),
+
     useCodexOauth: () => ({
       isAuthenticated: false,
       isStatusSuccess: true,
@@ -51,7 +46,6 @@ vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
       defaultAccountId: null,
       accounts: [],
     }),
-    useXaiOauth: () => ({ isAuthenticated: false, accounts: [] }),
   };
 });
 const LIVE_TOML = '\n[ui]\ntheme = "dark"\n';
@@ -79,6 +73,7 @@ function renderForm(appId: AppId, bases: Base[]) {
     <QueryClientProvider client={createTestQueryClient()}>
       <ProviderForm
         appId={appId}
+        modeView="direct"
         submitLabel="save"
         onSubmit={vi.fn()}
         onCancel={vi.fn()}

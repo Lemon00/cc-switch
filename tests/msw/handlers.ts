@@ -63,7 +63,7 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/list_profiles`, () =>
     success({
       profiles: [],
-      currentIds: { claude: null, claudeDesktop: null, codex: null },
+      currentIds: { claude: null, codex: null },
     }),
   ),
   http.post(`${TAURI_ENDPOINT}/get_providers`, async ({ request }) => {
@@ -252,15 +252,7 @@ export const handlers = [
     const { apps } = await withJson<{ apps?: AppId[] | null }>(request);
     const targets = apps?.length
       ? apps
-      : [
-          "claude",
-          "codex",
-          "gemini",
-          "grokbuild",
-          "opencode",
-          "hermes",
-          "mcode",
-        ];
+      : ["claude", "codex", "opencode", "dsh", "agy"];
     return success(targets.map((app) => ({ app, ok: true })));
   }),
 

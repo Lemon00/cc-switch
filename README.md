@@ -2,7 +2,7 @@
 
 面向多种 AI 编程客户端的桌面配置与管理工具，基于 React、TypeScript、Tauri 和 Rust。此仓库由 `Lemon00/cc-switch` 独立维护，版本从 **1.0.0** 重新开始。
 
-[用户手册](docs/user-manual/zh/README.md) · [1.0.0 发布说明](docs/release-notes/v1.0.0-zh.md) · [文档索引](docs/README.md) · [贡献指南](CONTRIBUTING.md)
+[用户手册](docs/user-manual/zh/README.md) · [1.0.1 发布说明（待发布）](docs/release-notes/v1.0.1-zh.md) · [文档索引](docs/README.md) · [贡献指南](CONTRIBUTING.md)
 
 ## 功能
 
@@ -28,7 +28,7 @@ Antigravity 的第三方 Key 卡通过卡片「打开终端」使用；CLI 会�
 
 从 [本仓库 Releases](https://github.com/Lemon00/cc-switch/releases) 获取已发布产物。当前工作流构建 Windows x64 和 Linux x64；可用文件以对应 Release 为准。其他平台需要自行构建，不沿用上游官网、Homebrew 或 AUR 包作为本独立版本的安装渠道。
 
-旧 4.x 用户需手动安装 1.0.0。版本号降低不会触发旧版自动更新，安装前请备份配置；具体步骤见[安装指南](docs/user-manual/zh/1-getting-started/1.2-installation.md)。
+旧 4.x 用户需手动安装本仓库已发布的独立版本。版本号降低不会触发旧版自动更新，安装前请备份配置；具体步骤见[安装指南](docs/user-manual/zh/1-getting-started/1.2-installation.md)。
 
 ## 开发
 

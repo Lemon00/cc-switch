@@ -3,7 +3,7 @@ use super::*;
 #[cfg(not(windows))]
 pub(super) use cc_switch_core::process_output::isolate_child_process_group;
 pub(crate) use cc_switch_core::process_output::{
-    output_with_timeout, terminate_child_tree, wait_child_output, CommandDeadline,
+    output_with_timeout, wait_child_output, CommandDeadline,
 };
 
 fn apply_extra_env(cmd: &mut std::process::Command, extra_env: &[(&str, String)]) {
@@ -40,29 +40,13 @@ pub(crate) fn run_detected_tool_command_with_timeout(
 
     // Runtime execution only needs the default entry point. Full installation
     // enumeration runs `--version` for every candidate and belongs to diagnostics.
-    let tool_path = locate_default_tool(tool, deadline)?;
-    let dir = tool_path
-        .parent()
-        .ok_or_else(|| format!("Invalid {tool} executable path"))?;
-    #[cfg(target_os = "windows")]
-    let current_path = effective_path_string();
-    // GUI 启动时继承的是 launchd 的窄 PATH（/usr/bin:/bin:/usr/sbin:/sbin）。npm 装的 CLI
-    // 是 `#!/usr/bin/env node` 脚本，node 常不在工具自己的目录里（如 codex 在
-    // /opt/homebrew/bin、node 在 /usr/local/bin），只补工具目录会 exit 127（#8653）。
-    // 与安装/升级同样补上登录 shell 的 PATH。
-    #[cfg(not(target_os = "windows"))]
-    let current_path = {
-        let inherited = std::env::var_os("PATH")
-            .map(|value| value.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        match login_shell_path(deadline) {
-            Some(login_path) => merge_path_segments(&login_path, &inherited),
-            None => inherited,
-        }
-    };
-
     #[cfg(target_os = "windows")]
     {
+        let tool_path = locate_default_tool(tool, deadline)?;
+        let dir = tool_path
+            .parent()
+            .ok_or_else(|| format!("Invalid {tool} executable path"))?;
+        let current_path = effective_path_string();
         run_windows_tool_command_capture(
             &tool_path,
             args,
@@ -75,16 +59,14 @@ pub(crate) fn run_detected_tool_command_with_timeout(
 
     #[cfg(not(target_os = "windows"))]
     {
-        use std::process::{Command, Stdio};
+        use std::process::Stdio;
 
-        let mut cmd = Command::new(&tool_path);
-        cmd.args(args)
-            .env("PATH", format!("{}:{current_path}", dir.display()))
+        let mut cmd = detected_unix_tool_command(tool, args, deadline)?;
+        cmd.stdin(Stdio::null())
             .current_dir(working_dir)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         apply_extra_env(&mut cmd, extra_env);
-        isolate_child_process_group(&mut cmd);
         let child = cmd
             .spawn()
             .map_err(|e| format!("Failed to run {tool}: {e}"))?;
@@ -92,52 +74,30 @@ pub(crate) fn run_detected_tool_command_with_timeout(
     }
 }
 
-/// 构造运行本机工具默认入口的命令（定位规则和 PATH 补全同 [`run_detected_tool_command_with_timeout`]），
-/// 不设 stdio、不等待：给要自己管子进程的调用方用（比如长时间运行、要往 stdin 写东西的登录）。
-/// `timeout` 只约束定位工具这一步。工具配置在 WSL 里时报错。
-pub(crate) fn detected_tool_command(
+#[cfg(not(target_os = "windows"))]
+fn detected_unix_tool_command(
     tool: &str,
     args: &[&str],
-    timeout: std::time::Duration,
+    deadline: Option<CommandDeadline>,
 ) -> Result<std::process::Command, String> {
-    if !VALID_TOOLS.contains(&tool) {
-        return Err(format!("Unsupported tool: {tool}"));
-    }
-    let deadline = CommandDeadline::from_timeout(Some(timeout));
-
-    #[cfg(target_os = "windows")]
-    if wsl_distro_for_tool(tool).is_some() {
-        return Err(format!(
-            "{tool} runs in WSL; this action needs it on Windows"
-        ));
-    }
-
     let tool_path = locate_default_tool(tool, deadline)?;
     let dir = tool_path
         .parent()
         .ok_or_else(|| format!("Invalid {tool} executable path"))?;
-
-    #[cfg(target_os = "windows")]
-    {
-        let new_path = format!("{};{}", dir.display(), effective_path_string());
-        Ok(build_windows_tool_command(&tool_path, args, &new_path))
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    let login_env = login_shell_env(deadline);
+    let path = match login_env.as_ref().and_then(|env| env.path.as_deref()) {
+        Some(login_path) => merge_path_segments(login_path, &inherited.to_string_lossy()).into(),
+        None => inherited,
+    };
+    let mut cmd = std::process::Command::new(&tool_path);
+    cmd.args(args)
+        .env("PATH", prepend_search_dir_to_path(dir, &path));
+    if let Some(env) = login_env {
+        apply_login_shell_vars(&mut cmd, &env.vars);
     }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        let inherited = std::env::var_os("PATH")
-            .map(|value| value.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let current_path = match login_shell_path(deadline) {
-            Some(login_path) => merge_path_segments(&login_path, &inherited),
-            None => inherited,
-        };
-        let mut cmd = std::process::Command::new(&tool_path);
-        cmd.args(args)
-            .env("PATH", format!("{}:{current_path}", dir.display()));
-        isolate_child_process_group(&mut cmd);
-        Ok(cmd)
-    }
+    isolate_child_process_group(&mut cmd);
+    Ok(cmd)
 }
 
 #[cfg(target_os = "windows")]

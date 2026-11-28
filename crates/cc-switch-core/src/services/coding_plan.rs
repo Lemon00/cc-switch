@@ -1237,12 +1237,15 @@ async fn volcengine_openapi_call(
             "Authentication failed (HTTP {status}). {VOLCENGINE_AKSK_HINT}"
         ));
     }
+    let raw = match crate::proxy::http_client::read_body_with_limit(resp, 4 * 1024 * 1024).await {
+        Ok(bytes) => bytes,
+        Err(error) => return VolcCall::Transient(format!("Failed to read response: {error}")),
+    };
     if !status.is_success() {
         // 火山 OpenAPI 网关对签名/凭据类错误常返 4xx（多为 HTTP 400）并携带与 200
         // 路径相同的 ResponseMetadata.Error 信封，而非 401/403。这里也解析信封，让
         // Bearer 被拒时仍能给出 AK/SK 引导并标记凭据失效，而不是当成普通 API 错误。
-        let raw = resp.text().await.unwrap_or_default();
-        if let Ok(body) = serde_json::from_str::<serde_json::Value>(&raw) {
+        if let Ok(body) = serde_json::from_slice::<serde_json::Value>(&raw) {
             if let Some((code, msg)) = volcengine_response_error(&body) {
                 if volcengine_is_auth_error_code(&code) {
                     return VolcCall::Auth(format!(
@@ -1252,15 +1255,12 @@ async fn volcengine_openapi_call(
                 return VolcCall::Soft(format!("API error (HTTP {status}, {code}): {msg}"));
             }
         }
-        return VolcCall::Soft(format!("API error (HTTP {status}): {raw}"));
+        let excerpt: String = String::from_utf8_lossy(&raw).chars().take(1024).collect();
+        return VolcCall::Soft(format!("API error (HTTP {status}): {excerpt}"));
     }
 
     // 同 Bearer 路径：先 bytes() 再解析——读体失败是瞬时（Transient），解析失败
     // 是确定性（Soft）。reqwest 的 json() 把读体错误也包成 decode，无法区分。
-    let raw = match resp.bytes().await {
-        Ok(b) => b,
-        Err(e) => return VolcCall::Transient(format!("Failed to read response: {e}")),
-    };
     let body: serde_json::Value = match serde_json::from_slice(&raw) {
         Ok(v) => v,
         Err(e) => return VolcCall::Soft(format!("Failed to parse response: {e}")),

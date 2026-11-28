@@ -35,7 +35,7 @@ pub(crate) fn start(app: tauri::AppHandle) {
             Err(error) => Some(format!("Startup task failed: {error}")),
         };
         if let Some(error) = error {
-            log::error!("Initialization failed: {error}");
+            log::error!("Initialization failed: {}", crate::error_for_log(&error));
             crate::init_status::set_init_error(crate::init_status::InitErrorPayload {
                 path: crate::config::get_app_config_dir().display().to_string(),
                 error,
@@ -316,12 +316,19 @@ fn initialize(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
                 "○ {} already has providers; live import skipped",
                 app_type.as_str()
             ),
-            Err(e) => log::debug!("○ No live config to import for {}: {e}", app_type.as_str()),
+            Err(e) => log::debug!(
+                "○ No live config to import for {}: {}",
+                app_type.as_str(),
+                crate::error_for_log(&e.to_string())
+            ),
         }
     }
 
     if let Err(error) = crate::services::provider::initialize_dsh_profiles(&app_state) {
-        log::warn!("Initializing DeepSeek Harness profiles failed: {error}");
+        log::warn!(
+            "Initializing DeepSeek Harness profiles failed: {}",
+            crate::error_for_log(&error.to_string())
+        );
     }
 
     match app_state.db.init_default_official_providers() {
@@ -533,20 +540,6 @@ fn initialize(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
     let skill_service = SkillService::new();
     app.manage(commands::skill::SkillServiceState(Arc::new(skill_service)));
 
-    // 初始化 CopilotAuthManager
-    {
-        use crate::proxy::providers::copilot_auth::CopilotAuthManager;
-        use commands::CopilotAuthState;
-        use tokio::sync::RwLock;
-
-        let app_config_dir = crate::config::get_app_config_dir();
-        let copilot_auth_manager = CopilotAuthManager::new(app_config_dir);
-        app.manage(CopilotAuthState(Arc::new(RwLock::new(
-            copilot_auth_manager,
-        ))));
-        log::info!("✓ CopilotAuthManager initialized");
-    }
-
     // 初始化 CodexOAuthManager (ChatGPT Plus/Pro 反代)
     {
         use commands::CodexOAuthState;
@@ -554,18 +547,6 @@ fn initialize(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
         let codex_oauth_manager = app.state::<AppState>().codex_oauth_manager.clone();
         app.manage(CodexOAuthState(codex_oauth_manager));
         log::info!("✓ CodexOAuthManager initialized");
-    }
-
-    // 初始化 xAI OAuthManager (Grok API 反代)
-    {
-        use crate::proxy::providers::xai_oauth_auth::XaiOAuthManager;
-        use commands::XaiOAuthState;
-        use tokio::sync::RwLock;
-
-        let app_config_dir = crate::config::get_app_config_dir();
-        let xai_oauth_manager = XaiOAuthManager::new(app_config_dir);
-        app.manage(XaiOAuthState(Arc::new(RwLock::new(xai_oauth_manager))));
-        log::info!("✓ XaiOAuthManager initialized");
     }
 
     // Antigravity 官方账号（授权中心加号、切 agy 的全局登录）

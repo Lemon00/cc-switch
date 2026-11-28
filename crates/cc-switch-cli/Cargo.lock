@@ -378,13 +378,14 @@ dependencies = [
 
 [[package]]
 name = "cc-switch-cli"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "cc-switch-core",
  "crossterm",
  "libc",
  "log",
  "ratatui",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
@@ -394,7 +395,7 @@ dependencies = [
 
 [[package]]
 name = "cc-switch-core"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "async-stream",

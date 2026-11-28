@@ -3,7 +3,7 @@
 //! 提供 Skills 和 Skill Repos 的 CRUD 操作。
 //!
 //! v3.10.0+ 统一管理架构：
-//! - Skills 使用统一的 id 主键，支持四应用启用标志
+//! - Skills 使用统一的 id 主键，按受支持应用保存启用标志
 //! - 实际文件存储在 ~/.cc-switch/skills/，同步到各应用目录
 
 use crate::app_config::{InstalledSkill, SkillApps};
@@ -22,8 +22,8 @@ impl Database {
         let mut stmt = conn
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
-                        readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
-                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode, enabled_agy, enabled_kimi, enabled_dsh
+                        readme_url, enabled_claude, enabled_codex, enabled_opencode,
+                        installed_at, content_hash, updated_at, enabled_agy, enabled_dsh
                  FROM skills ORDER BY name ASC",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -42,13 +42,13 @@ impl Database {
                     apps: SkillApps {
                         claude: row.get(8)?,
                         codex: row.get(9)?,
-                        opencode: row.get(12)?,
-                        agy: row.get(18)?,
-                        dsh: row.get(20)?,
+                        opencode: row.get(10)?,
+                        agy: row.get(14)?,
+                        dsh: row.get(15)?,
                     },
-                    installed_at: row.get(14)?,
-                    content_hash: row.get(15)?,
-                    updated_at: row.get(16)?,
+                    installed_at: row.get(11)?,
+                    content_hash: row.get(12)?,
+                    updated_at: row.get(13)?,
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -67,8 +67,8 @@ impl Database {
         let mut stmt = conn
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
-                        readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
-                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode, enabled_agy, enabled_kimi, enabled_dsh
+                        readme_url, enabled_claude, enabled_codex, enabled_opencode,
+                        installed_at, content_hash, updated_at, enabled_agy, enabled_dsh
                  FROM skills WHERE id = ?1",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -86,13 +86,13 @@ impl Database {
                 apps: SkillApps {
                     claude: row.get(8)?,
                     codex: row.get(9)?,
-                    opencode: row.get(12)?,
-                    agy: row.get(18)?,
-                    dsh: row.get(20)?,
+                    opencode: row.get(10)?,
+                    agy: row.get(14)?,
+                    dsh: row.get(15)?,
                 },
-                installed_at: row.get(14)?,
-                content_hash: row.get(15)?,
-                updated_at: row.get(16)?,
+                installed_at: row.get(11)?,
+                content_hash: row.get(12)?,
+                updated_at: row.get(13)?,
             })
         });
 

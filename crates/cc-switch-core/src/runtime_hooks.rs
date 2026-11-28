@@ -12,6 +12,7 @@ pub struct FailoverRequest {
     pub app_type: String,
     pub provider_id: String,
     pub provider_name: String,
+    pub route_revision: u64,
 }
 
 pub type FailoverFuture<'a> = Pin<Box<dyn Future<Output = Result<bool, AppError>> + Send + 'a>>;

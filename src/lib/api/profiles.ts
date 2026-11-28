@@ -2,16 +2,16 @@ import { invoke } from "@tauri-apps/api/core";
 /**
  * Profile 操作的应用分组（与后端 services/profile.rs 的 ProfileScope 严格对应）
  *
- * 项目实体全应用共享，但快照/应用/当前指针按组进行；Claude Code 与
- * Claude Desktop 的供应商独立切换，因此各自有独立分组。
+ * 项目实体全应用共享，Claude Code 与 Codex 的快照和当前指针按组管理。
  */
-export type ProfileScope = "claude" | "claude-desktop" | "codex";
+export type ProfileScope = "claude" | "codex";
 /**
  * 按 app 分槽的载荷容器（与后端 services/profile.rs 的 PerApp<T> 严格对应）
  */
 export interface PerApp<T> {
   claude: T;
-  "claude-desktop": T;
+  /** 旧快照的非活动字段，仅保留数据兼容。 */
+  "claude-desktop"?: T;
   codex: T;
 }
 /**
@@ -34,13 +34,10 @@ export interface Profile {
   updatedAt?: number;
 }
 /** 每个分组当前激活的项目 id（未使用项目时为 null）
- *
- * 注意：JSON key 是 camelCase（claudeDesktop），与 ProfileScope 的 kebab-case
- * 字符串不同——后者用于命令参数，前者用于响应字段。
+
  */
 export interface CurrentProfileIds {
   claude: string | null;
-  claudeDesktop: string | null;
   codex: string | null;
 }
 export interface ProfilesResponse {

@@ -18,7 +18,8 @@ pub async fn fetch_models_with_token(
     token: &str,
     account_id: &str,
 ) -> Result<Vec<FetchedModel>, String> {
-    let client = crate::proxy::http_client::no_redirect().map_err(crate::error::AppError::Message)?;
+    let client =
+        crate::proxy::http_client::no_redirect().map_err(crate::error::AppError::Message)?;
     let response = build_models_request(&client, token, account_id)
         .send()
         .await

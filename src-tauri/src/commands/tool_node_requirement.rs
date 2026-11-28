@@ -1,8 +1,3 @@
-//! 升级前的 Node 版本检查。npm 包的新版本在 `engines.node` 里抬高 Node 要求后（OpenClaw
-//! 2026.9.3 起要 24.16+），用旧 Node 升级必然失败：OpenClaw 自己的 `update` 预检和包的
-//! preinstall 都会拒绝；没有自带检查的包则会被 npm 照装、装完跑不起来。所以「应用」页
-//! 提前标出来、不给升级按钮，执行升级前再查一次。认不出、查不到时一律放行。
-
 use super::*;
 
 /// 新版本要求的 Node 和升级会用到的 Node 对不上。
@@ -20,8 +15,7 @@ pub(super) async fn update_node_gap(
     tool: &str,
     target: &str,
 ) -> Option<NodeRequirementGap> {
-    let package = npm_package_for(tool)?;
-    // MiniMax Code 的官方 installer 在系统 Node 不达标时会自带一份 Node。
+    let package = npm_package_for_version(tool, Some(target))?.name;
 
     #[cfg(target_os = "windows")]
     if wsl_distro_for_tool(tool).is_some() {
@@ -40,7 +34,12 @@ pub(super) async fn update_node_gap(
 
 /// 执行升级前的检查：目标是 `latest`（`npm i -g <pkg>@latest` 与各家 self-update 的稳定通道）。
 pub(super) async fn ensure_update_node(tool: &str) -> Result<(), String> {
-    let Some(package) = npm_package_for(tool) else {
+    let owned = tool.to_string();
+    let local = tokio::task::spawn_blocking(move || local_tool_version(&owned))
+        .await
+        .ok()
+        .flatten();
+    let Some(package) = npm_package_for_version(tool, local.as_deref()).map(|pkg| pkg.name) else {
         return Ok(());
     };
     let client = crate::proxy::http_client::get();

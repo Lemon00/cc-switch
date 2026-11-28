@@ -6,7 +6,9 @@ use crate::app_config::AppType;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
-use crate::proxy::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, HalfOpenPermitGuard};
+use crate::proxy::circuit_breaker::{
+    AllowResult, CircuitBreaker, CircuitBreakerConfig, HalfOpenPermitGuard,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -15,7 +17,15 @@ use tokio::sync::RwLock;
 pub struct ProviderPermit {
     pub allowed: bool,
     pub used_half_open_permit: bool,
+    pub(crate) outcome: ProviderOutcome,
     _guard: Option<HalfOpenPermitGuard>,
+}
+
+/// Captures the breaker instance and admission round for asynchronous results.
+#[derive(Clone)]
+pub(crate) struct ProviderOutcome {
+    breaker: Arc<CircuitBreaker>,
+    permit: AllowResult,
 }
 
 /// Codex Official requests carry the selected account's native Authorization
@@ -36,6 +46,10 @@ pub struct ProviderRouter {
 }
 
 impl ProviderRouter {
+    pub(crate) fn route_revision(&self, app: &AppType) -> u64 {
+        self.db.route_revision(app)
+    }
+
     /// 创建新的供应商路由器
     pub fn new(db: Arc<Database>) -> Self {
         Self {
@@ -178,28 +192,33 @@ impl ProviderRouter {
         &self,
         provider_id: &str,
         app_type: &AppType,
+        bypass: bool,
     ) -> ProviderPermit {
         let breaker = self
             .get_or_create_circuit_breaker(app_type, provider_id)
             .await;
-        let result = breaker.allow_request().await;
+        let result = breaker.allow_request(bypass).await;
         // 拿到名额和交给 guard 之间不能有 await，否则在这里被取消同样会漏还。
         let guard = result
             .used_half_open_permit
-            .then(|| HalfOpenPermitGuard::new(breaker, result.half_open_round));
+            .then(|| HalfOpenPermitGuard::new(breaker.clone(), result.half_open_round));
         ProviderPermit {
             allowed: result.allowed,
             used_half_open_permit: result.used_half_open_permit,
+            outcome: ProviderOutcome {
+                breaker,
+                permit: result,
+            },
             _guard: guard,
         }
     }
 
     /// 记录供应商请求结果
-    pub async fn record_result(
+    pub(crate) async fn record_result(
         &self,
         provider_id: &str,
         app_type: &AppType,
-        used_half_open_permit: bool,
+        outcome: &ProviderOutcome,
         success: bool,
         error_msg: Option<String>,
     ) -> Result<(), AppError> {
@@ -209,15 +228,20 @@ impl ProviderRouter {
             Err(_) => 5, // 默认值
         };
 
-        // 2. 更新熔断器状态
-        let breaker = self
-            .get_or_create_circuit_breaker(app_type, provider_id)
-            .await;
-
-        if success {
-            breaker.record_success(used_half_open_permit).await;
+        // A forgotten breaker belongs to an old provider/reset state. Do not
+        // recreate it merely because a request that was already in flight ended.
+        let key = format!("{}:{provider_id}", app_type.as_str());
+        let current = self.circuit_breakers.read().await.get(&key).cloned();
+        if !current.is_some_and(|breaker| Arc::ptr_eq(&breaker, &outcome.breaker)) {
+            return Ok(());
+        }
+        let accepted = if success {
+            outcome.breaker.record_success(&outcome.permit).await
         } else {
-            breaker.record_failure(used_half_open_permit).await;
+            outcome.breaker.record_failure(&outcome.permit).await
+        };
+        if !accepted {
+            return Ok(());
         }
 
         // 3. 更新数据库健康状态（使用配置的阈值）
@@ -226,7 +250,7 @@ impl ProviderRouter {
                 provider_id,
                 app_type,
                 success,
-                error_msg.clone(),
+                error_msg,
                 failure_threshold,
             )
             .await?;
@@ -351,6 +375,162 @@ mod tests {
     use std::env;
     use tempfile::TempDir;
 
+    async fn outcome_router() -> ProviderRouter {
+        let db = Arc::new(Database::memory().unwrap());
+        let provider = Provider::with_id("p".into(), "Provider".into(), json!({}), None);
+        db.save_provider(&AppType::Claude, &provider).unwrap();
+        let mut config = db.get_proxy_config_for_app(&AppType::Claude).await.unwrap();
+        config.circuit_failure_threshold = 1;
+        config.circuit_success_threshold = 1;
+        config.circuit_timeout_seconds = 0;
+        db.update_proxy_config_for_app(config).await.unwrap();
+        ProviderRouter::new(db)
+    }
+
+    async fn fail_request(router: &ProviderRouter) {
+        let request = router
+            .allow_provider_request("p", &AppType::Claude, false)
+            .await;
+        assert!(request.allowed);
+        router
+            .record_result("p", &AppType::Claude, &request.outcome, false, None)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn late_closed_result_does_not_complete_a_half_open_probe() {
+        use crate::proxy::circuit_breaker::CircuitState;
+        for success in [true, false] {
+            let router = outcome_router().await;
+            let slow = router
+                .allow_provider_request("p", &AppType::Claude, false)
+                .await;
+            assert!(!slow.used_half_open_permit);
+            fail_request(&router).await;
+            let probe = router
+                .allow_provider_request("p", &AppType::Claude, false)
+                .await;
+            assert!(probe.used_half_open_permit);
+            // The old ordinary request ends while the recovery probe is still running.
+            router
+                .record_result("p", &AppType::Claude, &slow.outcome, success, None)
+                .await
+                .unwrap();
+            let stats = router
+                .get_circuit_breaker_stats("p", &AppType::Claude)
+                .await
+                .unwrap();
+            assert_eq!(stats.state, CircuitState::HalfOpen);
+            assert!(
+                !router
+                    .allow_provider_request("p", &AppType::Claude, false)
+                    .await
+                    .allowed
+            );
+            router
+                .record_result("p", &AppType::Claude, &probe.outcome, true, None)
+                .await
+                .unwrap();
+            assert_eq!(
+                router
+                    .get_circuit_breaker_stats("p", &AppType::Claude)
+                    .await
+                    .unwrap()
+                    .state,
+                CircuitState::Closed
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn old_probe_outcomes_cannot_change_a_new_round() {
+        use crate::proxy::circuit_breaker::CircuitState;
+        for success in [true, false] {
+            let router = outcome_router().await;
+            fail_request(&router).await;
+            let old = router
+                .allow_provider_request("p", &AppType::Claude, false)
+                .await;
+            router.reset_provider_breaker("p", "claude").await;
+            fail_request(&router).await;
+            let current = router
+                .allow_provider_request("p", &AppType::Claude, false)
+                .await;
+            assert!(current.used_half_open_permit);
+            router
+                .record_result("p", &AppType::Claude, &old.outcome, success, None)
+                .await
+                .unwrap();
+            assert_eq!(
+                router
+                    .get_circuit_breaker_stats("p", &AppType::Claude)
+                    .await
+                    .unwrap()
+                    .state,
+                CircuitState::HalfOpen
+            );
+            drop(old);
+            assert!(
+                !router
+                    .allow_provider_request("p", &AppType::Claude, false)
+                    .await
+                    .allowed
+            );
+            router
+                .record_result("p", &AppType::Claude, &current.outcome, true, None)
+                .await
+                .unwrap();
+            assert_eq!(
+                router
+                    .get_circuit_breaker_stats("p", &AppType::Claude)
+                    .await
+                    .unwrap()
+                    .state,
+                CircuitState::Closed
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn manual_reset_invalidates_inflight_closed_outcomes() {
+        let router = outcome_router().await;
+        let old = router
+            .allow_provider_request("p", &AppType::Claude, false)
+            .await;
+        router.reset_provider_breaker("p", "claude").await;
+        router
+            .record_result("p", &AppType::Claude, &old.outcome, false, None)
+            .await
+            .unwrap();
+        let stats = router
+            .get_circuit_breaker_stats("p", &AppType::Claude)
+            .await
+            .unwrap();
+        assert_eq!(
+            stats.state,
+            crate::proxy::circuit_breaker::CircuitState::Closed
+        );
+        assert_eq!(stats.total_requests, 0);
+    }
+
+    #[tokio::test]
+    async fn forgotten_breakers_are_not_recreated_by_inflight_outcomes() {
+        let router = outcome_router().await;
+        let old = router
+            .allow_provider_request("p", &AppType::Claude, false)
+            .await;
+        router.forget("claude", Some("p")).await;
+        router
+            .record_result("p", &AppType::Claude, &old.outcome, false, None)
+            .await
+            .unwrap();
+        assert!(router
+            .get_circuit_breaker_stats("p", &AppType::Claude)
+            .await
+            .is_none());
+    }
+
     fn managed_codex_official(id: &str, account_id: &str) -> Provider {
         let mut provider = Provider::with_id(
             id.to_string(),
@@ -430,7 +610,7 @@ mod tests {
         let breaker = router
             .get_or_create_circuit_breaker(&AppType::Claude, "test")
             .await;
-        assert!(breaker.allow_request().await.allowed);
+        assert!(breaker.allow_request(false).await.allowed);
     }
 
     #[tokio::test]
@@ -639,7 +819,10 @@ mod tests {
             .record_result(
                 "b",
                 &AppType::Claude,
-                false,
+                &router
+                    .allow_provider_request("b", &AppType::Claude, false)
+                    .await
+                    .outcome,
                 false,
                 Some("fail".to_string()),
             )
@@ -651,7 +834,7 @@ mod tests {
 
         assert!(
             router
-                .allow_provider_request("b", &AppType::Claude)
+                .allow_provider_request("b", &AppType::Claude, false)
                 .await
                 .allowed
         );
@@ -695,7 +878,10 @@ mod tests {
             .record_result(
                 "a",
                 &AppType::Claude,
-                false,
+                &router
+                    .allow_provider_request("a", &AppType::Claude, false)
+                    .await
+                    .outcome,
                 false,
                 Some("fail".to_string()),
             )
@@ -703,19 +889,25 @@ mod tests {
             .unwrap();
 
         // 第一次请求：获取 HalfOpen 探测名额
-        let first = router.allow_provider_request("a", &AppType::Claude).await;
+        let first = router
+            .allow_provider_request("a", &AppType::Claude, false)
+            .await;
         assert!(first.allowed);
         assert!(first.used_half_open_permit);
 
         // 第二次请求应被拒绝（名额已被占用）
-        let second = router.allow_provider_request("a", &AppType::Claude).await;
+        let second = router
+            .allow_provider_request("a", &AppType::Claude, false)
+            .await;
         assert!(!second.allowed);
 
         // 第一次请求结束（或被中途丢弃）：放行结果一 drop 就归还名额
         drop(first);
 
         // 第三次请求应被允许（名额已释放）
-        let third = router.allow_provider_request("a", &AppType::Claude).await;
+        let third = router
+            .allow_provider_request("a", &AppType::Claude, false)
+            .await;
         assert!(third.allowed);
         assert!(third.used_half_open_permit);
     }
@@ -753,7 +945,10 @@ mod tests {
             .record_result(
                 "a",
                 &AppType::Claude,
-                false,
+                &router
+                    .allow_provider_request("a", &AppType::Claude, false)
+                    .await
+                    .outcome,
                 false,
                 Some("fail".to_string()),
             )
@@ -765,7 +960,7 @@ mod tests {
         let probe_router = router.clone();
         let probe = tokio::spawn(async move {
             let permit = probe_router
-                .allow_provider_request("a", &AppType::Claude)
+                .allow_provider_request("a", &AppType::Claude, false)
                 .await;
             let _ = acquired_tx.send((permit.allowed, permit.used_half_open_permit));
             std::future::pending::<()>().await;
@@ -774,7 +969,7 @@ mod tests {
         assert_eq!(acquired_rx.await.unwrap(), (true, true));
         assert!(
             !router
-                .allow_provider_request("a", &AppType::Claude)
+                .allow_provider_request("a", &AppType::Claude, false)
                 .await
                 .allowed
         );
@@ -782,7 +977,9 @@ mod tests {
         probe.abort();
         let _ = probe.await;
 
-        let next = router.allow_provider_request("a", &AppType::Claude).await;
+        let next = router
+            .allow_provider_request("a", &AppType::Claude, false)
+            .await;
         assert!(next.allowed);
         assert!(next.used_half_open_permit);
     }
@@ -820,7 +1017,10 @@ mod tests {
             .record_result(
                 "a",
                 &AppType::Claude,
-                false,
+                &router
+                    .allow_provider_request("a", &AppType::Claude, false)
+                    .await
+                    .outcome,
                 false,
                 Some("fail".to_string()),
             )
@@ -828,13 +1028,15 @@ mod tests {
             .unwrap();
 
         // A 拿到第一轮的名额，探测失败 → Open（A 的放行结果还没 drop）
-        let a = router.allow_provider_request("a", &AppType::Claude).await;
+        let a = router
+            .allow_provider_request("a", &AppType::Claude, false)
+            .await;
         assert!(a.used_half_open_permit);
         router
             .record_result(
                 "a",
                 &AppType::Claude,
-                false,
+                &a.outcome,
                 false,
                 Some("fail".to_string()),
             )
@@ -842,7 +1044,9 @@ mod tests {
             .unwrap();
 
         // 超时为 0：B 立刻进入第二轮并拿到名额
-        let b = router.allow_provider_request("a", &AppType::Claude).await;
+        let b = router
+            .allow_provider_request("a", &AppType::Claude, false)
+            .await;
         assert!(b.allowed);
         assert!(b.used_half_open_permit);
 
@@ -850,7 +1054,7 @@ mod tests {
         drop(a);
         assert!(
             !router
-                .allow_provider_request("a", &AppType::Claude)
+                .allow_provider_request("a", &AppType::Claude, false)
                 .await
                 .allowed
         );
@@ -858,7 +1062,7 @@ mod tests {
         drop(b);
         assert!(
             router
-                .allow_provider_request("a", &AppType::Claude)
+                .allow_provider_request("a", &AppType::Claude, false)
                 .await
                 .allowed
         );
@@ -902,7 +1106,16 @@ mod tests {
             "a"
         );
         router
-            .record_result("b", &AppType::Claude, false, false, Some("failed".into()))
+            .record_result(
+                "b",
+                &AppType::Claude,
+                &router
+                    .allow_provider_request("b", &AppType::Claude, false)
+                    .await
+                    .outcome,
+                false,
+                Some("failed".into()),
+            )
             .await
             .unwrap();
         let picked = router
@@ -915,7 +1128,16 @@ mod tests {
         );
         for id in ["a", "c"] {
             router
-                .record_result(id, &AppType::Claude, false, false, Some("failed".into()))
+                .record_result(
+                    id,
+                    &AppType::Claude,
+                    &router
+                        .allow_provider_request(id, &AppType::Claude, false)
+                        .await
+                        .outcome,
+                    false,
+                    Some("failed".into()),
+                )
                 .await
                 .unwrap();
         }

@@ -1,4 +1,4 @@
-use rquickjs::{Context, Function, Runtime};
+use rquickjs::{Context, Function, Persistent, Runtime};
 use serde_json::Value;
 use std::collections::HashMap;
 use url::{Host, Url};
@@ -29,46 +29,12 @@ pub async fn execute_usage_script(
         validate_base_url(base_url)?;
     }
 
-    // 3. 在 blocking worker 中提取 request 配置。QuickJS 的时间中断限制单次
-    // 执行，但解释器不能占住 Tokio worker，否则并发查询会阻塞代理 I/O。
-    // 用量脚本允许的最长执行时间（秒）。脚本来自不可信来源（deeplink、同步导入），
-    // 必须限制其 CPU / 内存 / 栈占用，防止一个恶意/ buggy 脚本挂死整个后端。
-    const USAGE_SCRIPT_TIMEOUT_SECS: u64 = 5;
-    // 16 MiB 对仅构造 request 配置 / extractor 的脚本已经足够。
-    const USAGE_SCRIPT_MEMORY_LIMIT_BYTES: usize = 16 * 1024 * 1024;
-
-    /// 创建一个受控的 QuickJS Runtime：限制内存与栈，并安装执行时间中断器。
-    fn create_script_runtime() -> Result<Runtime, AppError> {
-        let runtime = Runtime::new().map_err(|e| {
-            AppError::localized(
-                "usage_script.runtime_create_failed",
-                format!("创建 JS 运行时失败: {e}"),
-                format!("Failed to create JS runtime: {e}"),
-            )
-        })?;
-
-        // 内存和栈限制必须在 eval 前设置。
-        runtime.set_memory_limit(USAGE_SCRIPT_MEMORY_LIMIT_BYTES);
-        // set_max_stack_size 默认 256 KiB 够用，这里显式重申请求它保持一致。
-        runtime.set_max_stack_size(256 * 1024);
-
-        // 时间片中断器：每轮解释器循环检查是否超时，超时则抛出不可捕获的异常。
-        let deadline = std::time::Instant::now()
-            .checked_add(std::time::Duration::from_secs(USAGE_SCRIPT_TIMEOUT_SECS))
-            .ok_or_else(|| {
-                AppError::localized(
-                    "usage_script.invalid_timeout",
-                    "无法计算脚本执行截止时间",
-                    "Unable to compute script execution deadline",
-                )
-            })?;
-        runtime.set_interrupt_handler(Some(Box::new(move || std::time::Instant::now() > deadline)));
-
-        Ok(runtime)
-    }
-
-    let request_script = script_with_vars.clone();
-    let request_config = tokio::task::spawn_blocking(move || {
+    // QuickJS values never leave this blocking worker. Reuse its runtime and evaluated
+    // config across HTTP, which is still driven by the Tokio executor. The worker is
+    // reserved for this query (HTTP is bounded to 30s); async workers remain available.
+    let base_url = base_url.to_owned();
+    let executor = tokio::runtime::Handle::current();
+    tokio::task::spawn_blocking(move || {
         let runtime = create_script_runtime()?;
         let context = Context::full(&runtime).map_err(|e| {
             AppError::localized(
@@ -78,9 +44,9 @@ pub async fn execute_usage_script(
             )
         })?;
 
-        context.with(|ctx| {
+        let (request_json, config) = context.with(|ctx| {
             // 执行用户代码，获取配置对象
-            let config: rquickjs::Object = ctx.eval(request_script).map_err(|e| {
+            let config: rquickjs::Object = ctx.eval(script_with_vars).map_err(|e| {
                 AppError::localized(
                     "usage_script.config_parse_failed",
                     format!("解析配置失败: {e}"),
@@ -123,48 +89,25 @@ pub async fn execute_usage_script(
                     )
                 })?;
 
-            Ok::<_, AppError>(request_json)
-        })
-    })
-    .await
-    .map_err(|error| AppError::Message(format!("Usage script worker failed: {error}")))??;
-
-    // 4. 解析 request 配置
-    let request: RequestConfig = serde_json::from_str(&request_config).map_err(|e| {
-        AppError::localized(
-            "usage_script.request_format_invalid",
-            format!("request 配置格式错误: {e}"),
-            format!("Invalid request config format: {e}"),
-        )
-    })?;
-
-    // 5. 验证请求 URL（HTTPS 强制 + 同源检查）
-    validate_request_url(&request.url, base_url, is_custom_template)?;
-
-    // 6. 发送 HTTP 请求
-    let response_data = send_http_request(&request, timeout_secs).await?;
-
-    // 7. extractor 同样在 blocking worker 执行，Runtime/Context 不跨线程移动。
-    let result: Value = tokio::task::spawn_blocking(move || {
-        let runtime = create_script_runtime()?;
-        let context = Context::full(&runtime).map_err(|e| {
-            AppError::localized(
-                "usage_script.context_create_failed",
-                format!("创建 JS 上下文失败: {e}"),
-                format!("Failed to create JS context: {e}"),
-            )
+            Ok::<_, AppError>((request_json, Persistent::save(&ctx, config)))
         })?;
 
-        context.with(|ctx| {
-            // 重新 eval 获取配置对象
-            let config: rquickjs::Object = ctx.eval(script_with_vars).map_err(|e| {
-                AppError::localized(
-                    "usage_script.config_reparse_failed",
-                    format!("重新解析配置失败: {e}"),
-                    format!("Failed to re-parse config: {e}"),
-                )
-            })?;
+        let request: RequestConfig = serde_json::from_str(&request_json).map_err(|e| {
+            AppError::localized(
+                "usage_script.request_format_invalid",
+                format!("request 配置格式错误: {e}"),
+                format!("Invalid request config format: {e}"),
+            )
+        })?;
+        validate_request_url(&request.url, &base_url, is_custom_template)?;
+        let response_data = executor.block_on(send_http_request(&request, timeout_secs))?;
 
+        // Network latency does not consume the extractor's CPU time budget.
+        reset_script_deadline(&runtime)?;
+        let result = context.with(|ctx| {
+            let config = config
+                .restore(&ctx)
+                .map_err(|e| AppError::Message(e.to_string()))?;
             // 提取 extractor 函数
             let extractor: Function = config.get("extractor").map_err(|e| {
                 AppError::localized(
@@ -227,15 +170,60 @@ pub async fn execute_usage_script(
                     format!("JSON parse failed: {e}"),
                 )
             })
-        })
+        })?;
+        validate_result(&result)?;
+        Ok(result)
     })
     .await
-    .map_err(|error| AppError::Message(format!("Usage script worker failed: {error}")))??;
+    .map_err(|e| {
+        AppError::localized(
+            "usage_script.worker_failed",
+            format!("用量脚本工作线程失败: {e}"),
+            format!("Usage script worker failed: {e}"),
+        )
+    })?
+}
 
-    // 8. 验证返回值格式
-    validate_result(&result)?;
+// 用量脚本允许的最长执行时间（秒）。脚本来自不可信来源（deeplink、同步导入），
+// 必须限制其 CPU / 内存 / 栈占用，防止一个恶意/ buggy 脚本挂死整个后端。
+const USAGE_SCRIPT_TIMEOUT_SECS: u64 = 5;
+// 16 MiB 对仅构造 request 配置 / extractor 的脚本已经足够。
+const USAGE_SCRIPT_MEMORY_LIMIT_BYTES: usize = 16 * 1024 * 1024;
 
-    Ok(result)
+/// 创建一个受控的 QuickJS Runtime：限制内存与栈，并安装执行时间中断器。
+fn create_script_runtime() -> Result<Runtime, AppError> {
+    let runtime = Runtime::new().map_err(|e| {
+        AppError::localized(
+            "usage_script.runtime_create_failed",
+            format!("创建 JS 运行时失败: {e}"),
+            format!("Failed to create JS runtime: {e}"),
+        )
+    })?;
+
+    // 内存和栈限制必须在 eval 前设置。
+    runtime.set_memory_limit(USAGE_SCRIPT_MEMORY_LIMIT_BYTES);
+    // set_max_stack_size 默认 256 KiB 够用，这里显式重申请求它保持一致。
+    runtime.set_max_stack_size(256 * 1024);
+
+    reset_script_deadline(&runtime)?;
+
+    Ok(runtime)
+}
+
+fn reset_script_deadline(runtime: &Runtime) -> Result<(), AppError> {
+    // 时间片中断器：每轮解释器循环检查是否超时，超时则抛出不可捕获的异常。
+    let deadline = std::time::Instant::now()
+        .checked_add(std::time::Duration::from_secs(USAGE_SCRIPT_TIMEOUT_SECS))
+        .ok_or_else(|| {
+            AppError::localized(
+                "usage_script.invalid_timeout",
+                "无法计算脚本执行截止时间",
+                "Unable to compute script execution deadline",
+            )
+        })?;
+    runtime.set_interrupt_handler(Some(Box::new(move || std::time::Instant::now() > deadline)));
+
+    Ok(())
 }
 
 /// 请求配置结构
@@ -251,6 +239,23 @@ struct RequestConfig {
 
 /// 发送 HTTP 请求
 async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<String, AppError> {
+    // 禁止用量脚本访问 CC Switch 自身的本地代理监听端口，防止回打消耗其他供应商额度
+    for (listen_address, listen_port) in crate::proxy::http_client::active_proxy_listeners() {
+        crate::proxy::upstream_guard::reject_self_forwarding(
+            &config.url,
+            &listen_address,
+            listen_port,
+        )
+        .await
+        .map_err(|_| {
+            AppError::localized(
+                "usage_script.self_forwarding_blocked",
+                "请求地址不能指向 CC Switch 自身代理端口",
+                "Request URL cannot target CC Switch's own proxy listener",
+            )
+        })?;
+    }
+
     // 用量脚本常带自定义认证头：禁止自动重定向，避免跨源带走凭据。
     let client = crate::proxy::http_client::no_redirect().map_err(|e| {
         AppError::localized(
@@ -488,6 +493,14 @@ fn validate_base_url(base_url: &str) -> Result<(), AppError> {
         )
     })?;
 
+    if !matches!(parsed_url.scheme(), "http" | "https") {
+        return Err(AppError::localized(
+            "usage_script.base_url_scheme_invalid",
+            format!("base_url 仅支持 HTTP/HTTPS 协议: {}", parsed_url.scheme()),
+            format!("base_url must use HTTP or HTTPS: {}", parsed_url.scheme()),
+        ));
+    }
+
     let is_loopback = is_loopback_host(&parsed_url);
 
     // 必须是 HTTPS（允许 localhost 用于开发）
@@ -539,6 +552,20 @@ fn validate_request_url(
         )
     })?;
 
+    if !matches!(parsed_request.scheme(), "http" | "https") {
+        return Err(AppError::localized(
+            "usage_script.request_scheme_invalid",
+            format!(
+                "请求 URL 仅支持 HTTP/HTTPS 协议: {}",
+                parsed_request.scheme()
+            ),
+            format!(
+                "Request URL must use HTTP or HTTPS: {}",
+                parsed_request.scheme()
+            ),
+        ));
+    }
+
     let is_request_loopback = is_loopback_host(&parsed_request);
 
     // 必须使用 HTTPS（允许 localhost 用于开发）
@@ -563,7 +590,23 @@ fn validate_request_url(
             )
         })?;
 
-        // 核心安全检查：必须与 base_url 同源（相同域名和端口）
+        // 核心安全检查：必须与 base_url 同源（相同协议、域名和端口）
+        if parsed_request.scheme() != parsed_base.scheme() {
+            return Err(AppError::localized(
+                "usage_script.request_scheme_mismatch",
+                format!(
+                    "请求协议 {} 与 base_url 协议 {} 不匹配（必须是同源请求）",
+                    parsed_request.scheme(),
+                    parsed_base.scheme()
+                ),
+                format!(
+                    "Request scheme {} must match base_url scheme {} (same-origin required)",
+                    parsed_request.scheme(),
+                    parsed_base.scheme()
+                ),
+            ));
+        }
+
         if parsed_request.host_str() != parsed_base.host_str() {
             return Err(AppError::localized(
                 "usage_script.request_host_mismatch",
@@ -613,9 +656,15 @@ fn validate_request_url(
 /// 判断 URL 是否指向本机（localhost / loopback）
 fn is_loopback_host(url: &Url) -> bool {
     match url.host() {
-        Some(Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        Some(Host::Domain(d)) => {
+            let trimmed = d.trim_end_matches('.');
+            trimmed.eq_ignore_ascii_case("localhost")
+                || trimmed.to_ascii_lowercase().ends_with(".localhost")
+        }
         Some(Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(Host::Ipv6(ip)) => ip.is_loopback(),
+        Some(Host::Ipv6(ip)) => {
+            ip.is_loopback() || ip.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback())
+        }
         _ => false,
     }
 }
@@ -777,6 +826,76 @@ mod tests {
         assert!(
             elapsed < std::time::Duration::from_secs(15),
             "interruption took too long: {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn validate_urls_reject_non_http_schemes_and_loopback_downgrade() {
+        assert!(validate_base_url("file://localhost/etc/passwd").is_err());
+        assert!(validate_request_url(
+            "file://localhost/etc/passwd",
+            "https://localhost:8443",
+            false
+        )
+        .is_err());
+        assert!(validate_request_url("file:///etc/passwd", "", true).is_err());
+        assert!(
+            validate_request_url("http://localhost:8443/v1", "https://localhost:8443", false)
+                .is_err()
+        );
+        assert!(is_loopback_host(
+            &Url::parse("http://[::ffff:127.0.0.1]:8080/v1").unwrap()
+        ));
+    }
+    #[tokio::test]
+    async fn request_targeting_active_proxy_listener_is_blocked() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_clone = Arc::clone(&hits);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base_url = format!("http://{addr}");
+        let app = axum::Router::new().route(
+            "/v1/messages",
+            axum::routing::post(move || {
+                let hits = Arc::clone(&hits_clone);
+                async move {
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    axum::Json(serde_json::json!({ "remaining": 100 }))
+                }
+            }),
+        );
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let _guard =
+            crate::proxy::http_client::register_active_proxy_listener("127.0.0.1", addr.port());
+
+        let script = r#"({
+            request: { url: "{{baseUrl}}/v1/messages", method: "POST" },
+            extractor: (r) => ({ isValid: true, remaining: r.remaining })
+        })"#;
+
+        for template_type in [None, Some("custom")] {
+            let result =
+                execute_usage_script(script, "sk-test", &base_url, 5, None, None, template_type)
+                    .await;
+            assert!(
+                result.is_err(),
+                "self-forwarding to active proxy listener must be blocked (template={template_type:?}), got: {result:?}"
+            );
+        }
+
+        server.abort();
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            0,
+            "active proxy listener must never receive usage_script requests"
         );
     }
 }

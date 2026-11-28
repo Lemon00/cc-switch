@@ -351,10 +351,6 @@ pub enum ProxyAuth {
     /// 默认拒绝后就是未登录会话；两个键都写还会触发「Both ... set」警告（#4919）。
     /// 上游跳用哪种头由路由按行内凭据注入（proxy/providers/claude.rs），与占位符键名无关。
     AuthToken,
-    /// 托管账号（Copilot、Codex、xAI）：只写一个键，两个都在会触发 Claude Code 的
-    /// 「Both ANTHROPIC_AUTH_TOKEN and ANTHROPIC_API_KEY set」警告（#4919）。
-    /// - Codex 系要 `ANTHROPIC_AUTH_TOKEN`，缺了会弹登录提示（#3784）；
-    /// - Copilot 默认也用 `ANTHROPIC_AUTH_TOKEN`：`ANTHROPIC_API_KEY` 占位会触发自定义 key
     ///   确认框，默认选项是拒绝，之后就是未登录；只有表单显式选了 `ANTHROPIC_API_KEY`
     ///   才用它，避开和 /login 的 key 冲突（#1049）。
     Managed { auth_token: bool },

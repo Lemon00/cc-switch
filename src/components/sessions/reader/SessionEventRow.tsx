@@ -9,8 +9,8 @@ import { useReaderT } from "./i18n";
 import { GlyphCell } from "./rowStyles";
 import { openSessionLink, SessionPlainText } from "./SessionMarkdown";
 import { BlockText } from "./SessionStepDetails";
-import type { Translate } from "./toolSummary";
-import { messageText } from "./turns";
+import type { Translate } from "@/lib/sessions/toolSummary";
+import { messageText } from "@/lib/sessions/turns";
 /** PR 编号：文案里的 `#128` 或链接里的 `/pull/128` */
 const prNumber = (block: EventBlock) =>
   /#(\d+)/.exec(block.text ?? "")?.[1] ??

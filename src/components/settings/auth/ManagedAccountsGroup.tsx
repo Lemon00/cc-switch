@@ -66,7 +66,7 @@ interface ManagedAccountsGroupProps {
   /** DOM id 前缀 */
   slug: string;
   name: string;
-  /** ProviderIcon 的图标名（githubcopilot / openai / xai） */
+
   iconName: string;
   /** 「?」里的说明：这个服务的账号用在哪些预设上、没指定账号时用哪个 */
   help: string;
@@ -75,21 +75,21 @@ interface ManagedAccountsGroupProps {
   status: "loading" | "error" | "ready";
   statusErrorText: string;
   onRetryStatus: () => void;
-  /** 标题行下面的提示（Copilot 旧数据迁移失败） */
+
   notice?: React.ReactNode;
   /** 不能登录的原因（Claude 官方账号：配置目录在 WSL 里）：「添加账号」「重新登录」置灰，原因显示在标题行下面 */
   loginDisabledReason?: string;
   emptyText: string;
-  /** 标题行的「添加账号」，有没有账号都在（Copilot 先打开部署类型选择） */
+
   onAdd: () => void;
-  /** Copilot 选部署类型的那块；有它时不显示空状态那行 */
+
   chooser?: React.ReactNode;
   /** 放在「添加账号」左边的控件（ChatGPT 的登录方式） */
   loginControl?: React.ReactNode;
   /** 「默认」徽标和 ⋯ 里「设为默认」的文案（Antigravity 是「agy 在用」「切换 agy 到这个账号」） */
   defaultLabel?: string;
   setDefaultLabel?: string;
-  /** ⋯ 里有没有「重新登录」（Copilot 没有） */
+
   canReauth: boolean;
   /** 只给「需要重新登录」的账号显示（Claude 官方账号：重新登录会替换掉原来的登录，凭据好好的时候不该点到） */
   reauthOnlyWhenExpired?: boolean;

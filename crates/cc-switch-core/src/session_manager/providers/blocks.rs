@@ -567,37 +567,6 @@ fn str_field_allow_empty<'a>(input: &'a Value, keys: &[&str]) -> Option<&'a str>
         .find_map(|key| input.get(*key).and_then(Value::as_str))
 }
 
-/// OpenAI 形状的 `tool_calls[]`（`{id, function{name, arguments}}`，也兼容扁平 `{id, name, arguments}`）
-/// → ToolCall。`arguments_ref(pointer)` 为参数全文生成引用，`pointer` 是参数在 `tool_calls`
-/// 数组内的 JSON Pointer（`/{i}/function/arguments` 或扁平形状的 `/{i}/arguments`）。
-pub(super) fn openai_tool_calls(
-    calls: Option<&Value>,
-    arguments_ref: impl Fn(String) -> Option<ContentRef>,
-) -> Vec<SessionBlock> {
-    calls
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .enumerate()
-        .map(|(i, call)| {
-            let name = call
-                .pointer("/function/name")
-                .or_else(|| call.get("name"))
-                .and_then(Value::as_str)
-                .unwrap_or("unknown");
-            let id = call.get("id").and_then(Value::as_str).unwrap_or_default();
-            let (pointer, raw) = match call.pointer("/function/arguments") {
-                Some(raw) => (format!("/{i}/function/arguments"), Some(raw)),
-                None => (format!("/{i}/arguments"), call.get("arguments")),
-            };
-            let input = raw.map(parse_arguments).unwrap_or(Value::Null);
-            tool_call_block(ToolSource::Generic, id, name, &input, || {
-                arguments_ref(pointer)
-            })
-        })
-        .collect()
-}
-
 /// 由参数构造 `ToolCall`：归一化 kind、提炼标题、参数预览；参数超长时调用 `input_full` 生成引用。
 /// Edit/Write 先按参数估算 diff，解析器拿到更准的数据再覆盖。
 pub fn tool_call_block(

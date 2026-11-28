@@ -23,7 +23,6 @@ pub mod opencode_tests;
 pub mod usage;
 
 use indexmap::IndexMap;
-use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -203,7 +202,6 @@ mod tests {
         UsageScript,
     };
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
-    use crate::provider::{ClaudeDesktopMode, ClaudeDesktopModelRoute};
     use crate::proxy::types::ProxyConfig;
     use crate::store::AppState;
     use serde_json::json;
@@ -324,6 +322,85 @@ mod tests {
                  wire_api = \"chat\"\n"
             )
         })
+    }
+
+    #[test]
+    #[serial]
+    fn first_claude_add_rolls_back_before_live_publication_and_can_retry() {
+        with_test_home(|state, _| {
+            let path = get_claude_settings_path();
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, "{broken configuration").unwrap();
+            let provider = Provider::with_id(
+                "first-claude".into(),
+                "First".into(),
+                json!({"env": {"ANTHROPIC_AUTH_TOKEN": "fixture"}}),
+                None,
+            );
+            assert!(ProviderService::add(state, AppType::Claude, provider.clone(), true).is_err());
+            assert!(!state
+                .db
+                .provider_exists(&provider.id, &AppType::Claude)
+                .unwrap());
+            assert_eq!(fs::read_to_string(&path).unwrap(), "{broken configuration");
+            assert!(state
+                .db
+                .get_current_provider(&AppType::Claude)
+                .unwrap()
+                .is_none());
+            fs::write(&path, "{}").unwrap();
+            assert!(ProviderService::add(state, AppType::Claude, provider.clone(), true).unwrap());
+            assert_eq!(
+                ProviderService::current(state, AppType::Claude).unwrap(),
+                provider.id
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn first_claude_add_keeps_published_row_for_recovery() {
+        with_test_home(|state, _| {
+            state
+                .db
+                .conn
+                .lock()
+                .unwrap()
+                .execute_batch(
+                    "CREATE TRIGGER reject_first_claude_current
+                 BEFORE UPDATE OF is_current ON providers
+                 WHEN NEW.app_type = 'claude' AND NEW.is_current = 1
+                 BEGIN SELECT RAISE(ABORT, 'forced current failure'); END;",
+                )
+                .unwrap();
+            let provider = Provider::with_id(
+                "first-claude".into(),
+                "First".into(),
+                json!({"env": {"ANTHROPIC_AUTH_TOKEN": "fixture"}}),
+                None,
+            );
+            assert!(ProviderService::add(state, AppType::Claude, provider.clone(), true).is_err());
+            assert!(state
+                .db
+                .provider_exists(&provider.id, &AppType::Claude)
+                .unwrap());
+            assert!(crate::mode::operation::has_pending("claude"));
+            let live: Value = read_json_file(&get_claude_settings_path()).unwrap();
+            assert_eq!(live["env"]["ANTHROPIC_AUTH_TOKEN"], "fixture");
+            state
+                .db
+                .conn
+                .lock()
+                .unwrap()
+                .execute_batch("DROP TRIGGER reject_first_claude_current;")
+                .unwrap();
+            crate::mode::operation::recover_on_startup(&state.db);
+            assert!(!crate::mode::operation::has_pending("claude"));
+            assert_eq!(
+                ProviderService::current(state, AppType::Claude).unwrap(),
+                provider.id
+            );
+        });
     }
 
     #[test]
@@ -546,100 +623,6 @@ mod tests {
 
     #[test]
     #[serial]
-    fn codex_editor_view_preserves_draft_and_stored_copilot_metadata() {
-        with_test_home(|state, _home| {
-            crate::settings::reload_settings().expect("reload settings");
-            let settings = json!({
-                "auth": {},
-                "apiFormat": "openai_chat",
-                "config": "model = \"claude-sonnet-5\"\nmodel_provider = \"copilot\"\nmodel_context_window = 400000\n\n[model_providers.copilot]\nbase_url = \"https://api.githubcopilot.com\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n"
-            });
-            let meta = ProviderMeta {
-                provider_type: Some("github_copilot".to_string()),
-                api_format: Some("openai_chat".to_string()),
-                auth_binding: Some(AuthBinding {
-                    source: AuthBindingSource::ManagedAccount,
-                    auth_provider: Some("github_copilot".to_string()),
-                    account_id: Some("copilot-editor-account".to_string()),
-                }),
-                ..Default::default()
-            };
-            let mut stored = Provider::with_id(
-                "copilot-editor".to_string(),
-                "Copilot".to_string(),
-                settings.clone(),
-                None,
-            );
-            stored.meta = Some(meta.clone());
-            state
-                .db
-                .save_provider(&AppType::Codex, &stored)
-                .expect("store Copilot provider");
-
-            for (provider_id, draft_meta) in [(None, Some(&meta)), (Some(stored.id.as_str()), None)]
-            {
-                let view = ProviderService::editor_view_with_meta(
-                    state,
-                    AppType::Codex,
-                    &settings,
-                    None,
-                    provider_id,
-                    draft_meta,
-                )
-                .expect("keyless managed Copilot preview");
-                let text = view.settings["config"].as_str().expect("config text");
-                let parsed: toml::Value = toml::from_str(text).expect("preview TOML");
-                let route = &parsed["model_providers"]["custom"];
-                assert_eq!(parsed["model_provider"].as_str(), Some("custom"));
-                assert_eq!(route["wire_api"].as_str(), Some("responses"));
-                assert!(route.get("requires_openai_auth").is_none());
-                assert!(route.get("experimental_bearer_token").is_none());
-                assert_eq!(view.settings["auth"], json!({}));
-                assert!(!text.contains("copilot-editor-account"));
-                assert_eq!(parsed["model_context_window"].as_integer(), Some(400000));
-                assert_eq!(
-                    parsed["web_search"].as_str(),
-                    Some("disabled"),
-                    "Copilot must not inherit the generic ProxyChat search policy"
-                );
-            }
-
-            let cleared_meta = ProviderMeta::default();
-            let cleared = ProviderService::editor_view_with_meta(
-                state,
-                AppType::Codex,
-                &settings,
-                None,
-                Some(&stored.id),
-                Some(&cleared_meta),
-            )
-            .expect("generic keyless preview with explicitly cleared metadata");
-            let generic = ProviderService::editor_view(state, AppType::Codex, &settings, None)
-                .expect("generic keyless preview without managed metadata");
-            // 普通空 Key 草稿也允许预览，不能再用报错区分身份；检查 Copilot 专属策略。
-            for (view, reason) in [
-                (
-                    cleared,
-                    "explicit draft metadata must not fall back to the stored Copilot type",
-                ),
-                (
-                    generic,
-                    "the compatibility wrapper must not infer managed auth from the URL",
-                ),
-            ] {
-                let text = view.settings["config"].as_str().expect("config text");
-                let parsed: toml::Value = toml::from_str(text).expect("preview TOML");
-                assert!(parsed.get("web_search").is_none(), "{reason}");
-                assert_eq!(view.settings["auth"], json!({}));
-                assert!(!text.contains("cc-switch-editor-pending-key"));
-            }
-            assert!(!crate::codex_config::get_codex_config_path().exists());
-            assert!(!crate::codex_config::get_codex_model_catalog_path().exists());
-        });
-    }
-
-    #[test]
-    #[serial]
     fn codex_editor_metadata_does_not_change_other_app_previews() {
         with_test_home(|state, _home| {
             crate::settings::reload_settings().expect("reload settings");
@@ -651,7 +634,7 @@ mod tests {
             let expected =
                 ProviderService::editor_view(state, AppType::Claude, &settings, None).unwrap();
             let meta = ProviderMeta {
-                provider_type: Some("github_copilot".to_string()),
+                provider_type: Some("codex_oauth".into()),
                 ..Default::default()
             };
             let actual = ProviderService::editor_view_with_meta(
@@ -1066,6 +1049,22 @@ mod tests {
             assert_eq!(script.access_key_id.as_deref(), Some("ak-test"));
             assert_eq!(script.secret_access_key.as_deref(), Some("sk-test"));
         });
+    }
+
+    #[test]
+    fn retired_provider_is_rejected_before_client_specific_writes() {
+        let provider: Provider = serde_json::from_value(json!({
+            "id": "retired", "name": "Retired", "settingsConfig": {},
+            "meta": {"providerType": "xai_oauth"}
+        }))
+        .unwrap();
+        for app in AppType::all() {
+            let error = ProviderService::validate_provider_settings(&app, &provider).unwrap_err();
+            assert!(
+                error.to_string().contains("no longer supported"),
+                "{app}: {error}"
+            );
+        }
     }
 
     #[test]
@@ -1696,25 +1695,6 @@ mod tests {
             Some("true")
         );
         assert_eq!(value.get("theme").and_then(|v| v.as_str()), Some("dark"));
-    }
-
-    #[test]
-    fn extract_credentials_returns_expected_values() {
-        let provider = Provider::with_id(
-            "claude".into(),
-            "Claude".into(),
-            json!({
-                "env": {
-                    "ANTHROPIC_AUTH_TOKEN": "token",
-                    "ANTHROPIC_BASE_URL": "https://claude.example"
-                }
-            }),
-            None,
-        );
-        let (api_key, base_url) =
-            ProviderService::extract_credentials(&provider, &AppType::Claude).unwrap();
-        assert_eq!(api_key, "token");
-        assert_eq!(base_url, "https://claude.example");
     }
 
     #[test]
@@ -4969,7 +4949,7 @@ impl ProviderService {
         if matches!(app_type, AppType::Dsh) {
             // The key is user-chosen, and saving would overwrite an existing row or live node.
             // The per-app lock also serializes native list refreshes and other mutations;
-            // the live write repeats the check under MCode's file lock.
+            // the live write repeats the check under dsh's file lock.
             if state
                 .db
                 .get_provider_by_id(&provider.id, &app_type)?
@@ -4999,7 +4979,7 @@ impl ProviderService {
         // Save to database
         state.db.save_provider(&app_type, &provider)?;
 
-        // Additive mode apps (OpenCode, OpenClaw, Hermes): optionally write to live config.
+        // Additive mode apps: optionally write to live config.
         if app_type.is_additive_mode() {
             // OMO / OMO Slim providers use exclusive mode and write to dedicated config file.
             if matches!(app_type, AppType::OpenCode)
@@ -5031,8 +5011,13 @@ impl ProviderService {
             // 第一个供应商同样只写关键字段，不覆盖用户已有的配置文件。
             match app_type {
                 AppType::Claude => {
-                    claude_direct::switch_to(state.db.as_ref(), None, &provider)?;
-                    return Ok(true);
+                    return Self::keep_row_if_written(
+                        state,
+                        &app_type,
+                        &provider.id,
+                        None,
+                        claude_direct::switch_to(state.db.as_ref(), None, &provider).map(|_| ()),
+                    );
                 }
 
                 // Antigravity 的卡只用来打开终端，添加不写任何文件。
@@ -5099,7 +5084,7 @@ impl ProviderService {
         Ok(true)
     }
 
-    /// 供应商编辑器底部配置的显示内容（Claude Code、Codex、Gemini CLI、Grok Build）：切到
+    /// 供应商编辑器底部配置的显示内容（Claude Code、Codex）：切到
     /// 这个供应商之后配置文件会是什么样，以及行里不随切换生效的字段。`category` 用来认出
     /// 官方卡。
     pub fn editor_view(
@@ -5175,7 +5160,7 @@ impl ProviderService {
         })
     }
 
-    /// 从编辑器新增供应商。Claude Code、Codex、Gemini CLI、Grok Build 按关键字段拆开保存
+    /// 从编辑器新增供应商。Claude Code、Codex 按关键字段拆开保存
     /// （见各自的 `*_editor`），其余应用和 `add` 一样。
     pub fn add_from_editor(
         state: &AppState,
@@ -5196,7 +5181,7 @@ impl ProviderService {
         }
     }
 
-    /// 从编辑器保存供应商。Claude Code、Codex、Gemini CLI、Grok Build 按关键字段拆开保存
+    /// 从编辑器保存供应商。Claude Code、Codex 按关键字段拆开保存
     /// （见各自的 `*_editor`），其余应用和 `update` 一样。
     pub fn update_from_editor(
         state: &AppState,
@@ -5245,7 +5230,6 @@ impl ProviderService {
                 (None, None) => codex_editor::Origin::Live(codex_editor::live_exclusive(state)?),
             },
             codex_direct::is_official(&provider),
-            provider.uses_proxy_injected_oauth(),
             editor.on_conflict,
         )?;
         provider.settings_config = plan.row_settings.clone();
@@ -5508,7 +5492,7 @@ impl ProviderService {
             return Ok(true);
         }
 
-        // Additive mode apps (OpenCode, OpenClaw): only sync to live when the provider
+        // Additive mode apps: only sync to live when the provider
         // already exists in live config. Editing a DB-only provider must not auto-add it.
         if app_type.is_additive_mode() {
             let omo_variant = if matches!(app_type, AppType::OpenCode) {
@@ -6087,7 +6071,7 @@ impl ProviderService {
             }
         }
 
-        let mut result = SwitchResult::default();
+        let result = SwitchResult::default();
 
         // Additive mode apps skip setting is_current (no such concept).
         if !app_type.is_additive_mode() {
@@ -6379,7 +6363,6 @@ impl ProviderService {
         // 单数 `_TOKEN` 命中 AWS_SESSION_TOKEN 等，但**不**误伤复数 `_TOKENS`
         // （CLAUDE_CODE_MAX_OUTPUT_TOKENS / MAX_THINKING_TOKENS 是正常可共享配置）。
         const SENSITIVE_SUFFIXES: &[&str] = &[
-            // 裸 `_KEY` 是最常见的凭据写法（OPENAI_KEY / GROQ_KEY / XAI_KEY…），
             // 必须单列：只枚举 `_API_KEY` / `_ACCESS_KEY` 这些子类，等于把最普通
             // 的那一种漏在外面。下面几条 `_*_KEY` 被它蕴含，保留是为了说明覆盖面。
             "_KEY",
@@ -6716,6 +6699,8 @@ impl ProviderService {
     }
 
     fn validate_provider_settings(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
+        // 校验发生在任何 live 文件写入之前，不能仅依赖保存数据库时拒绝。
+        provider.validate_service_support()?;
         icon::validate_icon(provider.icon.as_deref())?;
         match app_type {
             AppType::Claude => {
@@ -6808,190 +6793,6 @@ impl ProviderService {
         }
 
         Ok(())
-    }
-
-    #[allow(dead_code)]
-    fn extract_credentials(
-        provider: &Provider,
-        app_type: &AppType,
-    ) -> Result<(String, String), AppError> {
-        match app_type {
-            AppType::Claude => {
-                let env = provider
-                    .settings_config
-                    .get("env")
-                    .and_then(|v| v.as_object())
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.claude.env.missing",
-                            "配置格式错误: 缺少 env",
-                            "Invalid configuration: missing env section",
-                        )
-                    })?;
-
-                let api_key = env
-                    .get("ANTHROPIC_AUTH_TOKEN")
-                    .or_else(|| env.get("ANTHROPIC_API_KEY"))
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.claude.api_key.missing",
-                            "缺少 API Key",
-                            "API key is missing",
-                        )
-                    })?
-                    .to_string();
-
-                let base_url = env
-                    .get("ANTHROPIC_BASE_URL")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.claude.base_url.missing",
-                            "缺少 ANTHROPIC_BASE_URL 配置",
-                            "Missing ANTHROPIC_BASE_URL configuration",
-                        )
-                    })?
-                    .to_string();
-
-                Ok((api_key, base_url))
-            }
-
-            AppType::Codex => {
-                let _auth = provider
-                    .settings_config
-                    .get("auth")
-                    .and_then(|v| v.as_object())
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.codex.auth.missing",
-                            "配置格式错误: 缺少 auth",
-                            "Invalid configuration: missing auth section",
-                        )
-                    })?;
-
-                let config_toml = provider
-                    .settings_config
-                    .get("config")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-
-                let api_key = crate::codex_config::extract_codex_api_key(
-                    provider.settings_config.get("auth"),
-                    Some(config_toml),
-                )
-                .ok_or_else(|| {
-                    AppError::localized(
-                        "provider.codex.api_key.missing",
-                        "缺少 API Key",
-                        "API key is missing",
-                    )
-                })?;
-
-                let base_url = if config_toml.contains("base_url") {
-                    let re = Regex::new(r#"base_url\s*=\s*["']([^"']+)["']"#).map_err(|e| {
-                        AppError::localized(
-                            "provider.regex_init_failed",
-                            format!("正则初始化失败: {e}"),
-                            format!("Failed to initialize regex: {e}"),
-                        )
-                    })?;
-                    re.captures(config_toml)
-                        .and_then(|caps| caps.get(1))
-                        .map(|m| m.as_str().to_string())
-                        .ok_or_else(|| {
-                            AppError::localized(
-                                "provider.codex.base_url.invalid",
-                                "config.toml 中 base_url 格式错误",
-                                "base_url in config.toml has invalid format",
-                            )
-                        })?
-                } else {
-                    return Err(AppError::localized(
-                        "provider.codex.base_url.missing",
-                        "config.toml 中缺少 base_url 配置",
-                        "base_url is missing from config.toml",
-                    ));
-                };
-
-                Ok((api_key, base_url))
-            }
-            AppType::Agy => {
-                let env_map = provider
-                    .settings_config
-                    .get("env")
-                    .and_then(serde_json::Value::as_object)
-                    .ok_or_else(|| AppError::InvalidInput("配置缺少 env 对象".into()))?;
-
-                let api_key = env_map
-                    .get("GEMINI_API_KEY")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_string)
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "gemini.missing_api_key",
-                            "缺少 GEMINI_API_KEY",
-                            "Missing GEMINI_API_KEY",
-                        )
-                    })?;
-
-                let base_url = env_map
-                    .get("GOOGLE_GEMINI_BASE_URL")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_string)
-                    .unwrap_or_else(|| "https://generativelanguage.googleapis.com".to_string());
-
-                Ok((api_key, base_url))
-            }
-            AppType::OpenCode => {
-                // OpenCode uses options.apiKey and options.baseURL
-                let options = provider
-                    .settings_config
-                    .get("options")
-                    .and_then(|v| v.as_object())
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.opencode.options.missing",
-                            "配置格式错误: 缺少 options",
-                            "Invalid configuration: missing options section",
-                        )
-                    })?;
-
-                let api_key = options
-                    .get("apiKey")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.opencode.api_key.missing",
-                            "缺少 API Key",
-                            "API key is missing",
-                        )
-                    })?
-                    .to_string();
-
-                let base_url = options
-                    .get("baseURL")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-
-                Ok((api_key, base_url))
-            }
-            AppType::Dsh => Ok((
-                provider
-                    .settings_config
-                    .pointer("/options/apiKey")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .into(),
-                provider
-                    .settings_config
-                    .pointer("/options/baseURL")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .into(),
-            )),
-        }
     }
 }
 

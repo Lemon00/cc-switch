@@ -11,7 +11,7 @@ import {
   createCollapsedMarkdownPreview,
   SessionPlainText,
 } from "./SessionMarkdown";
-import type { TurnQuestion } from "./turns";
+import type { TurnQuestion } from "@/lib/sessions/turns";
 /** 超过 3000 字折叠到 1500 字（§6.4 提问 / 规则 11） */
 export const COLLAPSE_THRESHOLD = 3000;
 export const COLLAPSED_LENGTH = 1500;

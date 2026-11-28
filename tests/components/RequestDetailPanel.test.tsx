@@ -17,7 +17,7 @@ vi.mock("@/lib/query/usage", () => ({
 const log = (overrides: Partial<RequestLog>): RequestLog => ({
   requestId: "req_1",
   providerId: "p1",
-  providerName: "GitHub Copilot",
+  providerName: "ChatGPT",
   appType: "claude",
   model: "claude-opus-5-5",
   costMultiplier: "1",
@@ -57,6 +57,12 @@ describe("RequestDetailPanel", () => {
     renderWith(log({ outputTokens: 64, latencyMs: 2400, firstTokenMs: 1900 }));
     expect(screen.getByText("usage.detail.speedTooFew")).toBeInTheDocument();
   });
+  it("explains why buffered burst outputs have no speed", () => {
+    renderWith(log({ outputTokens: 2_000, latencyMs: 350, firstTokenMs: 200 }));
+
+    expect(screen.getByText("usage.detail.speedBurst")).toBeInTheDocument();
+  });
+
   it("shows an estimated speed and duration for session logs", () => {
     renderWith(
       log({

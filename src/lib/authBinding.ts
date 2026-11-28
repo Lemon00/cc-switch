@@ -10,8 +10,6 @@ export function resolveManagedAccountId(
   ) {
     return binding.accountId ?? null;
   }
-  if (authProvider === "github_copilot") {
-    return meta?.githubAccountId ?? null;
-  }
+
   return null;
 }

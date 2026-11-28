@@ -4,7 +4,7 @@ import { useReaderContext } from "./context";
 import { useReaderT } from "./i18n";
 import { GlyphCell } from "./rowStyles";
 import { SessionMarkdown } from "./SessionMarkdown";
-import type { NoteStep } from "./turns";
+import type { NoteStep } from "@/lib/sessions/turns";
 /** 超过 3 行或 240 字才折叠（规则 10） */
 const isLongNote = (text: string) =>
   text.length > 240 || text.split("\n").length > 3;

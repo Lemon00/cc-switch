@@ -15,6 +15,7 @@ const OPEN_ER_API_URL: &str = "https://open.er-api.com/v6/latest/USD";
 const FLOATRATES_URL: &str = "https://www.floatrates.com/daily/usd.json";
 /// 单次请求的超时：汇率只用于显示，取不到就退缓存，不能让设置页一直转
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
+const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -81,7 +82,9 @@ async fn fetch_source(
     if !status.is_success() {
         return Err(format!("HTTP {status}"));
     }
-    let body = response.text().await.map_err(|error| error.to_string())?;
+    let bytes =
+        crate::proxy::http_client::read_body_with_limit(response, MAX_RESPONSE_BYTES).await?;
+    let body = String::from_utf8_lossy(&bytes);
     parser(&body).ok_or_else(|| "返回内容无法解析".to_string())
 }
 

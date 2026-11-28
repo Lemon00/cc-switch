@@ -4,15 +4,11 @@ import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
 vi.mock("@/components/providers/forms/ClaudeOfficialSection", () => ({
   ClaudeOfficialSection: () => <div data-testid="claude" />,
 }));
-vi.mock("@/components/providers/forms/CopilotAuthSection", () => ({
-  CopilotAuthSection: () => <div data-testid="copilot" />,
-}));
+
 vi.mock("@/components/providers/forms/CodexOAuthSection", () => ({
   CodexOAuthSection: () => <div data-testid="codex" />,
 }));
-vi.mock("@/components/providers/forms/XaiOAuthSection", () => ({
-  XaiOAuthSection: () => <div data-testid="xai" />,
-}));
+
 vi.mock("@/components/providers/forms/AgyOAuthSection", () => ({
   AgyOAuthSection: () => <div data-testid="agy" />,
 }));

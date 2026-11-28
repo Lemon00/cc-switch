@@ -19,7 +19,7 @@ import {
 } from "@/config/constants";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { settingsApi, usageApi, type AppId } from "@/lib/api";
-import { copilotGetUsage, copilotGetUsageForAccount } from "@/lib/api/copilot";
+
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useSettingsQuery } from "@/lib/query";
 import { usageKeys } from "@/lib/query/usage";
@@ -151,8 +151,7 @@ const generatePresetTemplates = (
     return result;
   },
 })`,
-  // GitHub Copilot 模板不需要脚本，使用专用 API
-  [TEMPLATE_TYPES.GITHUB_COPILOT]: "",
+
   // Coding Plan 模板不需要脚本，使用专用 Rust 查询
   [TEMPLATE_TYPES.TOKEN_PLAN]: "",
   // 官方余额查询模板不需要脚本，使用专用 Rust 查询
@@ -166,15 +165,14 @@ const TEMPLATE_NAME_KEYS: Record<string, string> = {
   [TEMPLATE_TYPES.GENERAL]: "usageScript.templateGeneral",
   [TEMPLATE_TYPES.NEW_API]: "usageScript.templateNewAPI",
   [TEMPLATE_TYPES.SUB2API]: "usageScript.templateSub2API",
-  [TEMPLATE_TYPES.GITHUB_COPILOT]: "usageScript.templateCopilot",
+
   [TEMPLATE_TYPES.TOKEN_PLAN]: "usageScript.templateTokenPlan",
   [TEMPLATE_TYPES.BALANCE]: "usageScript.templateBalance",
   [TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION]:
     "usageScript.templateOfficialSubscription",
 };
 function isOfficialSubscriptionProvider(provider: Provider, appId: AppId) {
-  if (!["claude", "codex", "gemini", "grokbuild", "agy"].includes(appId))
-    return false;
+  if (!["claude", "codex", "agy"].includes(appId)) return false;
   if (provider.category === "official") return true;
   const config = provider.settingsConfig as Record<string, any>;
   if (appId === "claude") {
@@ -210,7 +208,6 @@ function isOfficialSubscriptionProvider(provider: Provider, appId: AppId) {
   return false;
 }
 const NATIVE_USAGE_TEMPLATES = new Set<string>([
-  TEMPLATE_TYPES.GITHUB_COPILOT,
   TEMPLATE_TYPES.TOKEN_PLAN,
   TEMPLATE_TYPES.BALANCE,
   TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION,
@@ -407,10 +404,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(
     () => {
       const existingScript = provider.meta?.usage_script;
-      // Copilot 供应商默认使用 Copilot 模板
-      if (provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT) {
-        return TEMPLATE_TYPES.GITHUB_COPILOT;
-      }
+
       // 优先使用保存的 templateType
       if (
         existingScript?.templateType &&
@@ -609,37 +603,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         }
         return;
       }
-      // Copilot 模板使用专用 API
-      if (selectedTemplate === TEMPLATE_TYPES.GITHUB_COPILOT) {
-        const accountId = resolveManagedAccountId(
-          provider.meta,
-          PROVIDER_TYPES.GITHUB_COPILOT,
-        );
-        const usage = accountId
-          ? await copilotGetUsageForAccount(accountId)
-          : await copilotGetUsage();
-        const premium = usage.quota_snapshots.premium_interactions;
-        const used = premium.entitlement - premium.remaining;
-        const summary = `[${usage.copilot_plan}] ${t("usage.remaining")} ${premium.remaining}/${premium.entitlement} (${t("usageScript.resetDate")}: ${usage.quota_reset_date})`;
-        toast.success(`${t("usageScript.testSuccess")}${summary}`, {
-          duration: 3000,
-          closeButton: true,
-        });
-        // 更新缓存
-        queryClient.setQueryData(usageKeys.script(provider.id, appId), {
-          success: true,
-          data: [
-            {
-              planName: usage.copilot_plan,
-              remaining: premium.remaining,
-              total: premium.entitlement,
-              used: used,
-              unit: t("usageScript.premiumRequests"),
-            },
-          ],
-        });
-        return;
-      }
+
       const result = await usageApi.testScript(
         provider.id,
         appId,
@@ -742,16 +706,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           ...script,
           code: preset,
           apiKey: undefined,
-        });
-      } else if (presetName === TEMPLATE_TYPES.GITHUB_COPILOT) {
-        // Copilot 模板不需要脚本和凭证，使用专用 API
-        setScript({
-          ...script,
-          code: "",
-          apiKey: undefined,
-          baseUrl: undefined,
-          accessToken: undefined,
-          userId: undefined,
         });
       } else if (presetName === TEMPLATE_TYPES.TOKEN_PLAN) {
         // Coding Plan 模板不需要脚本，使用 Rust 原生查询
@@ -878,21 +832,12 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             <div className="flex gap-2 flex-wrap">
               {Object.keys(PRESET_TEMPLATES)
                 .filter((name) => {
-                  const isCopilotProvider =
-                    provider.meta?.providerType === "github_copilot";
-                  // Copilot 供应商只显示 copilot 模板
-                  if (isCopilotProvider) {
-                    return name === TEMPLATE_TYPES.GITHUB_COPILOT;
-                  }
                   // 官方 CLI/OAuth 供应商只显示官方订阅额度模板
                   if (isOfficialSubscription) {
                     return name === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;
                   }
-                  // 非 Copilot 供应商不显示 copilot 模板
-                  return (
-                    name !== TEMPLATE_TYPES.GITHUB_COPILOT &&
-                    name !== TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION
-                  );
+
+                  return name !== TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;
                 })
                 .map((name) => {
                   const isSelected = selectedTemplate === name;
@@ -982,14 +927,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
               </div>
             )}
 
-            {/* Copilot 模式：自动认证提示 */}
-            {selectedTemplate === TEMPLATE_TYPES.GITHUB_COPILOT && (
-              <div className="space-y-2 border-t border-white/10 pt-3">
-                <p className="text-sm text-fg-2">
-                  {t("usageScript.copilotAutoAuth")}
-                </p>
-              </div>
-            )}
+            {}
+            {false}
 
             {/* 官方余额查询模式：自动提示 */}
             {selectedTemplate === TEMPLATE_TYPES.BALANCE && (

@@ -3,7 +3,7 @@ import type { SessionMessage } from "@/types";
 import { memo } from "react";
 import { formatMessageTime, isSessionAppId } from "../utils";
 import { useReaderContext } from "./context";
-import type { SessionTurn } from "./turns";
+import type { SessionTurn } from "@/lib/sessions/turns";
 /**
  * 左侧 Agent 头像：每轮 Agent 输出的第一行左边显示一次。
  * 认识的来源用应用图标，其余退回风格里的 glyph 或 Agent 名首字。

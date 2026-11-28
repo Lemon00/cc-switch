@@ -99,8 +99,8 @@ export function SessionItem({
     .filter(Boolean)
     .join("\n");
   const deleteReason = !deletable
-    ? t(nativeDeleteHintKey(session) ?? "sessionManager.mcodeDeleteHint", {
-        defaultValue: "请在 MiniMax Code 中删除",
+    ? t(nativeDeleteHintKey(session) ?? "sessionManager.nativeDeleteHint", {
+        defaultValue: "请在原应用中删除",
       })
     : null;
   return (

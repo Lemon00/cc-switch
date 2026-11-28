@@ -63,7 +63,6 @@ const account = (id: string, login: string) => ({
   avatar_url: null,
   authenticated_at: 0,
   is_default: false,
-  github_domain: "claude.ai",
   requires_reauth: false,
 });
 const loginSwitch = (overrides: Record<string, unknown> = {}) => {

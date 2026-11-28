@@ -29,10 +29,7 @@ interface SubscriptionQuotaViewProps {
   loading: boolean;
   /** 原样传 refetch：额度列靠它返回的结果判断点击重查的成败 */
   refetch: () => unknown;
-  /**
-   * 用于 `subscription.expiredHint` 的 {tool} 插值（CLI 命令名）；解耦了 hook 的 appId。
-   * 不传＝账号由 CC Switch 自管（Codex / xAI OAuth），没有 CLI 命令可跑，提示改为去授权中心重新登录
-   */
+
   appIdForExpiredHint?: string;
   inline?: boolean;
   /** 按档写剩余还是已用；由外层按设置传入，这里不读设置（见 useQuotaDisplay） */
@@ -65,8 +62,6 @@ export const TIER_I18N_KEYS: Record<string, string> = {
   monthly: "subscription.monthly",
   // Grok credit 额度的兜底窗口（重置距离可识别时归入 weekly_limit/monthly）
   credits: "subscription.credits",
-  // GitHub Copilot
-  premium: "subscription.copilotPremium",
 };
 /** 卡片上不显示的档（展开时仍列出） */
 const HIDDEN_INLINE_TIERS = new Set(["seven_day_sonnet"]);

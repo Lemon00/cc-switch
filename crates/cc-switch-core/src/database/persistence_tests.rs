@@ -11,6 +11,7 @@ fn file_database(path: &std::path::Path) -> Database {
         .unwrap();
     Database::initialize_schema_on_conn(&conn).unwrap();
     Database {
+        route_revisions: Default::default(),
         conn: Mutex::new(conn),
         log_count_cache: Mutex::new(None),
         change_observer: Arc::new(NoOpDatabaseChangeObserver),

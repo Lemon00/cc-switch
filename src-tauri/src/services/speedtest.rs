@@ -210,6 +210,6 @@ mod tests {
                 .error
                 .as_deref()
                 .is_some_and(|error| error.contains("HTTP(S)"))));
-        assert_eq!(result[0].url, "file://tmp/config");
+        assert_eq!(result[0].url, "file:///tmp/config");
     }
 }

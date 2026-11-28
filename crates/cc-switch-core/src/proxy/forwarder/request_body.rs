@@ -1,48 +1,5 @@
 use super::*;
 
-/// Shared request pipeline after native Responses transport selection.
-/// Normalize standalone receipts for third parties before the strict-Grok gate.
-pub(super) fn apply_native_responses_request_compat(
-    provider: &Provider,
-    body: &mut Value,
-    keep_resolved_model: bool,
-) -> Result<(), ProxyError> {
-    if !super::super::providers::is_codex_official_provider(provider)
-        && super::super::providers::transform_codex_responses_xai_sanitize::rewrite_xai_call_id_less_tool_outputs(body)
-    {
-        log::info!(
-            "[Codex] Rewrote function_call_output items without call_id for native Responses upstream (provider={})",
-            provider.id
-        );
-    }
-    if !super::super::providers::provider_needs_responses_namespace_flatten(
-        provider,
-        body.get("model").and_then(Value::as_str),
-    ) {
-        return Ok(());
-    }
-    if super::super::providers::transform_codex_responses_namespace::flatten_request_namespaces(body)? {
-        log::debug!(
-            "[Codex] Flattened namespace tools for native Responses upstream (provider={})",
-            provider.id
-        );
-    }
-    // Copilot already resolved against its live catalog; never replace that
-    // model with the card default. Direct xAI keeps its existing fallback.
-    let upstream_model = if keep_resolved_model || provider.is_github_copilot() {
-        None
-    } else {
-        super::super::providers::codex_provider_upstream_model(provider)
-    };
-    super::super::providers::transform_codex_responses_xai_sanitize::apply_xai_native_responses_request_compat(
-        body,
-        &provider.id,
-        upstream_model.as_deref(),
-        &provider.settings_config,
-    );
-    Ok(())
-}
-
 pub(super) const CLAUDE_CODE_SYSTEM_IDENTITY: &str =
     "You are Claude Code, Anthropic's official CLI for Claude.";
 
@@ -127,7 +84,11 @@ pub(super) fn merge_json_override(target: &mut Value, patch: &Value) -> bool {
     merge_json_override_inner(target, patch, true)
 }
 
-pub(super) fn merge_json_override_inner(target: &mut Value, patch: &Value, is_top_level: bool) -> bool {
+pub(super) fn merge_json_override_inner(
+    target: &mut Value,
+    patch: &Value,
+    is_top_level: bool,
+) -> bool {
     match (target, patch) {
         (Value::Object(target_map), Value::Object(patch_map)) => {
             let mut changed = false;
@@ -163,4 +124,13 @@ pub(super) fn merge_json_override_inner(target: &mut Value, patch: &Value, is_to
 
 pub(super) fn prepare_upstream_request_body(request_body: Value) -> Value {
     canonicalize_value(filter_private_params_with_whitelist(request_body, &[]))
+}
+
+/// Keep official Responses history unchanged; expose standalone receipts as user content
+/// for third-party endpoints that require a call_id on every function_call_output.
+pub(super) fn apply_native_responses_request_compat(provider: &Provider, body: &mut Value) {
+    if !super::super::providers::is_codex_official_provider(provider) && !provider.is_codex_oauth()
+    {
+        super::super::providers::codex_responses_receipts::rewrite_call_id_less_tool_outputs(body);
+    }
 }

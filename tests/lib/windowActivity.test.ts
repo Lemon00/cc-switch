@@ -174,7 +174,7 @@ describe("window activity", () => {
     native.isVisible.mockResolvedValue(false);
     native.visibilityListener?.();
     await vi.advanceTimersByTimeAsync(0);
-    expect(focusManager.isFocused()).toBe(false);
+    expect(native.isVisible).toHaveBeenCalledTimes(1);
     resolve(true);
     await vi.advanceTimersByTimeAsync(0);
     expect(focusManager.isFocused()).toBe(false);
@@ -216,5 +216,23 @@ describe("window activity", () => {
       client.unmount();
       client.clear();
     }
+  });
+  it("coalesces resize bursts and discards the superseded snapshot", async () => {
+    let finish!: (visible: boolean) => void;
+    native.isVisible.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    native.isVisible.mockResolvedValue(false);
+    initialize();
+    await vi.advanceTimersByTimeAsync(0);
+    for (let i = 0; i < 30; i++) native.resizeListener?.();
+    expect(native.isVisible).toHaveBeenCalledTimes(1);
+    finish(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(native.isVisible).toHaveBeenCalledTimes(2);
+    expect(native.isMinimized).toHaveBeenCalledTimes(2);
+    expect(focusManager.isFocused()).toBe(false);
   });
 });

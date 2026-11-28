@@ -48,11 +48,11 @@ impl SkillService {
                 // Missing files require repair through update/restore; switching
                 // to an unrelated same-name target must never silently adopt it.
                 Self::validate_sync_source_dir(&source, &directory)?;
-                let source_hash = Self::compute_dir_hash(&source)?;
+                let source_hash = Self::compute_storage_hash(&source)?;
                 if destination.exists() || Self::is_symlink(&destination) {
                     if Self::is_symlink(&destination)
                         || !destination.is_dir()
-                        || Self::compute_dir_hash(&destination)? != source_hash
+                        || Self::compute_storage_hash(&destination)? != source_hash
                     {
                         return Err(anyhow!(
                             "Target Skill directory has different contents: {}",
@@ -62,7 +62,7 @@ impl SkillService {
                     result.skipped_count += 1;
                 } else {
                     let stage = Self::stage_skill_copy(&source, &destination)?;
-                    if Self::compute_dir_hash(&stage.path().join("new"))? != source_hash {
+                    if Self::compute_storage_hash(&stage.path().join("new"))? != source_hash {
                         return Err(anyhow!("Skill could not be copied completely: {directory}"));
                     }
                     staged.push((destination.clone(), stage));

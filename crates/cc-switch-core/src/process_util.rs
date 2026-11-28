@@ -12,10 +12,7 @@ use std::time::Duration;
 pub use crate::process_output::terminate_child_tree;
 use crate::process_output::{wait_child_output, CommandDeadline};
 
-const VALID_TOOLS: [&str; 13] = [
-    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "kimi",
-    "dsh", "agy", "omp",
-];
+const VALID_TOOLS: [&str; 5] = ["claude", "codex", "opencode", "dsh", "agy"];
 
 pub fn decode_command_output(bytes: &[u8]) -> String {
     #[cfg(target_os = "windows")]
@@ -125,7 +122,7 @@ pub fn local_tool_version(tool: &str) -> Option<String> {
     })
 }
 
-/// 构建一条跑工具的 Command（GUI `commands::detected_tool_command` 的核心版简化版）：
+/// 构建运行本机工具默认入口的命令：
 /// 只查 PATH，不做登录 shell 的 PATH 合并与多安装源枚举；
 /// 非 Windows 下子进程 setsid 脱离控制终端（与 GUI 版一致）。
 pub fn detected_tool_command(

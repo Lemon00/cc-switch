@@ -24,23 +24,6 @@ function pendingNavigation(initial: unknown) {
   };
 }
 describe("parseTrayNavigation", () => {
-  it("keeps known apps, sections and intents", () => {
-    expect(
-      parseTrayNavigation({
-        app: "claude",
-        intent: "needsRoute",
-        providerId: "copilot",
-      }),
-    ).toEqual({ app: "claude", intent: "needsRoute", providerId: "copilot" });
-    expect(parseTrayNavigation({ app: "opencode", intent: "add" })).toEqual({
-      app: "opencode",
-      intent: "add",
-      providerId: undefined,
-    });
-    expect(parseTrayNavigation({ section: "routing" })).toEqual({
-      section: "routing",
-    });
-  });
   it("drops unknown targets and incomplete needs-route requests", () => {
     expect(parseTrayNavigation(null)).toBeNull();
     expect(parseTrayNavigation({ app: "nope" })).toBeNull();
@@ -117,23 +100,6 @@ describe("useTrayNavigation", () => {
       }),
     );
     expect(onNavigate).toHaveBeenCalledTimes(1);
-  });
-  it("takes the navigation again on every tray-navigate event", async () => {
-    const leave = pendingNavigation(null);
-    const onNavigate = vi.fn();
-    renderHook(() => useTrayNavigation(onNavigate));
-    // 挂载时取过一次（空的），监听已经挂上
-    await waitFor(() => expect(onNavigate).not.toHaveBeenCalled());
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    leave({ app: "claude", intent: "needsRoute", providerId: "copilot" });
-    emitTauriEvent("tray-navigate", null);
-    await waitFor(() =>
-      expect(onNavigate).toHaveBeenCalledWith({
-        app: "claude",
-        intent: "needsRoute",
-        providerId: "copilot",
-      }),
-    );
   });
 });
 describe("useTrayAppPageSeen", () => {

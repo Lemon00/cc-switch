@@ -12,12 +12,12 @@ import { useTranslation } from "react-i18next";
 import { invalidateQueriesAfterChange } from "./invalidation";
 import { claudeLoginQueryKeys } from "./providerCache";
 import { proxyKeys } from "./proxy";
-/** UI 和托盘应用 Profile 共用同一份失效清单。旧事件无 scope 时刷新三组。 */
+/** UI 和托盘应用 Profile 共用同一份失效清单。旧事件无 scope 时刷新所有受支持分组。 */
 export async function invalidateProfileCaches(
   queryClient: QueryClient,
   scope?: ProfileScope,
 ) {
-  const scopes: ProfileScope[] = ["claude", "claude-desktop", "codex"];
+  const scopes: ProfileScope[] = ["claude", "codex"];
   const apps = scope && scopes.includes(scope) ? [scope] : scopes;
   await Promise.all(
     [
@@ -27,7 +27,6 @@ export async function invalidateProfileCaches(
       ["prompts"],
       proxyKeys.takeoverStatus,
       proxyKeys.status,
-      ...(apps.includes("claude-desktop") ? [["claudeDesktopStatus"]] : []),
       ...(apps.includes("claude") ? claudeLoginQueryKeys : []),
       ...apps.map((app) => ["providers", app]),
     ].map((queryKey) =>

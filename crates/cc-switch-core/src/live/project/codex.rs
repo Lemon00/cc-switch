@@ -119,9 +119,6 @@ pub struct RowInput<'a> {
     pub settings: &'a Value,
     /// 官方卡（`category == "official"`，或按 `is_codex_official_provider` 认出来的）。
     pub official: bool,
-    /// 代理注入凭据的 OAuth 卡（xai_oauth、github_copilot…）：本来就没有 Key，行里的
-    /// `requires_openai_auth = true` 是旧模板留下的。
-    pub proxy_injected_oauth: bool,
 }
 
 fn config_error(zh: impl Into<String>, en: impl Into<String>) -> AppError {
@@ -388,7 +385,7 @@ fn custom_route(
                 let requires = table_bool(&table, "requires_openai_auth");
                 let rerouted =
                     doc.get("openai_base_url").is_some() && doc.get("model_providers").is_none();
-                if (requires || rerouted) && !input.proxy_injected_oauth {
+                if requires || rerouted {
                     return Err(keyless_fallback_error());
                 }
                 if table.get("query_params").is_some()
@@ -991,7 +988,6 @@ mod tests {
         CodexProjection::of(&RowInput {
             settings,
             official: false,
-            proxy_injected_oauth: false,
         })
     }
 
@@ -1323,17 +1319,6 @@ mod tests {
             "model_provider = \"relay\"\nmodel = \"m\"\n",
         );
         assert!(project(&key_without_slot).is_err());
-
-        // 代理注入凭据的 OAuth 卡本来就没有 Key：放行，且不带 requires_openai_auth。
-        let oauth = CodexProjection::of(&RowInput {
-            settings: &keyless,
-            official: false,
-            proxy_injected_oauth: true,
-        })
-        .unwrap();
-        let (table, auth) = custom(&oauth);
-        assert_eq!(auth, RouteAuth::None);
-        assert!(table.get("requires_openai_auth").is_none());
 
         // 只有 model、没有路由的卡：有意放行（带 Key 也一样，Key 没有第三方地址可发）。
         for auth in [json!({}), json!({ "OPENAI_API_KEY": "sk" })] {

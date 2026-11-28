@@ -492,7 +492,22 @@ describe("useBlockContent", () => {
       limit: BLOCK_PAGE_CHARS,
     });
   });
-  it("累计到 2MB 停止并标记 tooLarge；没给 nextOffset 也停", async () => {
+  it("counts supplementary Unicode characters consistently with backend pagination", async () => {
+    const text = "😀".repeat(1024 * 1024);
+    api.getBlockContent.mockResolvedValueOnce({
+      text,
+      totalLen: 1024 * 1024 + 1,
+      truncated: true,
+      nextOffset: 1024 * 1024,
+    });
+    const { result } = renderHook(() => useBlockContent("claude", "/a", ref), {
+      wrapper: wrapperWith(newClient()),
+    });
+    await waitFor(() => expect(result.current.text).toBe(text));
+    expect(result.current.hasMore).toBe(true);
+    expect(result.current.tooLarge).toBe(false);
+  });
+  it("累计到 2M 字符停止并标记 tooLarge；没给 nextOffset 也停", async () => {
     const big = "x".repeat(2 * 1024 * 1024);
     api.getBlockContent.mockResolvedValueOnce({
       text: big,

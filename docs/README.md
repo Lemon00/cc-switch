@@ -1,6 +1,6 @@
 # 项目文档
 
-本文档索引对应当前工作树（`package.json` 版本 1.0.0，核对日期 2026-11-26）。版本号不代表工作树已发布，也不代表所有平台都已验收。
+本文档索引对应当前工作树（`package.json` 预定版本 1.0.1，版本信息核对日期 2026-11-28）。版本号不代表工作树已发布，也不代表所有平台都已验收。
 
 ## 使用 CC Switch
 
@@ -12,7 +12,7 @@
 - [Codex Desktop 自定义模型可见性](guides/codex-desktop-custom-model-visibility-zh.md)
 - 协议路由：[Claude 调用 Codex](guides/claude-codex-routing-guide-zh.md)、[Codex 调用 Claude](guides/codex-claude-routing-guide-zh.md)、[Codex 调用 DeepSeek](guides/codex-deepseek-routing-guide-zh.md)。
 - 客户端接入：[Antigravity](agy-integration-zh.md)、[DeepSeek Harness](deepseek-harness-integration-zh.md)。
-- 独立 CLI：[CLI 交互配置编辑（TUI）](cli-tui.md)。
+- 独立 CLI：[CLI 交互管理（TUI）](cli-tui.md)。
 
 ## 开发与维护
 
@@ -25,7 +25,7 @@
 
 ## 发布说明与项目政策
 
-[1.0.0 发布说明](release-notes/v1.0.0-zh.md) · [五应用范围更新（2026-11-26）](release-notes/five-apps-2026-11-26.md) · [CHANGELOG](../CHANGELOG.md)。仅维护独立版本记录，当前用法以用户手册为准。
+[1.0.1 发布说明（待发布）](release-notes/v1.0.1-zh.md) · [1.0.0 发布说明](release-notes/v1.0.0-zh.md) · [五应用范围更新（2026-11-26）](release-notes/five-apps-2026-11-26.md) · [CHANGELOG](../CHANGELOG.md)。仅维护独立版本记录，当前用法以用户手册为准。
 
 [安全报告](../SECURITY.md) · [支持渠道](../SUPPORT.md) · [行为准则](../CODE_OF_CONDUCT.md)
 

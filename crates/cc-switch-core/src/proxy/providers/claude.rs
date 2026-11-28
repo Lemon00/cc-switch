@@ -1,19 +1,3 @@
-//! Claude (Anthropic) Provider Adapter
-//!
-//! 支持透传模式和 OpenAI 格式转换模式
-//!
-//! ## API 格式
-//! - **anthropic** (默认): Anthropic Messages API 格式，直接透传
-//! - **openai_chat**: OpenAI Chat Completions 格式，需要 Anthropic ↔ OpenAI 转换
-//! - **openai_responses**: OpenAI Responses API 格式，需要 Anthropic ↔ Responses 转换
-//! - **gemini_native**: Google Gemini Native generateContent 格式，需要 Anthropic ↔ Gemini 转换
-//!
-//! ## 认证模式
-//! - **Claude**: Anthropic 官方 API (x-api-key + anthropic-version)
-//! - **ClaudeAuth**: 中转服务 (仅 Bearer 认证，无 x-api-key)
-//! - **OpenRouter**: 已支持 Claude Code 兼容接口，默认透传
-//! - **GitHubCopilot**: GitHub Copilot (OAuth + Copilot Token)
-
 use super::codex_oauth_auth::{CODEX_OAUTH_CLIENT_VERSION, CODEX_OAUTH_ORIGINATOR};
 use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
 use crate::provider::Provider;
@@ -37,10 +21,7 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
     // an invariant, not a preset default: editable metadata must not be able to
     // send an Anthropic Messages body to a Responses-only upstream.
     if let Some(meta) = provider.meta.as_ref() {
-        if matches!(
-            meta.provider_type.as_deref(),
-            Some("codex_oauth" | "xai_oauth")
-        ) {
+        if matches!(meta.provider_type.as_deref(), Some("codex_oauth")) {
             return "openai_responses";
         }
     }
@@ -346,23 +327,6 @@ fn should_preserve_reasoning_content_for_openai_chat(provider: &Provider, body: 
         .any(is_reasoning_vendor_identifier)
 }
 
-/// 发往 xAI Responses 的请求。OAuth 卡的地址可被改写，不能只看 base URL。
-fn claude_responses_targets_xai(provider: &Provider) -> bool {
-    if provider.is_xai_oauth() {
-        return true;
-    }
-    [
-        provider.settings_config.pointer("/env/ANTHROPIC_BASE_URL"),
-        provider.settings_config.get("base_url"),
-        provider.settings_config.get("baseURL"),
-        provider.settings_config.get("apiEndpoint"),
-    ]
-    .into_iter()
-    .flatten()
-    .filter_map(Value::as_str)
-    .any(|url| url.to_ascii_lowercase().contains("api.x.ai"))
-}
-
 pub fn transform_claude_request_for_api_format(
     body: serde_json::Value,
     provider: &Provider,
@@ -372,32 +336,7 @@ pub fn transform_claude_request_for_api_format(
 ) -> Result<serde_json::Value, ProxyError> {
     let is_codex_oauth = provider.is_codex_oauth();
 
-    // Copilot 场景：优先从 metadata.user_id 提取 session ID 作为 cache key
-    // 支持 JSON 字符串中的 session_id 和旧版 _session_ 后缀
-    // 同一会话的请求共享 cache key，提升 Copilot 缓存命中率
-    let is_copilot = provider.is_github_copilot()
-        || provider
-            .settings_config
-            .get("baseUrl")
-            .and_then(|v| v.as_str())
-            .is_some_and(|u| u.contains("githubcopilot.com"));
-    let session_cache_key: Option<String> = if is_copilot {
-        let metadata = body.get("metadata");
-        // Session 提取优先级（与 forwarder 和 session.rs 统一）：
-        //   1. metadata.user_id 中的 JSON session_id 或旧版 _session_ 后缀
-        //   2. metadata.session_id（直接字段）
-        metadata
-            .and_then(|m| m.get("user_id"))
-            .and_then(|v| v.as_str())
-            .and_then(super::super::session::parse_session_from_user_id)
-            .or_else(|| {
-                metadata
-                    .and_then(|m| m.get("session_id"))
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty())
-                    .map(|s| s.to_string())
-            })
-    } else {
+    let session_cache_key: Option<String> = {
         session_id
             .map(str::trim)
             .filter(|s| !s.is_empty())
@@ -440,26 +379,10 @@ pub fn transform_claude_request_for_api_format(
                 is_codex_oauth,
                 codex_fast_mode,
             )?;
-            // xAI 不认 Responses 的托管搜索选择器。只改发往 xAI 的请求，
+
             // OpenAI 自己的 `{"type":"web_search"}` 保持不动。
-            if claude_responses_targets_xai(provider) {
-                super::transform_responses::rewrite_xai_hosted_web_search_tool_choice(&mut result);
-            }
-            if provider.is_xai_oauth() {
-                const REASONING_MARKER: &str = "reasoning.encrypted_content";
-                let mut include = result
-                    .get("include")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default();
-                if !include
-                    .iter()
-                    .any(|item| item.as_str() == Some(REASONING_MARKER))
-                {
-                    include.push(json!(REASONING_MARKER));
-                }
-                result["include"] = json!(include);
-            }
+            {}
+            {}
             super::claude_reasoning::apply(&mut result, api_format, effort_plan);
             Ok(result)
         }
@@ -482,27 +405,9 @@ pub fn transform_claude_request_for_api_format(
             // 不在 SSE 末尾吐 usage → 转换出的 Anthropic message_delta 全 0 →
             // 整笔 input/output/cache 漏记（与 Codex Responses→Chat 路径同源）。
             super::transform::inject_openai_stream_include_usage(&mut result);
-            // GitHub Copilot 的 OpenAI Chat 端点不支持 `stop` 参数，携带该字段会
-            // 直接返回 400。Claude Code auto mode 的 classifier 请求会带
-            // stop_sequences（转换后即为 stop），导致 classifier 在 Copilot 下
-            // 始终不可用（Issue #5175）。仅在 Copilot 路径移除该字段，其它
+
             // OpenAI 兼容上游（如 OpenRouter）继续保留 stop 语义。
-            if is_copilot {
-                if let Some(obj) = result.as_object_mut() {
-                    obj.remove("stop");
-                }
-                // Copilot 的 chat 端点给 Gemini 模型转格式时，把所有 system 消息都提进
-                // 开头的指令；Claude Code 每轮追加的中途 system 消息于是改写请求开头，
-                // 前缀缓存只命中到 system 为止（#9613）。只对 Copilot 的 Gemini 模型
-                // 把中途 system 原位改成 user 发出。
-                let is_gemini = result
-                    .get("model")
-                    .and_then(Value::as_str)
-                    .is_some_and(|model| model.to_ascii_lowercase().contains("gemini"));
-                if is_gemini {
-                    super::transform::demote_mid_conversation_system_messages(&mut result);
-                }
-            }
+            {}
             super::claude_reasoning::apply(&mut result, api_format, effort_plan);
             Ok(result)
         }
@@ -524,12 +429,6 @@ impl ClaudeAdapter {
         Self
     }
 
-    /// 获取供应商类型
-    ///
-    /// 根据 base_url 和 auth_mode 检测具体的供应商类型：
-    /// - GitHubCopilot: meta.provider_type 为 github_copilot 或 base_url 包含 githubcopilot.com
-    /// - CodexOAuth: meta.provider_type 为 codex_oauth
-    /// - XaiOAuth: meta.provider_type 为 xai_oauth
     /// - OpenRouter: base_url 包含 openrouter.ai
     /// - ClaudeAuth: auth_mode 为 bearer_only
     /// - Claude: 默认 Anthropic 官方
@@ -538,7 +437,7 @@ impl ClaudeAdapter {
         if self.get_api_format(provider) == "gemini_native" {
             return match self.extract_key(provider) {
                 Some(key) if key.starts_with("ya29.") || key.starts_with('{') => {
-                    ProviderType::GeminiCli
+                    ProviderType::GeminiOAuth
                 }
                 _ => ProviderType::Gemini,
             };
@@ -549,14 +448,9 @@ impl ClaudeAdapter {
             return ProviderType::CodexOAuth;
         }
 
-        if self.is_xai_oauth(provider) {
-            return ProviderType::XaiOAuth;
-        }
+        {}
 
-        // 检测 GitHub Copilot
-        if self.is_github_copilot(provider) {
-            return ProviderType::GitHubCopilot;
-        }
+        {}
 
         // 检测 OpenRouter
         if self.is_openrouter(provider) {
@@ -578,28 +472,6 @@ impl ClaudeAdapter {
                 return true;
             }
         }
-        false
-    }
-
-    fn is_xai_oauth(&self, provider: &Provider) -> bool {
-        provider.is_xai_oauth()
-    }
-
-    /// 检测是否为 GitHub Copilot 供应商
-    fn is_github_copilot(&self, provider: &Provider) -> bool {
-        if let Some(meta) = provider.meta.as_ref() {
-            if meta.provider_type.as_deref() == Some("github_copilot") {
-                return true;
-            }
-        }
-
-        // 兼容旧数据的 fallback，后续应优先依赖 providerType
-        if let Ok(base_url) = self.extract_base_url(provider) {
-            if base_url.contains("githubcopilot.com") {
-                return true;
-            }
-        }
-
         false
     }
 
@@ -773,11 +645,8 @@ impl ProviderAdapter for ClaudeAdapter {
             return Ok(super::CHATGPT_CODEX_BASE_URL.to_string());
         }
 
-        // xAI OAuth: ignore editable provider base URLs and always use the xAI
         // API origin associated with the managed token.
-        if self.is_xai_oauth(provider) {
-            return Ok(super::XAI_API_BASE_URL.to_string());
-        }
+        {}
 
         // 1. 从 env 中获取
         if let Some(env) = provider.settings_config.get("env") {
@@ -819,15 +688,8 @@ impl ProviderAdapter for ClaudeAdapter {
     fn extract_auth(&self, provider: &Provider) -> Option<AuthInfo> {
         let provider_type = self.provider_type(provider);
 
-        // GitHub Copilot 使用特殊的认证策略
         // 实际的 token 会在代理请求时动态获取
-        if provider_type == ProviderType::GitHubCopilot {
-            // 返回一个占位符，实际 token 由 CopilotAuthManager 动态提供
-            return Some(AuthInfo::new(
-                "copilot_placeholder".to_string(),
-                AuthStrategy::GitHubCopilot,
-            ));
-        }
+        {}
 
         // Codex OAuth (ChatGPT Plus/Pro) 同样使用占位符
         // 实际的 access_token 由 CodexOAuthManager 动态提供
@@ -838,17 +700,12 @@ impl ProviderAdapter for ClaudeAdapter {
             ));
         }
 
-        if provider_type == ProviderType::XaiOAuth {
-            return Some(AuthInfo::new(
-                "xai_oauth_placeholder".to_string(),
-                AuthStrategy::XaiOAuth,
-            ));
-        }
+        {}
 
         let key = self.extract_key(provider)?;
 
         match provider_type {
-            ProviderType::GeminiCli => {
+            ProviderType::GeminiOAuth => {
                 // Parse stored OAuth JSON and only attach access_token when
                 // it's actually usable. `parse_oauth_credentials` accepts
                 // refresh-token-only JSON (which is legitimate before the
@@ -909,15 +766,7 @@ impl ProviderAdapter for ClaudeAdapter {
         }
 
         // Defense in depth for callers that bypass endpoint rewriting.
-        if base_url == super::XAI_API_BASE_URL {
-            let query = endpoint.split_once('?').map(|(_, query)| query);
-            return match query {
-                Some(query) if !query.is_empty() => {
-                    format!("{}/responses?{query}", super::XAI_API_BASE_URL)
-                }
-                _ => format!("{}/responses", super::XAI_API_BASE_URL),
-            };
-        }
+        {}
 
         // NOTE:
         // 过去 OpenRouter 只有 OpenAI Chat Completions 兼容接口，需要把 Claude 的 `/v1/messages`
@@ -987,29 +836,18 @@ impl ProviderAdapter for ClaudeAdapter {
                     ),
                 ]
             }
-            AuthStrategy::XaiOAuth => {
-                vec![(HeaderName::from_static("authorization"), hv(&bearer)?)]
-            }
-            AuthStrategy::GitHubCopilot => {
-                super::copilot_auth::build_copilot_request_headers(&auth.api_key)?
-            }
         })
     }
 
     fn needs_transform(&self, provider: &Provider) -> bool {
-        // GitHub Copilot 总是需要格式转换 (Anthropic → OpenAI)
-        if self.is_github_copilot(provider) {
-            return true;
-        }
+        {}
 
         // Codex OAuth 总是需要格式转换 (Anthropic → OpenAI Responses API)
         if self.is_codex_oauth(provider) {
             return true;
         }
 
-        if self.is_xai_oauth(provider) {
-            return true;
-        }
+        {}
 
         // 根据 api_format 配置决定是否需要格式转换
         // - "anthropic" (默认): 直接透传，无需转换
@@ -1473,7 +1311,7 @@ mod tests {
             },
         );
 
-        assert_eq!(adapter.provider_type(&provider), ProviderType::GeminiCli);
+        assert_eq!(adapter.provider_type(&provider), ProviderType::GeminiOAuth);
 
         let auth = adapter.extract_auth(&provider).unwrap();
         assert_eq!(auth.access_token.as_deref(), Some("ya29.valid"));
@@ -1481,7 +1319,7 @@ mod tests {
     }
 
     /// 回归:裸 `ya29.` access_token 若带前导换行,也应被 trim 后识别为
-    /// Gemini CLI OAuth,避免前导空白把 `starts_with("ya29.")` 检查顶穿。
+    /// Gemini OAuth OAuth,避免前导空白把 `starts_with("ya29.")` 检查顶穿。
     #[test]
     fn test_extract_auth_gemini_cli_access_token_with_leading_newline_classifies_correctly() {
         let adapter = ClaudeAdapter::new();
@@ -1498,7 +1336,7 @@ mod tests {
             },
         );
 
-        assert_eq!(adapter.provider_type(&provider), ProviderType::GeminiCli);
+        assert_eq!(adapter.provider_type(&provider), ProviderType::GeminiOAuth);
 
         let auth = adapter.extract_auth(&provider).unwrap();
         assert_eq!(auth.access_token.as_deref(), Some("ya29.raw-token-value"));
@@ -1546,107 +1384,6 @@ mod tests {
         let adapter = ClaudeAdapter::new();
         let url = adapter.build_url("https://api.anthropic.com", "/v1/messages");
         assert_eq!(url, "https://api.anthropic.com/v1/messages");
-    }
-
-    #[test]
-    fn xai_oauth_invariants_ignore_editable_format_and_base_url() {
-        let adapter = ClaudeAdapter::new();
-        let provider = create_provider_with_meta(
-            json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": "https://attacker.example/anthropic",
-                    "ANTHROPIC_API_KEY": "user-edited"
-                }
-            }),
-            ProviderMeta {
-                provider_type: Some("xai_oauth".to_string()),
-                api_format: Some("anthropic".to_string()),
-                is_full_url: Some(true),
-                ..Default::default()
-            },
-        );
-
-        assert_eq!(get_claude_api_format(&provider), "openai_responses");
-        assert_eq!(adapter.provider_type(&provider), ProviderType::XaiOAuth);
-        assert_eq!(
-            adapter.extract_base_url(&provider).unwrap(),
-            super::super::XAI_API_BASE_URL
-        );
-        assert!(adapter.needs_transform(&provider));
-        assert_eq!(
-            adapter
-                .extract_auth(&provider)
-                .expect("managed auth placeholder")
-                .strategy,
-            AuthStrategy::XaiOAuth
-        );
-        assert_eq!(
-            adapter.build_url(super::super::XAI_API_BASE_URL, "/v1/messages?beta=1"),
-            "https://api.x.ai/v1/responses?beta=1"
-        );
-
-        let transformed = transform_claude_request_for_api_format(
-            json!({
-                "model": "grok-4.5",
-                "max_tokens": 2048,
-                "thinking": { "type": "enabled", "budget_tokens": 20000 },
-                "messages": [{ "role": "user", "content": "hello" }]
-            }),
-            &provider,
-            "openai_responses",
-            None,
-            None,
-        )
-        .unwrap();
-        assert_eq!(transformed["reasoning"]["effort"], json!("high"));
-        assert_eq!(
-            transformed["include"],
-            json!(["reasoning.encrypted_content"])
-        );
-        assert!(transformed.get("store").is_none());
-    }
-
-    #[test]
-    fn xai_oauth_forced_web_search_uses_string_tool_choice() {
-        let provider = create_provider_with_meta(
-            json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": "https://api.x.ai/v1",
-                    "ANTHROPIC_API_KEY": "placeholder"
-                }
-            }),
-            ProviderMeta {
-                provider_type: Some("xai_oauth".to_string()),
-                api_format: Some("openai_responses".to_string()),
-                ..Default::default()
-            },
-        );
-        let transformed = transform_claude_request_for_api_format(
-            json!({
-                "model": "grok-4.5",
-                "max_tokens": 256,
-                "messages": [{"role": "user", "content": "search"}],
-                "tools": [
-                    {"name": "Bash", "input_schema": {"type": "object"}},
-                    {"type": "web_search_20250305", "name": "web_search"}
-                ],
-                "tool_choice": {"type": "tool", "name": "web_search"}
-            }),
-            &provider,
-            "openai_responses",
-            None,
-            None,
-        )
-        .unwrap();
-
-        assert_eq!(transformed["tool_choice"], json!("required"));
-        assert_eq!(transformed["tools"].as_array().unwrap().len(), 1);
-        assert_eq!(transformed["tools"][0]["type"], json!("web_search"));
-        assert!(transformed["include"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|item| item.as_str() == Some("reasoning.encrypted_content")));
     }
 
     #[test]
@@ -1700,13 +1437,6 @@ mod tests {
         let adapter = ClaudeAdapter::new();
         let url = adapter.build_url("https://api.anthropic.com", "/v1/messages?foo=bar");
         assert_eq!(url, "https://api.anthropic.com/v1/messages?foo=bar");
-    }
-
-    #[test]
-    fn test_build_url_no_beta_for_github_copilot() {
-        let adapter = ClaudeAdapter::new();
-        let url = adapter.build_url("https://api.githubcopilot.com", "/v1/messages");
-        assert_eq!(url, "https://api.githubcopilot.com/v1/messages");
     }
 
     #[test]
@@ -1854,96 +1584,6 @@ mod tests {
     }
 
     #[test]
-    fn test_github_copilot_detection_by_url() {
-        let adapter = ClaudeAdapter::new();
-
-        // GitHub Copilot by base_url
-        let copilot = create_provider(json!({
-            "env": {
-                "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com"
-            }
-        }));
-        assert_eq!(adapter.provider_type(&copilot), ProviderType::GitHubCopilot);
-    }
-
-    #[test]
-    fn test_github_copilot_detection_by_meta() {
-        let adapter = ClaudeAdapter::new();
-
-        // GitHub Copilot by meta.provider_type
-        let copilot_meta = create_provider_with_meta(
-            json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": "https://api.example.com"
-                }
-            }),
-            ProviderMeta {
-                provider_type: Some("github_copilot".to_string()),
-                ..Default::default()
-            },
-        );
-        assert_eq!(
-            adapter.provider_type(&copilot_meta),
-            ProviderType::GitHubCopilot
-        );
-    }
-
-    #[test]
-    fn test_github_copilot_auth() {
-        let adapter = ClaudeAdapter::new();
-
-        let copilot = create_provider(json!({
-            "env": {
-                "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com"
-            }
-        }));
-
-        let auth = adapter.extract_auth(&copilot).unwrap();
-        assert_eq!(auth.strategy, AuthStrategy::GitHubCopilot);
-    }
-
-    #[test]
-    fn test_github_copilot_needs_transform() {
-        let adapter = ClaudeAdapter::new();
-
-        let copilot = create_provider(json!({
-            "env": {
-                "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com"
-            }
-        }));
-
-        // GitHub Copilot always needs transform
-        assert!(adapter.needs_transform(&copilot));
-    }
-
-    #[test]
-    fn test_transform_claude_request_for_api_format_responses() {
-        let provider = create_provider(json!({
-            "env": {
-                "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com"
-            }
-        }));
-        let body = json!({
-            "model": "gpt-5.4",
-            "messages": [{ "role": "user", "content": "hello" }],
-            "max_tokens": 128
-        });
-
-        let transformed = transform_claude_request_for_api_format(
-            body,
-            &provider,
-            "openai_responses",
-            None,
-            None,
-        )
-        .unwrap();
-
-        assert_eq!(transformed["model"], "gpt-5.4");
-        assert!(transformed.get("input").is_some());
-        assert!(transformed.get("max_output_tokens").is_some());
-    }
-
-    #[test]
     fn test_responses_sends_effort_for_unlisted_deepseek_model() {
         // #9062：Desktop 把 claude-fable-5 映射到 deepseek-flash，经自建 Responses 网关转发。
         let provider = create_provider(json!({
@@ -2073,7 +1713,7 @@ mod tests {
                 ..ProviderMeta::default()
             },
         );
-        for client_format in ["claude", "claude-desktop"] {
+        for client_format in ["claude"] {
             for session_id in ["conversation-123", "conversation-456"] {
                 for turn in 0..3 {
                     let body = json!({
@@ -2304,129 +1944,7 @@ mod tests {
     }
 
     #[test]
-    fn test_transform_claude_request_openai_chat_strips_stop_for_copilot() {
-        // Issue #5175: GitHub Copilot 的 OpenAI Chat 端点不支持 `stop` 参数，
-        // 携带该字段会返回 400，导致 Claude Code auto mode 的 classifier
-        // 请求（携带 stop_sequences）始终失败。修复后 Copilot 路径应移除转换出的 stop。
-        let provider = create_provider_with_meta(
-            json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com",
-                    "ANTHROPIC_API_KEY": "test-key"
-                }
-            }),
-            ProviderMeta {
-                provider_type: Some("github_copilot".to_string()),
-                ..Default::default()
-            },
-        );
-        let body = json!({
-            "model": "claude-sonnet-4-6",
-            "messages": [{ "role": "user", "content": "hello" }],
-            "max_tokens": 64,
-            "stop_sequences": ["\n\nHuman:"]
-        });
-
-        let transformed =
-            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
-                .unwrap();
-
-        assert!(transformed.get("stop").is_none());
-    }
-
-    #[test]
-    fn copilot_gemini_chat_sends_mid_conversation_system_as_user() {
-        // #9613: Copilot hoists every system message into the Gemini instruction,
-        // so only Gemini models on Copilot get later system messages as user ones.
-        let copilot = create_provider(json!({
-            "env": { "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com" }
-        }));
-        let generic = create_provider(json!({
-            "env": { "ANTHROPIC_BASE_URL": "https://openrouter.ai/api/v1" }
-        }));
-        let body = |model: &str| {
-            json!({
-                "model": model,
-                "system": "You are Claude Code.",
-                "max_tokens": 64,
-                "messages": [
-                    { "role": "user", "content": "hello" },
-                    { "role": "assistant", "content": "hi" },
-                    { "role": "system", "content": "<total_tokens>9 tokens left</total_tokens>" },
-                    { "role": "user", "content": "go on" }
-                ]
-            })
-        };
-        let roles = |transformed: &Value| -> Vec<String> {
-            transformed["messages"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|m| m["role"].as_str().unwrap().to_string())
-                .collect()
-        };
-
-        let transformed = transform_claude_request_for_api_format(
-            body("gemini-4-carbon"),
-            &copilot,
-            "openai_chat",
-            None,
-            None,
-        )
-        .unwrap();
-        assert_eq!(
-            roles(&transformed),
-            ["system", "user", "assistant", "user", "user"]
-        );
-        assert_eq!(
-            transformed["messages"][3]["content"],
-            "<total_tokens>9 tokens left</total_tokens>"
-        );
-
-        for (model, provider) in [("gpt-4.1", &copilot), ("gemini-4-carbon", &generic)] {
-            let transformed = transform_claude_request_for_api_format(
-                body(model),
-                provider,
-                "openai_chat",
-                None,
-                None,
-            )
-            .unwrap();
-            assert_eq!(
-                roles(&transformed),
-                ["system", "user", "assistant", "system", "user"],
-                "{model}"
-            );
-        }
-    }
-
-    #[test]
-    fn test_transform_claude_request_openai_chat_strips_stop_for_copilot_env_url() {
-        // 兼容旧/手动 Copilot provider：即使没有 meta.provider_type，
-        // 只要 ANTHROPIC_BASE_URL 指向 Copilot，也应移除 stop。
-        let provider = create_provider(json!({
-            "env": {
-                "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com",
-                "ANTHROPIC_API_KEY": "test-key"
-            }
-        }));
-        let body = json!({
-            "model": "claude-sonnet-4-6",
-            "messages": [{ "role": "user", "content": "hello" }],
-            "max_tokens": 64,
-            "stop_sequences": ["\n\nHuman:"]
-        });
-
-        let transformed =
-            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
-                .unwrap();
-
-        assert!(transformed.get("stop").is_none());
-    }
-
-    #[test]
     fn test_transform_claude_request_openai_chat_keeps_stop_for_generic_provider() {
-        // 非 Copilot 的 OpenAI 兼容上游（如 OpenRouter）应继续保留 stop 语义，
         // 确认修复未影响其它 provider。
         let provider = create_provider(json!({
             "env": { "ANTHROPIC_BASE_URL": "https://openrouter.ai/api/v1" }

@@ -8,7 +8,7 @@
 //! 服务端要的客户端标识，版本取本机装的 agy，读不到时用 `FALLBACK_AGY_VERSION`。
 //! 只查额度，不调模型、不做预热，也不据额度自动换号。
 //!
-//! 顺序和 agy 1.5.5 一致：先调一次 `loadCodeAssist` 拿套餐、`cloudaicompanionProject` 和使用资格，
+//! 顺序和 agy 1.5.5 一致：先调一次 `loadCodeAssist` 拿 `cloudaicompanionProject` 和使用资格，
 //! 再把 `project` 带给 `retrieveUserQuotaSummary`（免费普通号的托管项目如 `aicode-consumers`
 //! 不带时会被判成 403「没有有效许可」）。没有资格或锁区（如 `UNSUPPORTED_LOCATION`）的号在第一步
 //! 就直接把 Google 给的原因原样显示，免得看着像 CC Switch 的问题，也不用再发第二次请求。
@@ -82,19 +82,11 @@ struct SummaryBucket {
 struct LoadCodeAssistResponse {
     cloudaicompanion_project: Option<Value>,
     current_tier: Option<Value>,
-    /// 订阅（Google AI Pro / Ultra）在这里；有时 Pro 号也缺，缺了看 currentTier
-    paid_tier: Option<Value>,
     #[serde(default)]
     allowed_tiers: Option<Vec<AllowedTier>>,
     #[serde(default)]
     ineligible_tiers: Option<Vec<IneligibleTier>>,
     gcp_managed: Option<bool>,
-}
-
-/// 一个账号的额度和套餐
-pub struct AccountQuota {
-    pub tiers: Vec<QuotaTier>,
-    pub plan: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -171,14 +163,13 @@ fn parse_version(stdout: &[u8]) -> Option<String> {
         .map(str::to_string)
 }
 
-/// 先问 `loadCodeAssist` 拿套餐、`cloudaicompanionProject` 和使用资格，再带 `project` 查额度
-/// （和 agy 1.5.5 一致）；`loadCodeAssist` 因非 401 失败时降级为不带项目直查额度（套餐问不到
-/// 只是不显示，不影响额度）。
-pub async fn fetch(access_token: &str) -> Result<AccountQuota, QuotaError> {
+/// 先问 `loadCodeAssist` 拿 `cloudaicompanionProject` 和使用资格，再带 `project` 查额度
+/// （和 agy 1.5.5 一致）；`loadCodeAssist` 因非 401 失败时降级为不带项目直查额度。
+pub async fn fetch(access_token: &str) -> Result<Vec<QuotaTier>, QuotaError> {
     fetch_with(|method, body| post(access_token, method, body)).await
 }
 
-async fn fetch_with<F, Fut>(mut send: F) -> Result<AccountQuota, QuotaError>
+async fn fetch_with<F, Fut>(mut send: F) -> Result<Vec<QuotaTier>, QuotaError>
 where
     F: FnMut(&'static str, Value) -> Fut,
     Fut: std::future::Future<Output = Result<(reqwest::StatusCode, bytes::Bytes), QuotaError>>,
@@ -189,13 +180,11 @@ where
             if let Some(reason) = parse_ineligible_reason(&body) {
                 return Err(QuotaError::Ineligible(reason));
             }
-            let plan = code_assist_plan(&body);
             let project = parse_project(&body);
-            let tiers = fetch_tiers(&mut send, project.as_deref()).await?;
-            Ok(AccountQuota { tiers, plan })
+            fetch_tiers(&mut send, project.as_deref()).await
         }
         Ok(_) | Err(_) => match fetch_tiers(&mut send, None).await {
-            Ok(tiers) => Ok(AccountQuota { tiers, plan: None }),
+            Ok(tiers) => Ok(tiers),
             Err(QuotaError::Http {
                 status: 403,
                 message,
@@ -279,11 +268,10 @@ async fn post(
         .send()
         .await?;
     let status = response.status();
-    let body = response.bytes().await?;
-    if body.len() > MAX_BODY {
-        return Err(QuotaError::Parse);
-    }
-    Ok((status, body))
+    let body = crate::proxy::http_client::read_body_with_limit(response, MAX_BODY)
+        .await
+        .map_err(QuotaError::Network)?;
+    Ok((status, body.into()))
 }
 
 fn parse(body: &[u8]) -> Option<Vec<QuotaTier>> {
@@ -301,49 +289,6 @@ fn parse(body: &[u8]) -> Option<Vec<QuotaTier>> {
                 )
             }),
     )
-}
-
-/// `loadCodeAssist` 响应里的套餐名：先看 `paidTier.name`（「Google AI Pro」），没有时按
-/// `currentTier.id` 写 Free / Paid（gemini-cli 和 CodexBar 都这样取）。Gemini CLI 的额度也用它
-pub(crate) fn code_assist_plan(body: &[u8]) -> Option<String> {
-    let response: LoadCodeAssistResponse = serde_json::from_slice(body).ok()?;
-    let name = |tier: &Option<Value>| {
-        tier.as_ref()?
-            .get("name")?
-            .as_str()
-            .map(str::trim)
-            .filter(|name| !name.is_empty())
-            .map(str::to_string)
-    };
-    if let Some(name) = name(&response.paid_tier) {
-        let id = response
-            .paid_tier
-            .as_ref()
-            .and_then(|tier| tier.get("id")?.as_str());
-        return Some(with_ultra_variant(name, id));
-    }
-    let id = response.current_tier.as_ref()?.get("id")?.as_str()?;
-    match id {
-        "free-tier" => Some("Free".to_string()),
-        "standard-tier" => Some("Paid".to_string()),
-        _ => name(&response.current_tier).map(|name| with_ultra_variant(name, Some(id))),
-    }
-}
-
-/// Google AI Ultra 分 5x、20x 两档，`paidTier.name` 都只写「Google AI Ultra」，靠 id 区分
-/// （11-07 实测）：`g1-ultra-lite-tier` 是 5x（升级提示写「可升级到更高的 Ultra 方案」），
-/// `g1-ultra-tier` 是 20x（「已是最好的 Google AI 方案」）。名字里已带档位时不重复补。
-fn with_ultra_variant(name: String, tier_id: Option<&str>) -> String {
-    let variant = match tier_id {
-        Some("g1-ultra-lite-tier") => "5x",
-        Some("g1-ultra-tier") => "20x",
-        _ => return name,
-    };
-    let lower = name.to_ascii_lowercase();
-    if !lower.contains("ultra") || lower.contains("5x") || lower.contains("20x") {
-        return name;
-    }
-    format!("{name} {variant}")
 }
 
 /// `loadCodeAssist` 返回的 `cloudaicompanionProject`（如免费普通号的 `"aicode-consumers"`），
@@ -480,65 +425,6 @@ mod tests {
             br#"{"currentTier":{"id":"free-tier"},"ineligibleTiers":[{"reasonMessage":"x"}]}"#;
         assert_eq!(parse_ineligible_reason(eligible), None);
         assert_eq!(parse_ineligible_reason(b"{}"), None);
-    }
-
-    #[test]
-    fn plan_prefers_the_paid_tier_name() {
-        let plan = |body: &str| code_assist_plan(body.as_bytes());
-        assert_eq!(
-            plan(r#"{"currentTier":{"id":"standard-tier","name":"Gemini Code Assist"},"paidTier":{"id":"g1-pro-tier","name":"Google AI Pro"}}"#)
-                .as_deref(),
-            Some("Google AI Pro")
-        );
-        // paidTier 缺了：按当前档写
-        assert_eq!(
-            plan(r#"{"currentTier":{"id":"standard-tier","name":"Gemini Code Assist"}}"#)
-                .as_deref(),
-            Some("Paid")
-        );
-        assert_eq!(
-            plan(
-                r#"{"currentTier":{"id":"free-tier","name":"Gemini Code Assist for individuals"}}"#
-            )
-            .as_deref(),
-            Some("Free")
-        );
-        assert_eq!(plan(r#"{"ineligibleTiers":[]}"#), None);
-    }
-
-    #[test]
-    fn ultra_plans_show_their_5x_or_20x_variant() {
-        let plan = |body: &str| code_assist_plan(body.as_bytes());
-        // loadCodeAssist 的真实 paidTier（11-07），两档名字一样，只有 id 不同
-        assert_eq!(
-            plan(r#"{"currentTier":{"id":"free-tier","name":"Antigravity"},"paidTier":{"id":"g1-ultra-lite-tier","name":"Google AI Ultra"}}"#)
-                .as_deref(),
-            Some("Google AI Ultra 5x")
-        );
-        assert_eq!(
-            plan(r#"{"currentTier":{"id":"free-tier","name":"Antigravity"},"paidTier":{"id":"g1-ultra-tier","name":"Google AI Ultra"}}"#)
-                .as_deref(),
-            Some("Google AI Ultra 20x")
-        );
-        // 以后 Google 自己把档位写进名字时不重复补；别的套餐不动
-        assert_eq!(
-            plan(r#"{"paidTier":{"id":"g1-ultra-tier","name":"Google AI Ultra 20x"}}"#).as_deref(),
-            Some("Google AI Ultra 20x")
-        );
-        assert_eq!(
-            plan(r#"{"paidTier":{"id":"g1-ultra-lite-tier","name":"Google AI Ultra 5X"}}"#)
-                .as_deref(),
-            Some("Google AI Ultra 5X")
-        );
-        assert_eq!(
-            plan(r#"{"currentTier":{"id":"g1-ultra-lite-tier","name":"Google AI Ultra"}}"#)
-                .as_deref(),
-            Some("Google AI Ultra 5x")
-        );
-        assert_eq!(
-            plan(r#"{"paidTier":{"id":"g1-pro-tier","name":"Google AI Pro"}}"#).as_deref(),
-            Some("Google AI Pro")
-        );
     }
 
     #[test]
@@ -698,8 +584,7 @@ mod tests {
                 ),
             ]
         );
-        assert_eq!(quota.plan.as_deref(), Some("Antigravity Starter Quota"));
-        assert_eq!(quota.tiers.len(), 5);
+        assert_eq!(quota.len(), 5);
 
         // 没有 cloudaicompanionProject 时仍发空对象 `{}`
         let mut calls = Vec::new();
@@ -720,7 +605,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(calls[1], ("retrieveUserQuotaSummary", json!({})));
-        assert_eq!(quota.plan.as_deref(), Some("Google AI Pro"));
+        assert_eq!(quota.len(), 5);
     }
 
     #[tokio::test]
@@ -808,8 +693,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(quota.plan, None);
-        assert_eq!(quota.tiers.len(), 5);
+        assert_eq!(quota.len(), 5);
 
         // 降级路径下 retrieveUserQuotaSummary 返回 403 时，补问一次 loadCodeAssist 拿原因
         let mut responses = VecDeque::from([

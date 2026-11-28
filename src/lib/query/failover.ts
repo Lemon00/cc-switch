@@ -54,15 +54,6 @@ export function useResetCircuitBreaker() {
   });
 }
 /**
- * 获取熔断器配置
- */
-export function useCircuitBreakerConfig() {
-  return useQuery({
-    queryKey: ["circuitBreakerConfig"],
-    queryFn: () => failoverApi.getCircuitBreakerConfig(),
-  });
-}
-/**
  * 更新熔断器配置
  */
 export function useUpdateCircuitBreakerConfig() {
@@ -77,17 +68,6 @@ export function useUpdateCircuitBreakerConfig() {
         ),
       );
     },
-  });
-}
-/**
- * 获取熔断器统计信息
- */
-export function useCircuitBreakerStats(providerId: string, appType: string) {
-  return useQuery({
-    queryKey: ["circuitBreakerStats", providerId, appType],
-    queryFn: () => failoverApi.getCircuitBreakerStats(providerId, appType),
-    enabled: !!providerId && !!appType,
-    refetchInterval: 5000, // 每 5 秒刷新一次
   });
 }
 // ========== 故障转移队列 Hooks（新） ==========
@@ -238,11 +218,6 @@ export function useSetAutoFailoverEnabled() {
           ["autoFailoverEnabled", context.appType],
           context.previousValue,
         );
-      } else if (context) {
-        queryClient.removeQueries({
-          queryKey: ["autoFailoverEnabled", context.appType],
-          exact: true,
-        });
       }
       const detail =
         extractErrorMessage(error) ||
@@ -255,7 +230,7 @@ export function useSetAutoFailoverEnabled() {
       );
     },
     // 无论成功失败，都重新获取
-    onSettled: (_, __, variables) => {
+    onSettled: (_, error, variables, context) => {
       // 主 Tab 开关与 AutoFailoverConfigPanel 共用 appConfig；不刷会导致
       // 面板保存时用旧的 autoFailoverEnabled 覆写刚打开的开关。
       // 启用/关闭故障转移可能触发：
@@ -269,9 +244,19 @@ export function useSetAutoFailoverEnabled() {
           ["availableProvidersForFailover", variables.appType],
           ["providers", variables.appType],
           proxyKeys.status,
-        ].map((queryKey) =>
-          invalidateQueriesAfterChange(queryClient, { queryKey }),
-        ),
+        ].map((queryKey) => {
+          // Keep active observers attached when a cold optimistic write fails.
+          // Removing the query strands readers on the optimistic value.
+          if (
+            queryKey[0] === "autoFailoverEnabled" &&
+            error &&
+            context &&
+            !context.hadCachedValue
+          ) {
+            return queryClient.resetQueries({ queryKey, exact: true });
+          }
+          return invalidateQueriesAfterChange(queryClient, { queryKey });
+        }),
       );
     },
   });

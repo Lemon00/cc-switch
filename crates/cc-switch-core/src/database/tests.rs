@@ -703,6 +703,69 @@ fn migration_from_v3_8_schema_v1_to_current_schema_v3() {
 }
 
 #[test]
+fn json_migration_skips_retired_apps_and_services() {
+    let db = Database::memory().unwrap();
+    let mut config = MultiAppConfig::default();
+    for app in ["claude", "codex", "opencode", "dsh", "agy", "gemini", "omp"] {
+        let manager = config.apps.entry(app.into()).or_default();
+        manager.current = "keep".into();
+        manager.providers.insert(
+            "keep".into(),
+            Provider::with_id("keep".into(), "Supported".into(), json!({}), None),
+        );
+        for service in ["github_copilot", "xai_oauth"] {
+            let retired: Provider = serde_json::from_value(json!({
+                "id": service, "name": service, "settingsConfig": {},
+                "meta": {"providerType": service}
+            }))
+            .unwrap();
+            manager.providers.insert(service.into(), retired);
+        }
+    }
+    db.migrate_from_json(&config).unwrap();
+    for app in AppType::all() {
+        let providers = db.get_all_providers(&app).unwrap();
+        assert_eq!(providers.len(), 1, "{app}");
+        assert!(providers.contains_key("keep"));
+    }
+    // 检查原始表，避免读取过滤掩盖迁移写入了退役条目。
+    let conn = db.conn.lock().unwrap();
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM providers", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(count, 5);
+}
+
+#[test]
+fn json_migration_preserves_supported_mcp_flags_and_opencode_config() {
+    let db = Database::memory().unwrap();
+    let config: MultiAppConfig = serde_json::from_value(json!({
+        "version": 2,
+        "mcp": {"servers": {"test": {
+            "id": "test", "name": "Test", "server": {"command": "test-mcp"},
+            "apps": {"claude": true, "codex": true, "opencode": true, "dsh": true, "agy": true}
+        }}},
+        "prompts": {"opencode": {"prompts": {"instructions": {
+            "id": "instructions", "name": "Instructions", "content": "Keep this prompt", "enabled": true
+        }}}},
+        "common_config_snippets": {"opencode": "{\"theme\": \"system\"}"}
+    })).unwrap();
+    db.migrate_from_json(&config).unwrap();
+    let servers = db.get_all_mcp_servers().unwrap();
+    assert_eq!(
+        servers["test"].apps.enabled_apps(),
+        AppType::all().collect::<Vec<_>>()
+    );
+    let prompts = db.get_prompts(&AppType::OpenCode).unwrap();
+    assert_eq!(prompts["instructions"].content, "Keep this prompt");
+    assert!(prompts["instructions"].enabled);
+    assert_eq!(
+        db.get_config_snippet("opencode").unwrap(),
+        config.common_config_snippets.opencode
+    );
+}
+
+#[test]
 fn schema_dry_run_does_not_write_to_disk() {
     // Create minimal valid config for migration
     let mut apps = HashMap::new();
@@ -1538,11 +1601,6 @@ async fn proxy_dao_calls_survive_a_poisoned_lock() {
         db.get_proxy_flags_sync(&AppType::Claude),
         (true, false),
         "get_proxy_flags_sync after poison"
-    );
-    poison();
-    assert!(
-        db.is_live_takeover_active_sync(),
-        "is_live_takeover_active_sync after poison"
     );
     poison();
     assert_eq!(

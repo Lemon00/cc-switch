@@ -14,7 +14,8 @@ export function initializeWindowActivity() {
   focusManager.setEventListener((handleFocus) => {
     const currentWindow = isTauri() ? getCurrentWindow() : undefined;
     let nativeVisible = true;
-    let visibilityRevision = 0;
+    let readingVisibility = false;
+    let visibilityPending = false;
     let disposed = false;
     const unlisteners: (() => void)[] = [];
     const update = () => {
@@ -23,17 +24,28 @@ export function initializeWindowActivity() {
     };
     const refreshVisibility = async () => {
       if (!currentWindow || disposed) return;
-      const revision = ++visibilityRevision;
+      visibilityPending = true;
+      if (readingVisibility) return;
+      readingVisibility = true;
       try {
-        const [visible, minimized] = await Promise.all([
-          currentWindow.isVisible(),
-          currentWindow.isMinimized(),
-        ]);
-        if (disposed || visibilityRevision !== revision) return;
-        nativeVisible = visible && !minimized;
-        update();
-      } catch (error) {
-        console.error("Failed to read window visibility", error);
+        do {
+          visibilityPending = false;
+          try {
+            const [visible, minimized] = await Promise.all([
+              currentWindow.isVisible(),
+              currentWindow.isMinimized(),
+            ]);
+            if (disposed) return;
+            // A transition during this read requires one fresh snapshot.
+            if (visibilityPending) continue;
+            nativeVisible = visible && !minimized;
+            update();
+          } catch (error) {
+            console.error("Failed to read window visibility", error);
+          }
+        } while (visibilityPending && !disposed);
+      } finally {
+        readingVisibility = false;
       }
     };
     const onVisibilityChange = () => {

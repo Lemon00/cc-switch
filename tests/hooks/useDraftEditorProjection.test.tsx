@@ -2,13 +2,10 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useDraftEditorProjection } from "@/components/providers/forms/hooks/useDraftEditorProjection";
 import type { ProviderMeta } from "@/types";
+const accountMeta: ProviderMeta = { providerType: "codex_oauth" };
 const getEditorView = vi.fn();
 const toastError = vi.fn();
-const copilotMeta: ProviderMeta = {
-  providerType: "github_copilot",
-  apiFormat: "openai_responses",
-  codexCopilotApiFormat: "openai_responses",
-};
+
 vi.mock("@/lib/api", () => ({
   providersApi: {
     getEditorView: (...args: unknown[]) => getEditorView(...args),
@@ -51,7 +48,7 @@ describe("useDraftEditorProjection", () => {
         { config: "a" },
         undefined,
         apply,
-        copilotMeta,
+        accountMeta,
       );
       result.current.projectDraft({ config: "b" }, "official", apply);
     });
@@ -61,7 +58,7 @@ describe("useDraftEditorProjection", () => {
       { config: "a" },
       undefined,
       undefined,
-      copilotMeta,
+      accountMeta,
     );
     expect(getEditorView).toHaveBeenLastCalledWith(
       "codex",

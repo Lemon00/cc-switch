@@ -8,25 +8,18 @@ use serde_json::Value;
 
 use crate::error::AppError;
 use crate::services::webdav::{
-    auth_from_credentials, build_remote_url, ensure_remote_directories, get_bytes,
-    path_segments, put_bytes, put_bytes_conditional, test_connection, WebDavAuth,
+    auth_from_credentials, build_remote_url, ensure_remote_directories, get_bytes, path_segments,
+    put_bytes, put_bytes_conditional, test_connection, WebDavAuth,
 };
 use crate::settings::{update_webdav_sync_status, WebDavSyncSettings, WebDavSyncStatus};
 
-// 本分支 GUI commands 仍经此重导出拿锁；上游已改为直接用 sync_protocol。
-pub use super::sync_protocol::run_with_sync_lock;
 use super::sync_protocol::{
     apply_snapshot, artifact_path, build_local_snapshot, effective_db_compat_version, localized,
     persist_sync_success_best_effort, sha256_hex, validate_artifact_size_limit,
     validate_manifest_compat, verify_artifact, PublishCondition, RemoteLayout, SyncManifest,
-    DB_COMPAT_VERSION, MAX_MANIFEST_BYTES, STORAGE_VERSION, REMOTE_DB_SQL, REMOTE_MANIFEST,
-    REMOTE_SKILLS_ZIP,
+    DB_COMPAT_VERSION, MAX_MANIFEST_BYTES, REMOTE_DB_SQL, REMOTE_MANIFEST, REMOTE_SKILLS_ZIP,
+    STORAGE_VERSION,
 };
-
-#[cfg(any(test, feature = "test-support"))]
-pub fn sync_mutex() -> &'static tokio::sync::Mutex<()> {
-    super::sync_protocol::sync_mutex()
-}
 
 pub mod archive;
 
@@ -42,6 +35,7 @@ struct RemoteSnapshot {
     manifest_bytes: Vec<u8>,
     manifest_etag: Option<String>,
 }
+
 // ─── Public API ──────────────────────────────────────────────
 
 pub async fn auto_upload(
@@ -57,9 +51,12 @@ pub async fn auto_upload(
             .map(|snapshot| snapshot.manifest_bytes.as_slice()),
     )?;
     // Legacy discovery is read-only: publication creates the current manifest.
-    let current = remote.as_ref().filter(|s| s.layout == RemoteLayout::Current);
+    let current = remote
+        .as_ref()
+        .filter(|s| s.layout == RemoteLayout::Current);
     let condition = PublishCondition::from_remote(
-        current.and_then(|s| s.manifest_etag.as_deref()), current.is_some(),
+        current.and_then(|s| s.manifest_etag.as_deref()),
+        current.is_some(),
     )?;
     upload_with_condition(db, settings, &condition).await
 }
@@ -95,10 +92,18 @@ async fn upload_with_condition(
     ensure_remote_directories(&settings.base_url, &dir_segs, &auth).await?;
 
     // Immutable artifacts keep the last committed snapshot readable after any failed PUT.
-    let db_url = remote_file_url(settings, RemoteLayout::Current, &format!("{}/{REMOTE_DB_SQL}", snapshot.artifact_dir))?;
+    let db_url = remote_file_url(
+        settings,
+        RemoteLayout::Current,
+        &format!("{}/{REMOTE_DB_SQL}", snapshot.artifact_dir),
+    )?;
     put_bytes(&db_url, &auth, snapshot.db_sql, "application/sql").await?;
 
-    let skills_url = remote_file_url(settings, RemoteLayout::Current, &format!("{}/{REMOTE_SKILLS_ZIP}", snapshot.artifact_dir))?;
+    let skills_url = remote_file_url(
+        settings,
+        RemoteLayout::Current,
+        &format!("{}/{REMOTE_SKILLS_ZIP}", snapshot.artifact_dir),
+    )?;
     put_bytes(&skills_url, &auth, snapshot.skills_zip, "application/zip").await?;
 
     let manifest_url = remote_file_url(settings, RemoteLayout::Current, REMOTE_MANIFEST)?;

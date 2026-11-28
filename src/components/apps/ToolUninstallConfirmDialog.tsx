@@ -121,13 +121,6 @@ export function ToolUninstallConfirmDialog({
                           {candidate.unavailable_reason}
                         </p>
                       )}
-                      {candidate.reinstalled_by_updater && (
-                        <p className="text-caption text-warning-text">
-                          {t("settings.toolUninstallReinstalledByUpdater", {
-                            tool: toolDisplayName(tool),
-                          })}
-                        </p>
-                      )}
                     </div>
                   </label>
                 ))}

@@ -19,8 +19,8 @@ import {
   CollapseToggle,
   rowIconButton,
 } from "./SessionQuestion";
-import { formatTokens } from "./toolSummary";
-import type { TurnFinal } from "./turns";
+import { formatTokens } from "@/lib/sessions/toolSummary";
+import type { TurnFinal } from "@/lib/sessions/turns";
 const SNIPPET_RADIUS = 60;
 /** 原文中命中处前后各 60 字（命中藏在链接地址等不可见位置时兜底展示） */
 const rawSnippets = (text: string, query: string, limit = 3) => {

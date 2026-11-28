@@ -9,14 +9,14 @@ import type { FetchedModel } from "@/lib/api/model-fetch";
 import type { CodexChatReasoning } from "@/types";
 const modelFetchApiMock = vi.hoisted(() => ({
   fetchModelsForConfig: vi.fn(),
-  fetchXaiOauthModels: vi.fn(),
+
   modelFetchRequestHeaders: vi.fn(),
   showFetchModelsError: vi.fn(),
 }));
 vi.mock("@/lib/api/model-fetch", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api/model-fetch")>()),
   fetchModelsForConfig: modelFetchApiMock.fetchModelsForConfig,
-  fetchXaiOauthModels: modelFetchApiMock.fetchXaiOauthModels,
+
   modelFetchRequestHeaders: modelFetchApiMock.modelFetchRequestHeaders,
   showFetchModelsError: modelFetchApiMock.showFetchModelsError,
 }));

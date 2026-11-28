@@ -5,7 +5,13 @@ import type { AppId } from "@/lib/api";
 import { vscodeApi } from "@/lib/api/vscode";
 import type { CustomEndpoint, EndpointCandidate } from "@/types";
 import { AlertCircle, Loader2, Plus, Save, X, Zap } from "lucide-react";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 // 端点测速超时配置（秒）
 const ENDPOINT_TIMEOUT_SECS: Record<AppId, number> = {
@@ -69,7 +75,15 @@ const buildInitialEntries = (
   }
   return Array.from(map.values());
 };
-const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
+const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = (props) =>
+  props.visible === false ? null : (
+    <EndpointSpeedTestSession
+      key={JSON.stringify([props.appId, props.providerId])}
+      {...props}
+    />
+  );
+
+const EndpointSpeedTestSession: React.FC<EndpointSpeedTestProps> = ({
   appId,
   providerId,
   value,
@@ -82,6 +96,15 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
   onCustomEndpointsChange,
 }) => {
   const { t } = useTranslation();
+  const lifetime = useRef<object | null>(null);
+  const testing = useRef(false);
+  const selectionVersion = useRef(0);
+  useEffect(() => {
+    lifetime.current = {};
+    return () => {
+      lifetime.current = null;
+    };
+  }, []);
   const [entries, setEntries] = useState<EndpointEntry[]>(() =>
     buildInitialEntries(initialEndpoints, value),
   );
@@ -95,6 +118,8 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
     new Set(),
   );
   const normalizedSelected = normalizeEndpointUrl(value);
+  const latest = useRef({ entries, autoSelect, normalizedSelected, onChange });
+  latest.current = { entries, autoSelect, normalizedSelected, onChange };
   const hasEndpoints = entries.length > 0;
   const isEditMode = Boolean(providerId); // 编辑模式有 providerId
   // 编辑模式：加载已保存的自定义端点
@@ -135,7 +160,7 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
             const existing = map.get(sanitized);
             if (existing) {
               // URL 已存在，更新 isCustom 为 true（因为它在数据库中）
-              existing.isCustom = true;
+              map.set(sanitized, { ...existing, isCustom: true });
             } else {
               // URL 不存在，添加新条目
               map.set(sanitized, {
@@ -163,7 +188,7 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [appId, providerId, t, initialEndpoints]);
+  }, [appId, providerId, t]);
   // 新建模式：将自定义端点变化透传给父组件（仅限 isCustom）
   // 编辑模式：不使用此回调，端点已通过 API 直接保存
   useEffect(() => {
@@ -251,23 +276,25 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
       // 清空之前的错误提示
       setLastError(null);
       // 更新本地状态（延迟保存，点击保存按钮时统一处理）
-      setEntries((prev) => {
-        const next = prev.filter((item) => item.id !== entry.id);
-        if (entry.url === normalizedSelected) {
-          const fallback = next[0];
-          onChange(fallback ? fallback.url : "");
-        }
-        return next;
-      });
+      const next = entries.filter((item) => item.id !== entry.id);
+      setEntries(next);
+      if (entry.url === normalizedSelected) {
+        selectionVersion.current += 1;
+        onChange(next[0]?.url ?? "");
+      }
     },
-    [normalizedSelected, onChange],
+    [entries, normalizedSelected, onChange],
   );
   const runSpeedTest = useCallback(async () => {
+    if (testing.current || !lifetime.current) return;
+    const requestLifetime = lifetime.current;
+    const requestedSelectionVersion = selectionVersion.current;
     const urls = entries.map((entry) => entry.url);
     if (urls.length === 0) {
       setLastError(t("endpointTest.pleaseAddEndpoint"));
       return;
     }
+    testing.current = true;
     setIsTesting(true);
     setLastError(null);
     // 清空所有延迟数据，显示 loading 状态
@@ -283,6 +310,7 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
       const results = await vscodeApi.testApiEndpoints(urls, {
         timeoutSecs: ENDPOINT_TIMEOUT_SECS[appId],
       });
+      if (lifetime.current !== requestLifetime) return;
       const resultMap = new Map(
         results.map((item) => [normalizeEndpointUrl(item.url), item]),
       );
@@ -308,36 +336,52 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
           };
         }),
       );
-      if (autoSelect) {
+      const current = latest.current;
+      if (
+        current.autoSelect &&
+        current.normalizedSelected === normalizedSelected &&
+        requestedSelectionVersion === selectionVersion.current
+      ) {
+        const remaining = new Set(current.entries.map((entry) => entry.url));
         const successful = results
           .filter(
-            (item) => typeof item.latency === "number" && item.latency !== null,
+            (item) =>
+              typeof item.latency === "number" &&
+              Number.isFinite(item.latency) &&
+              remaining.has(normalizeEndpointUrl(item.url)),
           )
           .sort((a, b) => (a.latency! || 0) - (b.latency! || 0));
         const best = successful[0];
         if (best && best.url && best.url !== normalizedSelected) {
-          onChange(best.url);
+          current.onChange(normalizeEndpointUrl(best.url));
         }
       }
     } catch (error) {
+      if (lifetime.current !== requestLifetime) return;
       const message =
         error instanceof Error
           ? error.message
           : `${t("endpointTest.testFailed", { error: String(error) })}`;
       setLastError(message);
     } finally {
-      setIsTesting(false);
+      if (lifetime.current === requestLifetime) {
+        testing.current = false;
+        setIsTesting(false);
+      }
     }
-  }, [entries, autoSelect, appId, normalizedSelected, onChange, t]);
+  }, [entries, appId, normalizedSelected, t]);
   const handleSelect = useCallback(
     (url: string) => {
       if (!url || url === normalizedSelected) return;
+      selectionVersion.current += 1;
       onChange(url);
     },
     [normalizedSelected, onChange],
   );
   // 保存端点变更
   const handleSave = useCallback(async () => {
+    const requestLifetime = lifetime.current;
+    if (!requestLifetime) return;
     // 编辑模式：对比初始端点和当前端点，批量保存变更
     if (isEditMode && providerId) {
       setIsSaving(true);
@@ -366,19 +410,20 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
           await vscodeApi.removeCustomEndpoint(appId, providerId, url);
         }
         // 更新初始端点列表
-        setInitialCustomUrls(currentCustomUrls);
+        if (lifetime.current === requestLifetime)
+          setInitialCustomUrls(currentCustomUrls);
       } catch (error) {
+        if (lifetime.current !== requestLifetime) return;
         const message =
           error instanceof Error ? error.message : t("endpointTest.saveFailed");
         setLastError(message);
-        setIsSaving(false);
         return;
       } finally {
-        setIsSaving(false);
+        if (lifetime.current === requestLifetime) setIsSaving(false);
       }
     }
     // 关闭弹窗
-    onClose();
+    if (lifetime.current === requestLifetime) onClose();
   }, [isEditMode, providerId, entries, initialCustomUrls, appId, onClose, t]);
   if (!visible) return null;
   const footer = (

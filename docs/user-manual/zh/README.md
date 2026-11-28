@@ -1,6 +1,6 @@
 # CC Switch 用户手册
 
-适用于独立版 1.0.0（管理 Claude Code、Codex、OpenCode、DeepSeek Harness 和 Antigravity 五个客户端），按当前代码和测试入口核对（2026-11-26）。[项目文档索引](../../README.md)提供架构、开发与测试资料；[发布说明](../../release-notes/v1.0.0-zh.md)与[五应用范围更新](../../release-notes/five-apps-2026-11-26.md)介绍独立版、功能范围与迁移方法。
+当前工作树预定版本为 1.0.1，管理 Claude Code、Codex、OpenCode、DeepSeek Harness 和 Antigravity 五个客户端；版本信息核对于 2026-11-28。[项目文档索引](../../README.md)提供架构、开发与测试资料；[1.0.1 发布说明](../../release-notes/v1.0.1-zh.md)与[五应用范围更新](../../release-notes/five-apps-2026-11-26.md)介绍版本变化、功能范围与迁移方法。
 
 ## 入门与设置
 

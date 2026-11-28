@@ -37,7 +37,6 @@ type LoginRequest = {
 };
 export function useManagedAuth(
   authProvider: ManagedAuthProvider,
-  githubDomain?: string,
   loginMethod?: CodexLoginMethod,
 ) {
   const queryClient = useQueryClient();
@@ -65,10 +64,7 @@ export function useManagedAuth(
     queryKey,
     queryFn: () => authApi.authGetStatus(authProvider),
     staleTime: 30000,
-    // A rejected xAI refresh token is persisted as `requires_reauth` by the
-    // proxy hot path. Periodically refresh local status so an already-open Auth
-    // Center stops showing the account as logged in without requiring a reload.
-    refetchInterval: authProvider === "xai_oauth" ? 15000 : false,
+    refetchInterval: false,
   });
   const stopPolling = useCallback(() => {
     if (pollingIntervalRef.current) {
@@ -126,13 +122,8 @@ export function useManagedAuth(
   const startLoginMutation = useMutation({
     mutationFn: ({ targetAccountId, loginMethod: method }: LoginRequest) =>
       method
-        ? authApi.authStartLogin(
-            authProvider,
-            githubDomain,
-            targetAccountId,
-            method,
-          )
-        : authApi.authStartLogin(authProvider, githubDomain, targetAccountId),
+        ? authApi.authStartLogin(authProvider, targetAccountId, method)
+        : authApi.authStartLogin(authProvider, targetAccountId),
     onSuccess: async (response, request) => {
       if (request.generation !== flowGenerationRef.current) {
         void cancelBackendFlow(response.device_code);
@@ -158,7 +149,7 @@ export function useManagedAuth(
         }
       }
       if (request.generation !== flowGenerationRef.current) return;
-      // Add a small buffer on top of GitHub's suggested interval to avoid
+      // Add a small buffer on top of the provider's suggested interval to avoid
       // hitting slow_down responses too aggressively during device polling.
       // The browser flow only checks a local result, so it can poll quickly.
       const interval = browserFlow
@@ -187,7 +178,6 @@ export function useManagedAuth(
           const newAccount = await authApi.authPollForAccount(
             authProvider,
             response.device_code,
-            githubDomain,
           );
           if (request.generation !== flowGenerationRef.current) return;
           if (newAccount) {
@@ -477,7 +467,6 @@ export function useManagedAuth(
     hasAnyAccount: accounts.length > 0,
     isAuthenticated: authStatus?.authenticated ?? false,
     defaultAccountId: authStatus?.default_account_id ?? null,
-    migrationError: authStatus?.migration_error ?? null,
     pollingState,
     deviceCode,
     error,
@@ -485,7 +474,6 @@ export function useManagedAuth(
     isAddingAccount: startLoginMutation.isPending || pollingState === "polling",
     isRemovingAccount:
       removeAccountMutation.isPending || logoutMutation.isPending,
-    isLoggingOut: logoutMutation.isPending,
     isSettingDefaultAccount: setDefaultAccountMutation.isPending,
     startAuth,
     addAccount: startAuth,

@@ -1,6 +1,6 @@
 # 项目模块列表与逐模块审查范围
 
-核对日期：2026-11-26。本文维护模块编号、代码入口和职责边界，作为后续逐模块分析的索引。当前架构见 [architecture.md](docs/architecture.md)，可复跑测试命令见 [testing.md](docs/testing.md)。当前发行版应用入口收敛为五个客户端（Claude Code、Codex、OpenCode、DeepSeek Harness、Antigravity），数据库与核心模块中保留的其余应用变体仅用于历史数据兼容与路径保护。
+核对日期：2026-11-28。本文维护模块编号、代码入口和职责边界，作为后续逐模块分析的索引。当前架构见 [architecture.md](docs/architecture.md)，可复跑测试命令见 [testing.md](docs/testing.md)。当前发行版应用入口收敛为五个客户端（Claude Code、Codex、OpenCode、DeepSeek Harness、Antigravity），AppType 仅保留这五个变体，历史标识由 is_retired 识别，用于跳过旧持久化记录。
 
 本文不维护易过期的审查进度表，也不以历史测试结果宣称当前工作树已通过。每次审查应针对当时的代码和测试，单独说明发现、修复及实际验证范围。
 
@@ -74,7 +74,7 @@
 
 - `src/lib/api/`：命令名、参数、返回值和错误契约。
 - `src/lib/query/`：`queryClient.ts`、`queries.ts`、`mutations.ts` 及领域查询文件。
-- `providerActions.ts` 管理显式原生同步、删除及操作后刷新；`providerCache.ts` 管理缓存失效规则；`openclawKeys.ts`、`hermesKeys.ts`、`proxyKeys.ts`、`usageKeys.ts` 提供独立查询键。
+- `providerActions.ts` 管理显式原生同步、删除及操作后刷新；`providerCache.ts` 管理缓存失效规则；`proxyKeys.ts`、`usageKeys.ts` 提供独立查询键。
 - `src/config/appCapabilities.ts` 是无 React 依赖的应用身份与能力入口；`appConfig.tsx` 保留展示配置与兼容导出。
 - `src/lib/localCache.ts`、`src/lib/windowActivity.ts`。
 - `src/hooks/useTauriEvent.ts`、`useLastValidValue.ts`、`useLatestRef.ts`、`useDelayedFlag.ts` 等通用 hook。
@@ -151,14 +151,14 @@
 
 ### 模块 07：提示词、工作区与记忆
 
-**包含什么：** 提示词创建编辑、启用、导入和应用同步；工作区文件浏览与编辑；OpenClaw/Hermes 工作区、记忆及相关原生内容操作。
+**包含什么：** 提示词创建编辑、启用、导入和五客户端原生提示文件同步。已移除客户端的工作区与记忆不作为当前功能入口。
 
 **主要代码：**
 
-- `src/components/prompts/`、`workspace/`、`hermes/`、`openclaw/` 中提示词、工作区与记忆相关组件。
-- `src/hooks/usePromptActions.ts`，`useHermes.ts`、`useOpenClaw.ts` 中对应接口；`src/lib/api/prompts.ts`、`workspace.ts`。
-- `src-tauri/src/commands/prompt.rs`、`workspace.rs`，`hermes.rs`、`openclaw.rs` 中相关命令。
-- `crates/cc-switch-core/src/prompt.rs`、`prompt_files.rs`、`services/prompt.rs`、`services/pi_prompt_files.rs`；`src/lib/piPromptSlug.ts`、`piPromptTemplate.ts`。
+- `src/components/prompts/` 中提示词列表、编辑和导入组件。
+- `src/hooks/usePromptActions.ts`、`src/lib/api/prompts.ts`、`src/lib/query/prompts.ts`。
+- `src-tauri/src/commands/prompt.rs`。
+- `crates/cc-switch-core/src/prompt.rs`、`prompt_files.rs`、`services/prompt.rs`。
 - `crates/cc-switch-core/src/database/dao/prompts.rs`。
 
 **重点：** 文件范围限制、编码与换行、未保存内容保护、外部修改冲突、错误文件覆盖、空文件与缺失目录、应用间内容隔离。
@@ -170,9 +170,9 @@
 **主要代码：**
 
 - `src/components/sessions/`、`src/components/sessions/reader/`、`src/hooks/useSessionSearch.ts`、`src/lib/api/sessions.ts`、`src/lib/query/sessions.ts`。
-- `src/lib/sessions/turns.ts`、`agentStyles.ts`、`toolSummary.ts`、`search.ts` 保存可复用转换逻辑；阅读器旧路径保留兼容导出，Query 直接依赖 lib 层。
-- `src-tauri/src/commands/session_manager.rs`、`codex_history_migration.rs`、`services/codex_session_compression.rs`。
-- `crates/cc-switch-core/src/session_manager/`、`kimi_session.rs`、`codex_rollout_file.rs`、`codex_state_db.rs`、`services/session_common.rs`。
+- `src/lib/sessions/turns.ts`、`agentStyles.ts`、`toolSummary.ts`、`search.ts` 保存可复用转换逻辑；阅读器与 Query 均直接依赖 lib 层。
+- `src-tauri/src/commands/session_manager.rs`、`src-tauri/src/codex_history_migration.rs`、`src-tauri/src/services/codex_session_compression.rs`。
+- `crates/cc-switch-core/src/session_manager/`、`codex_rollout_file.rs`、`codex_state_db.rs`、`services/session_common.rs`。
 
 **重点：** 损坏/截断日志、超大文件、重复消息、时间排序、搜索取消、路径与图片加载、删除/恢复一致性、文件扫描开销。
 
@@ -184,12 +184,12 @@
 
 **主要代码：**
 
-- `src/components/usage/`、`quota/`、`CopilotQuotaFooter.tsx` 及账号配额展示。
+- `src/components/usage/`、`quota/`、`SubscriptionQuotaFooter.tsx` 及账号配额展示。
 - `src/hooks/useUsage*.ts`、`useAutoExchangeRates.ts`、`useMoneyFormat.ts`；`src/lib/modelsDev*.ts`、`usageRange.ts`、`managedAccountUsage.ts`。
 - `src-tauri/src/commands/usage.rs`、`subscription.rs`、`balance.rs`、`coding_plan.rs`；`services/balance.rs` 及账号服务中的配额读取。
 - `crates/cc-switch-core/src/proxy/usage/`、`usage_events.rs`、`usage_script.rs`。
 - 核心 `services/session_usage*.rs`、`session_usage_agy/`、`usage_*.rs`、`model_pricing.rs`、`exchange_rates.rs`、`subscription*.rs`、`coding_plan.rs`。
-- `database/usage.rs`、`database/sql_helpers.rs`、`database/dao/usage_rollup.rs`、`database/dao/model_pricing.rs` 负责统计及定价读取；旧 `services/usage_stats.rs`、`services/sql_helpers.rs` 是兼容导出。
+- `database/usage.rs`、`database/sql_helpers.rs`、`database/dao/usage_rollup.rs`、`database/dao/model_pricing.rs` 负责统计及定价读取。
 - `pricing.rs` 保存共享价格模型；`services/model_pricing.rs` 仍负责本地文件、价格覆盖和回填编排。
 - `database/codex_usage_reset.rs` 承担迁移所需的重置逻辑；会话导入器 `services/session_usage_codex.rs` 随 `session-monitor` 门控。
 
@@ -202,11 +202,11 @@
 **主要代码：**
 
 - `src/components/settings/auth/`、`AuthCenterPanel.tsx`；`src/components/providers/forms/` 中 OAuth/官方账号组件及 `hooks/useManagedAuth.ts`。
-- `src/lib/authBinding.ts`、`authLoginLink.ts`、`src/lib/api/auth.ts`、`copilot.ts`、`kimiOAuth.ts`。
-- `src-tauri/src/commands/auth.rs`、`copilot.rs`、`codex_oauth.rs`、`xai_oauth.rs`、`kimi_oauth.rs`、`agy_account.rs`、`claude_account.rs` 及 `dsh.rs` 中授权相关命令。
-- `src-tauri/src/services/agy_account/`、`dsh_account.rs`；核心 `services/claude_account/`、`kimi_oauth/`。
+- `src/lib/authBinding.ts`、`authLoginLink.ts`、`src/lib/api/auth.ts`。
+- `src-tauri/src/commands/auth.rs`、`codex_oauth.rs`、`agy_account.rs`、`claude_account.rs` 及 `dsh.rs` 中授权相关命令。
+- `src-tauri/src/services/agy_account/`、`dsh_account.rs`；核心 `services/claude_account/`。
 - 核心 `proxy/providers/` 中认证管理器，以及 `services/provider/` 中登录、OAuth 切换和官方账号绑定逻辑。
-- 核心 `auth_state.rs` 定义认证访问接口；GUI `frontend_hooks.rs` 与 CLI 的认证适配保留各自宿主职责。Kimi 授权变化经共享动作入口同步原生目录后刷新快照。
+- 核心 `auth_state.rs` 定义认证访问接口；GUI `frontend_hooks.rs` 与 CLI 的认证适配保留各自宿主职责。授权变化经共享动作入口刷新账号与供应商快照。
 
 **重点：** state/回调校验、凭据泄露、刷新并发、过期时间、账号错绑、取消后回调、登录切换回滚、存储失败。
 
@@ -278,7 +278,7 @@
 
 - `crates/cc-switch-core/src/live/`，包括 engine、patch 及文件写入支持。
 - 核心 `app_config.rs`、`config.rs`、`jsonc_document.rs`；共享应用身份移至 `app.rs`，模型命名语义移至 `model_names.rs`。
-- 核心 `claude_desktop_config.rs`、`codex_config.rs`、`gemini_config.rs`、`grok_config.rs`、`opencode_config.rs`、`openclaw_config.rs`、`hermes_config.rs`、`pi_config/`、`omp_config.rs`、`mcode_config.rs`、`agy_config.rs`、`kimi_config.rs`、`dsh_config.rs`。
+- 核心 `codex_config.rs`、`opencode_config.rs`、`agy_config.rs`、`dsh_config.rs`；Claude 配置由 `config.rs` 与 `live/project/claude.rs` 管理。
 - `services/provider/live.rs` 及各客户端 direct/editor 适配中的文件层职责；`mode/operation.rs` 中操作恢复协议；`src/lib/errors/liveEditConflict.ts`。
 
 **重点：** 未知字段/注释丢失、读取失败被当空配置、格式转换、并发覆盖、权限和软链接、跨文件非原子更新、备份与恢复覆盖外部改动。

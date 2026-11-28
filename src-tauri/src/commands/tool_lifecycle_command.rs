@@ -91,14 +91,6 @@ const CLAUDE_INSTALL_UNIX: &str =
 const OPENCODE_INSTALL_UNIX: &str =
     "bash -c 'tmp=$(mktemp) && curl -fsSL https://opencode.ai/install -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
 
-pub(super) const GROK_INSTALL_UNIX: &str =
-    "bash -c 'tmp=$(mktemp) && curl -fsSL https://x.ai/cli/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
-
-/// MiniMax Code 官方 installer：用 npm `--prefix` 装进 `~/.minimax-code`（`MCODE_INSTALL_DIR`
-/// 可改），系统 Node 不达标时自带隔离 Node；重跑即升级（已是最新则跳过），全程无交互提示。
-pub(super) const MCODE_INSTALL_UNIX: &str =
-    "bash -c 'tmp=$(mktemp) && curl -fsSL https://filecdn.minimax.chat/public/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
-
 /// Codex 官方独立安装器（POSIX sh 脚本）。独立安装版的 `codex update` 内部跑的正是
 /// `curl ... | sh` 且没开 pipefail——实测断网时 curl 失败、sh 读到空脚本 exit 0，
 /// `codex update` 仍打印 "Update ran successfully" 并 exit 0。所以不走 `codex update`，
@@ -108,45 +100,11 @@ pub(super) const MCODE_INSTALL_UNIX: &str =
 pub(super) const CODEX_INSTALL_UNIX: &str =
     "bash -c 'tmp=$(mktemp) && curl -fsSL https://chatgpt.com/codex/install.sh -o $tmp && sh $tmp; status=$?; rm -f $tmp; exit $status'";
 
-/// Hermes 官方安装器会自带/选择合适的 Python 运行时。不要再用
-/// `python3 -m pip ... || python -m pip ...`:Hermes PyPI 包要求 Python >=3.11,
-/// 但 macOS 系统 `python3` 常是 3.9,而 pyenv 下 `python` shim 还可能不存在,会把
-/// 真正的 Python 版本问题盖成 "python command exists in these Python versions"。
-pub(super) const HERMES_INSTALL_UNIX: &str =
-    "bash -c 'tmp=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
-
-const HERMES_UPDATE_UNIX: &str =
-    "hermes update || bash -c 'tmp=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
-
-pub(super) const KIMI_INSTALL_UNIX: &str =
-    "bash -c 'tmp=$(mktemp) && curl -fsSL https://code.kimi.com/kimi-code/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
-
-#[cfg(target_os = "windows")]
-pub(super) const KIMI_INSTALL_WINDOWS_SCRIPT: &str =
-    "irm https://code.kimi.com/kimi-code/install.ps1 | iex";
-
-pub(super) const OMP_INSTALL_UNIX: &str =
-    "bash -c 'tmp=$(mktemp) && curl -fsSL https://omp.sh/install -o $tmp && sh $tmp; status=$?; rm -f $tmp; exit $status'";
-
-#[cfg(target_os = "windows")]
-const OMP_INSTALL_WINDOWS_SCRIPT: &str = "irm https://omp.sh/install.ps1 | iex";
-
 /// Antigravity CLI 官方 installer：把原生二进制放进 `~/.local/bin`，再跑 `agy install`
 /// 把该目录加进 shell 配置。目标处已有 `agy` 时它只提示已安装、exit 0，所以只用于新装；
 /// 升级一律走 `agy update`（实测非 TTY 下照常检查并安装）。
 const AGY_INSTALL_UNIX: &str =
     "bash -c 'tmp=$(mktemp) && curl -fsSL https://antigravity.google/cli/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
-
-#[cfg(target_os = "windows")]
-pub(super) const HERMES_INSTALL_WINDOWS_SCRIPT: &str =
-    "irm https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1 | iex";
-
-#[cfg(target_os = "windows")]
-pub(super) const GROK_INSTALL_WINDOWS_SCRIPT: &str = "irm https://x.ai/cli/install.ps1 | iex";
-
-#[cfg(target_os = "windows")]
-pub(super) const MCODE_INSTALL_WINDOWS_SCRIPT: &str =
-    "irm https://filecdn.minimax.chat/public/install.ps1 | iex";
 
 #[cfg(target_os = "windows")]
 const AGY_INSTALL_WINDOWS_SCRIPT: &str = "irm https://antigravity.google/cli/install.ps1 | iex";
@@ -163,14 +121,6 @@ pub(super) fn powershell_encoded_command(script: &str) -> String {
         bytes.extend_from_slice(&unit.to_le_bytes());
     }
     STANDARD.encode(bytes)
-}
-
-#[cfg(target_os = "windows")]
-pub(super) fn grok_install_windows_command() -> String {
-    format!(
-        "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {}",
-        powershell_encoded_command(GROK_INSTALL_WINDOWS_SCRIPT)
-    )
 }
 
 #[cfg(target_os = "windows")]
@@ -299,26 +249,6 @@ pub(super) fn tool_action_shell_command_for_shell(
     action: ToolLifecycleAction,
     shell: LifecycleCommandShell,
 ) -> Option<String> {
-    // xAI's and MiniMax's primary Windows distribution is the official PowerShell
-    // installer. Keep npm as the network/policy fallback, matching the POSIX installer chain.
-    #[cfg(target_os = "windows")]
-    if matches!(action, ToolLifecycleAction::Install)
-        && matches!(shell, LifecycleCommandShell::WindowsBatch)
-    {
-        let installer = match tool {
-            "grok" => Some(grok_install_windows_command()),
-
-            _ => None,
-        };
-        if let Some(installer) = installer {
-            return Some(chain_update_commands(
-                installer,
-                npm_install_command_for(tool)?.to_string(),
-                shell,
-            ));
-        }
-    }
-
     // 没有 npm 包。重跑 installer 不会升级（已安装就直接退出），升级失败也不拿它兜底。
     if tool == "agy" {
         return Some(match (action, shell) {
@@ -357,15 +287,15 @@ fn tool_action_shell_command(tool: &str, action: ToolLifecycleAction) -> Option<
     tool_action_shell_command_for_shell(tool, action, shell)
 }
 
-/// Windows host 上的 WSL 分支专用:`tool_action_shell_command` 在 Windows target 编译
-/// 出的版本会包含 Windows batch 语义(例如 `|| call npm ...`)且 hermes 会返回
-/// Windows PowerShell installer,但跨 `wsl.exe` 边界后跑的是 Linux。这个 wrapper
-/// 强制生成 POSIX 版命令。
 #[cfg(target_os = "windows")]
 pub(super) fn wsl_tool_action_shell_command(
     tool: &str,
     action: ToolLifecycleAction,
 ) -> Option<String> {
+    // WSL 的静态命令不知道安装代际；升级失败不能回退安装 1.x 包。
+    if tool == "opencode" && matches!(action, ToolLifecycleAction::Update) {
+        return bare_official_update_command(tool);
+    }
     match action {
         ToolLifecycleAction::Install => {
             let command = posix_install_command_for(tool);
@@ -389,13 +319,6 @@ fn build_tool_action_line(
 ) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
-        // ① WSL 工具(override 是 UNC `\\wsl$\<distro>\...`):锚定的绝对路径是 Windows
-        //    主机路径,跨 wsl.exe 进入 distro 文件系统后无效;且 enumerate 不参与 WSL。
-        //    install 走 POSIX 安装优先级,update 走 POSIX 静态/官方 update 命令,
-        //    再通过 wsl.exe -d distro -- sh 包一层。
-        //    **必须用 wsl_tool_action_shell_command 而非 tool_action_shell_command**:
-        //    后者在 Windows target 给 hermes 返回 PowerShell installer,且 Windows batch
-        //    语义也不适合跨 wsl.exe;这里统一替换为 POSIX 版安装/更新命令。
         if let Some(distro) = wsl_distro_for_tool(tool) {
             let command = wsl_tool_action_shell_command(tool, action)
                 .ok_or_else(|| format!("Unsupported tool action target: {tool}"))?;
@@ -434,9 +357,6 @@ fn build_tool_action_line(
     #[cfg(not(target_os = "windows"))]
     {
         let _ = (wsl_shell, wsl_shell_flag);
-        // update 锚定到命令行实际命中的那处（写回同一个 node / brew / 原生安装器），
-        // 而非裸 `npm` 落到 PATH 第一个 npm；install 走「上游推荐 || npm 兜底」短路链
-        // （有 native installer 的工具如 claude/opencode/hermes），其余仍裸 npm。
         let command = match action {
             ToolLifecycleAction::Update => {
                 let installs = enumerate_tool_installations(tool);
@@ -505,11 +425,6 @@ pub(super) fn parent_dir(p: &str) -> String {
     }
 }
 
-/// 从 canonicalize 后的真身路径提取 Homebrew formula 名：
-/// `/opt/homebrew/Cellar/gemini-cli/0.13.0/...` → `Some("gemini-cli")`。
-/// 非 Cellar 路径（= 不是 formula，可能是 Homebrew 的 node 装的 npm 全局包）返回 None。
-/// 关键区分：formula 即便内部用 node，真身也落在 `Cellar/<formula>/` 下；而 Homebrew
-/// npm 全局包落在 `/opt/homebrew/lib/node_modules`（不含 Cellar）。两者升级命令不同。
 #[cfg(not(target_os = "windows"))]
 pub(super) fn brew_formula_from_path(real: &str) -> Option<String> {
     brew_token_from_path(real, "Cellar")
@@ -545,64 +460,40 @@ pub(super) fn is_brew_managed_path(real: &str) -> bool {
     brew_formula_from_path(real).is_some() || brew_cask_from_path(real).is_some()
 }
 
-/// xAI's native installer uses `~/.grok/bin` for its launchers and
-/// `~/.grok/downloads/grok-<platform>` for the downloaded binary. The launcher
-/// directory also covers the default Windows layout, where the executable is
-/// copied instead of symlinked. Checking the real target additionally supports
-/// a custom `$GROK_BIN_DIR` on POSIX, whose launcher still points into the
-/// standard downloads directory.
-fn is_grok_native_install(bin_path: &str, real_target: &str) -> bool {
-    [bin_path, real_target].iter().any(|path| {
-        let normalized = path.replace('\\', "/").to_ascii_lowercase();
-        normalized.contains("/.grok/bin/") || normalized.contains("/.grok/downloads/grok-")
-    })
-}
-
-fn last_path_segment_lower(path: &str) -> String {
-    path.rsplit(['/', '\\'])
-        .next()
-        .unwrap_or_default()
-        .to_ascii_lowercase()
-}
-
-/// MiniMax Code 官方 installer 的入口布局（见 `mcode_extra_search_paths`）：POSIX 为
-/// `<root>/bin/mcode`（读 `<root>/current` 再转发的 sh launcher，不是软链），Windows 的
-/// `mcode.cmd` 直接放在 `<root>` 下。显式传参而不是在函数里 `cfg`，两种布局都能在任一
-/// 平台上单测。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum McodeLayout {
-    Posix,
-    Windows,
-}
-
-impl McodeLayout {
-    pub(super) const NATIVE: Self = if cfg!(target_os = "windows") {
-        Self::Windows
+/// Quote shell metacharacters in paths and package names while keeping simple words readable.
+#[cfg(any(not(target_os = "windows"), test))]
+fn quote_shell_word(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '-' | '.'))
+    {
+        value.to_string()
     } else {
-        Self::Posix
-    };
+        shell_single_quote(value)
+    }
 }
 
-/// Kimi Code 的 `upgrade` 子命令 0.43.0 起才有 `-y, --yes`。更早的版本把 `--yes` 当成主命令
-/// 的全局选项吞掉，非 TTY（静默 lifecycle 正是如此）下只打印手动升级提示就 exit 0，
-/// `kimi upgrade --yes || <fallback>` 的兜底永不触发，用户看到「版本没有变化」（#9032）。
-const KIMI_UPGRADE_YES_MIN_VERSION: &str = "0.43.0";
+#[cfg(test)]
+mod shell_quote_tests {
+    use super::quote_shell_word;
 
-/// 含空格才用 POSIX 单引号包一层,否则保持裸路径——命令展示更干净。
-/// claude / brew / volta / bun / npm 五个锚定分支共用,避免"含空格"判定漂移。
-///
-/// **仅按空格判定,不防其他 shell 元字符**(`$` / `` ` `` / `'` / `"` / `;` 等)。
-/// 调用方传入的是探测得到的可执行路径(`enumerate_tool_installations` 里来源于
-/// `Path::display()`),实际 macOS/Linux 上 home dir 名几乎不允许这类字符、
-/// npm/brew/volta/bun 也不会装到含这类字符的路径,与 diff 前内联在 npm 分支里的
-/// `if npm.contains(' ')` 实现等价。若未来要扩广,改成 `shell_single_quote` 无条件
-/// 包裹即可,但会失去"无空格时的清洁展示"。
-#[cfg(not(target_os = "windows"))]
-fn quote_path_if_spaced(p: &str) -> String {
-    if p.contains(' ') {
-        shell_single_quote(p)
-    } else {
-        p.to_string()
+    #[test]
+    fn paths_with_shell_syntax_are_single_literal_arguments() {
+        assert_eq!(quote_shell_word("/opt/bin/npm"), "/opt/bin/npm");
+        for path in [
+            "/tmp/a;b/npm",
+            "/tmp/$HOME/npm",
+            "/tmp/$(id)/npm",
+            "/tmp/a`id`/npm",
+            "/tmp/a*b/npm",
+            "/tmp/a\nb/npm",
+            "/tmp/中文/npm",
+            "",
+        ] {
+            assert_eq!(quote_shell_word(path), format!("'{path}'"));
+        }
+        assert_eq!(quote_shell_word("/tmp/it's/npm"), "'/tmp/it'\"'\"'s/npm'");
     }
 }
 
@@ -625,7 +516,7 @@ fn quote_path_if_spaced(p: &str) -> String {
 /// `!`(delayed expansion)只在 `setlocal enabledelayedexpansion` 下生效——我们
 /// .bat 头只有 `chcp 65001` 和 `@echo off`、没开,所以不需要处理。`'` 在 cmd 中无特殊意义。
 ///
-/// 镜像 POSIX `quote_path_if_spaced` 的"轻量条件包装"语义:不含任何特殊字符就保持
+/// 镜像 POSIX `quote_shell_word` 的"轻量条件包装"语义:不含任何特殊字符就保持
 /// 裸路径(命令展示更干净),否则用 `win_double_quote` 包并做必要转义。
 #[cfg(target_os = "windows")]
 pub(super) fn win_quote_path_for_batch(p: &str) -> String {
@@ -731,7 +622,7 @@ fn anchored_npm_command(bin_path: &str, args: &str) -> Option<String> {
     Some(format!(
         "PATH={}:\"$PATH\" {} {args}",
         shell_single_quote(&dir),
-        quote_path_if_spaced(&npm)
+        quote_shell_word(&npm)
     ))
 }
 
@@ -744,70 +635,12 @@ fn npm_scripts_env_prefix(pkg: &str) -> String {
 
 #[cfg(not(target_os = "windows"))]
 fn anchored_official_update_command(tool: &str, bin_path: &str) -> Option<String> {
-    official_update_args(tool).map(|args| format!("{} {args}", quote_path_if_spaced(bin_path)))
+    official_update_args(tool).map(|args| format!("{} {args}", quote_shell_word(bin_path)))
 }
 
 #[cfg(target_os = "windows")]
 fn anchored_official_update_command(tool: &str, bin_path: &str) -> Option<String> {
     official_update_args(tool).map(|args| format!("{} {args}", win_quote_path_for_batch(bin_path)))
-}
-
-/// Grok Build 原生安装的升级命令 = `<bin 绝对> update || <官方 installer>`。
-///
-/// **为什么唯独 native Grok 的 self-update 需要 fallback**（claude native / hermes 都没有）：
-/// `grok update` 虽然是自包含 Rust 二进制的子命令，**却把 npm 当成自己的分发管道**——
-/// 先 spawn `npm view @xai-official/grok version --json` 查最新版，再 spawn
-/// `npm i -g @xai-official/grok@<version>` 安装，由该包的 `postinstall.js` 从平台 optional
-/// 依赖里解出二进制、安置成 `~/.grok/bin/grok-<version>` 并 relink `grok`。而 `npm` 自身是
-/// `#!/usr/bin/env node` 脚本 → **native 安装也隐式硬依赖 PATH 里同时有 `npm` + `node`**。
-/// GUI 进程 PATH 由 launchd 给、`run_tool_lifecycle_silently` 又是非登录 `bash -c`，
-/// nvm/homebrew 下的 node+npm 均不可见 → grok 内部 spawn 得到 ENOENT，只向用户抛出
-/// 费解的 `Error: No such file or directory (os error 2)`（实测复现）。
-///
-/// **这是上游换了机制**：0.2.111 及更早版本自更新是直接下载二进制到 `~/.grok/downloads/`
-/// （彼时 `is_grok_native_install` 假设的 "native = 不碰 npm" 成立），0.2.112 起改走上述 npm
-/// 管道（落点随之从 `downloads/` 变为 `bin/`）。**副作用**：npm 全局包那一处安装是
-/// `grok update` 自己装出来的，非用户手动所为，故 native 用户也会被 enumerate 到两处；
-/// 两处由同一次 postinstall 同步，版本恒等。
-///
-/// 这正是 `anchored_command_from_paths` 那条"绝对路径 + 必要时把解释器目录放 PATH 首位"
-/// 不变量没覆盖的第三类：**执行体自身既不需要解释器、也已用绝对路径，却在内部再 spawn
-/// 第三方 CLI**。`login_shell_path` 的 PATH 注入已让绝大多数机器上的 primary 直接成功；
-/// 这条 fallback 覆盖的是"这台机器根本没装 node"——用官方 installer 装的用户完全可能如此。
-///
-/// **fallback 必须是官方 installer，不能是 `npm i -g`**：后者与 primary **同源**——primary
-/// 失败的两种现实原因（本机无 node；npm registry 指向未同步该 tarball 的镜像，见
-/// npmmirror dist-tag 事故）都会让 npm fallback 一并失败，`||` 形同虚设。官方 installer
-/// 是唯一 node-free 的独立路径（只需 `curl`，在 `/usr/bin`，窄 PATH 下可用），且落点同为
-/// `~/.grok/bin`，锚定语义分毫不动 —— 真正的降级冗余要求 fallback 与 primary **失败模式不相关**。
-///
-/// **这条 fallback 还兼具第三重作用：修复上游锚点（勿在重构时丢掉）**。
-/// grok 的更新路径由 `~/.grok/config.toml` 的 `[cli] installer` 决定（`npm` / `internal` /
-/// `gh-release`），而官方 install.sh 会**无条件把该字段覆写为 `internal`**（其 awk 段落先插入
-/// `installer = "internal"`、再跳过 `[cli]` 段里已有的 `installer`/`channel` 行）。于是：
-/// 用户一旦因 install 端的 npm fallback 被切进 npm 模式（postinstall.js 会写 `installer = "npm"`
-/// 并在每次 npm 更新时重写，自我巩固），只要 npm 路径出任何问题，这里的 `||` 就会把他拉回
-/// node-free 的 internal 模式，并顺带修好 npm 模式漏更新的 `~/.grok/bin/agent` launcher。
-/// **实测验证**（2026-07-30，窄 PATH + `installer = "npm"`）：primary 抛 `os error 2` → fallback
-/// 接管 → 装上最新版 → config 写回 `internal` → agent 对齐 → `.zshrc` 幂等更新不重复。
-/// ⇒ install 端保留 npm fallback 是安全的（它是 x.ai 不可达时的唯一退路，防火墙场景需要），
-/// 其副作用由本链自愈；**把这里换成 npm fallback 会同时废掉降级冗余和这条自愈路径**。
-#[cfg(not(target_os = "windows"))]
-fn grok_native_update_command(update: String) -> String {
-    chain_update_commands(
-        update,
-        GROK_INSTALL_UNIX.to_string(),
-        LifecycleCommandShell::Posix,
-    )
-}
-
-/// Windows 版同上，fallback 换成官方 PowerShell installer。
-/// **不走 `chain_update_commands`**：它会给 `||` 右侧加 `call`，而这里的 fallback 是
-/// `powershell.exe`（不是 `.cmd`/`.bat`），不需要 `call`——与 `hermes_update_windows_command`
-/// 同一理由。
-#[cfg(target_os = "windows")]
-fn grok_native_update_command(update: String) -> String {
-    format!("{update} || {}", grok_install_windows_command())
 }
 
 /// 哪些工具的"官方 self-update"优先于包管理器升级（生成 `<tool> update || <pkg-mgr>`）。
@@ -822,7 +655,7 @@ fn grok_native_update_command(update: String) -> String {
 fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
     match shell {
         LifecycleCommandShell::Posix => {
-            matches!(tool, "claude" | "opencode" | "openclaw" | "kimi" | "omp")
+            matches!(tool, "claude" | "opencode")
         }
         LifecycleCommandShell::WindowsBatch => {
             matches!(
@@ -831,7 +664,7 @@ fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
                 // 安装方式探测失败弹交互 prompt（spawn npm.cmd 没传 shell:true）；静默
                 // lifecycle 没有 stdin 会挂死，Windows 先锚到包管理器路径，等上游修了
                 // 再把 opencode 加回这里。
-                "claude" | "openclaw" | "kimi" | "omp"
+                "claude"
             )
         }
     }
@@ -903,29 +736,33 @@ fn package_manager_anchored_command_from_paths(
     if let Some(cask) = brew_cask_from_path(real_target) {
         let brew = sibling_bin(bin_path, "brew")?;
         return Some(format!(
-            "{} upgrade --cask {cask}",
-            quote_path_if_spaced(&brew)
+            "{} upgrade --cask {}",
+            quote_shell_word(&brew),
+            quote_shell_word(&cask)
         ));
     }
     if let Some(formula) = brew_formula_from_path(real_target) {
         let brew = sibling_bin(bin_path, "brew")?;
-        return Some(format!("{} upgrade {formula}", quote_path_if_spaced(&brew)));
+        return Some(format!(
+            "{} upgrade {}",
+            quote_shell_word(&brew),
+            quote_shell_word(&formula)
+        ));
     }
-    let pkg = npm_package_for(tool)?;
+    let NpmPackage {
+        name: pkg,
+        install_args,
+    } = npm_package_for_install(tool, bin_path, real_target)?;
     let source = infer_install_source(Path::new(bin_path));
-    // omp 的 npm 包只能由 bun 运行：除 bun 外的 node 管理器装不出能跑的 omp。
 
     match source {
         "volta" => {
             let volta = sibling_bin(bin_path, "volta")?;
-            return Some(format!("{} install {pkg}", quote_path_if_spaced(&volta)));
+            return Some(format!("{} install {pkg}", quote_shell_word(&volta)));
         }
         "bun" => {
             let bun = sibling_bin(bin_path, "bun")?;
-            return Some(format!(
-                "{} add -g {pkg}@latest",
-                quote_path_if_spaced(&bun)
-            ));
+            return Some(format!("{} add -g {pkg}@latest", quote_shell_word(&bun)));
         }
         // 自带同级 npm 的 node 管理器：落到下面锚定到那处的 npm。
         "nvm" | "fnm" | "mise" | "homebrew" => {}
@@ -933,45 +770,9 @@ fn package_manager_anchored_command_from_paths(
         // self-update，上层会直接锚到 CLI 自身；否则返回 None 走静态兜底。
         _ => return None,
     }
-    anchored_npm_command(
-        bin_path,
-        &format!("i -g {pkg}@latest{}", npm_install_extra_args(tool)),
-    )
+    anchored_npm_command(bin_path, &format!("i -g {pkg}@latest{install_args}"))
 }
 
-/// 给定工具、原始 bin 路径（命令行命中的入口）、canonicalize 后的真身路径，
-/// 推断"写回同一处"的锚定升级命令。**POSIX 版是纯函数（不碰 FS）**——真实 canonicalize
-/// 由调用方做（`installs_anchored_command` 复用 enumerate 时算出的 `inst.real`),
-/// 便于单测覆盖各包管理器分支。Windows 版同名函数因 sibling 扩展名歧义必须读 fs,
-/// 是刻意保留的平台差异(详见 Windows 版本 doc)。
-///
-/// **关键不变量：返回的命令必须用绝对路径调用执行体；若执行体通过
-/// `#!/usr/bin/env` 查找解释器，还必须把其同级 bin 目录显式放到 PATH 首位**。
-/// 这条命令最终在 `run_tool_lifecycle_silently` 的非登录 `bash -c` 里执行——
-/// GUI App 启动的进程 PATH 由 launchd / Windows Service / systemd 给,通常**不含**
-/// `~/.local/bin` / `/opt/homebrew/bin` / `~/.volta/bin` 等用户级 bin 目录;而探测
-/// 阶段 `try_get_version` 用的是 `$SHELL -lic`(登录+交互式,会读 .zshrc/.zprofile),
-/// 两者 PATH 不对称。裸 `claude update` / `brew upgrade ...` 在 GUI 进程里大概率
-/// `command not found`(exit 127)→ `set -e` 中止 → 用户看到失败 toast,锚定决策却
-/// 已展示给用户"将写回原生那处"——欺骗性故障。
-///
-/// 判定顺序（命中即返回）：
-/// ① Hermes → `<bin_path 绝对> update`;Hermes CLI 自己知道安装环境,避免 cc-switch
-///    猜系统 `python3`/`python` 时撞上 Python 版本或 pyenv shim 问题。
-/// ② Claude / Grok 原生安装器 → `<bin_path 绝对> update`；
-///    bin_path 指向 launcher,launcher 内部 dispatch update 子命令。它不归 npm 管,
-///    且在 PATH 里比 nvm/homebrew 更靠前,用 npm 升级会装到别处且被原生那份遮蔽。
-///    MiniMax Code 的脚本安装同理不归全局 npm 管,但 `mcode update` 非 TTY 下不安装
-///    (见 `official_update_args` 上方注释),改为带 `MCODE_INSTALL_DIR` 重跑官方 installer。
-///    Codex 独立安装器同理:`codex update` 断网时假成功(见 `CODEX_INSTALL_UNIX`),
-///    改为带 `CODEX_INSTALL_DIR` / `CODEX_HOME` 重跑官方 installer。
-/// ③ Homebrew formula / cask（真身在 `Cellar/<formula>/` 或 `Caskroom/<token>/`）
-///    → `<bin_path 同目录>/brew upgrade [--cask] <name>`；由 Homebrew 拥有,避免
-///    self-update 或 sibling npm 改动包管理器管理的安装。
-/// ④ 其余支持官方自升级的工具 → `<bin_path 绝对> update/upgrade || <原锚定包管理器命令>`；
-///    Codex 的 self-update 只在部分 release 可用,所以保留 npm/brew/bun/volta fallback。
-/// ⑤ 不支持官方自升级的 npm 全局包(例如 Gemini CLI，以及非 native 的 Grok Build) → 锚定到
-///    "那处 bin 目录的 npm"。
 #[cfg(not(target_os = "windows"))]
 pub(super) fn anchored_command_from_paths(
     tool: &str,
@@ -990,24 +791,12 @@ pub(super) fn anchored_command_from_paths(
     {
         return anchored_official_update_command(tool, bin_path);
     }
-    if tool == "grok" && is_grok_native_install(bin_path, real_target) {
-        // `[cli] installer = "npm"`（npm 包的 postinstall 写入）下，`grok update` 会 spawn
-        // `npm i -g @xai-official/grok@<version>`，靠 postinstall relink `~/.grok/bin/grok`。
-        // npm 12 拦截后仍 exit 0，`||` 后的官方 installer 不会接手，用户继续跑旧版。
-        // 环境变量只作用于 `||` 左侧这一条；internal / gh-release 模式不经 npm，不受影响。
-        return Some(grok_native_update_command(format!(
-            "{}{}",
-            npm_scripts_env_prefix("@xai-official/grok"),
-            anchored_official_update_command(tool, bin_path)?
-        )));
-    }
 
     if tool == "codex" {
         if let Some(install) = codex_standalone_install(bin_path, real_target) {
             return Some(codex_installer_update_command(&install));
         }
     }
-    // Nix 安装 `omp update` 只提示去改 flake 就 exit 0，执行它会报假成功。
 
     let package_command = package_manager_anchored_command_from_paths(tool, bin_path, real_target);
     if is_brew_managed_path(real_target) {
@@ -1025,7 +814,9 @@ pub(super) fn anchored_command_from_paths(
         // Bun-installed OpenCode upgrades through bun, not npm.
         let npm_scripts_package = match tool {
             "claude" => Some("@anthropic-ai/claude-code"),
-            "opencode" if !real_lower.contains("/.bun/") => Some("opencode-ai"),
+            "opencode" if !real_lower.contains("/.bun/") => {
+                npm_package_for_install(tool, bin_path, real_target).map(|pkg| pkg.name)
+            }
             _ => None,
         };
         if let Some(pkg) = npm_scripts_package {
@@ -1043,9 +834,10 @@ pub(super) fn anchored_command_from_paths(
 
 #[cfg(target_os = "windows")]
 fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Option<String> {
-    // omp 的 npm 包只能由 bun 运行，这里的 npm / Volta / pnpm 都装不出能跑的 omp。
-
-    let pkg = npm_package_for(tool)?;
+    let NpmPackage {
+        name: pkg,
+        install_args,
+    } = npm_package_for_install(tool, bin_path, bin_path)?;
 
     match infer_install_source(Path::new(bin_path)) {
         "volta" => {
@@ -1067,42 +859,13 @@ fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Op
         _ => {
             let npm = sibling_bin_with_ext(bin_path, "npm", &["cmd", "exe"])?;
             Some(format!(
-                "{} i -g {pkg}@latest{}",
-                win_quote_path_for_batch(&npm),
-                npm_install_extra_args(tool)
+                "{} i -g {pkg}@latest{install_args}",
+                win_quote_path_for_batch(&npm)
             ))
         }
     }
 }
 
-/// Windows 版锚定命令生成。对平台确认可静默运行的工具优先使用官方 CLI 自升级；
-/// 对 npm/Volta/pnpm 这类可确认写回位置的安装，再接一个包管理器 fallback。不存在 brew/bun/claude-native
-/// (Windows 没 Homebrew、Bun for Windows 仍 preview；Grok native 使用 PowerShell installer)。
-/// Scoop/Chocolatey/winget/nvm-windows/MS Store node 都归 npm 类——它们都只是"如何装
-/// node"的不同入口,全局包真正的 idiom 仍是 sibling `npm.cmd`。
-///
-/// **与 POSIX 版的语义差异**:POSIX 版是纯函数(不碰 fs),Windows 版通过
-/// `sibling_bin_with_ext` 读 fs 来探明扩展名(`.cmd` vs `.exe`)——Node installer
-/// 装 `.cmd`、Volta 装 `.exe`,纯字符串拼接无法消歧。这一平台差异**被刻意保留**:
-/// 测试用 tempdir 隔离 fs,生产侧 TOCTOU 是 by design(见 `sibling_bin_with_ext` doc)。
-///
-/// `real_target` 维持与 POSIX 版的签名对称，并辅助识别 Grok native。若未来加 Scoop
-/// persist 锚定(scoop 装的工具真身在 `<scoop_root>/persist/<app>/...`),也从这里取真身。
-///
-/// **关键不变量同 POSIX 版:返回的命令必须用绝对路径,不依赖 PATH**。Windows GUI
-/// 进程 PATH 由 Service Control Manager / explorer.exe 给,通常不含用户 `%LOCALAPPDATA%`
-/// 下的 Volta/pnpm 路径;`$SHELL -lic` 的探测时 PATH 与执行时 PATH 不对称。
-///
-/// 判定顺序(命中即返回):
-/// ① hermes / Grok native → `<bin_path> update`;CLI 自己处理安装环境。
-///    MiniMax Code 脚本安装 → 带 `MCODE_INSTALL_DIR` 重跑官方 PowerShell installer。
-///    Codex 独立安装 → 带 `CODEX_INSTALL_DIR` / `CODEX_HOME` 重跑官方 PowerShell installer。
-/// ② 支持官方自升级且 Windows 可安全静默执行的工具 → `<bin_path> update/upgrade || call <包管理器 fallback>`。
-/// ③ 其余 npm 工具 → sibling `npm.cmd`/`.exe` i -g <pkg>@latest。
-///
-/// 包管理器 fallback 的 sibling 探测都通过 `sibling_bin_with_ext`(碰 fs):该处无候选
-/// 扩展名存在时,支持官方自升级的工具仍返回 `<bin_path> update/upgrade`,其余工具
-/// 才返 None 让上游兜回静态命令、`anchored=false`。
 #[cfg(target_os = "windows")]
 pub(super) fn anchored_command_from_paths(
     tool: &str,
@@ -1112,11 +875,6 @@ pub(super) fn anchored_command_from_paths(
     // Antigravity 原生二进制自升级（Homebrew cask 也标了 auto_updates，`brew upgrade` 默认跳过它）。
     if tool == "agy" {
         return anchored_official_update_command(tool, bin_path);
-    }
-    if tool == "grok" && is_grok_native_install(bin_path, real_target) {
-        return Some(grok_native_update_command(
-            anchored_official_update_command(tool, bin_path)?,
-        ));
     }
 
     if tool == "codex" {
@@ -1163,11 +921,19 @@ pub(super) fn installs_anchored_command(
             return Some(cmd);
         }
     }
-    // MiniMax Code 脚本安装按回执认领（读 fs，故不放进纯函数 `anchored_command_from_paths`）。
-    // 否则自定义 `MCODE_INSTALL_DIR` 会退到全局 `npm i -g`：单处安装不弹确认，静默升级了
-    // 别处，命令行实际用的那处版本不变。
 
-    // 版本号来自 `--version` 探测，所以放在这里而不是纯路径的 `anchored_command_from_paths`。
+    // Volta shim 不暴露包路径，使用已探测的版本区分 OpenCode 的两条发布线。
+    if tool == "opencode"
+        && inst.source == "volta"
+        && inst.version.as_deref().is_some_and(is_opencode_v2_version)
+    {
+        #[cfg(target_os = "windows")]
+        let volta =
+            win_quote_path_for_batch(&sibling_bin_with_ext(&inst.path, "volta", &["exe", "cmd"])?);
+        #[cfg(not(target_os = "windows"))]
+        let volta = quote_shell_word(&sibling_bin(&inst.path, "volta")?);
+        return Some(format!("{volta} install {}", OPENCODE_V2_NPM.name));
+    }
 
     anchored_command_from_paths(tool, &inst.path, &real)
 }
@@ -1200,11 +966,28 @@ pub(super) enum UpdateCommand {
 }
 
 pub(super) fn resolve_update_command(tool: &str, installs: &[ToolInstallation]) -> UpdateCommand {
+    if tool == "opencode" && default_install(installs).is_some_and(|inst| inst.source == "desktop")
+    {
+        return UpdateCommand::Unmanaged;
+    }
     if let Some(command) = installs_anchored_command(tool, installs) {
         return UpdateCommand::Anchored(command);
     }
     if default_install(installs).is_some_and(is_unmanaged_native_install) {
         return UpdateCommand::Unmanaged;
+    }
+    if tool == "opencode"
+        && default_install(installs).is_some_and(|inst| {
+            inst.version.as_deref().is_some_and(is_opencode_v2_version)
+                || npm_package_for_install(tool, &inst.path, &inst.real.to_string_lossy())
+                    .is_some_and(|package| package.name == OPENCODE_V2_NPM.name)
+        })
+    {
+        let package = OPENCODE_V2_NPM;
+        return UpdateCommand::Static(format!(
+            "npm i -g {}@latest{}",
+            package.name, package.install_args
+        ));
     }
     UpdateCommand::Static(static_fallback_command(tool))
 }
@@ -1254,24 +1037,6 @@ fn unmanaged_update_error(tool: &str, installs: &[ToolInstallation]) -> String {
     )
 }
 
-/// 新装(install)的命令:对有官方 installer 的工具走「上游推荐 || npm 兜底」短路链,
-/// 其余工具透传到 install 静态命令。update fallback 会在平台可安全静默执行时
-/// 优先跑官方 CLI 自升级,但 install 端不能先跑 `tool update`,
-/// 否则“未安装时安装”的路径会多一次无效失败。
-///
-/// 设计理由:
-/// - install 没有锚点可言(从无到有),但**有"上游推荐方式"这一事实** ——
-///   Anthropic、xAI 和 SST(OpenCode)都已将自家 native installer 列为首推、把 npm 列为替代方式。
-///   把这层认知补进来,让 install 表与 update 端的锚定决策树共用同一份"上游事实"。
-/// - Hermes 使用官方 installer,避免用系统 Python/pip 安装时踩 Python >=3.11 与 pyenv
-///   `python` shim 问题;更新路径若能锚定已安装 CLI,则走 `<hermes> update`。
-///   **Hermes 没有 npm 包,install 端不享受 `||` 降级**——上游 installer 不可达就只能等。
-/// - 对**有 npm 包**的工具(claude/grok/opencode/mcode),短路链(POSIX `||`)保证官方脚本不可达/
-///   防火墙拦截时仍能装上,降级到裸 `npm i -g`。官方脚本本身不用 pipe,
-///   所以这条路径在 WSL 的 `sh -c` 子 shell 中也不依赖外层 `pipefail`。
-/// - Windows 上 Claude/OpenCode 原生不启用（对应 installer 都是 bash 脚本）；Grok
-///   与 MiniMax Code 使用官方 PowerShell installer，并同样保留 npm fallback。WSL 作为 Linux 环境
-///   复用这套 POSIX 安装优先级。
 fn installer_with_npm_fallback(installer: &str, tool: &str) -> String {
     match npm_install_command_for(tool) {
         Some(npm) => chain_update_commands(
@@ -1286,12 +1051,7 @@ fn installer_with_npm_fallback(installer: &str, tool: &str) -> String {
 pub(super) fn posix_install_command_for(tool: &str) -> String {
     match tool {
         "claude" => installer_with_npm_fallback(CLAUDE_INSTALL_UNIX, tool),
-        // Grok 的 npm fallback **会切换用户的分发模式**（该包 postinstall 把
-        // `~/.grok/config.toml` 的 `[cli] installer` 写成 `npm`，此后 `grok update` 一律走
-        // npm、隐式依赖 node）。仍然保留它：官方 installer 不可达（防火墙 / x.ai 被拦）时
-        // 这是唯一退路，而副作用可自愈——`grok_native_update_command` 的 `||` 官方 installer
-        // 会在 npm 路径出问题时把 `installer` 覆写回 `internal`（见该函数 doc 的实测记录）。
-        "grok" => installer_with_npm_fallback(GROK_INSTALL_UNIX, tool),
+
         "opencode" => installer_with_npm_fallback(OPENCODE_INSTALL_UNIX, tool),
 
         "agy" => AGY_INSTALL_UNIX.to_string(),
@@ -1304,20 +1064,6 @@ pub(super) fn install_command_for(tool: &str) -> String {
     posix_install_command_for(tool)
 }
 
-/// 计算某工具的升级命令与"是否需确认"。全平台共用一份:
-/// - **Windows + WSL 工具**(override 是 `\\wsl$\<distro>\...` UNC 路径)的升级规划
-///   始终走 POSIX 静态命令、不锚定:锚定命令是 Windows 主机绝对路径,跨 `wsl.exe`
-///   边界进入 distro 文件系统后完全无效;且 `enumerate_tool_installations` 不参与
-///   WSL 文件系统、锚定无锚点。这一类显式短路到 `(unix_static, false, false)`,
-///   前端不会弹确认。
-///   **必须用 `wsl_tool_action_shell_command`(unix 版)而非 `static_fallback_command`**
-///   ——后者读 `tool_action_shell_command`,Windows target 给 hermes 返回 PowerShell
-///   installer,跨 wsl.exe 后不适用;`build_tool_action_line` 的 WSL 分支也用同一 wrapper,
-///   保证 plan 展示给前端的命令与实际执行落 .bat 的命令一致。
-/// - 其他平台与 Windows 原生工具走 `resolve_update_command`:命中 → 锚定;
-///   None(无默认 / sibling 不存在等)→ 静态兜底、`anchored=false`,
-///   前端据此给"默认入口无法确定"诚实文案;默认那处是认不出渠道的原生可执行文件
-///   → `Unmanaged`,前端跳过并提示用原安装方式升级。
 pub(super) fn plan_command_for(tool: &str, installs: &[ToolInstallation]) -> (UpdateCommand, bool) {
     #[cfg(target_os = "windows")]
     {

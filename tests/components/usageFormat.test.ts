@@ -109,7 +109,7 @@ describe("usage format helpers", () => {
       }),
     ).toBeNull();
   });
-  it("hides speed when the generation window is a transport burst", () => {
+  it("hides speed when the generation window is a transport or buffered burst", () => {
     // 2842 tps 实例：输出在首字后 19ms 内全部到达，算出来的是传输突发
     expect(
       getOutputTokensPerSecond({
@@ -126,6 +126,42 @@ describe("usage format helpers", () => {
       }),
     ).toBe(1500);
   });
+  it("excludes non-2xx requests from exact and estimated speed", () => {
+    expect(
+      getOutputTokensPerSecond({
+        outputTokens: 500,
+        latencyMs: 6_000,
+        firstTokenMs: 1_000,
+        statusCode: 500,
+      }),
+    ).toBeNull();
+    expect(
+      getOutputTokensPerSecond({
+        outputTokens: 500,
+        latencyMs: 6_000,
+        firstTokenMs: 1_000,
+        statusCode: 200,
+      }),
+    ).toBe(100);
+    expect(
+      getEstimatedTokensPerSecond({
+        outputTokens: 1_000,
+        latencyMs: 10_000,
+        dataSource: "pi_session",
+        statusCode: 499,
+      }),
+    ).toBeNull();
+    // 估算速度也受 10,000 tok/s 上限保护
+    expect(
+      getEstimatedTokensPerSecond({
+        outputTokens: 20_000,
+        latencyMs: 1_500,
+        dataSource: "session_log",
+        statusCode: 200,
+      }),
+    ).toBeNull();
+  });
+
   it("formats speed with integer or single-decimal precision", () => {
     expect(
       formatOutputTokensPerSecond({

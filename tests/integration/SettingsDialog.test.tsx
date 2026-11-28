@@ -13,6 +13,7 @@ import {
 } from "../msw/state";
 import { server } from "../msw/server";
 import { createTestQueryClient } from "../utils/testQueryClient";
+import { hasUnsavedChanges } from "@/lib/unsavedChanges";
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
 vi.mock("sonner", () => ({
@@ -96,6 +97,47 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("SettingsPage integration", () => {
+  it.each([
+    { section: "data" as const, placeholder: "settings.browsePlaceholderApp" },
+    {
+      section: "appConfig" as const,
+      placeholder: "settings.browsePlaceholderClaude",
+    },
+    {
+      section: "appConfig" as const,
+      placeholder: "settings.browsePlaceholderCodex",
+    },
+    {
+      section: "appConfig" as const,
+      placeholder: "settings.browsePlaceholderOpencode",
+    },
+  ])(
+    "protects $placeholder drafts until they are saved or reverted",
+    async ({ section, placeholder }) => {
+      const view = renderDialog({ section });
+      const input = await screen.findByPlaceholderText(placeholder);
+      expect((input as HTMLInputElement).value).not.toBe("");
+      expect(hasUnsavedChanges()).toBe(false);
+      fireEvent.change(input, {
+        target: { value: "/unsaved/navigation-draft" },
+      });
+      expect(hasUnsavedChanges()).toBe(true);
+      fireEvent.click(screen.getAllByText("common.save")[0]);
+      await waitFor(() => expect(hasUnsavedChanges()).toBe(false));
+      expect(input).toHaveValue("/unsaved/navigation-draft");
+      if (section === "data") {
+        fireEvent.click(await screen.findByText("settings.restartLater"));
+      }
+      fireEvent.change(input, { target: { value: "/another/draft" } });
+      expect(hasUnsavedChanges()).toBe(true);
+      fireEvent.change(input, {
+        target: { value: "/unsaved/navigation-draft" },
+      });
+      expect(hasUnsavedChanges()).toBe(false);
+      view.unmount();
+      expect(hasUnsavedChanges()).toBe(false);
+    },
+  );
   it("loads default settings from MSW", async () => {
     renderDialog();
     const appInput = await screen.findByPlaceholderText(

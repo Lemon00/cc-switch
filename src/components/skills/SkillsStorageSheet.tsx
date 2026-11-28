@@ -15,6 +15,7 @@ import {
 } from "@/hooks/useSkills";
 import { skillsApi, type SkillAppSyncOutcome } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
+import { invalidateQueriesAfterChange } from "@/lib/query/invalidation";
 import { toast } from "@/lib/toast";
 import type { SkillStorageLocation, SkillSyncMethod } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -113,6 +114,7 @@ export function SkillsStorageSheet({
         updateSettings({ skillStorageLocation: target });
       }
       await Promise.all([
+        invalidateQueriesAfterChange(queryClient, { queryKey: ["settings"] }),
         queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
         queryClient.invalidateQueries({ queryKey: ["skills", "unmanaged"] }),
       ]);

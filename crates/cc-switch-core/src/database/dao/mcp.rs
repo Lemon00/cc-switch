@@ -110,26 +110,20 @@ impl Database {
             .transaction()
             .map_err(|e| AppError::Database(e.to_string()))?;
         let column = match app {
-            AppType::Claude => Some("enabled_claude"),
-            AppType::Codex => Some("enabled_codex"),
-
-            AppType::OpenCode => Some("enabled_opencode"),
-
-            // These applications intentionally have no MCP flag in the SSOT.
-            AppType::Dsh => Some("enabled_dsh"),
-
-            AppType::Agy => Some("enabled_agy"),
+            AppType::Claude => "enabled_claude",
+            AppType::Codex => "enabled_codex",
+            AppType::OpenCode => "enabled_opencode",
+            AppType::Dsh => "enabled_dsh",
+            AppType::Agy => "enabled_agy",
         };
 
-        if let Some(column) = column {
-            // `column` comes exclusively from the fixed allow-list above.
-            let sql = format!("UPDATE mcp_servers SET {column} = ?1 WHERE id = ?2");
-            let affected = conn
-                .execute(&sql, params![enabled, id])
-                .map_err(|e| AppError::Database(e.to_string()))?;
-            if affected == 0 {
-                return Ok(None);
-            }
+        // `column` comes exclusively from the fixed allow-list above.
+        let sql = format!("UPDATE mcp_servers SET {column} = ?1 WHERE id = ?2");
+        let affected = conn
+            .execute(&sql, params![enabled, id])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if affected == 0 {
+            return Ok(None);
         }
 
         let server = conn

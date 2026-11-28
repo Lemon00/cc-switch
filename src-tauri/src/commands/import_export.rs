@@ -100,40 +100,52 @@ pub async fn save_file_dialog<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     #[allow(non_snake_case)] defaultName: String,
 ) -> Result<Option<String>, String> {
-    let dialog = app.dialog();
-    let result = dialog
-        .file()
-        .add_filter("SQL", &["sql"])
-        .set_file_name(&defaultName)
-        .blocking_save_file();
+    tauri::async_runtime::spawn_blocking(move || {
+        let dialog = app.dialog();
+        let result = dialog
+            .file()
+            .add_filter("SQL", &["sql"])
+            .set_file_name(&defaultName)
+            .blocking_save_file();
 
-    Ok(result.map(|p| p.to_string()))
+        result.map(|p| p.to_string())
+    })
+    .await
+    .map_err(|error| format!("File dialog failed: {error}"))
 }
 
 #[tauri::command]
 pub async fn open_file_dialog<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
 ) -> Result<Option<String>, String> {
-    let dialog = app.dialog();
-    let result = dialog
-        .file()
-        .add_filter("SQL", &["sql"])
-        .blocking_pick_file();
+    tauri::async_runtime::spawn_blocking(move || {
+        let dialog = app.dialog();
+        let result = dialog
+            .file()
+            .add_filter("SQL", &["sql"])
+            .blocking_pick_file();
 
-    Ok(result.map(|p| p.to_string()))
+        result.map(|p| p.to_string())
+    })
+    .await
+    .map_err(|error| format!("File dialog failed: {error}"))
 }
 
 #[tauri::command]
 pub async fn open_zip_file_dialog<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
 ) -> Result<Option<String>, String> {
-    let dialog = app.dialog();
-    let result = dialog
-        .file()
-        .add_filter("ZIP / Skill", &["zip", "skill"])
-        .blocking_pick_file();
+    tauri::async_runtime::spawn_blocking(move || {
+        let dialog = app.dialog();
+        let result = dialog
+            .file()
+            .add_filter("ZIP / Skill", &["zip", "skill"])
+            .blocking_pick_file();
 
-    Ok(result.map(|p| p.to_string()))
+        result.map(|p| p.to_string())
+    })
+    .await
+    .map_err(|error| format!("File dialog failed: {error}"))
 }
 
 // ─── Database backup management ─────────────────────────────

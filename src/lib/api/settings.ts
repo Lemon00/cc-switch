@@ -106,12 +106,6 @@ export const settingsApi = {
   async selectConfigDirectory(defaultPath?: string): Promise<string | null> {
     return await invoke("pick_directory", { defaultPath });
   },
-  async getClaudeCodeConfigPath(): Promise<string> {
-    return await invoke("get_claude_code_config_path");
-  },
-  async getAppConfigPath(): Promise<string> {
-    return await invoke("get_app_config_path");
-  },
   async openAppConfigFolder(): Promise<void> {
     await invoke("open_app_config_folder");
   },
@@ -247,9 +241,6 @@ export const settingsApi = {
   async setAutoLaunch(enabled: boolean): Promise<boolean> {
     return await invoke("set_auto_launch", { enabled });
   },
-  async getAutoLaunchStatus(): Promise<boolean> {
-    return await invoke("get_auto_launch_status");
-  },
   async getToolVersions(
     tools?: string[],
     wslShellByTool?: Record<
@@ -364,7 +355,6 @@ export interface ToolUninstallCandidate extends ToolInstallation {
   plan: ToolUninstallPlan | null;
   unavailable_reason: string | null;
   /** 工具自己的更新程序会把这份装回来（Grok 的 npm 模式），单独删掉只是暂时的。 */
-  reinstalled_by_updater: boolean;
 }
 /** 一次"探测工具安装分布"的结果。字段对应后端 ToolInstallationReport。 */
 export interface ToolInstallationReport {

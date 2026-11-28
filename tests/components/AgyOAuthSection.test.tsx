@@ -52,7 +52,6 @@ const account = (id: string, login: string) => ({
   avatar_url: null,
   authenticated_at: 0,
   is_default: false,
-  github_domain: "google.com",
   requires_reauth: false,
 });
 describe("AgyOAuthSection", () => {

@@ -3,8 +3,7 @@ use tauri::{Emitter, Manager, State};
 
 use super::run_db_task;
 use crate::app_config::AppType;
-use crate::commands::copilot::CopilotAuthState;
-use crate::commands::xai_oauth::XaiOAuthState;
+
 use crate::error::AppError;
 use crate::provider::{Provider, ProviderMeta};
 use crate::services::provider::{EditorSave, EditorView};
@@ -14,12 +13,9 @@ use crate::services::{
 use crate::store::AppState;
 use std::str::FromStr;
 
-// 常量定义
-const TEMPLATE_TYPE_GITHUB_COPILOT: &str = "github_copilot";
 const TEMPLATE_TYPE_TOKEN_PLAN: &str = "token_plan";
 const TEMPLATE_TYPE_BALANCE: &str = "balance";
 const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str = "official_subscription";
-const COPILOT_UNIT_PREMIUM: &str = "requests";
 
 #[tauri::command]
 pub async fn get_providers(
@@ -297,28 +293,16 @@ pub async fn ensure_codex_official_provider(state: State<'_, AppState>) -> Resul
 pub async fn queryProviderUsage(
     app_handle: tauri::AppHandle,
     state: State<'_, AppState>,
-    copilot_state: State<'_, CopilotAuthState>,
-    xai_state: State<'_, XaiOAuthState>,
+
     #[allow(non_snake_case)] providerId: String, // 使用 camelCase 匹配前端
     app: String,
 ) -> Result<crate::provider::UsageResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    // inner 可能以两种形式失败：
-    //   1) 返回 Ok(UsageResult { success: false, .. }) —— 确定性失败（401、脚本
-    //      报错、未知供应商等）。写进 UsageCache 并刷新托盘，让
-    //      format_script_summary 的 success 守卫生效、suffix 自然消失。
-    //   2) 返回 Err(String) —— 瞬时传输失败（网络/超时）及 DB/Copilot fetch 等。
+
     //      不写失败快照、不 emit：保留上一份托盘快照，与前端 react-query reject
     //      保留上次 data 的语义一致；否则失败快照会经 useUsageCacheBridge 盲写
     //      回 query 缓存，抹掉 reject 本该保留的旧值。
-    let inner = query_provider_usage_inner(
-        &state,
-        &copilot_state,
-        &xai_state,
-        app_type.clone(),
-        &providerId,
-    )
-    .await;
+    let inner = query_provider_usage_inner(&state, app_type.clone(), &providerId).await;
     if let Ok(snapshot) = &inner {
         let payload = serde_json::json!({
             "kind": "script",
@@ -383,8 +367,7 @@ fn resolve_coding_plan_credentials(
 
 async fn query_provider_usage_inner(
     state: &AppState,
-    copilot_state: &CopilotAuthState,
-    xai_state: &XaiOAuthState,
+
     app_type: AppType,
     provider_id: &str,
 ) -> Result<crate::provider::UsageResult, String> {
@@ -400,42 +383,6 @@ async fn query_provider_usage_inner(
     let template_type = usage_script
         .and_then(|s| s.template_type.as_deref())
         .unwrap_or("");
-
-    // ── GitHub Copilot 专用路径 ──
-    if template_type == TEMPLATE_TYPE_GITHUB_COPILOT {
-        let copilot_account_id = provider
-            .and_then(|p| p.meta.as_ref())
-            .and_then(|m| m.managed_account_id_for(TEMPLATE_TYPE_GITHUB_COPILOT));
-
-        let auth_manager = copilot_state.0.read().await;
-        let usage = match copilot_account_id.as_deref() {
-            Some(account_id) => auth_manager
-                .fetch_usage_for_account(account_id)
-                .await
-                .map_err(|e| format!("Failed to fetch Copilot usage: {e}"))?,
-            None => auth_manager
-                .fetch_usage()
-                .await
-                .map_err(|e| format!("Failed to fetch Copilot usage: {e}"))?,
-        };
-        let premium = &usage.quota_snapshots.premium_interactions;
-        let used = premium.entitlement - premium.remaining;
-
-        return Ok(crate::provider::UsageResult {
-            success: true,
-            data: Some(vec![crate::provider::UsageData {
-                plan_name: Some(usage.copilot_plan),
-                remaining: Some(premium.remaining as f64),
-                total: Some(premium.entitlement as f64),
-                used: Some(used as f64),
-                unit: Some(COPILOT_UNIT_PREMIUM.to_string()),
-                is_valid: Some(true),
-                invalid_message: None,
-                extra: Some(format!("Reset: {}", usage.quota_reset_date)),
-            }]),
-            error: None,
-        });
-    }
 
     // ── Coding Plan 专用路径 ──
     if template_type == TEMPLATE_TYPE_TOKEN_PLAN {
@@ -564,15 +511,9 @@ async fn query_provider_usage_inner(
             });
         }
 
-        // xAI OAuth 托管供应商的额度属绑定的 SuperGrok 账号，而非所在 app 的
         // CLI 凭据（对 codex/claude 而言 CLI 凭据是 ChatGPT/Claude 订阅，跨了
         // 订阅体系，查出来的数字张冠李戴）。
-        let quota = if provider.map(Provider::is_xai_oauth).unwrap_or(false) {
-            let account_id = provider
-                .and_then(|p| p.meta.as_ref())
-                .and_then(|m| m.managed_account_id_for("xai_oauth"));
-            crate::commands::xai_oauth::query_xai_oauth_quota_for(xai_state, account_id).await?
-        } else {
+        let quota = {
             crate::services::subscription::get_subscription_quota(app_type.as_str())
                 .await
                 .map_err(|e| format!("Failed to query subscription quota: {e}"))?

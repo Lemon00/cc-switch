@@ -4,8 +4,8 @@ import { useTranslation } from "react-i18next";
 import { formatMessageTime } from "../utils";
 import { useReaderT } from "./i18n";
 import { SessionAgentAvatar } from "./SessionAgentAvatar";
-import { isFailureStep } from "./toolSummary";
-import type { SessionTurn } from "./turns";
+import { isFailureStep } from "@/lib/sessions/toolSummary";
+import type { SessionTurn } from "@/lib/sessions/turns";
 /** 目录里每条最多显示的字数：再多也只是两行截断，没必要整段传给 DOM */
 const SNIPPET_CHARS = 160;
 /** 去掉 Markdown 记号，只留可读文字作目录摘要 */

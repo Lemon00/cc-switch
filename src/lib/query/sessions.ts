@@ -317,7 +317,7 @@ export const useSessionTranscript = (
 // ─── 块全文 ───────────────────────────────────────────────────────────────
 /** 单次取的字符数（§5.1 默认 512KB） */
 export const BLOCK_PAGE_CHARS = 512 * 1024;
-/** 前端累计超过 2MB 停止加载，提示复制源文件路径（规则 12） */
+/** 前端累计到 2M Unicode 字符停止加载，与后端分页口径一致。 */
 export const BLOCK_MAX_CHARS = 2 * 1024 * 1024;
 export interface BlockContentResult {
   text: string;
@@ -349,7 +349,11 @@ export const useBlockContent = (
       }),
     initialPageParam: 0,
     getNextPageParam: (last, pages) => {
-      const loaded = pages.reduce((sum, page) => sum + page.text.length, 0);
+      let loaded = 0;
+      for (const page of pages) {
+        // Rust counts Unicode scalar values; JS string.length counts UTF-16 units.
+        for (const _character of page.text) loaded += 1;
+      }
       return last.truncated &&
         last.nextOffset !== undefined &&
         loaded < BLOCK_MAX_CHARS

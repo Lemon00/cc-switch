@@ -23,6 +23,7 @@ export interface McpDraftConnection {
 }
 /** JSON 里看不到真实的 env / headers 值，用这个占位 */
 export const SECRET_MASK = "••••••••";
+const OAUTH_SECRET_FIELDS = ["clientSecret", "client_secret"] as const;
 const KNOWN_FIELDS = new Set([
   "type",
   "command",
@@ -119,6 +120,13 @@ export function specOf(conn: McpDraftConnection, mask = false): McpServerSpec {
         );
       }
     }
+    if (isObject(spec.oauth)) {
+      const oauth = { ...spec.oauth };
+      for (const field of OAUTH_SECRET_FIELDS) {
+        if (typeof oauth[field] === "string") oauth[field] = SECRET_MASK;
+      }
+      spec.oauth = oauth;
+    }
   }
   return spec;
 }
@@ -127,7 +135,13 @@ export function jsonTextOf(conn: McpDraftConnection, reveal: boolean): string {
 }
 export function secretCountOf(conn: McpDraftConnection): number {
   const rows = conn.transport === "stdio" ? conn.env : conn.headers;
-  return rows.filter((row) => row.key.trim()).length;
+  const oauth = conn.extra.oauth;
+  return (
+    rows.filter((row) => row.key.trim()).length +
+    OAUTH_SECRET_FIELDS.filter(
+      (field) => isObject(oauth) && typeof oauth[field] === "string",
+    ).length
+  );
 }
 // ─── 写法归一（OpenCode local/remote、streamable-http、http_headers） ─────────
 function fromOpenCode(value: Record<string, unknown>): McpServerSpec {
@@ -304,7 +318,7 @@ export type JsonParseError =
   /** 值还是占位符，但草稿里没有这个键的原值可换回（改了键名、或新加的键） */
   | {
       kind: "maskedUnknown";
-      field: "env" | "headers";
+      field: "env" | "headers" | "oauth";
       key: string;
     };
 export type JsonParseResult =
@@ -358,6 +372,19 @@ export function parseJsonText(
         return { ok: false, error: { kind: "maskedUnknown", field, key } };
       }
       map[key] = original;
+    }
+  }
+  if (isObject(parsed.oauth)) {
+    for (const field of OAUTH_SECRET_FIELDS) {
+      if (parsed.oauth[field] !== SECRET_MASK) continue;
+      const oauth = previous.extra.oauth;
+      if (!isObject(oauth) || typeof oauth[field] !== "string") {
+        return {
+          ok: false,
+          error: { kind: "maskedUnknown", field: "oauth", key: field },
+        };
+      }
+      parsed.oauth[field] = oauth[field];
     }
   }
   return { ok: true, spec: normalizeSpec(parsed) };

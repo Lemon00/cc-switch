@@ -6,7 +6,7 @@
 use crate::app_config::AppType;
 use crate::provider::Provider;
 
-const MANAGED_OAUTH_PROVIDER_TYPES: &[&str] = &["github_copilot", "codex_oauth", "xai_oauth"];
+const MANAGED_OAUTH_PROVIDER_TYPES: &[&str] = &["codex_oauth"];
 
 /// 官方账号卡（同前端 `isOfficialAccount`）：Codex 早期绑定托管账号的官方卡没有 category，按身份认。
 pub fn is_official_account(app: &AppType, provider: &Provider) -> bool {

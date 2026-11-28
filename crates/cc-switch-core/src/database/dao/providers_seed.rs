@@ -55,8 +55,3 @@ pub const OFFICIAL_SEEDS: &[OfficialProviderSeed] = &[
 pub fn is_official_seed_id(id: &str) -> bool {
     OFFICIAL_SEEDS.iter().any(|seed| seed.id == id)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-}

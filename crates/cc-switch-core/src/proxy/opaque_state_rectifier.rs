@@ -229,8 +229,6 @@ pub fn unreadable_agent_task_error() -> ProxyError {
     }
 }
 
-/// 错误体里可能放错误原文的几个位置：`error.message`、平铺的 `message`、
-/// 字符串形式的 `error`（xAI）、`detail`。
 fn error_messages(payload: &Value) -> Vec<&str> {
     [
         payload.pointer("/error/message"),
@@ -257,7 +255,7 @@ fn is_coded_rejection(payload: &Value) -> bool {
     if payload.pointer("/error/code").and_then(Value::as_str) == Some("invalid_encrypted_content") {
         return true;
     }
-    // xAI：{"code":"invalid-argument","error":"Could not decrypt the provided encrypted_content ..."}
+
     payload.get("code").and_then(Value::as_str) == Some("invalid-argument")
         && payload
             .get("error")
@@ -542,12 +540,6 @@ mod tests {
                                "message": "Item with id 'rs_resp_1' not found. Items are not persisted when `store` is set to false. Try again with `store` to `true`, or remove this item from your input." } }),
         );
         assert!(detect(&not_found).is_some());
-
-        let xai = upstream(
-            400,
-            json!({ "code": "invalid-argument", "error": "Could not decode the compaction blob: bad" }),
-        );
-        assert_eq!(detect(&xai), Some(ALL_STATE));
 
         let function_output = ProxyError::UpstreamError {
             status: 502,

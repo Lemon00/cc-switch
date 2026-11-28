@@ -191,8 +191,12 @@ impl PublishCondition {
         let etag = etag.unwrap_or("");
         // If-Match requires a single strong entity tag. Never silently overwrite
         // when a server omits it, sends a weak tag, or an invalid header value.
-        if etag.len() < 2 || !etag.starts_with('"') || !etag.ends_with('"')
-            || !etag.as_bytes()[1..etag.len() - 1].iter().all(|b| *b == 0x21 || (0x23..=0x7e).contains(b) || *b >= 0x80)
+        if etag.len() < 2
+            || !etag.starts_with('"')
+            || !etag.ends_with('"')
+            || !etag.as_bytes()[1..etag.len() - 1]
+                .iter()
+                .all(|b| *b == 0x21 || (0x23..=0x7e).contains(b) || *b >= 0x80)
         {
             return Err(AppError::Conflict(
                 "远端未提供有效的强 ETag，无法安全自动上传；请确认远端数据后手动上传。 (Remote does not provide a strong ETag; confirm the remote data and upload manually.)".into(),
@@ -207,7 +211,12 @@ impl PublishCondition {
             Self::Create => (reqwest::header::IF_NONE_MATCH, "*"),
             Self::Match(etag) => (reqwest::header::IF_MATCH, etag.as_str()),
         };
-        headers.insert(name, value.parse().map_err(|_| AppError::InvalidInput("Invalid sync ETag".into()))?);
+        headers.insert(
+            name,
+            value
+                .parse()
+                .map_err(|_| AppError::InvalidInput("Invalid sync ETag".into()))?,
+        );
         Ok(())
     }
 }
@@ -223,10 +232,15 @@ pub fn artifact_path(manifest: &SyncManifest, name: &str) -> Result<String, AppE
     }
     match manifest.version {
         2 => Ok(name.to_string()),
-        PROTOCOL_VERSION if manifest.snapshot_id.len() == 64
-            && manifest.snapshot_id.bytes().all(|b| b.is_ascii_hexdigit()) =>
-            Ok(format!("snapshots/{}/{name}", manifest.snapshot_id)),
-        _ => Err(AppError::InvalidInput("Invalid snapshot version or identity".into())),
+        PROTOCOL_VERSION
+            if manifest.snapshot_id.len() == 64
+                && manifest.snapshot_id.bytes().all(|b| b.is_ascii_hexdigit()) =>
+        {
+            Ok(format!("snapshots/{}/{name}", manifest.snapshot_id))
+        }
+        _ => Err(AppError::InvalidInput(
+            "Invalid snapshot version or identity".into(),
+        )),
     }
 }
 
@@ -718,21 +732,6 @@ mod tests {
         let skills_zip = transfer_timeout(94_218_061);
         assert!(skills_zip > Duration::from_secs(927 * 2), "{skills_zip:?}");
         assert!(transfer_timeout(MAX_SYNC_ARTIFACT_BYTES) > transfer_timeout(94_218_061));
-    }
-
-    #[tokio::test]
-    async fn webdav_and_s3_operations_share_one_sync_mutex() {
-        let webdav_lock = crate::services::webdav_sync::sync_mutex();
-        let s3_lock = crate::services::s3_sync::sync_mutex();
-        assert!(
-            std::ptr::eq(webdav_lock, s3_lock),
-            "every transport must expose the same global sync lock"
-        );
-
-        let guard = webdav_lock.lock().await;
-        assert!(s3_lock.try_lock().is_err());
-        drop(guard);
-        assert!(s3_lock.try_lock().is_ok());
     }
 
     fn artifact(sha256: &str, size: u64) -> ArtifactMeta {

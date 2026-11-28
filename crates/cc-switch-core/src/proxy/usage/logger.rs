@@ -3,10 +3,10 @@
 use super::calculator::{CostBreakdown, CostCalculator, ModelPricing};
 use super::parser::TokenUsage;
 use crate::app_config::AppType;
+use crate::database::sql_helpers::{INPUT_TOKEN_SEMANTICS_FRESH, INPUT_TOKEN_SEMANTICS_TOTAL};
+use crate::database::usage::{find_model_pricing_row, is_placeholder_pricing_model};
 use crate::database::{Database, PRICING_SOURCE_REQUEST, PRICING_SOURCE_RESPONSE};
 use crate::error::AppError;
-use crate::services::sql_helpers::{INPUT_TOKEN_SEMANTICS_FRESH, INPUT_TOKEN_SEMANTICS_TOTAL};
-use crate::services::usage_stats::{find_model_pricing_row, is_placeholder_pricing_model};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use rusqlite::OptionalExtension;
@@ -162,7 +162,7 @@ impl<'a> UsageLogger<'a> {
 
         let created_at = chrono::Utc::now().timestamp();
         let input_token_semantics =
-            if crate::services::sql_helpers::is_cache_inclusive_app(log.app_type.as_str()) {
+            if crate::database::sql_helpers::is_cache_inclusive_app(log.app_type.as_str()) {
                 INPUT_TOKEN_SEMANTICS_TOTAL
             } else {
                 INPUT_TOKEN_SEMANTICS_FRESH

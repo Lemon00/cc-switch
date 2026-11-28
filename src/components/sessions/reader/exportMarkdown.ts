@@ -1,5 +1,5 @@
 import { formatMessageTime } from "../utils";
-import type { AgentReaderStyle } from "./agentStyles";
+import type { AgentReaderStyle } from "@/lib/sessions/agentStyles";
 import { describeEvent } from "./SessionEventRow";
 import {
   formatDuration,
@@ -10,8 +10,12 @@ import {
   isFailureStatus,
   type StepMeta,
   type Translate,
-} from "./toolSummary";
-import type { SessionTurn, TimelineStep, TurnEvent } from "./turns";
+} from "@/lib/sessions/toolSummary";
+import type {
+  SessionTurn,
+  TimelineStep,
+  TurnEvent,
+} from "@/lib/sessions/turns";
 /**
  * 「复制这一轮 / 复制整段为 Markdown」（§3.4 旧功能落点）：提问原文、步骤写成
  * `- ⏺ Bash(cargo build) — 失败 · exit 101 · 12s` 列表、最终回复原文；思考默认不含（决策 D14）。

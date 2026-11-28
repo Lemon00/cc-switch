@@ -4,7 +4,7 @@ import {
   AGENT_READER_STYLES,
   getAgentReaderStyle,
   type AgentReaderStyle,
-} from "@/components/sessions/reader/agentStyles";
+} from "@/lib/sessions/agentStyles";
 import {
   formatDuration,
   formatMergedTitle,
@@ -20,13 +20,13 @@ import {
   summarizeTurn,
   toolStepsOf,
   TOOL_OUTPUT_VERB_KEY,
-} from "@/components/sessions/reader/toolSummary";
+} from "@/lib/sessions/toolSummary";
 import {
   buildTurns,
   type MergedStep,
   type TimelineStep,
   type ToolStep,
-} from "@/components/sessions/reader/turns";
+} from "@/lib/sessions/turns";
 import { call, fixtures, msg, result, text, thinking } from "./helpers";
 
 const PROJECT = "/Users/yovinchen/Projects/demo-app";

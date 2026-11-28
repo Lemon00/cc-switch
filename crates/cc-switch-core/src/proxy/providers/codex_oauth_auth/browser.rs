@@ -153,7 +153,7 @@ impl CodexOAuthManager {
     pub async fn start_browser_flow(
         &self,
         target_account_id: Option<&str>,
-    ) -> Result<GitHubDeviceCodeResponse, CodexOAuthError> {
+    ) -> Result<CodexDeviceCodeResponse, CodexOAuthError> {
         self.start_browser_flow_at_port(
             target_account_id,
             1455,
@@ -167,7 +167,7 @@ impl CodexOAuthManager {
         target_account_id: Option<&str>,
         port: u16,
         lifetime: Duration,
-    ) -> Result<GitHubDeviceCodeResponse, CodexOAuthError> {
+    ) -> Result<CodexDeviceCodeResponse, CodexOAuthError> {
         let _start = self.browser_start_lock.lock().await;
         // A new login supersedes only this manager's flow. Never disturb an
         // unrelated application that owns the fixed callback port.
@@ -185,7 +185,7 @@ impl CodexOAuthManager {
         target_account_id: Option<&str>,
         listener: tokio::net::TcpListener,
         lifetime: Duration,
-    ) -> Result<GitHubDeviceCodeResponse, CodexOAuthError> {
+    ) -> Result<CodexDeviceCodeResponse, CodexOAuthError> {
         let (epoch, target, generation) = self.prepare_login_target(target_account_id).await?;
         let flow_id = format!("browser:{}", Uuid::new_v4());
         let verifier = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
@@ -260,7 +260,7 @@ impl CodexOAuthManager {
             return Err(CodexOAuthError::ExpiredToken);
         }
         flows.insert(flow_id.clone(), flow);
-        Ok(GitHubDeviceCodeResponse {
+        Ok(CodexDeviceCodeResponse {
             device_code: flow_id,
             user_code: String::new(),
             verification_uri: authorization_url,
@@ -273,7 +273,7 @@ impl CodexOAuthManager {
         &self,
         flow_id: &str,
         before_commit: BeforeCommit,
-    ) -> Result<Option<GitHubAccount>, CodexOAuthError>
+    ) -> Result<Option<CodexAccountSummary>, CodexOAuthError>
     where
         BeforeCommit: FnOnce() -> CommitFuture,
         CommitFuture: std::future::Future<Output = CommitGuard>,

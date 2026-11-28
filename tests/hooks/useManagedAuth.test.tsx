@@ -57,56 +57,6 @@ function createWrapper(
   };
 }
 describe("useManagedAuth", () => {
-  it.each(["github_copilot", "xai_oauth"] as const)(
-    "cancels %s in the backend and waits before logging out",
-    async (provider) => {
-      let finishCancel!: (cancelled: boolean) => void;
-      let finishPoll!: (account: object) => void;
-      apiMocks.authStartLogin.mockResolvedValue({
-        provider,
-        device_code: "device-1",
-        user_code: "ABCD-EFGH",
-        verification_uri: "https://example.com/device",
-        expires_in: 600,
-        interval: 5,
-      });
-      apiMocks.authPollForAccount.mockImplementation(
-        () => new Promise((resolve) => (finishPoll = resolve)),
-      );
-      apiMocks.authCancelLogin.mockImplementation(
-        () => new Promise((resolve) => (finishCancel = resolve)),
-      );
-      const { result, unmount } = renderHook(() => useManagedAuth(provider), {
-        wrapper: createWrapper(),
-      });
-      await waitFor(() => expect(result.current.isStatusSuccess).toBe(true));
-      act(() => result.current.startAuth());
-      await waitFor(() =>
-        expect(apiMocks.authPollForAccount).toHaveBeenCalled(),
-      );
-      let logout!: Promise<unknown>;
-      act(() => {
-        logout = result.current.logout();
-      });
-      await waitFor(() =>
-        expect(apiMocks.authCancelLogin).toHaveBeenCalledWith(
-          provider,
-          "device-1",
-        ),
-      );
-      expect(apiMocks.authLogout).not.toHaveBeenCalled();
-      expect(result.current.isPolling).toBe(false);
-      await act(async () => {
-        finishCancel(true);
-        await logout;
-      });
-      expect(apiMocks.authLogout).toHaveBeenCalledWith(provider);
-      await act(async () => finishPoll({ id: "late-account" }));
-      expect(result.current.pollingState).toBe("idle");
-      expect(result.current.deviceCode).toBeNull();
-      unmount();
-    },
-  );
   it("opens browser login without copying a device code and keeps the reauth target", async () => {
     const { copyText } = await import("@/lib/clipboard");
     const { settingsApi } = await import("@/lib/api");
@@ -121,7 +71,7 @@ describe("useManagedAuth", () => {
       interval: 1,
     });
     const { result, unmount } = renderHook(
-      () => useManagedAuth("codex_oauth", undefined, "browser"),
+      () => useManagedAuth("codex_oauth", "browser"),
       { wrapper: createWrapper() },
     );
     await waitFor(() => expect(result.current.isStatusSuccess).toBe(true));
@@ -129,7 +79,6 @@ describe("useManagedAuth", () => {
     await waitFor(() => expect(result.current.isPolling).toBe(true));
     expect(apiMocks.authStartLogin).toHaveBeenCalledWith(
       "codex_oauth",
-      undefined,
       "acct-1",
       "browser",
     );
@@ -174,7 +123,6 @@ describe("useManagedAuth", () => {
     expect(apiMocks.authStartLogin).toHaveBeenCalledWith(
       "claude_official",
       undefined,
-      undefined,
       "copy_link",
     );
     await waitFor(() =>
@@ -203,7 +151,7 @@ describe("useManagedAuth", () => {
       interval: 5,
     });
     const { result, unmount } = renderHook(
-      () => useManagedAuth("codex_oauth", undefined, "device_code"),
+      () => useManagedAuth("codex_oauth", "device_code"),
       { wrapper: createWrapper() },
     );
     await waitFor(() => expect(result.current.isStatusSuccess).toBe(true));
@@ -211,7 +159,6 @@ describe("useManagedAuth", () => {
     await waitFor(() => expect(result.current.isPolling).toBe(true));
     expect(apiMocks.authStartLogin).toHaveBeenCalledWith(
       "codex_oauth",
-      undefined,
       undefined,
       "device_code",
     );
@@ -239,7 +186,6 @@ describe("useManagedAuth", () => {
           avatar_url: null,
           authenticated_at: 1,
           is_default: true,
-          github_domain: "",
           reauth_required: false,
           requires_reauth: false,
         },
@@ -269,7 +215,6 @@ describe("useManagedAuth", () => {
           () =>
             useManagedAuth(
               provider,
-              undefined,
               provider === "codex_oauth" ? "browser" : undefined,
             ),
           { wrapper: createWrapper() },
@@ -422,7 +367,6 @@ describe("useManagedAuth", () => {
     await waitFor(() =>
       expect(apiMocks.authStartLogin).toHaveBeenCalledWith(
         "codex_oauth",
-        undefined,
         "acct-1",
       ),
     );
@@ -442,7 +386,6 @@ describe("useManagedAuth", () => {
     expect(apiMocks.authStartLogin).toHaveBeenNthCalledWith(
       2,
       "codex_oauth",
-      undefined,
       "acct-1",
     );
   });
@@ -527,7 +470,6 @@ describe("useManagedAuth", () => {
           avatar_url: null,
           authenticated_at: 2,
           is_default: false,
-          github_domain: "",
           reauth_required: false,
           requires_reauth: false,
         },

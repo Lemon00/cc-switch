@@ -60,7 +60,9 @@ pub(super) fn base_url_is_full_endpoint(base_url: &str, endpoint_suffix: &str) -
 }
 
 /// Rewrite Codex's `/responses` (and variants) to Anthropic's `/v1/messages`, preserving the query.
-pub(super) fn rewrite_codex_responses_endpoint_to_anthropic(endpoint: &str) -> (String, Option<String>) {
+pub(super) fn rewrite_codex_responses_endpoint_to_anthropic(
+    endpoint: &str,
+) -> (String, Option<String>) {
     let (_path, query) = split_endpoint_and_query(endpoint);
     let passthrough_query = query.map(ToString::to_string);
     let target_path = "/v1/messages";
@@ -72,37 +74,10 @@ pub(super) fn rewrite_codex_responses_endpoint_to_anthropic(endpoint: &str) -> (
     (rewritten, passthrough_query)
 }
 
-pub(super) fn rewrite_codex_endpoint_for_copilot(
-    inbound_endpoint: &str,
-    supported_endpoint: &str,
-) -> (String, Option<String>) {
-    let (inbound_path, query) = split_endpoint_and_query(inbound_endpoint);
-    let passthrough_query = query.map(ToString::to_string);
-    let mut target_path = supported_endpoint.trim_end_matches('/').to_string();
-    if inbound_path.ends_with("/responses/compact")
-        && matches!(target_path.as_str(), "/responses" | "/v1/responses")
-    {
-        target_path.push_str("/compact");
-    }
-    let rewritten = match passthrough_query.as_deref() {
-        Some(query) if !query.is_empty() => format!("{target_path}?{query}"),
-        _ => target_path,
-    };
-    (rewritten, passthrough_query)
-}
-
-pub(super) fn build_copilot_unversioned_url(base_url: &str, endpoint: &str) -> String {
-    format!(
-        "{}/{}",
-        base_url.trim_end_matches('/'),
-        endpoint.trim_start_matches('/')
-    )
-}
-
 pub(super) fn rewrite_claude_transform_endpoint(
     endpoint: &str,
     api_format: &str,
-    is_copilot: bool,
+
     body: &Value,
 ) -> (String, Option<String>) {
     let (path, query) = split_endpoint_and_query(endpoint);
@@ -117,8 +92,8 @@ pub(super) fn rewrite_claude_transform_endpoint(
     }
 
     if api_format == "gemini_native" {
-        let model =
-            super::super::providers::transform_gemini::extract_gemini_model(body).unwrap_or("unknown");
+        let model = super::super::providers::transform_gemini::extract_gemini_model(body)
+            .unwrap_or("unknown");
         // Accept both bare ids (`gemini-2.5-pro`) and the resource-name
         // form (`models/gemini-2.5-pro`) that Gemini SDKs emit. See
         // `normalize_gemini_model_id` for rationale.
@@ -146,11 +121,7 @@ pub(super) fn rewrite_claude_transform_endpoint(
         return (rewritten, rewritten_query);
     }
 
-    let target_path = if is_copilot && api_format == "openai_responses" {
-        "/v1/responses"
-    } else if is_copilot {
-        "/chat/completions"
-    } else if api_format == "openai_responses" {
+    let target_path = if api_format == "openai_responses" {
         "/v1/responses"
     } else {
         "/v1/chat/completions"
@@ -164,7 +135,10 @@ pub(super) fn rewrite_claude_transform_endpoint(
     (rewritten, passthrough_query)
 }
 
-pub(super) fn merge_query_params(base_query: Option<&str>, extra_param: Option<&str>) -> Option<String> {
+pub(super) fn merge_query_params(
+    base_query: Option<&str>,
+    extra_param: Option<&str>,
+) -> Option<String> {
     let mut params: Vec<String> = base_query
         .into_iter()
         .flat_map(|query| query.split('&'))
@@ -278,7 +252,6 @@ impl CodexStandaloneEndpoint {
     }
 }
 
-
 /// Derive Codex standalone sibling endpoints from a provider configured with a
 /// complete Codex-compatible API URL.
 ///
@@ -337,7 +310,11 @@ pub(super) fn rewrite_codex_standalone_full_url(
     Ok(rewritten)
 }
 
-pub(super) fn is_streaming_request(endpoint: &str, body: &Value, headers: &axum::http::HeaderMap) -> bool {
+pub(super) fn is_streaming_request(
+    endpoint: &str,
+    body: &Value,
+    headers: &axum::http::HeaderMap,
+) -> bool {
     if body
         .get("stream")
         .and_then(|value| value.as_bool())

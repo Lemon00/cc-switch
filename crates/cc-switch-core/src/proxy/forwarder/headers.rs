@@ -119,8 +119,8 @@ pub(super) fn should_strip_codex_client_fingerprint_header(
     }
 
     if codex_stack_request && !codex_official_auth_passthrough {
-        let native_third_party_responses =
-            !codex_responses_to_chat && super::super::providers::is_codex_responses_endpoint(endpoint);
+        let native_third_party_responses = !codex_responses_to_chat
+            && super::super::providers::is_codex_responses_endpoint(endpoint);
         return is_codex_client_fingerprint_header(key_str)
             && !(native_third_party_responses && key_str == "x-codex-beta-features");
     }
@@ -187,10 +187,7 @@ pub(super) fn is_managed_account_upstream_url(url: &str) -> bool {
         return false;
     };
 
-    host == "githubcopilot.com"
-        || host.ends_with(".githubcopilot.com")
-        || (host == "chatgpt.com" && uri.path().starts_with("/backend-api/codex"))
-        || (host == "api.x.ai" && uri.path().starts_with("/v1/"))
+    host == "chatgpt.com" && uri.path().starts_with("/backend-api/codex")
 }
 
 pub(super) fn headers_contain_proxy_placeholder(headers: &http::HeaderMap) -> bool {
@@ -206,13 +203,12 @@ pub(super) fn should_preserve_exact_header_case(
     adapter_name: &str,
     provider: &Provider,
     resolved_claude_api_format: Option<&str>,
-    is_copilot: bool,
 ) -> bool {
     if matches!(adapter_name, "Codex" | "Gemini") {
         return false;
     }
 
-    if is_copilot || provider.is_codex_oauth() || provider.is_xai_oauth() {
+    if provider.is_codex_oauth() {
         return false;
     }
 
@@ -231,11 +227,8 @@ pub(super) fn should_force_identity_encoding(
 pub(super) fn apply_local_proxy_header_overrides(
     headers: &mut http::HeaderMap,
     overrides: Option<&LocalProxyRequestOverrides>,
-    is_copilot: bool,
 ) {
-    if is_copilot {
-        return;
-    }
+    {}
 
     let Some(header_overrides) = overrides.map(|overrides| &overrides.headers) else {
         return;

@@ -414,6 +414,7 @@ mod tests {
             .as_mut()
             .poll(&mut Context::from_waker(futures::task::noop_waker_ref()));
         server.name = "concurrent edit".into();
+        server.apps.claude = true;
 
         db.save_mcp_server(&server).unwrap();
         drop(guard);
@@ -426,7 +427,7 @@ mod tests {
         });
         let saved = db.get_all_mcp_servers().unwrap()["fixture"].clone();
         assert_eq!(saved.name, "concurrent edit");
-        assert!(false && saved.apps.codex);
+        assert!(saved.apps.claude && saved.apps.codex);
         assert_eq!(saved.server["args"][0], "new");
     }
 

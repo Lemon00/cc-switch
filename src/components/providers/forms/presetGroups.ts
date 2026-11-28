@@ -444,9 +444,9 @@ export function loginAccountKey(
   preset: AnyPreset,
 ): string {
   const type = (preset as PresetFields).providerType;
-  if (type === "github_copilot") return "github";
+
   if (type === "codex_oauth") return "chatgpt";
-  if (type === "xai_oauth") return "xai";
+
   switch (appId) {
     case "codex":
       return "chatgpt";

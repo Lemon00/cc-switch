@@ -3,6 +3,7 @@ import { renderWithQueryClient as render } from "../utils/testQueryClient";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SkillsStorageSheet } from "@/components/skills/SkillsStorageSheet";
+import { useQuery } from "@tanstack/react-query";
 const m = vi.hoisted(() => ({
   settings: {
     skillStorageLocation: "cc_switch",
@@ -55,6 +56,46 @@ describe("SkillsStorageSheet", () => {
     m.settings = { skillStorageLocation: "cc_switch", skillSyncMethod: "auto" };
     m.installed = [];
     m.autoSaveSettings.mockResolvedValue(undefined);
+  });
+  it("refreshes the shared settings after committing a storage migration", async () => {
+    m.migrate.mockResolvedValue({
+      migratedCount: 0,
+      skippedCount: 0,
+      errors: [],
+      locationChanged: true,
+    });
+    const readSettings = vi
+      .fn()
+      .mockResolvedValue({ skillStorageLocation: "unified" });
+    function SettingsReader() {
+      const { data } = useQuery({
+        queryKey: ["settings"],
+        queryFn: readSettings,
+        initialData: { skillStorageLocation: "cc_switch" },
+        staleTime: Infinity,
+      });
+      return (
+        <output data-testid="shared-location">
+          {data.skillStorageLocation}
+        </output>
+      );
+    }
+    render(
+      <>
+        <SkillsStorageSheet open onOpenChange={vi.fn()} />
+        <SettingsReader />
+      </>,
+    );
+    expect(screen.getByTestId("shared-location")).toHaveTextContent(
+      "cc_switch",
+    );
+    await userEvent.click(radio(/skills\.storageSheet\.locationUnified/));
+    await userEvent.click(moveButton());
+    await waitFor(() =>
+      expect(screen.getByTestId("shared-location")).toHaveTextContent(
+        "unified",
+      ),
+    );
   });
   it.each(["auto", "symlink", "copy"] as const)(
     "shows the backend sync method %s as the checked option",

@@ -2,8 +2,8 @@ import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import { cn } from "@/lib/utils";
 import { memo, type ReactNode } from "react";
 import { useReaderT } from "./i18n";
-import type { StatusTone, StepMeta } from "./toolSummary";
-import { formatDuration, formatTokens } from "./toolSummary";
+import type { StatusTone, StepMeta } from "@/lib/sessions/toolSummary";
+import { formatDuration, formatTokens } from "@/lib/sessions/toolSummary";
 /**
  * 阅读页各行共用的样式片段：统一行高 32、glyph 列宽 16、状态色语义（§6.6「统一的部分」）。
  */

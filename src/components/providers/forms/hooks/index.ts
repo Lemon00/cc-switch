@@ -5,7 +5,7 @@ export { useBaseUrlState } from "./useBaseUrlState";
 export { useCodexConfigState } from "./useCodexConfigState";
 export { useCodexOauth } from "./useCodexOauth";
 export { useCodexTomlValidation } from "./useCodexTomlValidation";
-export { useCopilotAuth } from "./useCopilotAuth";
+
 export {
   useDraftEditorProjection,
   type EditorBaseChange,
@@ -18,4 +18,3 @@ export { useOpencodeFormState } from "./useOpencodeFormState";
 export { useProviderCategory } from "./useProviderCategory";
 export { useSpeedTestEndpoints } from "./useSpeedTestEndpoints";
 export { useTemplateValues } from "./useTemplateValues";
-export { useXaiOauth } from "./useXaiOauth";

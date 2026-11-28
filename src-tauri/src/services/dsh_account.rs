@@ -127,10 +127,11 @@ async fn read_platform(request: reqwest::RequestBuilder) -> Result<Value, Platfo
     if status.is_redirection() || !status.is_success() {
         return Err(PlatformError::Failed(format!("HTTP {}", status.as_u16())));
     }
-    let body: Value = response
-        .json()
+    let bytes = crate::proxy::http_client::read_body_with_limit(response, 1024 * 1024)
         .await
-        .map_err(|error| PlatformError::Failed(error.without_url().to_string()))?;
+        .map_err(PlatformError::Failed)?;
+    let body: Value =
+        serde_json::from_slice(&bytes).map_err(|error| PlatformError::Failed(error.to_string()))?;
     match body["code"].as_i64() {
         Some(0) => Ok(body["data"]["biz_data"].clone()),
         Some(UNAUTHORIZED_CODE) => Err(PlatformError::Unauthorized),
@@ -605,26 +606,29 @@ fn callback_code(query: &str, state: &str) -> Option<String> {
             states[0].as_bytes(),
             state.as_bytes(),
         ));
-    (state_matches && codes.len() == 1 && !codes[0].is_empty()).then(|| codes[0].to_owned())
+    (state_matches && codes.len() == 1 && !codes[0].is_empty() && values("error").is_empty())
+        .then(|| codes[0].to_owned())
 }
 
 async fn read_request_head(stream: &mut TcpStream) -> std::io::Result<String> {
     let mut buffer = Vec::with_capacity(1024);
     let mut chunk = [0u8; 1024];
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
-        let read = tokio::time::timeout(Duration::from_secs(10), stream.read(&mut chunk))
+        let read = tokio::time::timeout_at(deadline, stream.read(&mut chunk))
             .await
             .map_err(|_| std::io::Error::from(std::io::ErrorKind::TimedOut))??;
         if read == 0 {
-            break;
+            return Err(std::io::ErrorKind::UnexpectedEof.into());
         }
         buffer.extend_from_slice(&chunk[..read]);
-        if buffer.windows(4).any(|window| window == b"\r\n\r\n") || buffer.len() > MAX_REQUEST_BYTES
-        {
-            break;
+        if buffer.len() > MAX_REQUEST_BYTES {
+            return Err(std::io::ErrorKind::InvalidData.into());
+        }
+        if buffer.windows(4).any(|window| window == b"\r\n\r\n") {
+            return String::from_utf8(buffer).map_err(|_| std::io::ErrorKind::InvalidData.into());
         }
     }
-    Ok(String::from_utf8_lossy(&buffer).into_owned())
 }
 
 /// Query string of `GET /oauth/callback?... HTTP/1.1`; `None` for any other request.
@@ -716,6 +720,26 @@ fn abandon(login: PendingLogin) {
 
 #[cfg(test)]
 mod tests {
+
+    #[tokio::test]
+    async fn callback_rejects_truncated_and_oversized_headers() {
+        for request in [
+            "GET /callback?code=c&state=s HTTP/1.1\r\n".to_string(),
+            format!(
+                "GET / HTTP/1.1\r\nX: {}\r\n\r\n",
+                "x".repeat(MAX_REQUEST_BYTES)
+            ),
+        ] {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let mut sender = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
+                .await
+                .unwrap();
+            let (mut receiver, _) = listener.accept().await.unwrap();
+            sender.write_all(request.as_bytes()).await.unwrap();
+            sender.shutdown().await.unwrap();
+            assert!(read_request_head(&mut receiver).await.is_err());
+        }
+    }
     use super::*;
 
     #[test]
@@ -824,6 +848,7 @@ mod tests {
         assert_eq!(callback_code("code=c&state=s&state=s", "s"), None);
         assert_eq!(callback_code("code=c&code=d&state=s", "s"), None);
         assert_eq!(callback_code("code=&state=s", "s"), None);
+        assert_eq!(callback_code("code=c&state=s&error=denied", "s"), None);
     }
 
     #[tokio::test]

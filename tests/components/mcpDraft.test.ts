@@ -113,6 +113,31 @@ describe("mcpDraft paste recognition", () => {
   });
 });
 describe("mcpDraft form ⇄ JSON", () => {
+  it.each(["clientSecret", "client_secret"])(
+    "masks OAuth %s and restores it without mutating the draft",
+    (secretField) => {
+      const spec = {
+        type: "http" as const,
+        url: "https://example.com/mcp",
+        oauth: {
+          clientId: "fixture",
+          [secretField]: "private-secret",
+          scope: "read",
+        },
+      };
+      const conn = connectionOf(spec);
+      const masked = jsonTextOf(conn, false);
+      expect(masked).not.toContain("private-secret");
+      expect(JSON.parse(masked).oauth.clientId).toBe("fixture");
+      expect(parseJsonText(masked, conn)).toEqual({ ok: true, spec });
+      expect(specOf(conn)).toEqual(spec);
+      expect(jsonTextOf(conn, true)).toContain("private-secret");
+      expect(parseJsonText(masked, connectionOf({ url: spec.url }))).toEqual({
+        ok: false,
+        error: { kind: "maskedUnknown", field: "oauth", key: secretField },
+      });
+    },
+  );
   it("preserves empty arguments and names that collide with object properties", () => {
     const spec = JSON.parse(
       '{"command":"node","args":["--value","","last"],"env":{"__proto__":"token","constructor":"value"},"__proto__":{"custom":true}}',

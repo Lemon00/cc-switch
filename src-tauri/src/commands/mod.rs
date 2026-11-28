@@ -7,7 +7,7 @@ mod claude_account;
 pub(crate) mod codex_oauth;
 mod coding_plan;
 mod config;
-pub(crate) mod copilot;
+
 mod custom_icon;
 mod deeplink;
 mod dsh;
@@ -31,7 +31,6 @@ pub mod skill;
 mod stream_check;
 mod subscription;
 mod sync_support;
-pub(crate) mod xai_oauth;
 
 mod lightweight;
 #[cfg(test)]
@@ -49,7 +48,7 @@ pub use claude_account::*;
 pub use codex_oauth::*;
 pub use coding_plan::*;
 pub use config::*;
-pub use copilot::*;
+
 pub use custom_icon::*;
 pub use deeplink::*;
 pub use dsh::*;
@@ -72,7 +71,6 @@ pub use settings::*;
 pub use skill::*;
 pub use stream_check::*;
 pub use subscription::*;
-pub use xai_oauth::*;
 
 pub use lightweight::*;
 pub use s3_sync::*;
@@ -97,9 +95,6 @@ where
 
 #[cfg(not(target_os = "windows"))]
 pub(crate) use misc::tool_discovery::{login_shell_path, merge_path_segments};
+pub(crate) use misc::tool_process::run_detected_tool_command_with_timeout;
 #[cfg(not(target_os = "windows"))]
 pub(crate) use misc::tool_process::CommandDeadline;
-pub(crate) use misc::tool_process::{
-    detected_tool_command, run_detected_tool_command_with_timeout, terminate_child_tree,
-};
-pub(crate) use misc::tool_version::local_tool_version;

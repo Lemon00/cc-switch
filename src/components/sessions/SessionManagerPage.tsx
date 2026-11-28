@@ -15,7 +15,7 @@ import { SearchField } from "@/components/ui/search-field";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
 import { useSessionSearch } from "@/hooks/useSessionSearch";
-import { sessionsApi, type AppId } from "@/lib/api";
+import { sessionsApi } from "@/lib/api";
 import { isMac } from "@/lib/platform";
 import {
   useDeleteSessionMutation,
@@ -126,8 +126,6 @@ const linkButton =
   "h-[22px] rounded-[4px] px-0.5 text-caption text-fg-1 underline decoration-border-strong underline-offset-[3px] hover:decoration-fg-2";
 interface SessionManagerPageProps {
   appId: string;
-  /** 侧栏上当前的应用（从 Claude Desktop 进来时要提示一句） */
-  fromApp?: AppId;
   /** 打开设置里的「首选终端」 */
   onOpenTerminalSettings?: () => void;
 }
@@ -906,7 +904,7 @@ export function SessionManagerPage({
             >
               {t("sessionManager.helpBody", {
                 defaultValue:
-                  "CC Switch 读取各个应用保存在本机的会话记录，位置见右上角 ⋯ 里的「会话记录在哪里」。Claude Desktop 没有单独的会话记录。",
+                  "CC Switch 读取各个应用保存在本机的会话记录，位置见右上角 ⋯ 里的「会话记录在哪里」。",
               })}
             </HelpTip>
           }

@@ -7,7 +7,7 @@ use crate::database::usage::effective_usage_log_filter;
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use chrono::{Duration, Local, TimeZone};
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -117,11 +117,14 @@ fn merge_rollup_costs(
     let mut new_costs: HashMap<RollupCostKey, Decimal> = HashMap::new();
     for row in rows {
         let (key, cost_text) = row.map_err(|e| AppError::Database(e.to_string()))?;
-        *new_costs.entry(key).or_insert(Decimal::ZERO) += parse_cost_text(cost_text.as_deref());
+        let total = new_costs.entry(key).or_insert(Decimal::ZERO);
+        *total = total
+            .checked_add(parse_cost_text(cost_text.as_deref()))
+            .ok_or_else(|| AppError::Database("Usage rollup cost overflow".into()))?;
     }
 
     for (key, new_sum) in new_costs {
-        let existing: String = conn
+        let existing: Option<String> = conn
             .query_row(
                 "SELECT total_cost_usd FROM usage_daily_rollups
                  WHERE date = ?1 AND app_type = ?2 AND provider_id = ?3 AND model = ?4
@@ -136,8 +139,10 @@ fn merge_rollup_costs(
                 ],
                 |row| row.get(0),
             )
-            .unwrap_or_else(|_| "0".to_string());
-        let merged = parse_cost_text(Some(&existing)) + new_sum;
+            .optional()?;
+        let merged = parse_cost_text(existing.as_deref())
+            .checked_add(new_sum)
+            .ok_or_else(|| AppError::Database("Usage rollup cost overflow".into()))?;
         conn.execute(
             "UPDATE usage_daily_rollups SET total_cost_usd = ?7
              WHERE date = ?1 AND app_type = ?2 AND provider_id = ?3 AND model = ?4
@@ -291,6 +296,36 @@ mod tests {
     use crate::database::{lock_conn, Database};
     use crate::error::AppError;
     use chrono::{Local, TimeZone};
+
+    #[test]
+    fn overflowing_cost_rollup_preserves_details_and_database_lock() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            for id in ["large-a", "large-b"] {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs
+                     (request_id, provider_id, app_type, model, input_tokens, output_tokens,
+                      latency_ms, status_code, created_at, total_cost_usd)
+                     VALUES (?1, 'p', 'claude', 'm', 1, 1, 0, 200, 1, ?2)",
+                    rusqlite::params![id, rust_decimal::Decimal::MAX.to_string()],
+                )?;
+            }
+        }
+        assert!(db
+            .rollup_and_prune(30)
+            .unwrap_err()
+            .to_string()
+            .contains("overflow"));
+        let conn = lock_conn!(db.conn);
+        let details: i64 =
+            conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |r| r.get(0))?;
+        let rollups: i64 =
+            conn.query_row("SELECT COUNT(*) FROM usage_daily_rollups", [], |r| r.get(0))?;
+        assert_eq!(details, 2);
+        assert_eq!(rollups, 0);
+        Ok(())
+    }
 
     #[test]
     fn invalid_retention_never_panics_or_prunes_current_data() {

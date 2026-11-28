@@ -105,6 +105,10 @@ pub fn convert_to_opencode_format(spec: &Value) -> Result<Value, AppError> {
             }
 
             // Add enabled flag
+            // Preserve explicit OAuth disablement and client credentials on round trips.
+            if let Some(oauth) = obj.get("oauth") {
+                result.insert("oauth".into(), oauth.clone());
+            }
             result.insert("enabled".into(), json!(true));
         }
         _ => {
@@ -112,6 +116,11 @@ pub fn convert_to_opencode_format(spec: &Value) -> Result<Value, AppError> {
         }
     }
 
+    for field in ["protocol", "codemode"] {
+        if let Some(value) = obj.get(field) {
+            result.insert(field.into(), value.clone());
+        }
+    }
     Ok(Value::Object(result))
 }
 
@@ -186,7 +195,7 @@ pub fn convert_from_opencode_format(spec: &Value) -> Result<Value, AppError> {
         }
     }
 
-    for field in ["cwd", "timeout", "oauth"] {
+    for field in ["cwd", "timeout", "oauth", "protocol", "codemode"] {
         if let Some(value) = obj.get(field) {
             result.insert(field.into(), value.clone());
         }
@@ -301,6 +310,25 @@ pub fn import_from_opencode(config: &mut MultiAppConfig) -> Result<usize, AppErr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_oauth_survives_import_and_sync() {
+        for oauth in [
+            json!(false),
+            json!({"clientId": "fixture", "clientSecret": "test-secret", "scope": "read"}),
+        ] {
+            let native = json!({
+                "type": "remote", "url": "https://example.com/mcp",
+                "oauth": oauth, "timeout": 12000, "enabled": true,
+                "headers": {"X-Api-Key": "fixture-key"}
+            });
+            let unified = convert_from_opencode_format(&native).unwrap();
+            assert_eq!(convert_to_opencode_format(&unified).unwrap(), native);
+        }
+        let native =
+            convert_to_opencode_format(&json!({"url": "https://example.com/mcp"})).unwrap();
+        assert!(native.get("oauth").is_none());
+    }
 
     #[test]
     fn test_convert_stdio_to_local() {

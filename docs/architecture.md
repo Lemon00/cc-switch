@@ -1,6 +1,6 @@
 # 当前架构与模块边界
 
-核对日期：2026-11-26。对应当前工作树，功能模块编号见[模块划分](../PROJECT_MODULE_REVIEW_PLAN.md)，验证方法见[测试指南](testing.md)。
+核对日期：2026-11-28。对应当前工作树，功能模块编号见[模块划分](../PROJECT_MODULE_REVIEW_PLAN.md)，验证方法见[测试指南](testing.md)。
 
 ## 运行入口与依赖
 
@@ -30,7 +30,7 @@ flowchart TD
 
 ## 共享类型、能力与宿主能力
 
-- 核心应用身份在 [app.rs](../crates/cc-switch-core/src/app.rs)，`AppType::SUPPORTED` 收敛为 5 个客户端（`claude`、`codex`、`opencode`、`dsh`、`agy`）；历史变体保留在 `AppType::persisted()` 用于兼容读取已有数据库和同步归档。共享供应商身份、图标、模型、定价等规则分别有独立模块。
+- 核心应用身份在 [app.rs](../crates/cc-switch-core/src/app.rs)，`AppType::SUPPORTED` 收敛为 5 个客户端（`claude`、`codex`、`opencode`、`dsh`、`agy`）；`AppType::persisted()` 与 `all()` 均只列出这五个变体；`is_retired` 识别历史字符串，以跳过旧记录。共享供应商身份、图标、模型、定价等规则分别有独立模块。
 - 前端 [appCapabilities.ts](../src/config/appCapabilities.ts) 提供不依赖 React 的受管应用列表（`APP_IDS`）、路由与聚合能力（`MODE_APP_IDS` / `PROXY_APP_IDS` / `STACK_APP_IDS` 面向 Claude Code 和 Codex）、MCP/Skills 能力；[appConfig.tsx](../src/config/appConfig.tsx) 负责展示配置。
 - [runtime_hooks.rs](../crates/cc-switch-core/src/runtime_hooks.rs) 组合宿主注入能力；[events.rs](../crates/cc-switch-core/src/events.rs) 表达业务事件，桌面通过 [frontend_hooks.rs](../src-tauri/src/frontend_hooks.rs) 适配 Tauri。
 - [startup.rs](../crates/cc-switch-core/src/startup.rs) 装配数据库变更观察者及本地定价同步。数据库通过 [changes.rs](../crates/cc-switch-core/src/database/changes.rs) 通知外部，不在 DAO 内直接绑定某个云同步实现。

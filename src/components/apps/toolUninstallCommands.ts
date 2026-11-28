@@ -22,14 +22,37 @@ const COMMANDS: Record<UninstallMethod, UninstallCommand[]> = {
     { tool: "dsh", command: "npm uninstall -g @deepseek-ai/dsh" },
     { tool: "claude", command: "npm uninstall -g @anthropic-ai/claude-code" },
     { tool: "codex", command: "npm uninstall -g @openai/codex" },
-    { tool: "opencode", command: "npm uninstall -g opencode-ai" },
+    {
+      tool: "opencode",
+      command: "npm uninstall -g opencode-ai",
+      variant: "1.x",
+    },
+    {
+      tool: "opencode",
+      command: "npm uninstall -g @opencode/cli",
+      variant: "2.x",
+    },
   ],
-  pnpm: [{ tool: "opencode", command: "pnpm remove -g opencode-ai" }],
+  pnpm: [
+    { tool: "opencode", command: "pnpm remove -g opencode-ai", variant: "1.x" },
+    {
+      tool: "opencode",
+      command: "pnpm remove -g @opencode/cli",
+      variant: "2.x",
+    },
+  ],
   bun: [
     {
       tool: "opencode",
       command: "bun remove -g opencode-ai",
       environments: ["macos", "linux"],
+      variant: "1.x",
+    },
+    {
+      tool: "opencode",
+      command: "bun remove -g @opencode/cli",
+      environments: ["macos", "linux"],
+      variant: "2.x",
     },
   ],
   "brew-formula": [
@@ -44,6 +67,12 @@ const COMMANDS: Record<UninstallMethod, UninstallCommand[]> = {
       command: "brew uninstall --formula opencode",
       environments: ["macos", "linux"],
       variant: "homebrew/core",
+    },
+    {
+      tool: "opencode",
+      command: "brew uninstall --formula anomalyco/tap/opencode-v2",
+      environments: ["macos", "linux"],
+      variant: "2.x",
     },
   ],
   "brew-cask": [

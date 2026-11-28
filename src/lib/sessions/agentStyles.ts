@@ -3,12 +3,12 @@ import type { SessionAppId } from "./search";
 /**
  * 会话阅读页的 Agent 风格配置。
  *
- * 五家 Agent 共用同一套版式骨架，只用这份配置区分符号、动作叫法、主题色和合并规则；
- * 没有专属配置的来源（Hermes / OpenClaw / Grok Build / MiniMax Code）一律用 generic。
+ * 受支持的 Agent 共用同一套版式骨架，只用这份配置区分符号、动作叫法、主题色和合并规则；
+ * 没有专属配置的来源一律用 generic。
  * 主题色只用于提问竖条和助手 glyph，正文保持中性（决策 D4）。
  */
 export type ReaderStyleId =
-  | Extract<SessionAppId, "claude" | "codex" | "gemini" | "opencode" | "pi">
+  | Extract<SessionAppId, "claude" | "codex" | "opencode">
   | "generic";
 export interface AgentReaderStyle {
   id: ReaderStyleId;

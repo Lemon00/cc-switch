@@ -2,7 +2,7 @@ import { cn } from "@/lib/utils";
 import { ChevronRight } from "lucide-react";
 import { memo, useMemo } from "react";
 import { highlightText } from "../utils";
-import type { AgentReaderStyle } from "./agentStyles";
+import type { AgentReaderStyle } from "@/lib/sessions/agentStyles";
 import { useReaderContext } from "./context";
 import { useReaderT } from "./i18n";
 import { GlyphCell, ROW_BUTTON, StepMetaText, TONE_CLASS } from "./rowStyles";
@@ -18,8 +18,8 @@ import {
   shortenPath,
   type StepTitle,
   type Translate,
-} from "./toolSummary";
-import type { MergedStep, TimelineStep, ToolStep } from "./turns";
+} from "@/lib/sessions/toolSummary";
+import type { MergedStep, TimelineStep, ToolStep } from "@/lib/sessions/turns";
 export type StepToggle = (id: string, expanded: boolean) => void;
 /** 标题：动作（品牌字面）+ 对象；call 格式包括号，icon 格式前置符号 */
 const TitleText = ({

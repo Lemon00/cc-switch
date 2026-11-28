@@ -22,13 +22,9 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
     "~/.t3/userdata/providers/antigravity/<instance>/antigravity-acp/brain/<conversation>/.system_generated/logs",
   ],
 };
-/** MiniMax Code 的会话只能在 MiniMax Code 里删（后端也会拒绝）。 */
+/** 由客户端维护索引、不能在这里直接删除的会话。 */
 const NATIVE_DELETE_HINT_KEYS: Record<string, string> = {
-  mcode: "sessionManager.mcodeDeleteHint",
   dsh: "dsh.deleteSessionHint",
-  copilot: "sessionManager.copilotDeleteHint",
-  workbuddy: "workbuddy.deleteSessionHint",
-  codebuddy: "sessionManager.codebuddyDeleteHint",
 };
 /** Antigravity 只有 CLI 的会话能在这里删（后端连索引一起清）；IDE（`antigravity/brain`）
  *  和 ACP 客户端（`antigravity-acp/brain`，如 T3 Code）的会话索引由原软件维护，
@@ -65,9 +61,9 @@ export const getSessionTime = (session: SessionMeta) =>
   session.lastActiveAt ?? session.createdAt ?? 0;
 export const sortSessionsByTime = (sessions: SessionMeta[]) =>
   [...sessions].sort((a, b) => getSessionTime(b) - getSessionTime(a));
-/** Codex / Grok Build 把归档的会话放在 archived_sessions 目录下。 */
+/** Codex 把归档的会话放在 archived_sessions 目录下。 */
 export const isArchivedSession = (session: SessionMeta) =>
-  (session.providerId === "codex" || session.providerId === "grokbuild") &&
+  session.providerId === "codex" &&
   /[\\/]archived_sessions[\\/]/.test(session.sourcePath ?? "");
 export const getBaseName = (value?: string | null) => {
   if (!value) return "";

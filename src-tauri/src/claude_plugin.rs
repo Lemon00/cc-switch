@@ -21,14 +21,6 @@ pub fn claude_config_path() -> Result<PathBuf, AppError> {
     Ok(claude_dir()?.join(CLAUDE_CONFIG_FILE))
 }
 
-pub fn ensure_claude_dir_exists() -> Result<PathBuf, AppError> {
-    let dir = claude_dir()?;
-    if !dir.exists() {
-        fs::create_dir_all(&dir).map_err(|e| AppError::io(&dir, e))?;
-    }
-    Ok(dir)
-}
-
 pub fn read_claude_config() -> Result<Option<String>, AppError> {
     let path = claude_config_path()?;
     match fs::read_to_string(&path) {

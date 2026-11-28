@@ -20,9 +20,8 @@ export interface ManagedAccountUser {
   /** 没指定账号、跟着「默认」账号走的供应商（删掉这个账号后会改用新的默认账号） */
   viaDefault: boolean;
 }
-// 没写 providerType 的旧卡按 Claude 的请求地址认（对齐后端 Provider::is_github_copilot 等）
+
 const BASE_URL_MARKERS: Partial<Record<ManagedAuthProvider, string>> = {
-  github_copilot: "githubcopilot.com",
   codex_oauth: "chatgpt.com/backend-api/codex",
 };
 function claudeBaseUrl(provider: Provider): string {

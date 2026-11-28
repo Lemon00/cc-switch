@@ -14,7 +14,6 @@ import {
   countdownStr,
   formatRelativeTime,
   lineHint,
-  tierLine,
   type QuotaDisplay,
   type QuotaLine,
 } from "@/components/quota/quotaRules";
@@ -24,15 +23,13 @@ import {
   quotaRows,
 } from "@/components/SubscriptionQuotaFooter";
 import { HoverTip } from "@/components/ui/hover-tip";
-import { useCopilotQuota } from "@/lib/query/copilot";
+
 import {
   useAgyAccountQuota,
   useClaudeAccountQuota,
-  useXaiOauthQuotaByAccountId,
 } from "@/lib/query/subscription";
 import { cn } from "@/lib/utils";
 import type { SubscriptionQuota } from "@/types/subscription";
-import { extractErrorMessage } from "@/utils/errorUtils";
 import type { TFunction } from "i18next";
 import { RefreshCw } from "lucide-react";
 import { useId, type ReactNode } from "react";
@@ -270,7 +267,7 @@ function QuotaRowCells({
     </>
   );
 }
-/** SubscriptionQuota（ChatGPT / xAI 账号的订阅额度）→ 额度列状态 */
+
 export function subscriptionQuotaState(
   t: TFunction,
   quota: SubscriptionQuota | undefined,
@@ -295,55 +292,7 @@ export function subscriptionQuotaState(
   const rows = quotaRows(t, quota, locale, { display });
   return rows.length > 0 ? { kind: "rows", rows } : null;
 }
-/** GitHub Copilot 账号的高级请求额度（copilot_get_usage_for_account） */
-export function CopilotAccountQuota({
-  accountId,
-  login,
-}: {
-  accountId: string;
-  login: string;
-}) {
-  const { t } = useTranslation();
-  const display = useQuotaDisplay();
-  const query = useCopilotQuota(accountId, { enabled: true, autoQuery: false });
-  const { data: quota, isFetching: loading } = query;
-  let state: AccountQuotaState;
-  if (quota?.success) {
-    const label = t("subscription.copilotPremium");
-    state =
-      quota.tiers.length > 0
-        ? {
-            kind: "rows",
-            rows: quota.tiers.map((tier) => ({
-              label,
-              line: tierLine(t, tier, label, { display }),
-            })),
-          }
-        : null;
-  } else if (quota) {
-    state = {
-      kind: "failed",
-      reason: quota.error || t("subscription.queryFailed"),
-    };
-  } else if (query.isError) {
-    state = {
-      kind: "failed",
-      reason: extractErrorMessage(query.error) || t("subscription.queryFailed"),
-    };
-  } else {
-    state = loading ? { kind: "loading" } : null;
-  }
-  return (
-    <AccountQuotaColumn
-      login={login}
-      state={state}
-      queriedAt={quota?.queriedAt ?? null}
-      loading={loading}
-      onRefresh={() => void query.refetch()}
-    />
-  );
-}
-/** 按账号查的订阅额度列：xAI、Antigravity、Claude 只是查询 hook 不同 */
+
 function subscriptionAccountQuota(
   useQuota: (
     accountId: string,
@@ -388,10 +337,7 @@ function subscriptionAccountQuota(
     );
   };
 }
-/** xAI 账号的订阅额度（get_xai_oauth_quota(accountId)） */
-export const XaiAccountQuota = subscriptionAccountQuota(
-  useXaiOauthQuotaByAccountId,
-);
+
 /** Kimi 官方账号的剩余额度（kimi_oauth_quota(accountId)，不用先切号） */
 
 /** Antigravity 账号的剩余额度（agy_account_quota(accountId)，不用先切号） */

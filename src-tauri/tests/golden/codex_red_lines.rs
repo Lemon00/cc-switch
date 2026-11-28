@@ -23,7 +23,6 @@
 //! | 12 | 保留 id 大小写精确：`OpenAI`、`oss` 是合法自定义 id；不产出 `[model_providers.openai]` 这类保留表 | 本文件 |
 //! | 13 | 存量的保留表（`[model_providers.openai]` 等）不进 live，带 Key 时路由落到非保留表 | 本文件 |
 //! | 14 | 直连时 `requires_openai_auth`：开关关→活跃带 Key 表为 false；开关开且已登录→true；无 Key 的头鉴权表从不为 true | 本文件 |
-//! | 15 | 代理注入型 OAuth 卡（xai_oauth 等）直连不会带出官方登录 | 本文件 |
 //! | 16 | 官方卡：带登录材料整份写 auth.json；无材料只写 config、不动现有登录 | 已有 `..._official_accounts_write_auth_json`、`..._supports_official_login_provider_without_auth_write` |
 //! | 17 | 切到无材料官方卡时删掉第三方残留的 auth.json，真实登录不删；重选当前卡不删 | 已有 `..._official_clears_stale_third_party_auth`、`provider_service_reswitch_current_official_keeps_live_auth` |
 //! | 18 | 元数据（last_refresh、account_id）不算登录（#6277） | crate 内：`codex_config.rs` 的 `credential_login_material_only_counts_real_credentials` |
@@ -590,43 +589,6 @@ fn requires_openai_auth_follows_login_preservation() {
         flag(route(&doc).expect("route").1, "requires_openai_auth"),
         Some(true)
     );
-}
-
-/// CX-15：结果可以是拒绝，也可以是放行，但放行时路由表绝不要求官方登录。
-#[test]
-fn proxy_injected_oauth_cards_never_carry_the_official_login() {
-    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
-    for provider_type in ["xai_oauth", "github_copilot"] {
-        reset_test_fs();
-        set_login_preservation(true);
-        let card = with_meta(
-            codex(
-                "oauth-card",
-                Some(""),
-                "model_provider = \"custom\"\nmodel = \"grok-4.5\"\n\n[model_providers.custom]\nname = \"xAI\"\nbase_url = \"https://api.x.ai/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n",
-            ),
-            ProviderMeta {
-                provider_type: Some(provider_type.to_string()),
-                ..Default::default()
-            },
-        );
-        let state = setup(vec![card], true);
-        let before = snapshot(&state, "oauth-card");
-
-        match switch(&state, "oauth-card") {
-            Ok(_) => {
-                let doc = live_config();
-                let (_, route) = route(&doc).expect("route");
-                assert_ne!(
-                    flag(route, "requires_openai_auth"),
-                    Some(true),
-                    "{provider_type}: the official ChatGPT login would be sent to api.x.ai"
-                );
-                assert_loadable(&doc);
-            }
-            Err(_) => assert_eq!(before, snapshot(&state, "oauth-card")),
-        }
-    }
 }
 
 /// CX-23

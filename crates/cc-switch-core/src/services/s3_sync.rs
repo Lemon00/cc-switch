@@ -6,23 +6,19 @@
 use chrono::Utc;
 use serde_json::Value;
 
+#[cfg(test)]
+use super::sync_protocol::sync_mutex;
 use crate::error::AppError;
 use crate::services::s3::{self, S3Credentials};
 use crate::settings::{update_s3_sync_status, S3SyncSettings, WebDavSyncStatus};
 
-// 本分支 GUI commands 仍经此重导出拿锁；上游已改为直接用 sync_protocol。
-pub use super::sync_protocol::run_with_sync_lock;
 use super::sync_protocol::{
-    apply_snapshot, artifact_path, build_local_snapshot, localized, persist_sync_success_best_effort, sha256_hex,
-    validate_artifact_size_limit, validate_manifest_compat, verify_artifact, PublishCondition,
-    RemoteLayout, SyncManifest, DB_COMPAT_VERSION, MAX_MANIFEST_BYTES, STORAGE_VERSION,
-    REMOTE_DB_SQL, REMOTE_MANIFEST, REMOTE_SKILLS_ZIP,
+    apply_snapshot, artifact_path, build_local_snapshot, localized,
+    persist_sync_success_best_effort, sha256_hex, validate_artifact_size_limit,
+    validate_manifest_compat, verify_artifact, PublishCondition, RemoteLayout, SyncManifest,
+    DB_COMPAT_VERSION, MAX_MANIFEST_BYTES, REMOTE_DB_SQL, REMOTE_MANIFEST, REMOTE_SKILLS_ZIP,
+    STORAGE_VERSION,
 };
-
-#[cfg(any(test, feature = "test-support"))]
-pub fn sync_mutex() -> &'static tokio::sync::Mutex<()> {
-    super::sync_protocol::sync_mutex()
-}
 
 // ─── Public API ──────────────────────────────────────────────
 
@@ -42,7 +38,8 @@ pub async fn auto_upload(
         remote.as_ref().map(|(bytes, _)| bytes.as_slice()),
     )?;
     let condition = PublishCondition::from_remote(
-        remote.as_ref().and_then(|(_, etag)| etag.as_deref()), remote.is_some(),
+        remote.as_ref().and_then(|(_, etag)| etag.as_deref()),
+        remote.is_some(),
     )?;
     upload_with_condition(db, settings, &condition).await
 }
@@ -73,10 +70,16 @@ async fn upload_with_condition(
     let snapshot = build_local_snapshot(db)?;
 
     // Immutable artifacts keep the last committed snapshot readable after any failed PUT.
-    let db_key = s3_key(settings, &format!("{}/{REMOTE_DB_SQL}", snapshot.artifact_dir));
+    let db_key = s3_key(
+        settings,
+        &format!("{}/{REMOTE_DB_SQL}", snapshot.artifact_dir),
+    );
     s3::put_object(&creds, &db_key, snapshot.db_sql, "application/sql").await?;
 
-    let skills_key = s3_key(settings, &format!("{}/{REMOTE_SKILLS_ZIP}", snapshot.artifact_dir));
+    let skills_key = s3_key(
+        settings,
+        &format!("{}/{REMOTE_SKILLS_ZIP}", snapshot.artifact_dir),
+    );
     s3::put_object(&creds, &skills_key, snapshot.skills_zip, "application/zip").await?;
 
     let manifest_key = s3_key(settings, REMOTE_MANIFEST);
@@ -127,8 +130,7 @@ pub async fn download(
 
     // Download and verify artifacts
     let db_sql = download_and_verify(settings, &creds, REMOTE_DB_SQL, &manifest).await?;
-    let skills_zip =
-        download_and_verify(settings, &creds, REMOTE_SKILLS_ZIP, &manifest).await?;
+    let skills_zip = download_and_verify(settings, &creds, REMOTE_SKILLS_ZIP, &manifest).await?;
 
     // Apply snapshot
     apply_snapshot(db, &db_sql, &skills_zip)?;

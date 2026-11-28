@@ -23,17 +23,12 @@ vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
     await importOriginal<typeof import("@/components/providers/forms/hooks")>();
   return {
     ...actual,
-    useCopilotAuth: () => ({
-      isAuthenticated: false,
-      isStatusSuccess: true,
-      accounts: [],
-    }),
+
     useCodexOauth: () => ({
       isAuthenticated: false,
       isStatusSuccess: true,
       accounts: [],
     }),
-    useXaiOauth: () => ({ isAuthenticated: false, accounts: [] }),
   };
 });
 describe("OpenCode built-in provider editing", () => {

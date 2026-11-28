@@ -28,8 +28,6 @@ use crate::services::usage_cache::UsageCache;
 use crate::store::AppState;
 
 const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str = "official_subscription";
-/// Copilot 用量结果的单位（`commands::provider` 的 `COPILOT_UNIT_PREMIUM`）：高级请求次数。
-const COPILOT_UNIT_PREMIUM: &str = "requests";
 
 pub const TRAY_ID: &str = "cc-switch";
 
@@ -695,7 +693,6 @@ fn amount(value: f64, unit: Option<&str>) -> String {
     }
 }
 
-/// 不认识档名的一条脚本结果（余额、Copilot、自定义脚本），照卡片 `UsageFooter.planLine`。
 fn plan_line(texts: &TrayTexts, data: &crate::provider::UsageData) -> Option<QuotaLine> {
     if data.is_valid == Some(false) {
         return Some(QuotaLine {
@@ -707,15 +704,6 @@ fn plan_line(texts: &TrayTexts, data: &crate::provider::UsageData) -> Option<Quo
         });
     }
     let unit = data.unit.as_deref();
-    let total = data.total.filter(|total| *total != -1.0);
-    if unit == Some(COPILOT_UNIT_PREMIUM) {
-        if let (Some(remaining), Some(total)) = (data.remaining, total) {
-            if total > 0.0 {
-                let utilization = (total - remaining) / total * 100.0;
-                return Some(tier_line(texts, texts.tier_premium, utilization, None));
-            }
-        }
-    }
     if let Some(remaining) = data.remaining {
         // 余额不提示「快用完」，只有用完才算（和卡片 `quotaRules.balanceLine` 一致）；
         // 用完也照写金额（欠费就是负数，#8812），整行变色、金额不另上绿色
@@ -748,8 +736,7 @@ fn format_script_result(
         return Some(QuotaView::Failed(QuotaFailure::Other));
     }
     let data = result.data.as_ref()?;
-    // commands::provider 的 token_plan / official_subscription 分支把每档扁平化成一条
-    // UsageData（plan_name 是档名），按档名恢复成档位；其余（余额、Copilot、自定义脚本）一条一行。
+
     let entries: Vec<TierEntry<'_>> = data
         .iter()
         .filter_map(|d| {
@@ -917,8 +904,8 @@ fn tray_usage_source(app_type: &AppType, provider: &Provider) -> Option<TrayUsag
             .unwrap_or(true);
         return enabled.then_some(TrayUsageSource::ClaudeAccount(account_id));
     }
-    // xAI OAuth 的额度属于绑定的 SuperGrok 账号，不是所在应用的客户端登录，仍走脚本路径。
-    if provider_uses_official_subscription(provider) && !provider.is_xai_oauth() {
+
+    if provider_uses_official_subscription(provider) {
         return Some(TrayUsageSource::Subscription);
     }
     (provider.has_usage_script_enabled()
@@ -981,7 +968,7 @@ fn cached_usage_view(
             .flatten();
     }
     source?;
-    // 脚本缓存（Copilot/coding_plan/balance/自定义脚本），借用访问避免克隆整条 UsageResult。
+
     usage_cache
         .with_script(app_type, provider_id, |result| {
             format_script_result(texts, result)
@@ -991,7 +978,7 @@ fn cached_usage_view(
 
 // ─── 「需要路由」判定（镜像前端 `providerNeedsRouting`）──────────────────────────────
 
-const MANAGED_OAUTH_PROVIDER_TYPES: &[&str] = &["github_copilot", "codex_oauth", "xai_oauth"];
+const MANAGED_OAUTH_PROVIDER_TYPES: &[&str] = &["codex_oauth"];
 
 /// 官方账号卡（同前端 `isOfficialAccount`）：Codex 早期绑定托管账号的官方卡没有 category，按身份认。
 fn is_official_account(app: &AppType, provider: &Provider) -> bool {
@@ -3184,7 +3171,6 @@ pub fn schedule_tray_refresh(app: &tauri::AppHandle) {
 /// `TRAY_APPS.len()` 个用量查询；按供应商用量开关查询，Codex 托管账号
 /// 未保存开关时与卡片一致默认启用。
 pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
-    use crate::commands::CopilotAuthState;
     use futures::future::join_all;
 
     {
@@ -3245,8 +3231,7 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
         if let Some(source) = tray_usage_source(app_type, &current) {
             let app_clone = app.clone();
             let state = app.state::<AppState>();
-            let copilot_state = app.state::<CopilotAuthState>();
-            let xai_state = app.state::<crate::commands::XaiOAuthState>();
+
             let provider_id = current_id.clone();
             let app_str = app_type_str.to_string();
             usage_futures.push(async move {
@@ -3275,8 +3260,6 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
                     TrayUsageSource::Script => crate::commands::queryProviderUsage(
                         app_clone,
                         state,
-                        copilot_state,
-                        xai_state,
                         provider_id.clone(),
                         app_str,
                     )
@@ -3306,7 +3289,6 @@ fn script_query_interval(minutes: u64) -> std::time::Duration {
 /// 后台补查一次——和主界面供应商卡片是同一个查询，结果写进 `UsageCache` 后面板跟着刷新。
 /// 自动查询间隔为 0（关掉了）的不查；在用的那家由 `refresh_all_usage_in_tray` 负责。
 pub(crate) async fn refresh_panel_provider_usage(app: &tauri::AppHandle) {
-    use crate::commands::CopilotAuthState;
     use futures::{stream, StreamExt};
 
     let Some(app_state) = app.try_state::<AppState>() else {
@@ -3368,8 +3350,6 @@ pub(crate) async fn refresh_panel_provider_usage(app: &tauri::AppHandle) {
             let result = crate::commands::queryProviderUsage(
                 app.clone(),
                 app.state::<AppState>(),
-                app.state::<CopilotAuthState>(),
-                app.state::<crate::commands::XaiOAuthState>(),
                 provider_id.clone(),
                 app_type.as_str().to_string(),
             )
@@ -3786,24 +3766,6 @@ mod tests {
     }
 
     #[test]
-    fn copilot_premium_requests_use_the_card_word() {
-        let data = UsageData {
-            plan_name: Some("copilot_pro".to_string()),
-            extra: Some("Reset: 2026-11-01".to_string()),
-            is_valid: Some(true),
-            invalid_message: None,
-            total: Some(300.0),
-            used: Some(120.0),
-            remaining: Some(180.0),
-            unit: Some(COPILOT_UNIT_PREMIUM.to_string()),
-        };
-        assert_eq!(
-            title(format_script_result(&zh(), &usage_result(true, vec![data]))),
-            Some(("高级请求剩余 60%".to_string(), false))
-        );
-    }
-
-    #[test]
     fn expired_plan_and_failed_queries() {
         let mut expired = usage_data(None, 10.0);
         expired.is_valid = Some(false);
@@ -4173,31 +4135,9 @@ mod tests {
             title(view()).map(|(text, _)| text).as_deref(),
             Some("5-hour 75% left")
         );
-
-        // xAI OAuth 的额度属于绑定的 SuperGrok 账号：仍走脚本路径，也不沿用应用级订阅缓存。
-        let mut xai = codex_provider(None, Some(true));
-        xai.meta.as_mut().unwrap().provider_type = Some("xai_oauth".to_string());
-        assert_eq!(
-            tray_usage_source(&AppType::Claude, &xai),
-            Some(TrayUsageSource::Script)
-        );
-        assert_eq!(
-            title(usage_view(&cache, &en(), &AppType::Claude, &xai, "xai")),
-            None
-        );
     }
 
     // ─── 「需要路由」判定（和前端 providerNeedsRouting 对照）───
-
-    fn provider(meta: serde_json::Value, settings: serde_json::Value) -> Provider {
-        serde_json::from_value(serde_json::json!({
-            "id": "p1",
-            "name": "P1",
-            "settingsConfig": settings,
-            "meta": meta,
-        }))
-        .unwrap()
-    }
 
     #[test]
     fn codex_wire_api_falls_back_to_a_single_assignment_when_toml_is_broken() {
@@ -4271,41 +4211,6 @@ mod tests {
                 _ => None,
             })
             .expect("submenu")
-    }
-
-    #[test]
-    fn direct_submenu_sends_needs_routing_providers_to_the_app_page() {
-        let mut copilot = entry("copilot", "GitHub Copilot");
-        copilot.needs_routing = true;
-        let app = snapshot(
-            AppType::Claude,
-            TrayMode::Direct,
-            vec![entry("kimi", "Kimi For Coding"), copilot],
-        );
-        let children = children_of(&model(&[], &[app]), &AppType::Claude);
-        assert_eq!(
-            texts_of(&children),
-            [
-                "直连",
-                "Kimi For Coding",
-                "GitHub Copilot（需要路由）…",
-                "---",
-                "打开 Claude Code 页面"
-            ]
-        );
-        assert!(matches!(
-            &children[0],
-            TrayEntry::Item { enabled: false, .. }
-        ));
-        assert!(matches!(
-            &children[1],
-            TrayEntry::Check { id, checked: true, enabled: true, .. } if id == "prov:claude:kimi"
-        ));
-        assert!(matches!(
-            &children[2],
-            TrayEntry::Item { id, enabled: true, .. } if id == "nav:needs:claude:copilot"
-        ));
-        assert!(matches!(&children[4], TrayEntry::Item { id, .. } if id == "nav:app:claude"));
     }
 
     #[test]
@@ -4716,5 +4621,40 @@ mod tests {
         assert!(clear_app_problems(&AppType::Codex));
         assert!(!clear_app_problems(&AppType::Codex));
         assert!(collect_problems(None, &rerouted).is_empty());
+    }
+
+    #[test]
+    fn direct_submenu_sends_needs_routing_providers_to_the_app_page() {
+        let mut chatgpt = entry("chatgpt", "ChatGPT");
+        chatgpt.needs_routing = true;
+        let app = snapshot(
+            AppType::Claude,
+            TrayMode::Direct,
+            vec![entry("kimi", "Kimi For Coding"), chatgpt],
+        );
+        let children = children_of(&model(&[], &[app]), &AppType::Claude);
+        assert_eq!(
+            texts_of(&children),
+            [
+                "直连",
+                "Kimi For Coding",
+                "ChatGPT（需要路由）…",
+                "---",
+                "打开 Claude Code 页面"
+            ]
+        );
+        assert!(matches!(
+            &children[0],
+            TrayEntry::Item { enabled: false, .. }
+        ));
+        assert!(matches!(
+            &children[1],
+            TrayEntry::Check { id, checked: true, enabled: true, .. } if id == "prov:claude:kimi"
+        ));
+        assert!(matches!(
+            &children[2],
+            TrayEntry::Item { id, enabled: true, .. } if id == "nav:needs:claude:chatgpt"
+        ));
+        assert!(matches!(&children[4], TrayEntry::Item { id, .. } if id == "nav:app:claude"));
     }
 }

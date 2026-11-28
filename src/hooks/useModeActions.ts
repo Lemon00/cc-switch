@@ -42,11 +42,10 @@ export function useModeActions(app: AppId) {
         await refresh();
         toast.success(
           mode === "route"
-            ? // Desktop 的模型列表也换成了路由那家的，要重启才看得到
-              t("mode.toast.enteredRoute", {
+            ? t("mode.toast.enteredRoute", {
                 app: appName,
                 provider: routeName ?? "",
-              }) + ""
+              })
             : t(
                 app === "codex"
                   ? "mode.toast.enteredStack"
@@ -63,7 +62,7 @@ export function useModeActions(app: AppId) {
         setPending(false);
       }
     },
-    [app, appName, refresh, restartHint, t],
+    [app, appName, refresh, t],
   );
   /**
    * 回到直连（确认框里确认后调用）。`useProviderId` 不为空时回到直连后改用这家

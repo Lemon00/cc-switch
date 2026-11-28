@@ -366,15 +366,13 @@ fn fetch_models(login: &OfficialLogin, version: &str, etag: Option<&str>) -> Fet
                 .get(reqwest::header::ETAG)
                 .and_then(|value| value.to_str().ok())
                 .map(str::to_string);
-            let bytes = match crate::proxy::http_client::read_body_with_limit(
-                response,
-                MAX_BODY_BYTES,
-            )
-            .await
-            {
-                Ok(bytes) => bytes,
-                Err(error) => return Fetch::Failed(format!("读取响应失败: {error}")),
-            };
+            let bytes =
+                match crate::proxy::http_client::read_body_with_limit(response, MAX_BODY_BYTES)
+                    .await
+                {
+                    Ok(bytes) => bytes,
+                    Err(error) => return Fetch::Failed(format!("读取响应失败: {error}")),
+                };
             match serde_json::from_slice::<Value>(&bytes)
                 .ok()
                 .and_then(|body| body.get("models").and_then(Value::as_array).cloned())

@@ -39,10 +39,7 @@ export interface ProxyServerInfo {
 }
 export interface ProxyTakeoverStatus {
   claude: boolean;
-  "claude-desktop"?: boolean;
   codex: boolean;
-  gemini: boolean;
-  grokbuild: boolean;
   opencode: boolean;
 }
 /** Applied under the backend switch lock, not inferred from a possibly stale UI mode. */

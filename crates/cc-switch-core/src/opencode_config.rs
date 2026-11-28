@@ -622,35 +622,152 @@ pub fn set_default_model(model: &str) -> Result<(), AppError> {
     .map(|_| ())
 }
 
+// OpenCode v2.0.12: packages/schema/src/config/mcp.ts and src/mcp.ts.
+// A legacy server may itself be named "servers" or "timeout". Its connection
+// fields distinguish it from the native container; never migrate unrelated rows.
+fn is_legacy_mcp_entry(value: &Value) -> bool {
+    value
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| matches!(kind, "local" | "remote"))
+        || value
+            .get("command")
+            .is_some_and(|value| value.is_array() || value.is_string())
+        || value.get("url").is_some_and(Value::is_string)
+        || value.get("enabled").is_some_and(Value::is_boolean)
+}
+
+fn native_mcp_layout(config: &Value) -> bool {
+    let mcp = config.get("mcp");
+    if mcp
+        .and_then(|mcp| mcp.get("servers"))
+        .is_some_and(|servers| !is_legacy_mcp_entry(servers))
+    {
+        return true;
+    }
+    if mcp
+        .and_then(|mcp| mcp.get("timeout"))
+        .is_some_and(|timeout| !is_legacy_mcp_entry(timeout))
+    {
+        return true;
+    }
+    config.get("providers").is_some_and(Value::is_object)
+        && mcp.is_none_or(|mcp| mcp.as_object().is_some_and(Map::is_empty))
+}
+
+fn mcp_object<'a>(value: &'a Value, field: &str) -> Result<&'a Map<String, Value>, AppError> {
+    value.as_object().ok_or_else(|| {
+        AppError::Config(format!(
+            "OpenCode {field} must be an object; the original configuration was preserved"
+        ))
+    })
+}
+
+const MCP_OAUTH_FIELDS: [(&str, &str); 5] = [
+    ("clientId", "client_id"),
+    ("clientSecret", "client_secret"),
+    ("callbackPort", "callback_port"),
+    ("redirectUri", "redirect_uri"),
+    ("authServerMetadataUrl", "auth_server_metadata_url"),
+];
+
+/// Keep the shared MCP adapter on one representation, while retaining V2-only
+/// timeout/protocol/codemode fields for a round trip back to the native file.
+fn normalize_mcp_entry(mut value: Value, native: bool) -> Value {
+    let Some(obj) = value.as_object_mut() else {
+        return value;
+    };
+    let (from, to) = if native {
+        ("enabled", "disabled")
+    } else {
+        ("disabled", "enabled")
+    };
+    if let Some(Value::Bool(flag)) = obj.remove(from) {
+        obj.insert(to.into(), Value::Bool(!flag));
+    }
+    if native {
+        if let Some(timeout) = obj.get_mut("timeout") {
+            if timeout.is_number() {
+                *timeout = json!({"catalog": timeout.clone(), "execution": timeout.clone()});
+            }
+        }
+    }
+    if let Some(oauth) = obj.get_mut("oauth").and_then(Value::as_object_mut) {
+        for (legacy, current) in MCP_OAUTH_FIELDS {
+            let (from, to) = if native {
+                (legacy, current)
+            } else {
+                (current, legacy)
+            };
+            if let Some(value) = oauth.remove(from) {
+                oauth.insert(to.into(), value);
+            }
+        }
+    }
+    value
+}
+
 pub fn get_mcp_servers() -> Result<Map<String, Value>, AppError> {
     let config = read_opencode_config()?;
-    Ok(config
-        .get("mcp")
-        .and_then(|v| v.as_object())
-        .cloned()
-        .unwrap_or_default())
+    let Some(mcp) = config.get("mcp") else {
+        return Ok(Map::new());
+    };
+    let mcp = mcp_object(mcp, "mcp")?;
+    if native_mcp_layout(&config) {
+        let Some(servers) = mcp.get("servers") else {
+            return Ok(Map::new());
+        };
+        Ok(mcp_object(servers, "mcp.servers")?
+            .iter()
+            .map(|(id, server)| (id.clone(), normalize_mcp_entry(server.clone(), false)))
+            .collect())
+    } else {
+        Ok(mcp.clone())
+    }
 }
 
 pub fn set_mcp_server(id: &str, config: Value) -> Result<(), AppError> {
-    edit_config(get_opencode_config_path, |full_config| {
-        if !full_config.get("mcp").is_some_and(Value::is_object) {
-            if full_config.get("mcp").is_some() {
-                log::warn!(
-                    "OpenCode 的 MCP 服务配置格式有误，将清空原有 MCP 服务配置，再保存当前服务"
-                );
-            }
+    try_edit_config(get_opencode_config_path, |full_config| {
+        let native = native_mcp_layout(full_config);
+        if full_config.get("mcp").is_none() {
             full_config["mcp"] = json!({});
         }
-        full_config["mcp"][id] = config;
+        mcp_object(&full_config["mcp"], "mcp")?;
+        if native {
+            if full_config["mcp"].get("servers").is_none() {
+                full_config["mcp"]["servers"] = json!({});
+            }
+            mcp_object(&full_config["mcp"]["servers"], "mcp.servers")?;
+            full_config["mcp"]["servers"][id] = normalize_mcp_entry(config, true);
+        } else {
+            full_config["mcp"][id] = config;
+        }
+        Ok(())
     })
     .map(|_| ())
 }
 
 pub fn remove_mcp_server(id: &str) -> Result<(), AppError> {
-    edit_config(get_opencode_config_path, |config| {
-        if let Some(mcp) = config.get_mut("mcp").and_then(Value::as_object_mut) {
-            mcp.remove(id);
-        }
+    try_edit_config(get_opencode_config_path, |config| {
+        let native = native_mcp_layout(config);
+        let Some(mcp) = config.get_mut("mcp") else {
+            return Ok(());
+        };
+        mcp_object(mcp, "mcp")?;
+        let servers = if native {
+            let Some(servers) = mcp.get_mut("servers") else {
+                return Ok(());
+            };
+            mcp_object(servers, "mcp.servers")?;
+            servers
+        } else {
+            mcp
+        };
+        servers
+            .as_object_mut()
+            .expect("validated MCP object")
+            .remove(id);
+        Ok(())
     })
     .map(|_| ())
 }
@@ -1187,24 +1304,106 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn set_mcp_server_normalizes_non_object_section() {
-        let temp = tempfile::tempdir().expect("tempdir");
+    fn malformed_mcp_sections_are_never_overwritten() {
+        let temp = tempfile::tempdir().unwrap();
         let _guard = TestHomeGuard::set(temp.path());
+        for original in [r#"{"mcp":[]}"#, r#"{"mcp":{"servers":[]}}"#] {
+            write_config(temp.path(), original);
+            assert!(get_mcp_servers().is_err());
+            assert!(set_mcp_server("echo", json!({"command":["echo"]})).is_err());
+            assert!(remove_mcp_server("echo").is_err());
+            assert_eq!(
+                std::fs::read_to_string(get_opencode_config_path().unwrap()).unwrap(),
+                original
+            );
+        }
+    }
 
-        // `"mcp": []` 时旧代码的 as_object_mut 返回 None → 写入静默失效
-        write_config(temp.path(), "{\"model\": \"keep-me\", \"mcp\": []}");
-
-        set_mcp_server("echo", json!({"command": "npx"})).expect("set must succeed");
-
-        let config = read_opencode_config().expect("reload");
-        assert_eq!(
-            config["mcp"]["echo"]["command"], "npx",
-            "server must actually be written"
+    #[test]
+    #[serial_test::serial]
+    fn native_mcp_round_trip_preserves_options_comments_and_disabled_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let _guard = TestHomeGuard::set(temp.path());
+        write_config(
+            temp.path(),
+            r#"{
+          // retain global settings
+          "mcp": {"timeout":{"execution":90000}, "servers":{
+            "remote":{"type":"remote","url":"https://mcp.example","disabled":true,
+              "oauth":{"client_id":"fixture","client_secret":"test-secret"},
+              "timeout":{"startup":15000,"catalog":5000},"protocol":"auto","codemode":false},
+            "keep":{"type":"local","command":["echo"]}
+          }}
+        }"#,
         );
+        let servers = get_mcp_servers().unwrap();
+        assert_eq!(servers.len(), 2);
+        assert_eq!(servers["remote"]["enabled"], false);
+        assert_eq!(servers["remote"]["oauth"]["clientSecret"], "test-secret");
+        let mut imported = crate::app_config::MultiAppConfig::default();
+        crate::mcp::opencode::import_from_opencode(&mut imported).unwrap();
+        let imported = &imported.mcp.servers.as_ref().unwrap()["remote"];
+        assert!(!imported.apps.opencode);
+        crate::mcp::opencode::sync_single_server_to_opencode("remote", &imported.server).unwrap();
+        let config = read_opencode_config().unwrap();
+        assert_eq!(config["mcp"]["servers"]["remote"]["disabled"], false);
         assert_eq!(
-            config["model"], "keep-me",
-            "unrelated user config must be preserved"
+            config["mcp"]["servers"]["remote"]["oauth"]["client_secret"],
+            "test-secret"
         );
+        assert_eq!(config["mcp"]["servers"]["remote"]["protocol"], "auto");
+        assert_eq!(config["mcp"]["servers"]["remote"]["codemode"], false);
+        assert_eq!(
+            config["mcp"]["servers"]["remote"]["timeout"]["catalog"],
+            5000
+        );
+        remove_mcp_server("remote").unwrap();
+        let config = read_opencode_config().unwrap();
+        assert_eq!(config["mcp"]["timeout"]["execution"], 90000);
+        assert_eq!(config["mcp"]["servers"].as_object().unwrap().len(), 1);
+        assert!(std::fs::read_to_string(get_opencode_config_path().unwrap())
+            .unwrap()
+            .contains("// retain global settings"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn mcp_layout_keeps_legacy_named_servers_and_initializes_native_configs() {
+        let temp = tempfile::tempdir().unwrap();
+        let _guard = TestHomeGuard::set(temp.path());
+        write_config(
+            temp.path(),
+            r#"{"mcp":{"servers":{"url":{"type":"local","command":["echo"]},"command":{"type":"remote","url":"https://mcp.example"}}}}"#,
+        );
+        assert_eq!(get_mcp_servers().unwrap().len(), 2);
+        remove_mcp_server("url").unwrap();
+        assert_eq!(get_mcp_servers().unwrap().len(), 1);
+        write_config(
+            temp.path(),
+            r#"{"mcp":{"servers":{"type":"local","command":["echo"]},"timeout":{"type":"remote","url":"https://mcp.example"}}}"#,
+        );
+        assert_eq!(get_mcp_servers().unwrap().len(), 2);
+        remove_mcp_server("servers").unwrap();
+        assert!(read_opencode_config().unwrap()["mcp"]
+            .get("timeout")
+            .is_some());
+        for original in [
+            r#"{"providers":{}}"#,
+            r#"{"mcp":{"timeout":{"execution":90000}}}"#,
+        ] {
+            write_config(temp.path(), original);
+            set_mcp_server(
+                "new",
+                json!({"type":"local","command":["echo"],"enabled":true,"timeout":5000}),
+            )
+            .unwrap();
+            let config = read_opencode_config().unwrap();
+            assert_eq!(config["mcp"]["servers"]["new"]["disabled"], false);
+            assert_eq!(
+                config["mcp"]["servers"]["new"]["timeout"],
+                json!({"catalog":5000,"execution":5000})
+            );
+        }
     }
 
     #[test]

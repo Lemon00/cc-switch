@@ -376,7 +376,7 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
               }),
               body: t("routingSettings.lanTokenHelp", {
                 defaultValue:
-                  "远程客户端必须将此令牌作为 API Key（Authorization: Bearer、x-api-key 或 x-goog-api-key），或通过 x-cc-switch-token 请求头发送。仅 TCP 回环连接免验证；不信任 X-Forwarded-For。请只在可信网络或 TLS 隧道中使用。重置立即撤销旧令牌，Claude Desktop 仍使用其专用令牌。",
+                  "远程客户端必须将此令牌作为 API Key（Authorization: Bearer、x-api-key 或 x-goog-api-key），或通过 x-cc-switch-token 请求头发送。仅 TCP 回环连接免验证；不信任 X-Forwarded-For。请只在可信网络或 TLS 隧道中使用。重置立即撤销旧令牌。",
               }),
             }}
             control={

@@ -45,6 +45,7 @@ pub use cc_switch_core::session_manager;
 pub use cc_switch_core::settings;
 pub use cc_switch_core::store;
 mod startup;
+#[cfg(test)]
 mod sync_utils;
 
 mod tray;
@@ -444,10 +445,18 @@ pub fn run() {
                     {
                         tray::apply_tray_policy(window.app_handle(), false);
                     }
-                    if let Some(state) = window.app_handle().try_state::<store::AppState>() {
-                        let _ = state.db.shrink_memory();
-                    }
-                    trim_process_memory();
+                    let db = window
+                        .app_handle()
+                        .try_state::<store::AppState>()
+                        .map(|state| state.db.clone());
+                    // Backup and session import can hold the database lock.
+                    // Waiting here would block the native window event loop.
+                    tauri::async_runtime::spawn_blocking(move || {
+                        if let Some(db) = db {
+                            let _ = db.shrink_memory();
+                        }
+                        trim_process_memory();
+                    });
                 } else {
                     api.prevent_close();
                     log::info!("关闭请求已处理：退出应用");
@@ -612,8 +621,6 @@ pub fn run() {
             commands::set_rectifier_config,
             commands::get_optimizer_config,
             commands::set_optimizer_config,
-            commands::get_copilot_optimizer_config,
-            commands::set_copilot_optimizer_config,
             commands::get_log_config,
             commands::set_log_config,
             commands::restart_app,
@@ -642,8 +649,6 @@ pub fn run() {
             commands::get_subscription_quota,
             commands::get_codex_oauth_quota,
             commands::get_codex_oauth_models,
-            commands::get_xai_oauth_models,
-            commands::get_xai_oauth_quota,
             commands::get_coding_plan_quota,
             commands::get_balance,
             // New MCP via config.json (SSOT)
@@ -724,7 +729,6 @@ pub fn run() {
             commands::parse_deeplink,
             commands::merge_deeplink_config,
             commands::fetch_deeplink_icon,
-            commands::import_from_deeplink,
             commands::import_from_deeplink_unified,
             commands::peek_pending_deeplink,
             commands::ack_pending_deeplink,
@@ -926,22 +930,6 @@ pub fn run() {
             commands::dsh_account_login_start,
             commands::dsh_account_login_poll,
             commands::dsh_account_login_cancel,
-            // Copilot OAuth commands (multi-account support)
-            commands::copilot_start_device_flow,
-            commands::copilot_poll_for_auth,
-            commands::copilot_poll_for_account,
-            commands::copilot_list_accounts,
-            commands::copilot_remove_account,
-            commands::copilot_set_default_account,
-            commands::copilot_get_auth_status,
-            commands::copilot_logout,
-            commands::copilot_is_authenticated,
-            commands::copilot_get_token,
-            commands::copilot_get_token_for_account,
-            commands::copilot_get_models,
-            commands::copilot_get_models_for_account,
-            commands::copilot_get_usage,
-            commands::copilot_get_usage_for_account,
             // OMO commands
             commands::read_omo_local_file,
             commands::get_current_omo_provider_id,
@@ -1138,6 +1126,10 @@ fn cleanup_before_system_exit(app_handle: &tauri::AppHandle) {
 /// 在进程结束前干净地把图标摘掉。其它平台 `set_visible(false)` 也是
 /// 正常的隐藏/移除语义，作为跨平台兜底也安全。
 pub(crate) fn remove_tray_icon_before_exit(app_handle: &tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    let _ = app_handle;
+    // macOS retains the user-selected menu bar position when the process exits.
+    #[cfg(not(target_os = "macos"))]
     if let Some(tray) = app_handle.tray_by_id(tray::TRAY_ID) {
         if let Err(e) = tray.set_visible(false) {
             log::warn!("退出时移除托盘图标失败: {e}");
@@ -1186,7 +1178,10 @@ fn run_codex_history_migrations_on_startup(db: &crate::database::Database) {
             }
         }
         Err(e) => {
-            log::warn!("✗ Codex history provider bucket migration failed: {e}");
+            log::warn!(
+                "✗ Codex history provider bucket migration failed: {}",
+                error_for_log(&e.to_string())
+            );
         }
     }
 
@@ -1202,7 +1197,10 @@ fn run_codex_history_migrations_on_startup(db: &crate::database::Database) {
             }
         }
         Err(e) => {
-            log::warn!("✗ Codex provider template bucket migration failed: {e}");
+            log::warn!(
+                "✗ Codex provider template bucket migration failed: {}",
+                error_for_log(&e.to_string())
+            );
         }
     }
 
@@ -1222,7 +1220,10 @@ fn run_codex_history_migrations_on_startup(db: &crate::database::Database) {
             }
         }
         Err(e) => {
-            log::warn!("✗ Codex legacy official history bucket migration failed: {e}");
+            log::warn!(
+                "✗ Codex legacy official history bucket migration failed: {}",
+                error_for_log(&e.to_string())
+            );
         }
     }
 
@@ -1241,7 +1242,10 @@ fn run_codex_history_migrations_on_startup(db: &crate::database::Database) {
             }
         }
         Err(e) => {
-            log::warn!("✗ Codex official history unify migration failed: {e}");
+            log::warn!(
+                "✗ Codex official history unify migration failed: {}",
+                error_for_log(&e.to_string())
+            );
         }
     }
 }

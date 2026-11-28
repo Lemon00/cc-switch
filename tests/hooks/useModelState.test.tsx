@@ -1,12 +1,12 @@
+import {
+  useModelState,
+  hasClaudeOneMMarker,
+  stripClaudeOneMMarker,
+  setClaudeOneMMarker,
+} from "@/components/providers/forms/hooks/useModelState";
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import {
-  copilotOneMAvailable,
-  hasClaudeOneMMarker,
-  setClaudeOneMMarker,
-  stripClaudeOneMMarker,
-  useModelState,
-} from "@/components/providers/forms/hooks/useModelState";
+
 describe("useModelState", () => {
   it("hydrates role models and display names from Claude Code env", () => {
     const settingsConfig = JSON.stringify({
@@ -130,23 +130,5 @@ describe("useModelState", () => {
     expect(setClaudeOneMMarker("deepseek-v4-pro [1M]", true)).toBe(
       "deepseek-v4-pro[1m]",
     );
-  });
-});
-describe("copilotOneMAvailable", () => {
-  const models = [
-    { id: "claude-fable-5.1" },
-    { id: "claude-opus-5.5" },
-    { id: "claude-opus-5.5-1m" },
-    { id: "gemini-4-carbon", context_window: 1048576 },
-  ];
-  it("allows 1M only when Copilot lists a -1m id or a native 1M context", () => {
-    expect(copilotOneMAvailable("claude-fable-5.1[1M]", models)).toBe(false);
-    expect(copilotOneMAvailable("claude-fable-5-1", models)).toBe(false);
-    expect(copilotOneMAvailable("claude-opus-5-5[1M]", models)).toBe(true);
-    expect(copilotOneMAvailable("gemini-4-carbon", models)).toBe(true);
-  });
-  it("returns undefined before the list is fetched or without a model", () => {
-    expect(copilotOneMAvailable("claude-fable-5.1[1M]", [])).toBeUndefined();
-    expect(copilotOneMAvailable("  ", models)).toBeUndefined();
   });
 });

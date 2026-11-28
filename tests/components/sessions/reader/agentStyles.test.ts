@@ -5,7 +5,7 @@ import {
   getAgentReaderStyle,
   READER_VERB_I18N_PREFIX,
   type ReaderStyleId,
-} from "@/components/sessions/reader/agentStyles";
+} from "@/lib/sessions/agentStyles";
 import { SESSION_APP_IDS } from "@/components/sessions/utils";
 const STYLE_IDS: ReaderStyleId[] = ["claude", "codex", "opencode", "generic"];
 const TOOL_KINDS: ToolKind[] = [

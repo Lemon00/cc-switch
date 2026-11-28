@@ -1,0 +1,25 @@
+{
+  "version": "1.0.1",
+  "items": [
+    {
+      "type": "improve",
+      "zh": "降低 Linux 直接轻量启动内存，加快大量历史记录下的用量同步",
+      "en": "Lower Linux tray-only startup memory and faster usage sync with large checkpoint histories"
+    },
+    {
+      "type": "fix",
+      "zh": "修复路由切换、工具调用转换、会话与用量统计的一致性问题",
+      "en": "Fixed consistency in routing changes, tool-call conversion, sessions and usage statistics"
+    },
+    {
+      "type": "fix",
+      "zh": "加强 Skills 迁移、配置恢复、授权回调与敏感信息保护",
+      "en": "Safer Skills migration, configuration recovery, OAuth callbacks and sensitive-data handling"
+    },
+    {
+      "type": "improve",
+      "zh": "移除 Copilot、xAI 授权入口及无用代码，保持五客户端范围",
+      "en": "Removed Copilot/xAI account management and unused code; retained the five supported clients"
+    }
+  ]
+}

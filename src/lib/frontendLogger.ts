@@ -19,7 +19,7 @@ const NAMED_SECRET_PATTERN =
 // 兜底：命中敏感键名后把紧跟的 `[..]`/`{..}` 整体替换。`\b` 防止匹配到 monkey 之类的后缀，
 // `(?:\\?["'])?` 同时兼容裸引号与转义引号(双重编码 JSON 里的 `\"tokens\"`)。
 const NAMED_SECRET_CONTAINER_PATTERN =
-  /((?:\\?["'])?\b(?:api[_-]?key|access[_-]?key|secret[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?token|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|session[_-]?id|authorization|credential|password|passwd|bearer|cookie|secret|token|auth|pwd|key)s?(?:\\?["'])?\s*[:=]\s*)(\[[^\]]*\]|\{[^{}]*\})/gi;
+  /((?:\\?["'])?\b(?:api[_-]?key|access[_-]?key|secret[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?token|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|session[_-]?id|authorization|credential|password|passwd|bearer|cookie|secret|token|auth|pwd|key)s?(?:\\?["'])?\s*[:=]\s*)([\[{])/gi;
 const SENSITIVE_HEADER_LINE_PATTERN =
   /(^|[\r\n])([ \t]*(?:(?:proxy-)?authorization|cookie|set-cookie|x-api-key|api-key)\s*[:=]\s*)[^\r\n]+/gim;
 const AUTH_SCHEME_PATTERN =
@@ -34,14 +34,53 @@ function truncateForProcessing(input: string, limit: number): string {
   }
   return `${input.slice(0, limit)}\n[input truncated]`;
 }
+// Scan balanced containers so nested credentials and delimiters inside strings
+// cannot leave a readable suffix. Malformed/truncated or encoded containers
+// conservatively consume the remainder instead of guessing where the secret ends.
+function redactSecretContainers(input: string): string {
+  NAMED_SECRET_CONTAINER_PATTERN.lastIndex = 0;
+  let result = "";
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  while ((match = NAMED_SECRET_CONTAINER_PATTERN.exec(input))) {
+    const start = match.index + match[1].length;
+    let end = input.length;
+    if (!match[1].includes("\\")) {
+      const stack: string[] = [];
+      let quote = "";
+      for (let i = start; i < input.length; i++) {
+        const char = input[i];
+        if (quote) {
+          if (char === "\\") i++;
+          else if (char === quote) quote = "";
+          continue;
+        }
+        if (char === '"' || char === "'") quote = char;
+        else if (char === "{" || char === "[") stack.push(char);
+        else if (char === "}" || char === "]") {
+          if (stack.pop() !== (char === "}" ? "{" : "[")) break;
+          if (!stack.length) {
+            end = i + 1;
+            break;
+          }
+        }
+      }
+    }
+    result += input.slice(cursor, start) + "[REDACTED]";
+    cursor = end;
+    NAMED_SECRET_CONTAINER_PATTERN.lastIndex = end;
+  }
+  return result + input.slice(cursor);
+}
 export function redactFrontendLogText(input: string): string {
-  return input
+  return redactSecretContainers(
+    truncateForProcessing(input, MAX_RAW_LOG_INPUT_LENGTH),
+  )
     .replace(QUERY_VALUE_PATTERN, "$1=[REDACTED]")
     .replace(URL_CREDENTIAL_PATTERN, "$1[REDACTED]@")
     .replace(SENSITIVE_HEADER_LINE_PATTERN, "$1$2[REDACTED]")
     .replace(AUTH_SCHEME_PATTERN, "$1 [REDACTED]")
     .replace(SECRET_VALUE_IN_TEXT_PATTERN, "$1[REDACTED]")
-    .replace(NAMED_SECRET_CONTAINER_PATTERN, "$1[REDACTED]")
     .replace(QUOTED_NAMED_SECRET_PATTERN, "$1$2[REDACTED]$2")
     .replace(NAMED_SECRET_PATTERN, "$1[REDACTED]");
 }
@@ -158,7 +197,7 @@ function normalizeForSerialization(
       }
       return items;
     }
-    const output: Record<string, unknown> = {};
+    const output: Record<string, unknown> = Object.create(null);
     const keys = Object.keys(value);
     for (const key of keys.slice(0, MAX_SERIALIZED_ENTRIES)) {
       if (budget.remaining <= 0) {

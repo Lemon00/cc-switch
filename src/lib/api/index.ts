@@ -6,12 +6,7 @@ export type {
   ManagedAuthProvider,
   ManagedAuthStatus,
 } from "./auth";
-export * as copilotApi from "./copilot";
-export type {
-  CopilotAuthStatus,
-  CopilotDeviceCodeResponse,
-  GitHubAccount,
-} from "./copilot";
+
 export { mcpApi } from "./mcp";
 export { profilesApi } from "./profiles";
 export type { Profile, ProfilePayload, ProfilesResponse } from "./profiles";

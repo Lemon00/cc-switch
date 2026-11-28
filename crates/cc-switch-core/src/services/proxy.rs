@@ -196,12 +196,8 @@ impl ProxyService {
         Ok(ProxyTakeoverStatus {
             claude,
             codex,
-            gemini: false,
-            grokbuild: false,
-            claude_desktop: false,
-            // OpenCode and OpenClaw don't support proxy features
+            // OpenCode does not support proxy features
             opencode: false,
-            openclaw: false,
         })
     }
 
@@ -312,11 +308,7 @@ impl ProxyService {
     /// 是否有应用处于代理模式
     pub async fn is_takeover_active(&self) -> Result<bool, String> {
         let status = self.get_takeover_status().await?;
-        Ok(status.claude
-            || status.codex
-            || status.gemini
-            || status.grokbuild
-            || status.claude_desktop)
+        Ok(status.claude || status.codex)
     }
 
     fn is_claude_live_taken_over(config: &Value) -> bool {

@@ -38,9 +38,8 @@ vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
   };
   return {
     ...actual,
-    useCopilotAuth: () => signedOut,
+
     useCodexOauth: () => signedOut,
-    useXaiOauth: () => signedOut,
   };
 });
 const IN_USE =
@@ -204,12 +203,6 @@ describe("完整表单按实际模式提示（Claude Code）", () => {
     expect(document.getElementById("baseUrl")).toBeNull();
     expect(document.getElementById("apiFormat")).toBeNull();
     expect(screen.queryByText("认证字段")).toBeNull();
-  });
-  it("Copilot 卡不显示会被转发跳过的 UA 和请求覆盖", () => {
-    modeState.mode = "route";
-    renderClaude(undefined, "https://api.githubcopilot.com");
-    expandClaudeAdvanced();
-    expect(document.getElementById("claude-custom-user-agent")).toBeNull();
   });
 });
 describe("完整表单按实际模式提示（Codex）", () => {

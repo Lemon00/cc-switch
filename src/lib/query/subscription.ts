@@ -108,9 +108,7 @@ export function useSubscriptionQuota(
   const query = useQuery({
     queryKey: subscriptionKeys.quota(appId),
     queryFn: () => subscriptionApi.getQuota(appId),
-    enabled:
-      enabled &&
-      ["claude", "codex", "gemini", "grokbuild", "agy"].includes(appId),
+    enabled: enabled && ["claude", "codex", "agy"].includes(appId),
     ...autoRefetch(autoQuery, autoQueryIntervalMinutes),
     staleTime:
       autoQueryIntervalMinutes > 0
@@ -170,46 +168,7 @@ export function useCodexOauthQuota(
   const accountId = resolveManagedAccountId(meta, PROVIDER_TYPES.CODEX_OAUTH);
   return useCodexOauthQuotaByAccountId(accountId, options);
 }
-/**
- * xAI OAuth (SuperGrok 反代) 订阅额度查询 hook
- *
- * 与 `useCodexOauthQuota` 平行：数据走 cc-switch 自管的 xAI OAuth token，
- * 而不是 Grok CLI 的 ~/.grok/auth.json；后端复用同一个 grok.com 账单端点，
- * 因此与 Grok Build 分区的官方订阅显示同一份额度。
- */
-export function useXaiOauthQuota(
-  meta: ProviderMeta | undefined,
-  options: UseCodexOauthQuotaOptions = {},
-) {
-  const accountId = resolveManagedAccountId(meta, PROVIDER_TYPES.XAI_OAUTH);
-  return useXaiOauthQuotaByAccountId(accountId, options);
-}
-/**
- * xAI OAuth 订阅额度（按账号 ID）：授权中心逐个账号显示额度时用。
- * Query key 与 `useXaiOauthQuota` 一致，绑定同一账号的供应商卡片共用缓存。
- */
-export function useXaiOauthQuotaByAccountId(
-  accountId: string | null,
-  options: UseCodexOauthQuotaOptions = {},
-) {
-  const {
-    enabled = true,
-    autoQuery = false,
-    autoQueryIntervalMinutes = 5,
-  } = options;
-  const query = useQuery({
-    queryKey: ["xai_oauth", "quota", accountId ?? "default"],
-    queryFn: () => subscriptionApi.getXaiOauthQuota(accountId),
-    enabled,
-    ...autoRefetch(autoQuery, autoQueryIntervalMinutes),
-    staleTime:
-      autoQueryIntervalMinutes > 0
-        ? Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000
-        : REFETCH_INTERVAL,
-    retry: 1,
-  });
-  return useQuotaKeepLastGood(query, accountId ?? "default");
-}
+
 /**
  * Antigravity 账号的剩余额度（按账号 ID，用该账号自己的令牌直接查，不用先切号）。
  * 授权中心逐个账号、以及绑了这个账号的官方卡共用同一份缓存。

@@ -9,13 +9,13 @@
 //! ```
 
 use crate::config::get_claude_config_dir;
+use crate::database::usage::{
+    effective_usage_log_filter, find_model_pricing, has_matching_proxy_usage_log, DedupKey,
+};
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::ModelPricing;
 use crate::proxy::usage::parser::{claude_cache_creation_1h_tokens, TokenUsage};
-use crate::services::usage_stats::{
-    effective_usage_log_filter, find_model_pricing, has_matching_proxy_usage_log, DedupKey,
-};
 use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -56,7 +56,7 @@ pub fn last_sync_completed_at() -> Option<i64> {
 
 /// session_log_sync 表一行的内存快照。
 ///
-/// 各解析器在一轮扫描开头用 [`load_sync_cursors`] 一次性预取全表，替代
+/// 各解析器在一轮扫描开头用 [`load_sync_cursors`] 批量读取本轮文件的游标，替代
 /// 逐文件的单行查询（文件数随历史只增不减，逐文件查询意味着每轮上千次
 /// 取锁）。`last_synced_at` 对 Pi 路径是编码后的 revision，其余路径是
 /// 真实同步时间戳。
@@ -73,36 +73,55 @@ pub struct SyncCursor {
     pub last_synced_at: i64,
 }
 
-/// 一次性预取 session_log_sync 全表游标。
-///
-/// 失败必须中止本轮同步，不能回退空表当新库处理：`rollup_and_prune` 会把
-/// 30 天前的明细汇总后删除，request_id 去重只查明细表，对已剪条目失明——
-/// 空表回退意味着全量重导，被剪的旧条目会在下次 rollup 时再次累加进汇总，
-/// 永久放大统计。
-pub fn load_sync_cursors(db: &Database) -> Result<HashMap<String, SyncCursor>, AppError> {
+/// 按本轮文件的精确键批量读取游标，避免载入其他客户端和已移走文件的历史状态。
+/// 参数化 IN 查询使用主键索引；分批限制绑定参数数量，整个读取期间持有连接锁。
+/// 读取失败必须终止本轮同步，不能当作新文件重导，防止已归档用量重复计费。
+pub fn load_sync_cursors(
+    db: &Database,
+    keys: impl IntoIterator<Item = String>,
+) -> Result<HashMap<String, SyncCursor>, AppError> {
+    let mut keys = keys.into_iter().peekable();
+    let mut cursors = HashMap::new();
+    if keys.peek().is_none() {
+        return Ok(cursors);
+    }
     let conn = lock_conn!(db.conn);
-    let mut stmt = conn
-        .prepare(
+    loop {
+        let batch: Vec<_> = keys.by_ref().take(512).collect();
+        if batch.is_empty() {
+            break;
+        }
+        let placeholders = vec!["?"; batch.len()].join(",");
+        let sql = format!(
             "SELECT file_path, last_modified, last_line_offset, last_synced_at, last_byte_offset,
                     last_tail_fingerprint, parser_state
-             FROM session_log_sync",
-        )
-        .map_err(|e| AppError::Database(format!("预取同步游标失败: {e}")))?;
-    let rows = stmt.query_map([], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            SyncCursor {
-                last_modified: row.get(1)?,
-                last_line_offset: row.get(2)?,
-                last_synced_at: row.get(3)?,
-                last_byte_offset: row.get(4)?,
-                last_tail_fingerprint: row.get(5)?,
-                parser_state: row.get(6)?,
-            },
-        ))
-    });
-    rows.and_then(|rows| rows.collect::<Result<HashMap<_, _>, _>>())
-        .map_err(|e| AppError::Database(format!("预取同步游标失败: {e}")))
+             FROM session_log_sync WHERE file_path IN ({placeholders})"
+        );
+        let mut stmt = conn
+            .prepare_cached(&sql)
+            .map_err(|e| AppError::Database(format!("预取同步游标失败: {e}")))?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(&batch), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    SyncCursor {
+                        last_modified: row.get(1)?,
+                        last_line_offset: row.get(2)?,
+                        last_synced_at: row.get(3)?,
+                        last_byte_offset: row.get(4)?,
+                        last_tail_fingerprint: row.get(5)?,
+                        parser_state: row.get(6)?,
+                    },
+                ))
+            })
+            .map_err(|e| AppError::Database(format!("预取同步游标失败: {e}")))?;
+        for row in rows {
+            let (key, cursor) =
+                row.map_err(|e| AppError::Database(format!("预取同步游标失败: {e}")))?;
+            cursors.insert(key, cursor);
+        }
+    }
+    Ok(cursors)
 }
 
 fn merge_sync_step(
@@ -196,6 +215,26 @@ struct ChainNode {
 
 type ChainNodes = HashMap<uuid::Uuid, ChainNode>;
 
+/// 新版 Claude Code 每发一次 API 请求就写一行 `api-request`（不在对话链上），
+/// 回复的块用 `requestRef` 指向它。这里按 id 记下发出的时刻。
+type ApiRequests = HashMap<String, i64>;
+
+fn record_api_request(api_requests: &mut ApiRequests, value: &serde_json::Value) {
+    if value.get("type").and_then(|t| t.as_str()) != Some("api-request") {
+        return;
+    }
+    let Some(id) = value.get("id").and_then(|v| v.as_str()) else {
+        return;
+    };
+    if let Some(sent_ms) = value
+        .get("timestamp")
+        .and_then(|v| v.as_str())
+        .and_then(parse_timestamp_millis)
+    {
+        api_requests.insert(id.to_string(), sent_ms);
+    }
+}
+
 fn parse_line_uuid(value: &serde_json::Value, key: &str) -> Option<uuid::Uuid> {
     value
         .get(key)
@@ -226,13 +265,14 @@ fn record_chain_node(chain: &mut ChainNodes, value: &serde_json::Value) {
 /// 请求就不估耗时。
 const CHAIN_SEED_BYTES: i64 = 256 * 1024;
 
-/// 把游标前一小段里的行记进对话链和回复计时（只取这两样，不导入）。回复的
-/// 前几块可能已经被上一轮读走，这一轮要靠它们才知道回复从哪一块开始。返回后
+/// 把游标前一小段里的行记进对话链、请求发出记录和回复计时（只取这些，不导入）。
+/// 回复的前几块可能已经被上一轮读走，这一轮要靠它们才知道回复从哪一块开始。返回后
 /// 文件位置停在 `offset`。回看读不出来不算错，只是少估几条耗时。
 fn read_chain_seed(
     file: &mut fs::File,
     offset: i64,
     chain: &mut ChainNodes,
+    api_requests: &mut ApiRequests,
     timings: &mut HashMap<String, MessageTiming>,
 ) -> Result<(), AppError> {
     let len = offset.clamp(0, CHAIN_SEED_BYTES);
@@ -258,6 +298,7 @@ fn read_chain_seed(
     for line in lines {
         if let Ok(value) = serde_json::from_slice::<serde_json::Value>(line) {
             record_chain_node(chain, &value);
+            record_api_request(api_requests, &value);
             if let Some(msg_id) = assistant_message_id(&value) {
                 record_block_timing(timings, &value, msg_id);
             }
@@ -278,6 +319,9 @@ fn assistant_message_id(value: &serde_json::Value) -> Option<&str> {
 struct MessageTiming {
     /// 文件里最先出现的那一块的父行，请求起点沿它往上找。
     first_parent: Option<uuid::Uuid>,
+    /// 最先出现的那一块的 `requestRef`：产出这条回复的那次 API 请求（`api-request` 行的 id）。
+    /// 旧版日志没有。
+    request_ref: Option<String>,
     /// 最先出现的那一块是不是这条回复的第一块。不是的话（前面的块在回看窗口
     /// 之外）起点会取晚、速度偏高，宁可不估。旧版日志没有 `apiBlockIndex`，按是处理。
     starts_at_first_block: bool,
@@ -305,6 +349,10 @@ fn record_block_timing(
             .is_none_or(|index| index.as_u64() == Some(0));
         MessageTiming {
             first_parent: parse_line_uuid(value, "parentUuid"),
+            request_ref: value
+                .get("requestRef")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
             starts_at_first_block,
             first_output_ms: starts_at_first_block
                 .then(|| thinking_block_start_ms(value, block_end_ms?))
@@ -333,9 +381,29 @@ fn thinking_block_start_ms(value: &serde_json::Value, block_end_ms: i64) -> Opti
 /// 沿父链往上最多走这么多行。
 const MAX_CHAIN_HOPS: usize = 32;
 
-/// 请求起点：从回复第一块的父行往上，跳过 `attachment`，第一个别的行（用户
+/// 请求起点。对话链上的起点是请求该发出的时刻；第一次请求挂住、Claude Code
+/// 原样重发时，链上起点还停在第一次之前，挂住的时间（常见十几分钟）会全算进
+/// 这条回复的耗时和首字，估算速度被拉低一截。所以回复指向的那行 `api-request`
+/// 对得上、又比链上起点晚时，改从它发出的时刻算。
+fn resolve_request_start_ms(
+    chain: &ChainNodes,
+    api_requests: &ApiRequests,
+    timing: &MessageTiming,
+) -> Option<i64> {
+    let chain_start = resolve_chain_start_ms(chain, timing.first_parent);
+    let sent_ms = timing
+        .request_ref
+        .as_deref()
+        .and_then(|id| api_requests.get(id).copied());
+    match (chain_start, sent_ms) {
+        (Some(chain_start), Some(sent_ms)) => Some(chain_start.max(sent_ms)),
+        (chain_start, sent_ms) => chain_start.or(sent_ms),
+    }
+}
+
+/// 对话链上的起点：从回复第一块的父行往上，跳过 `attachment`，第一个别的行（用户
 /// 消息、工具结果、出错重试的 system 行）的时间戳。
-fn resolve_request_start_ms(chain: &ChainNodes, first_parent: Option<uuid::Uuid>) -> Option<i64> {
+fn resolve_chain_start_ms(chain: &ChainNodes, first_parent: Option<uuid::Uuid>) -> Option<i64> {
     let mut cursor = first_parent?;
     for _ in 0..MAX_CHAIN_HOPS {
         let node = chain.get(&cursor)?;
@@ -372,7 +440,12 @@ pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppE
 
     // 收集所有 .jsonl 文件
     let jsonl_files = collect_jsonl_files(&projects_dir);
-    let cursors = load_sync_cursors(db)?;
+    let cursors = load_sync_cursors(
+        db,
+        jsonl_files
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned()),
+    )?;
 
     for file_path in &jsonl_files {
         result.files_scanned += 1;
@@ -597,6 +670,7 @@ fn sync_single_file(
     // （升级存量行转换后的首轮之前）时无从校验，按纯追加处理——这是旧
     // 行号游标本就存在的暴露面，首轮写入后即有指纹。
     let mut chain = ChainNodes::new();
+    let mut api_requests = ApiRequests::new();
     let mut timings: HashMap<String, MessageTiming> = HashMap::new();
     let (start_byte, legacy_lines, mut tail_buf) = match last_byte_offset {
         Some(offset) => {
@@ -633,7 +707,13 @@ fn sync_single_file(
                     ..Default::default()
                 });
             }
-            read_chain_seed(&mut file, offset, &mut chain, &mut timings)?;
+            read_chain_seed(
+                &mut file,
+                offset,
+                &mut chain,
+                &mut api_requests,
+                &mut timings,
+            )?;
             (offset, 0, seed.unwrap_or_default())
         }
         // 旧行号游标：从头按行转换（下方转换段），tail 缓冲从空积累
@@ -711,8 +791,9 @@ fn sync_single_file(
             }
         }
 
-        // 每一行都记进对话链，估算请求耗时时沿它找起点
+        // 每一行都记进对话链，估算请求耗时时沿它找起点；请求发出记录另记一份
         record_chain_node(&mut chain, &value);
+        record_api_request(&mut api_requests, &value);
 
         // 只处理 assistant 类型的消息
         if value.get("type").and_then(|t| t.as_str()) != Some("assistant") {
@@ -843,7 +924,7 @@ fn sync_single_file(
             .get(&msg.message_id)
             .filter(|timing| msg.stop_reason.is_some() && timing.starts_at_first_block)
             .and_then(|timing| {
-                let start_ms = resolve_request_start_ms(&chain, timing.first_parent)?;
+                let start_ms = resolve_request_start_ms(&chain, &api_requests, timing)?;
                 let latency_ms = estimated_latency_ms(start_ms, timing.end_ms?)?;
                 let first_token_ms = timing.first_output_ms.and_then(|first_output_ms| {
                     estimated_first_token_ms(start_ms, first_output_ms, latency_ms)
@@ -1491,6 +1572,52 @@ mod tests {
     }
 
     #[test]
+    fn cursor_batches_preserve_exact_keys_and_report_selected_row_errors() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let mut keys: Vec<_> = (0..1100).map(|i| format!("/会话/{i}.jsonl")).collect();
+        keys.push("/literal/'?_%[x]\\session.jsonl".into());
+        {
+            let conn = lock_conn!(db.conn);
+            let tx = conn.unchecked_transaction()?;
+            for key in &keys {
+                tx.execute(
+                    "INSERT INTO session_log_sync (file_path,last_modified,last_line_offset,last_synced_at,last_byte_offset,last_tail_fingerprint,parser_state)
+                     VALUES (?1,11,12,13,14,15,'{\"pending\":true}')",
+                    [key],
+                )?;
+            }
+            tx.execute(
+                "INSERT INTO session_log_sync (file_path,last_modified,last_line_offset,last_synced_at)
+                 VALUES ('other-client','invalid',0,0)",
+                [],
+            )?;
+            tx.commit()?;
+        }
+        let cursors = load_sync_cursors(&db, keys.clone())?;
+        assert_eq!(cursors.len(), keys.len());
+        for key in &keys {
+            let cursor = &cursors[key];
+            assert_eq!(
+                (
+                    cursor.last_modified,
+                    cursor.last_line_offset,
+                    cursor.last_synced_at
+                ),
+                (11, 12, 13)
+            );
+            assert_eq!(cursor.last_byte_offset, Some(14));
+            assert_eq!(cursor.last_tail_fingerprint, Some(15));
+            assert_eq!(cursor.parser_state.as_deref(), Some("{\"pending\":true}"));
+        }
+        assert!(load_sync_cursors(&db, ["missing".into()])?.is_empty());
+        assert!(load_sync_cursors(&db, ["other-client".into()]).is_err());
+        lock_conn!(db.conn).execute("DROP TABLE session_log_sync", [])?;
+        assert!(load_sync_cursors(&db, Vec::<String>::new())?.is_empty());
+        assert!(load_sync_cursors(&db, keys).is_err());
+        Ok(())
+    }
+
+    #[test]
     fn sync_result_notification_is_coalesced_to_one_call() {
         crate::usage_events::take_test_notify_count();
         notify_sync_result(&SessionSyncResult::default());
@@ -1731,14 +1858,14 @@ mod tests {
     }
 
     fn byte_cursor(db: &Database, path: &Path) -> Option<i64> {
-        load_sync_cursors(db)
+        load_sync_cursors(db, [path.to_string_lossy().into_owned()])
             .unwrap()
             .get(path.to_string_lossy().as_ref())
             .and_then(|c| c.last_byte_offset)
     }
 
     fn sync_with_cursor(db: &Database, path: &Path) -> Result<ClaudeFileSync, AppError> {
-        let cursors = load_sync_cursors(db)?;
+        let cursors = load_sync_cursors(db, [path.to_string_lossy().into_owned()])?;
         let cursor = cursors.get(path.to_string_lossy().as_ref()).cloned();
         sync_single_file(db, path, cursor.as_ref())
     }
@@ -2202,6 +2329,18 @@ mod tests {
         )
     }
 
+    /// 新版 Claude Code 每发一次 API 请求写的一行（不在对话链上）
+    fn api_request_line(id: &str, timestamp: &str) -> String {
+        format!(
+            r#"{{"type":"api-request","sessionId":"session-t","id":"{id}","timestamp":"{timestamp}","querySource":"sdk","requestDigest":"digest-same"}}"#
+        )
+    }
+
+    /// 给回复块加上指向那次 API 请求的 `requestRef`
+    fn with_request_ref(block: String, request_id: &str) -> String {
+        block.replacen('{', &format!(r#"{{"requestRef":"{request_id}","#), 1)
+    }
+
     fn first_token_of(db: &Database, msg_id: &str) -> Option<i64> {
         let conn = db.conn.lock().unwrap();
         conn.query_row(
@@ -2371,6 +2510,84 @@ mod tests {
         let second = sync_with_cursor(&db, &file)?;
         assert_eq!(second.imported, 1);
         assert_eq!(latency_of(&db, "msg_t"), 9_000);
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_latency_starts_at_the_request_that_produced_the_reply() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let (tmp, file) = temp_session_file();
+        let lines = [
+            // 第一次请求挂住 15 分钟后原样重发，重发的那次 5 秒出结果：
+            // 耗时和首字只算重发那次
+            chain_line("user", 1, None, "2026-06-07T13:00:00.000Z"),
+            api_request_line("req-1", "2026-06-07T13:00:00.010Z"),
+            api_request_line("req-2", "2026-06-07T13:15:00.000Z"),
+            with_request_ref(
+                thinking_block("msg_retry", 2, 1, "2026-06-07T13:15:04.000Z", 3_000, false),
+                "req-2",
+            ),
+            with_request_ref(
+                assistant_block("msg_retry", 3, 2, 1, "2026-06-07T13:15:05.000Z"),
+                "req-2",
+            ),
+            // 没重发：起点仍是链上的工具结果（请求比它晚几毫秒发出）
+            chain_line("user", 4, Some(3), "2026-06-07T13:16:00.000Z"),
+            api_request_line("req-3", "2026-06-07T13:16:00.020Z"),
+            with_request_ref(
+                assistant_block("msg_plain", 5, 4, 0, "2026-06-07T13:16:04.000Z"),
+                "req-3",
+            ),
+            // requestRef 对不上，或指向比链上起点还早的请求：按链上起点算
+            chain_line("user", 6, Some(5), "2026-06-07T13:17:00.000Z"),
+            with_request_ref(
+                assistant_block("msg_unknown_ref", 7, 6, 0, "2026-06-07T13:17:03.000Z"),
+                "req-missing",
+            ),
+            chain_line("user", 8, Some(7), "2026-06-07T13:18:00.000Z"),
+            with_request_ref(
+                assistant_block("msg_stale_ref", 9, 8, 0, "2026-06-07T13:18:06.000Z"),
+                "req-1",
+            ),
+        ];
+        fs::write(&file, lines.join("\n") + "\n").unwrap();
+
+        sync_single_file(&db, &file, None)?;
+        assert_eq!(latency_of(&db, "msg_retry"), 5_000);
+        assert_eq!(first_token_of(&db, "msg_retry"), Some(1_000));
+        assert_eq!(latency_of(&db, "msg_plain"), 3_980);
+        assert_eq!(latency_of(&db, "msg_unknown_ref"), 3_000);
+        assert_eq!(latency_of(&db, "msg_stale_ref"), 6_000);
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_resent_request_is_found_before_the_cursor() -> Result<(), AppError> {
+        // 重发记录被上一轮同步读走，回复结束时才整条写出
+        let db = Database::memory()?;
+        let (tmp, file) = temp_session_file();
+        let before = [
+            chain_line("user", 1, None, "2026-06-07T13:00:00.000Z"),
+            api_request_line("req-1", "2026-06-07T13:00:00.010Z"),
+            api_request_line("req-2", "2026-06-07T13:10:00.000Z"),
+        ];
+        fs::write(&file, before.join("\n") + "\n").unwrap();
+        sync_with_cursor(&db, &file)?;
+
+        append_lines(
+            &file,
+            &[with_request_ref(
+                assistant_block("msg_t", 2, 1, 0, "2026-06-07T13:10:07.000Z"),
+                "req-2",
+            )],
+        );
+        let second = sync_with_cursor(&db, &file)?;
+        assert_eq!(second.imported, 1);
+        assert_eq!(latency_of(&db, "msg_t"), 7_000);
 
         fs::remove_dir_all(&tmp).ok();
         Ok(())

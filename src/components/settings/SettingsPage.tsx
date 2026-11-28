@@ -16,6 +16,7 @@ import {
 import { WebdavSyncSection } from "@/components/settings/WebdavSyncSection";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
 import { Button } from "@/components/ui/button";
+import { DIRECTORY_APPS, sanitizeDir } from "@/config/directoryApps";
 import {
   Dialog,
   DialogContent,
@@ -30,6 +31,7 @@ import { settingsApi, type AppId } from "@/lib/api";
 import type { SettingsSection } from "@/lib/navigation";
 import { useSettingsQuery } from "@/lib/query";
 import { toast } from "@/lib/toast";
+import { useUnsavedChangesState } from "@/lib/unsavedChanges";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import {
   Database,
@@ -339,8 +341,20 @@ export function SettingsPage({
   const isBusy = useMemo(() => isLoading && !settings, [isLoading, settings]);
   const SectionIcon = SECTION_ICON[section];
   const appConfigDirty =
-    (appConfigDir?.trim() || undefined) !==
-    (initialAppConfigDir?.trim() || undefined);
+    sanitizeDir(appConfigDir) !== sanitizeDir(initialAppConfigDir);
+  // Directory edits require an explicit save. Register them at page scope so
+  // changing settings sections retains the draft and leaving the page asks first.
+  useUnsavedChangesState(
+    !isLoading &&
+      (appConfigDirty ||
+        (!!settings &&
+          !!savedSettings &&
+          DIRECTORY_APPS.some(
+            ({ field }) =>
+              sanitizeDir(settings[field]) !==
+              sanitizeDir(savedSettings[field]),
+          ))),
+  );
   const renderSection = () => {
     if (!settings) return null;
     switch (section) {

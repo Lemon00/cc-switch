@@ -1,7 +1,7 @@
 {
   "app": {
     "title": "CC Switch",
-    "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
+    "description": "All-in-One Assistant for Claude Code, Codex, OpenCode, DeepSeek Harness & Antigravity"
   },
   "common": {
     "unsavedLeaveTitle": "Unsaved changes",
@@ -54,7 +54,7 @@
   },
   "firstRunNotice": {
     "title": "Welcome to CC Switch",
-    "bodyDefault": "CC Switch lets you switch between multiple Claude Code / Codex / Gemini CLI providers with a single click. If you already had these tools configured, CC Switch has saved your existing setup as a provider named “default” so none of your previous configuration is lost.",
+    "bodyDefault": "CC Switch lets you switch between multiple Claude Code / Codex / OpenCode / DeepSeek Harness / Antigravity providers with a single click. If you already had these tools configured, CC Switch has saved your existing setup as a provider named “default” so none of your previous configuration is lost.",
     "bodyOfficial": "An “Official” preset is also included in the list — click it any time you want to switch back to the official default. CC Switch automatically backs up your current config to “default” before switching, so you can move back and forth freely. That's how CC Switch works 😊",
     "confirm": "Got it"
   },
@@ -179,8 +179,6 @@
     "duplicate": "Duplicate",
     "sortUpdateFailed": "Failed to update sort order",
     "configureUsage": "Configure usage query",
-    "managedByHermes": "Hermes Managed",
-    "managedByHermesHint": "Defined in Hermes' providers: dict. Edit or remove it via Hermes Web UI.",
     "openTerminal": "Open Terminal with This Provider",
     "openTerminalIsolated": "Open Terminal with This Provider (Isolated)",
     "openTerminalNeedsRoute": "This card only works through Routing: a terminal would connect straight to its address, without the credentials and format conversion Routing provides. Turn on Routing, then run the client in a terminal directly",
@@ -297,59 +295,12 @@
     "boundAccountUnavailable": "The linked account is unavailable",
     "accountLoading": "Loading account…"
   },
-  "claudeDesktop": {
-    "modelConfigTitle": "Model Configuration",
-    "modelModeLabel": "Connection Mode",
-    "modelModeDirect": "Direct",
-    "modelModeProxy": "Model Mapping",
-    "officialNotice": "Claude Desktop official providers use the built-in 1P sign-in. No API key or endpoint URL is required.",
-    "mode": "Model handling",
-    "modeDirect": "Direct",
-    "modeProxy": "Requires routing",
-    "modelMappingToggle": "Needs model mapping",
-    "modelModeHint": "If your provider offers native Claude models, you can use Direct. For third-party models such as DeepSeek or Kimi, use Model Mapping.",
-    "routeMapTitle": "Model mapping",
-    "routeMapHint": "Fill in the actual request model for each of the Sonnet, Opus, and Haiku tiers. Use the menu display name for branded models such as DeepSeek or Kimi. Any tier left blank inherits the Sonnet tier's model (or the first tier you filled in), so the Haiku that sub-agents call is always available.",
-    "routeModelLabel": "Model role",
-    "routeRoleSonnet": "Sonnet",
-    "routeRoleOpus": "Opus",
-    "routeRoleFable": "Fable",
-    "routeRoleHaiku": "Haiku",
-    "labelOverrideLabel": "Menu display name",
-    "upstreamModelLabel": "Requested model",
-    "supports1mLabel": "Declare 1M",
-    "supports1mShort": "1M",
-    "directModelListTitle": "Model List",
-    "directModelListCollapsedHint": "Native Claude model providers usually do not need this. Claude Desktop will fetch /v1/models automatically.",
-    "directModelListHint": "Configure the Sonnet, Opus, and Haiku models available to Claude Desktop. In direct mode, leave this empty to let Claude Desktop fetch /v1/models automatically; in route mode, an empty list only offers the default Claude model names, so fill it in to use the provider's models. Checking 1M declares 1M context support.",
-    "directModelInvalid": "Direct models must use Claude Desktop-recognized Sonnet / Opus / Haiku model IDs",
-    "addModel": "Add model",
-    "addRoute": "Add model",
-    "routeInvalid": "Choose a model role and enter the requested model",
-    "routesRequired": "At least one model mapping is required",
-    "statusTitle": "Claude Desktop configuration needs attention",
-    "statusUnsupported": "This platform does not support writing Claude Desktop 3P configuration yet.",
-    "statusStaleRawModels": "The Claude Desktop profile contains model IDs outside the Sonnet / Opus / Haiku role families. Newer Claude Desktop versions may reject it; switch to the current provider again to repair it.",
-    "statusMissingRouteMappings": "The routed provider has no valid model mapping. Edit it and add at least one mapping.",
-    "statusGatewayTokenMissing": "The local routing token has not been generated yet. Switching to this provider again will write a new local token.",
-    "statusBaseUrlMismatch": "The Claude Desktop profile points to a different URL than the current provider. Current: {{actual}}; expected: {{expected}}. Switch to the current provider again to repair it.",
-    "route": {
-      "tooltip": {
-        "active": "Claude Desktop local routing is running - {{address}}:{{port}}",
-        "inactive": "Turn on Claude Desktop local routing for providers that need model mapping or format conversion. Configured address: {{address}}:{{port}}"
-      },
-      "stopBlockedByTakeover": "Other apps are still in Routing mode. Switch them back to Direct before stopping the routing service."
-    }
-  },
   "notifications": {
     "providerAdded": "Provider added",
     "providerSaved": "Provider configuration saved",
     "providerDeleted": "Provider deleted successfully",
     "switchSuccess": "Switch successful!",
     "codexRestartRequired": "Switched successfully. Restart the client to apply changes.",
-    "geminiRestartRequired": "Switched successfully. Restart Gemini CLI to apply changes.",
-    "grokBuildRestartRequired": "Switched successfully. Restart Grok Build to apply changes.",
-    "claudeDesktopRestartRequired": "Switched successfully. Restart Claude Desktop to apply changes.",
     "addToConfigSuccess": "Added to config",
     "removeFromConfigSuccess": "Removed from config",
     "removeFromConfigFailed": "Could not remove provider",
@@ -373,7 +324,6 @@
     "settingsSaved": "Settings saved",
     "settingsSaveFailed": "Failed to save settings: {{error}}",
     "proxyRequiredForSwitch": "This provider {{reason}}, requires the routing service to work properly. Start routing first.",
-    "proxyReasonCopilot": "uses GitHub Copilot as a Claude provider",
     "proxyReasonOpenAIChat": "uses OpenAI Chat API format",
     "proxyReasonOpenAIResponses": "uses OpenAI Responses API format",
     "proxyReasonAnthropicMessages": "uses Anthropic Messages API format",
@@ -382,19 +332,17 @@
     "proxyReasonManagedOAuth": "uses managed OAuth login (token injected by local routing)",
     "proxyReasonRoutingRequired": "requires local routing to process requests",
     "openAIFormatHint": "This provider uses OpenAI-compatible format and requires the routing service to be enabled",
-    "copilotProxyHint": "GitHub Copilot as a Claude provider always requires local routing; routing automatically selects Chat Completions or Responses based on the current model.",
     "openLinkFailed": "Failed to open link",
-    "openclawModelsRegistered": "Models have been registered to /model list",
-    "openclawDefaultModelSet": "Set as default model",
-    "openclawDefaultModelSetFailed": "Failed to set default model",
-    "openclawNoModels": "No models configured",
-    "openclawModelNotFound": "The selected model no longer exists. Refresh and try again.",
     "backfillWarning": "Switched successfully, but failed to save changes back to the previous provider",
     "codexAuthCleanupFailed": "Switched successfully, but auth.json could not be removed — the official login credentials are still on disk; delete auth.json from the Codex config directory to remove them",
     "omoVariantCleanupFailed": "Switched successfully, but the other OMO variant's config file (OMO / OMO Slim) could not be removed, so OpenCode may load both; delete it from the OpenCode config directory",
     "windowControlFailed": "Window control failed: {{error}}",
     "officialBlockedByProxy": "Cannot switch to official provider while local routing is active. Using routing with official APIs may cause account bans.",
-    "proxyOfficialWarning": "Current provider {{name}} is official. Consider switching to a third-party provider before using local routing."
+    "proxyOfficialWarning": "Current provider {{name}} is official. Consider switching to a third-party provider before using local routing.",
+    "opencodeNoModels": "This provider has no configured models",
+    "opencodeModelNotFound": "The selected model is no longer available. Refresh and try again.",
+    "opencodeDefaultModelSet": "Default model set",
+    "opencodeDefaultModelSetFailed": "Failed to set the default model"
   },
   "confirm": {
     "deleteProvider": "Delete Provider",
@@ -462,11 +410,9 @@
     "tabAdvanced": "Advanced",
     "tabProxy": "Routing",
     "authCenter": {
-      "description": "Use GitHub Copilot, ChatGPT and xAI subscriptions as providers. The routing service injects their credentials, so these providers run in Routing mode (except Codex's official-login binding). Antigravity accounts switch agy's official sign-in.",
+      "description": "Manage Claude Code, ChatGPT, DeepSeek Harness and Antigravity accounts. ChatGPT subscriptions can power routed providers; Codex official bindings and Antigravity use the corresponding client sign-in.",
       "beta": "Beta",
-      "copilotDescription": "Manage GitHub Copilot accounts",
-      "codexOauthDescription": "Manage ChatGPT accounts",
-      "xaiOauthDescription": "Manage xAI / Grok accounts"
+      "codexOauthDescription": "Manage ChatGPT accounts"
     },
     "advanced": {
       "configDir": {
@@ -653,14 +599,6 @@
         "liveFirstWrite": {
           "name": "Config first-write backups",
           "hint": "Original client config files from before CC Switch first rewrote them. After deleting, those originals are gone; the next write backs up the file as it is then."
-        },
-        "hermes": {
-          "name": "Hermes config backups",
-          "hint": "Copies kept before saving Hermes config, pruned by Backup Retention."
-        },
-        "openclaw": {
-          "name": "OpenClaw config backups",
-          "hint": "Copies kept before saving OpenClaw config, pruned by Backup Retention."
         },
         "proxyLiveBackup": {
           "name": "Legacy routing takeover backups",
@@ -928,7 +866,6 @@
       "description": "Choose which apps to show on the homepage",
       "claudeDesc": "Anthropic Claude Code CLI",
       "codexDesc": "OpenAI Codex CLI",
-      "geminiDesc": "Google Gemini CLI",
       "opencodeDesc": "OpenCode CLI",
       "showProfileSwitcher": "Show project switcher",
       "showProfileSwitcherDescription": "Show the project switcher in the main page header",
@@ -973,18 +910,12 @@
     "claudeConfigDirDescription": "Override Claude configuration directory (settings.json). Custom directories store .claude.json (MCP) inside the directory; the default ~/.claude directory keeps Claude Code's split ~/.claude.json path.",
     "codexConfigDirDescription": "Override Codex configuration directory.",
     "geminiConfigDirDescription": "Override Gemini configuration directory (.env).",
-    "grokConfigDirDescription": "Override Grok Build configuration directory (config.toml).",
     "opencodeConfigDirDescription": "Override OpenCode configuration directory (opencode.json / opencode.jsonc).",
-    "openclawConfigDirDescription": "Override OpenClaw configuration directory (openclaw.json).",
-    "hermesConfigDirDescription": "Override Hermes configuration directory (config.yaml).",
     "piConfigDirDescription": "Override the Pi configuration directory (models.json, instruction files, prompts, skills, and sessions).",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
-    "browsePlaceholderGrok": "e.g., /home/<your-username>/.grok",
     "browsePlaceholderOpencode": "e.g., /home/<your-username>/.config/opencode",
-    "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
-    "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
     "browsePlaceholderPi": "e.g., /home/<your-username>/.pi/agent",
     "browsePlaceholderOmp": "e.g., /home/<your-username>/.omp/agent",
     "browseDirectory": "Browse Directory",
@@ -1013,15 +944,13 @@
     "manualUninstallCommands": "Manual uninstall commands",
     "manualUninstallHint": "Each app’s environment is detected automatically by default, and you can select a different environment manually. Select the original installation method, then copy the command for the app you want to remove and run it in a terminal. Click “Check for updates” afterwards to refresh its status.",
     "manualUninstallMethod": "Installation method",
-    "manualUninstallBunLauncherHint": "Bun can leave an OpenClaw launcher behind. Inspect its “OpenClaw Bun launcher” header and package path before removing that file; keep the shared bin directory.",
-    "manualUninstallOpenClawHint": "First run openclaw uninstall --service --yes --non-interactive successfully to remove the Gateway service while keeping configuration and workspaces. Then remove the CLI with the command below.",
     "manualUninstallEnvironment": "Environment",
     "manualUninstallEnvironmentHint": "Use the same Node environment and package manager as the original installation. Only add --prefix for a verified global npm prefix. Run commands for WSL apps inside the corresponding distribution.",
     "manualUninstallOtherMethods": "Only methods verified against official installation instructions are listed. Commands retain configuration and session data. For script-managed installations, downloads or other methods, use the original installer’s instructions; do not substitute a global npm command. For Pi installed by script, rerun its installer and select “Uninstall Pi”.",
     "copyToolUninstallCommand": "Copy the uninstall command for {{tool}}",
     "uninstallCommandCopied": "Uninstall command copied",
     "uninstallCommandCopyFailed": "Copy failed. Please select and copy the command manually.",
-    "oneClickInstallHint": "Install or upgrade Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code / Oh My Pi",
+    "oneClickInstallHint": "Install or upgrade Claude Code / Codex / OpenCode / DeepSeek Harness / Antigravity",
     "localEnvCheck": "Local environment check",
     "updateAllTools": "Update All ({{count}})",
     "currentVersion": "Current Version",
@@ -1035,10 +964,8 @@
     "toolUninstallManualRequired": "Cannot uninstall automatically. Please uninstall this app manually.",
     "toolUninstallChooseInstall": "Installation to remove",
     "toolUninstallNativeHint": "Only the files listed in the command above are removed, never directories. Configuration and session data are kept.",
-    "toolUninstallReinstalledByUpdater": "{{tool}}'s updater installed this copy alongside the other one. If you remove only this copy, the next update will install it again.",
     "toolUninstallFailed": "Uninstall failed",
     "toolUninstallWarningTitle": "Uninstall command completed; check the result",
-    "toolUninstallHermesWindowsHint": "On Windows, Hermes may leave some program files behind because its running Python is locked during uninstall. After the command finishes, check the original installation directory for leftover files; keep configuration and session data when cleaning up.",
     "toolUninstallRemaining": "The selected installation was removed; other installations remain",
     "toolUninstallCheckFailed": "Could not verify the installation status after uninstalling. Click “Check for updates” to try again.",
     "toolUpdate": "Update",
@@ -1136,18 +1063,10 @@
   "apps": {
     "claude": "Claude",
     "claudeCode": "Claude Code",
-    "claudeDesktop": "Claude Desktop",
-    "claude-desktop": "Claude Desktop",
     "codex": "Codex",
-    "gemini": "Gemini",
-    "grokbuild": "Grok Build",
     "opencode": "OpenCode",
-    "openclaw": "OpenClaw",
-    "hermes": "Hermes",
-    "pi": "Pi",
-    "mcode": "MiniMax Code",
     "agy": "Antigravity",
-    "omp": "Oh My Pi"
+    "dsh": "DeepSeek Harness"
   },
   "appSwitcher": {
     "more": "More apps"
@@ -1195,7 +1114,7 @@
     "whereTitle": "Where sessions are stored",
     "whereLead": "CC Switch reads sessions from these locations. Claude Desktop has no session records of its own.",
     "whereNote": "Apps with a custom config directory in Settings are read from that directory.",
-    "appPrefix": "App: ",
+    "appPrefix": "App:",
     "chooseApp": "Choose app",
     "allApps": "All apps",
     "noSessionsCount": "None",
@@ -1219,7 +1138,6 @@
     "deleteEllipsis": "Delete",
     "selectSessionLabel": "Select {{title}}",
     "agyDeleteHint": "Delete this session in Antigravity to also remove its runtime state",
-    "mcodeDeleteHint": "Delete it in MiniMax Code",
     "groupMeta": "{{count}} sessions · {{time}}",
     "bucketToday": "Today",
     "bucketYesterday": "Yesterday",
@@ -1235,7 +1153,6 @@
     "moreFor": "More actions for {{title}}",
     "copySessionId": "Copy session ID",
     "sessionIdCopied": "Session ID copied",
-    "hermesLimit": "Hermes shows only the latest 500 sessions",
     "emptyApp": "No {{app}} sessions yet",
     "emptyAll": "No sessions yet",
     "emptyAppHint": "CC Switch reads session data from {{path}}",
@@ -1258,8 +1175,6 @@
     "changeTerminal": "Change preferred terminal",
     "changeTerminalAction": "Change terminal",
     "codexResumeNote": "Older sessions may not resume after switching providers: Codex keeps history separately per provider.",
-    "noResumeOpenclaw": "OpenClaw sessions are managed by its gateway and can’t be resumed in a terminal",
-    "noResumeHermes": "Resuming Hermes sessions from the command line isn’t supported yet",
     "launchedIn": "Ran the resume command in {{terminal}}",
     "launchFailed": "Couldn’t open {{terminal}}: {{error}}. The resume command was copied; paste it into any terminal.",
     "onlyChat": "Chat only",
@@ -1283,7 +1198,7 @@
     "copyCode": "Copy code",
     "codeCopied": "Code copied",
     "codeRegion": "{{lang}} code",
-    "toolCalls": "Tool calls: ",
+    "toolCalls": "Tool calls:",
     "toolOutput": "Tool output · {{size}} chars",
     "toolOutputRegion": "Tool output",
     "toolOutputMore": "{{count}} more lines",
@@ -1297,7 +1212,6 @@
     "deleteManyAction": "Delete {{count}} sessions",
     "consequenceClaude": "Deletes the session file and its same-named folder. Claude Code’s Agents panel may still list it.",
     "consequenceCodex": "Deletes only this session file. The Codex desktop app may still list it and say it can’t be continued.",
-    "consequenceGrok": "Deletes this session’s entire folder.",
     "consequenceGeneric": "Permanently removed from {{app}}’s local records.",
     "sessionDeletedNamed": "Deleted session “{{title}}”",
     "remoteImage": "Remote image",
@@ -1337,7 +1251,6 @@
         "codex": "Reasoning",
         "gemini": "Thoughts",
         "opencode": "Thought",
-        "pi": "Thinking…",
         "generic": "Thinking"
       },
       "thinkingMeta": "{{chars}} chars · {{duration}}",
@@ -1427,7 +1340,8 @@
       "rawMatch": "Matches in source",
       "expandContent": "Show full content",
       "collapseContent": "Collapse"
-    }
+    },
+    "nativeDeleteHint": "Delete this session in its original application"
   },
   "console": {
     "providerSwitchReceived": "Received provider switch event:",
@@ -1524,7 +1438,7 @@
       "grooroute": "GrooRoute Pro is a reliable AI API relay with access to OpenAI, Claude, DeepSeek, and other mainstream models, offering pay-as-you-go and subscription plans. CC Switch users get ¥5 in free trial credit by registering via this link!",
       "buytoken": "BuyToken offers relay access for Claude Code, Codex, DeepSeek, and more, with enterprise-grade concurrency and fast invoicing, built to be a stable, long-running service. CC Switch users who register via this link get ¥3 in trial credit and 10% off their first top-up!",
       "vapi": "V-API is a three-year-old brand offering stable, fast, and secure high-quality LLM API services for individuals, developers, and businesses, with formal contracts and official invoices (general / special VAT). CC Switch users who register via this link get ¥2 off and 10% off their first order!",
-      "ospreyai": "ACS OspreyAI is a one-stop multi-model API platform for developers and businesses. A single API key gives you access to leading Chinese and international models, including Claude, Gemini, GPT, GLM, Kimi, Qwen, DeepSeek, and Tencent Hunyuan. The platform is compatible with OpenAI, Anthropic, and other mainstream API protocols, and works with popular AI tools such as Claude Code, Codex, OpenCode, Pi, and Hermes. International models cost 20–40% less than official prices, and Chinese models 30–50% less. Unified top-ups, unified billing, usage tracking, and flexible model switching make it a fit for AI app development, content production, and automated workflows. Create an account via this link to get a discount and quickly connect to leading models from China and abroad."
+      "ospreyai": "ACS OspreyAI is a one-stop multi-model API platform for developers and businesses. A single API key gives you access to leading Chinese and international models, including Claude, Gemini, GPT, GLM, Kimi, Qwen, DeepSeek, and Tencent Hunyuan. The platform is compatible with OpenAI, Anthropic, and other mainstream API protocols, and works with popular AI tools such as Claude Code, Codex, and OpenCode. International models cost 20–40% less than official prices, and Chinese models 30–50% less. Unified top-ups, unified billing, usage tracking, and flexible model switching make it a fit for AI app development, content production, and automated workflows. Create an account via this link to get a discount and quickly connect to leading models from China and abroad."
     },
     "presets": {
       "ucloud": "Compshare",
@@ -1623,8 +1537,6 @@
     "requestModelLabel": "Requested model",
     "modelOneMHeader": "Declare 1M",
     "modelOneMLabel": "1M",
-    "copilotOneMUnavailable": "Copilot has no 1M version of this model",
-    "copilotOneMMismatch": "Copilot has no 1M version of {{models}}: requests fall back to the regular model, but Claude Code still plans for a 1M context, so long sessions may exceed the limit. Uncheck 1M.",
     "fallbackModelLabel": "Default fallback model",
     "fallbackModelHelpDirect": "Written to ANTHROPIC_MODEL: the main model Claude Code starts with. Background tasks use the Haiku tier instead.",
     "fallbackModelHelp": "Requests that don't map to the Sonnet, Opus, Fable, or Haiku tier are sent upstream with this model.",
@@ -1683,48 +1595,6 @@
     "directModeFormatInUse": "This card is in use in direct mode: saving it with this format makes requests fail. Switch to routing or Aggregation first.",
     "directModeFormatSwitch": "This format doesn't work in direct mode; switch to routing or Aggregation to use this card."
   },
-  "copilot": {
-    "automaticFormat": "Selected automatically by routing",
-    "automaticFormatHint": "Routing selects the Copilot upstream format per model; manual format settings are ignored.",
-    "authSection": "GitHub Copilot Authentication",
-    "authStatus": "Authentication Status",
-    "authenticated": "Authenticated as {{username}}",
-    "notAuthenticated": "Not authenticated",
-    "loginWithGitHub": "Login with GitHub",
-    "githubAccount": "GitHub account",
-    "manageAccounts": "Manage accounts",
-    "loginRequired": "Please login to GitHub Copilot first",
-    "statusLoading": "Loading account status...",
-    "statusUnavailable": "Status unavailable",
-    "statusLoadFailed": "Failed to load GitHub Copilot account status. Please retry.",
-    "waitingForAuth": "Waiting for authorization...",
-    "enterCode": "Please enter the code in your browser:",
-    "logout": "Logout",
-    "authSuccess": "GitHub Copilot authentication successful",
-    "authFailed": "Authentication failed: {{error}}",
-    "authTimeout": "Authentication timed out, please try again",
-    "tokenExpired": "Token expired, please re-authenticate",
-    "accountCount": "{{count}} account(s)",
-    "selectAccount": "Select Account",
-    "selectAccountPlaceholder": "Select a GitHub account",
-    "useDefaultAccount": "Use default account",
-    "loggedInAccounts": "Logged in accounts",
-    "defaultAccount": "Default",
-    "selected": "Selected",
-    "removeAccount": "Remove account",
-    "setAsDefault": "Set as default",
-    "addAnotherAccount": "Add another account",
-    "retry": "Retry",
-    "copyCode": "Copy code",
-    "migrationFailed": "Legacy auth migration failed: {{error}}",
-    "loadModelsFailed": "Failed to load Copilot models",
-    "noPickerModels": "This GitHub account has no Copilot models available. This is typical for Copilot Free accounts; please make sure the account has Copilot Pro or a higher plan. You can still type gpt-4.1 or gpt-4o into the model field manually.",
-    "noModelsForApiFormat": "None of this account's Copilot models support the selected upstream format. Try a different upstream format.",
-    "deploymentType": "GitHub Deployment Type",
-    "deploymentGitHubCom": "GitHub.com",
-    "deploymentEnterprise": "GitHub Enterprise Server",
-    "enterpriseDomainPlaceholder": "e.g. company.ghe.com"
-  },
   "codexOauth": {
     "authStatus": "Auth status",
     "notAuthenticated": "Not authenticated",
@@ -1769,27 +1639,6 @@
     "openBrowserLogin": "Open browser login",
     "loginExpired": "Login expired. Please try again."
   },
-  "xaiOauth": {
-    "authStatus": "xAI OAuth authentication",
-    "accountCount": "Usable accounts: {{count}}",
-    "reauthRequired": "Sign-in required",
-    "notAuthenticated": "Not authenticated",
-    "selectAccount": "Select account",
-    "selectAccountPlaceholder": "Select an xAI account",
-    "useDefaultAccount": "Use default account",
-    "accounts": "xAI accounts",
-    "defaultAccount": "Default",
-    "expired": "Credentials expired",
-    "setAsDefault": "Set as default",
-    "removeAccount": "Remove account",
-    "addOrReauth": "Add account or sign in again",
-    "login": "Sign in with xAI",
-    "waitingForAuth": "Waiting for xAI authorization…",
-    "enterCode": "If the browser did not fill it in automatically, enter:",
-    "retry": "Retry",
-    "logoutAll": "Delete all xAI accounts",
-    "loginRequired": "Sign in to an xAI account first"
-  },
   "managedAuth": {
     "accountRemoved": "Account deleted",
     "selectedAccountNeedsReauth": "The linked account is missing or needs you to sign in again",
@@ -1808,8 +1657,8 @@
       "noneAll": "No provider uses these accounts.",
       "confirmOne": "Delete account",
       "confirmAll": "Delete {{count}} accounts",
-      "appSeparator": ": ",
-      "nameSeparator": ", "
+      "appSeparator": ":",
+      "nameSeparator": ","
     }
   },
   "endpointTest": {
@@ -1853,8 +1702,6 @@
     "saveFailed": "Save failed: {{error}}",
     "upstreamFormatLabel": "Upstream Format",
     "upstreamFormatAuto": "Automatic (model capabilities)",
-    "upstreamFormatCopilotResponses": "Responses (routing required)",
-    "upstreamFormatCopilotHint": "Auto prefers Responses when the model supports it, otherwise Chat Completions. You can also pick a protocol explicitly.",
     "upstreamFormatHint": "Pick the protocol the provider supports natively: Responses is forwarded as is without conversion; routing converts Chat or Anthropic to Responses.",
     "upstreamFormatChat": "Chat Completions (conversion required)",
     "upstreamFormatResponses": "Responses (native)",
@@ -1923,7 +1770,6 @@
     "keyFieldsHint": "The endpoint, key, model, reasoning effort, context window and compatibility switches follow the provider; everything else is a global Codex setting that applies to every provider once saved.",
     "inactiveFieldsHint": "Saved in this provider by an older version; switching no longer applies them. Click one to copy its TOML and paste it above if you need it.",
     "inactiveFieldCopied": "Copied",
-    "upstreamFormatCopilotRouteHint": "Every mode requires routing, which injects the Copilot account credentials. A protocol you pick explicitly fails for models that don't support it.",
     "maxOutputTokensWarning": "Don't exceed the real output limit of the model or gateway, or requests return 400.",
     "routeOnlySettingsHint": "The two settings below only apply in routing and Aggregation modes."
   },
@@ -1931,8 +1777,8 @@
     "envFile": "Environment Variables (.env)",
     "envFileHint": "Configure Gemini environment variables in .env format",
     "configJson": "Settings file (settings.json)",
-    "configJsonHint": "Gemini CLI's settings.json (MCP servers are managed in the MCP panel)",
-    "keyFieldsHint": "The endpoint, key, model name and auth type follow the provider; the other environment variables and settings.json are Gemini CLI global settings and apply to every provider after saving.",
+    "configJsonHint": "the client's settings.json (MCP servers are managed in the MCP panel)",
+    "keyFieldsHint": "The endpoint, key, model name and auth type follow the provider; the other environment variables and settings.json are the client global settings and apply to every provider after saving.",
     "inactiveFieldsHint": "Saved in this provider by an older version; switching no longer applies them. Click one to add it above; after saving it applies to every provider.",
     "addToGlobalSettings": "Add to global settings"
   },
@@ -2041,7 +1887,7 @@
       "cloud": "Call models with a cloud provider account.",
       "local": "Inference servers running on this computer. Start the server and pull a model first; the key is just a placeholder.",
       "plugin": "Model assignment configs for OpenCode plugins.",
-      "universal": "Configure once, synced to Claude Code, Codex and Gemini CLI."
+      "universal": "Configure once, synced to Claude Code, Codex and OpenCode."
     },
     "noResults": "Nothing found for “{{query}}”",
     "noResultsHint": "You can use a custom config and fill in the request URL and API key yourself.",
@@ -2050,7 +1896,7 @@
     "customBar": "Custom config · fill in every field yourself",
     "change": "Change",
     "backToPick": "Back to presets",
-    "universalDetail": "Synced to Claude Code, Codex, Gemini CLI",
+    "universalDetail": "Synced to Claude Code, Codex, OpenCode",
     "manageUniversal": "Manage existing universal providers ›",
     "loginWith": {
       "deepseek": "Sign in with a DeepSeek account",
@@ -2058,7 +1904,6 @@
       "claude": "Sign in with a Claude account",
       "chatgpt": "Sign in with a ChatGPT account",
       "github": "Sign in with a GitHub account",
-      "xai": "Sign in with an xAI account",
       "google": "Sign in with a Google account"
     },
     "versionCount": "{{domain}} · {{n}} versions",
@@ -2157,9 +2002,6 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "grokbuild": "Grok Build",
-      "pi": "Pi",
-      "mcode": "MiniMax Code",
       "label": "Filter by app"
     },
     "rawInputLabel": "Raw",
@@ -2460,7 +2302,7 @@
       "coverage": "Covers {{total}} apps: {{apps}}",
       "cadenceOn": "Scans at startup and every 10 minutes in the background; opening the Usage page scans right away, then at the selected interval",
       "cadenceOff": "Auto scan is off; logs are scanned only when you click Sync Now",
-      "unsupported": "Hermes and OpenClaw don't support usage stats yet",
+      "unsupported": "Usage statistics are unavailable for this source",
       "loggingHelpTitle": "What does recording request usage do?",
       "loggingHelp": "Each request through the routing service is recorded with its status code, duration and time to first token.",
       "on": "On",
@@ -2513,11 +2355,9 @@
     "templateGeneral": "General",
     "templateNewAPI": "NewAPI",
     "templateSub2API": "Sub2API",
-    "templateCopilot": "GitHub Copilot",
     "templateTokenPlan": "Token Plan",
     "templateBalance": "Official",
     "templateOfficialSubscription": "Official Subscription",
-    "copilotAutoAuth": "Auto OAuth authentication, no manual credentials needed",
     "tokenPlanHint": "Automatically uses the provider's API Key and Base URL to query Token Plan quota",
     "balanceHint": "Automatically uses the provider's API Key to query account balance",
     "officialSubscriptionHint": "Reads the local CLI OAuth credentials and calls the official API to query subscription quota. Disabled by default and only requests after you enable it.",
@@ -2651,11 +2491,7 @@
         "claude": "Claude",
         "codex": "Codex",
         "gemini": "Gemini",
-        "grokbuild": "Grok Build",
-        "opencode": "OpenCode",
-        "openclaw": "OpenClaw",
-        "hermes": "Hermes",
-        "mcode": "MiniMax Code"
+        "opencode": "OpenCode"
       }
     },
     "userLevelPath": "User-level MCP config path",
@@ -2821,8 +2657,6 @@
     "appSelect": "Choose app",
     "helpTitle": "How prompts take effect",
     "helpText": "Each app has one enabled prompt at a time, and it becomes the target file. Edits made elsewhere are pulled into the enabled prompt the next time you open this page; file content that isn't here yet is saved as an \"Original prompt\" before another one is enabled.",
-    "helpHermesTitle": "How SOUL.md takes effect",
-    "helpHermesText": "SOUL.md is Hermes's persona; one is enabled at a time. Edits made elsewhere are pulled into the enabled one the next time you open this page; file content that isn't here yet is saved as an \"Original prompt\" before another one is enabled.",
     "helpPiTitle": "How Pi prompts take effect",
     "helpPiText": "One library prompt is enabled at a time and becomes AGENTS.md. System prompt files take effect whenever they exist, and templates are run in Pi by typing /command — neither needs enabling.",
     "moreActions": "More prompt actions",
@@ -2840,7 +2674,6 @@
     "copyFailed": "Couldn't copy to the clipboard",
     "appLabel": "App:",
     "appNoteDesktop": "Claude Desktop uses Claude Code's prompts.",
-    "appNoteOpenclaw": "OpenClaw is managed under Workspace on its own page.",
     "targetFile": "Target file",
     "targetDir": "Folder",
     "fileMissing": "file doesn't exist",
@@ -2867,12 +2700,8 @@
     "importExisting": "Import existing content",
     "formDescription": "Name, note and the text written to {{file}}",
     "requiredMark": "(required)",
-    "namePlaceholderHermes": "e.g. Friendly partner",
     "nameRequired": "Enter a name, e.g. Team coding rules",
-    "nameRequiredHermes": "Enter a name, e.g. Friendly partner",
-    "contentPlaceholderHermes": "# SOUL.md\n\nHermes's persona in Markdown: tone, way of speaking, what to avoid…",
     "charCount": "{{chars}} characters · {{size}}",
-    "mcodeTooLarge": "MiniMax Code prompts can be at most 32 KB (UTF-8 bytes). This one is {{size}}; trim it before saving",
     "addSubmit": "Add",
     "saveAndOverwrite": "Save and overwrite {{file}}",
     "saveAndWritePi": "Save and write AGENTS.md",
@@ -2881,24 +2710,21 @@
       "lead": "Each app gets its own copy, not enabled. Later edits don't affect each other.",
       "legend": "Apps to copy to",
       "sameName": "Has one with this name",
-      "hermesNote": "SOUL.md is a persona",
       "pickOne": "Select at least one app",
       "go": "Copy to {{count}} apps",
       "goNone": "Copy",
       "failed": "Couldn't copy to {{apps}}"
     },
-    "listSeparator": ", ",
+    "listSeparator": ",",
     "undo": "Undo",
     "undoFailed": "Couldn't undo: {{reason}}",
     "toast": {
-      "joiner": ". ",
+      "joiner": ".",
       "enabled": "Enabled \"{{name}}\" and overwrote {{path}}",
       "enabledPi": "Enabled \"{{name}}\" and wrote AGENTS.md",
       "disabled": "Disabled \"{{name}}\"; {{path}} is now empty",
       "disabledPi": "Disabled \"{{name}}\" and deleted AGENTS.md",
       "backup": "The file's previous content was saved as \"{{name}}\"",
-      "hermesOn": "Takes effect in new Hermes sessions",
-      "hermesOff": "New Hermes sessions use the built-in default persona",
       "added": "Added \"{{name}}\"",
       "saved": "Saved \"{{name}}\"",
       "savedActive": "Saved \"{{name}}\" and overwrote {{path}}",
@@ -3102,7 +2928,9 @@
         "checkPermission": "Please check directory permissions",
         "uninstallFirst": "Please uninstall the existing skill with the same name first",
         "checkZipContent": "Please verify the ZIP file contains valid skill directories (with SKILL.md files)"
-      }
+      },
+      "downloadStalled": "Download of repository {{owner}}/{{name}} stalled: no data received for {{timeout}}s",
+      "archiveInvalid": "The download isn't a ZIP archive: this site may not be a GitHub / GitLab / Gitea repository, which isn't supported yet"
     },
     "repo": {
       "title": "Manage Skill Repositories",
@@ -3191,8 +3019,7 @@
       "claude": "Claude",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode",
-      "openclaw": "OpenClaw"
+      "opencode": "OpenCode"
     },
     "installFromZip": {
       "button": "Install from ZIP",
@@ -3221,7 +3048,7 @@
       "locationUnified": "Shared folder",
       "openFolder": "Open",
       "openFolderAria": "Open {{path}}",
-      "unifiedWarning": "Codex, Gemini CLI, OpenCode and others read this folder directly, so the per-app switches no longer fully apply to them.",
+      "unifiedWarning": "Codex, OpenCode and others read this folder directly, so the per-app switches no longer fully apply to them.",
       "move": "Move and switch",
       "moving": "Moving…",
       "moveConfirmTitle": "Move {{count}} Skills to {{path}}?",
@@ -3282,7 +3109,6 @@
     "importError": "Failed to import",
     "configSource": "Config Source",
     "codexConfigScopeHint": "Only the settings that belong to this provider (endpoint, auth, model, reasoning effort, etc.) are imported; global settings such as [features], MCP and permissions are skipped.",
-    "grokConfigScopeHint": "Only the model table named by [models] default is imported (display name, description, API backend, context window, etc.); the endpoint and key come from the link parameters, and other model tables are skipped.",
     "configEmbedded": "Embedded Config",
     "configRemote": "Remote Config",
     "configDetails": "Config Details",
@@ -3302,7 +3128,9 @@
       "parseError": "Could not parse the MCP config in this link",
       "emptyServers": "This link has no MCP servers to import",
       "existingKeepConfig": "Enable apps only",
-      "existingKeepConfigDetail": "This ID already exists: import will only enable the target apps and will not overwrite the current command, URL, or secrets. The link payload below is for comparison."
+      "existingKeepConfigDetail": "This ID already exists: import will only enable the target apps and will not overwrite the current command, URL, or secrets. The link payload below is for comparison.",
+      "type": "Type",
+      "cwd": "CWD"
     },
     "prompt": {
       "title": "Import System Prompt",
@@ -3337,7 +3165,8 @@
     "risk": {
       "envHijack": "This config sets environment variables that change how processes load code (e.g. injecting libraries or replacing CA certificates). Import only from a source you trust.",
       "privateEndpoint": "This address points at localhost or a private network. Do not import unless it is your own local service.",
-      "shellCommand": "This config runs a full command line through a shell — what actually executes is in the arguments. Review each line."
+      "shellCommand": "This config runs a full command line through a shell — what actually executes is in the arguments. Review each line.",
+      "mcpDangerousField": "This MCP config contains high-risk fields that can read host environment variables (e.g. bearer_token_env_var, env_http_headers, env_vars), execute helper commands (http_headers_helper), or override the working directory (cwd). Import only if you fully trust the source."
     }
   },
   "iconPicker": {
@@ -3852,35 +3681,6 @@
       "council": "Multi-model consensus agent. Runs multiple read-only councillors in parallel, then lets the master synthesize the final answer."
     }
   },
-  "openclawConfig": {
-    "defaultModel": {
-      "title": "Default Model",
-      "description": "Configure the default primary model and fallback models for OpenClaw",
-      "primary": "Primary Model",
-      "primaryPlaceholder": "e.g., deepseek/deepseek-chat",
-      "fallbacks": "Fallback Models",
-      "fallbacksPlaceholder": "e.g., openrouter/anthropic/claude-sonnet-4.5",
-      "addFallback": "Add Fallback Model",
-      "saved": "Default model configuration saved",
-      "saveFailed": "Failed to save default model"
-    },
-    "modelCatalog": {
-      "title": "Model Catalog",
-      "description": "Configure model aliases and allowlist",
-      "modelId": "Model ID",
-      "modelIdPlaceholder": "e.g., deepseek/deepseek-chat",
-      "alias": "Alias",
-      "aliasPlaceholder": "e.g., DeepSeek",
-      "addEntry": "Add Model",
-      "removeEntry": "Remove",
-      "saved": "Model catalog saved",
-      "saveFailed": "Failed to save model catalog",
-      "empty": "No model catalog entries",
-      "emptyHint": "Add models to the catalog to configure aliases"
-    },
-    "suggestedDefaults": "Apply Suggested Defaults",
-    "suggestedDefaultsHint": "Use this preset's recommended default model configuration"
-  },
   "subscription": {
     "title": "Subscription Quota",
     "short": {
@@ -3899,8 +3699,7 @@
       "agyThirdPartyFiveHour": "Claude 5h",
       "agyThirdPartyWeekly": "Claude Wk",
       "monthly": "Mo",
-      "credits": "Credits",
-      "copilotPremium": "Premium"
+      "credits": "Credits"
     },
     "fiveHour": "5-hour",
     "sevenDay": "Weekly",
@@ -3921,7 +3720,6 @@
     "weeklyLimit": "Weekly",
     "monthly": "Monthly",
     "credits": "Credits",
-    "copilotPremium": "Premium",
     "utilization": "{{value}}%",
     "resetsIn": "Resets in {{time}}",
     "extraUsage": "Extra Usage",
@@ -3987,15 +3785,8 @@
     "installHint": {
       "claude": "Installs with the official script, falls back to npm",
       "codex": "Installs with npm",
-      "gemini": "Installs with npm",
-      "grok": "Installs with npm",
       "opencode": "Installs with the official script, falls back to npm",
-      "openclaw": "Installs with npm",
-      "hermes": "Installs with the official script",
-      "pi": "Installs with npm",
-      "mcode": "Installs with the official script, falls back to npm",
-      "agy": "Installs with the official script",
-      "omp": "Installs with the official script"
+      "agy": "Installs with the official script"
     }
   },
   "appPage": {
@@ -4006,7 +3797,6 @@
     "hideFromSidebar": "Hide from sidebar",
     "providers": "Providers",
     "workspace": "Workspace",
-    "openclawConfig": "Config",
     "memory": "Memory",
     "webUi": "Web UI",
     "viewUsage": "View usage for this app"
@@ -4159,7 +3949,6 @@
       "models": "{{count}} models",
       "noModels": "No models",
       "direct": "Direct",
-      "hermesManaged": "Managed by Hermes",
       "defaultModel": "Default model {{model}}"
     },
     "reason": {
@@ -4318,9 +4107,9 @@
       "disabled": "Not enabled"
     },
     "noun": "MCP servers",
-    "listSeparator": ", ",
+    "listSeparator": ",",
     "helpTitle": "How MCP syncs",
-    "help": "This list is the source of truth: it is written into the config files of the apps you tick, and rewritten from here when you switch providers. Claude Desktop and OpenClaw are not supported, so they have no column; Pi needs 1.0 or later and does not support SSE.",
+    "help": "This list is the source of truth: it is written into the config files of the apps you tick, and rewritten from here when you switch providers.",
     "importFromApps": "Import from apps",
     "add": "Add MCP",
     "moreActions": "More MCP actions",
@@ -4467,7 +4256,7 @@
       "jsonMaskedUnknown": "\"{{key}}\" still holds the placeholder, but the draft has no original value for that key. Enter the real value, or turn on \"Show values\" before renaming keys.",
       "writeTo": "Write to",
       "writeToHelpTitle": "How it's written to apps",
-      "writeToHelp": "The same config is written as-is to every ticked app; if one app needs different arguments, create a separate entry for it. MiniMax Code only replaces the connection fields; other fields in mcp.json are kept.",
+      "writeToHelp": "The same config is written as-is to every ticked app; if one app needs different arguments, create a separate entry for it.",
       "sseAsHttpTitle": "{{apps}} doesn't support SSE and will connect over HTTP",
       "sseAsHttpBody": "{{apps}} only supports stdio and HTTP (Streamable HTTP), so this URL will be used as an HTTP server; it won't connect if the server only speaks SSE. If the server also offers Streamable HTTP, switch to HTTP.",
       "sseRejectedTitle": "SSE isn't supported by {{apps}}",
@@ -4488,7 +4277,7 @@
   "skillsPage": {
     "noun": "Skills",
     "helpTitle": "How Skills sync",
-    "help": "The main copy lives in CC Switch's folder and is synced to the apps you tick. Claude Desktop and OpenClaw don't support Skills, so they have no column.",
+    "help": "The main copy lives in CC Switch's folder and is synced to the apps you tick.",
     "add": "Add Skill",
     "addMenu": {
       "discover": "Browse in Discover",
@@ -4578,7 +4367,7 @@
       "disabledSelection": "Turned off {{count}} {{noun}} in {{app}}"
     },
     "installTo": {
-      "prefix": "Install to: ",
+      "prefix": "Install to:",
       "button": "Install to: {{apps}}",
       "many": "{{first}} and {{count}} more",
       "title": "Enable in these apps after installing",
@@ -4679,9 +4468,7 @@
     "helpTitle": "What is Accounts?",
     "group": {
       "helpTitle": "How {{service}} accounts are used",
-      "copilotHelp": "Used by GitHub Copilot presets in Claude Code and Claude Desktop. Providers without a chosen account use the Default one.",
       "chatgptHelp": "Used by ChatGPT presets in Claude Code and Claude Desktop, and by Codex's official-login binding. Providers without a chosen account use the Default one.",
-      "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex. Providers without a chosen account use the Default one.",
       "agyHelp": "The official sign-in for Antigravity CLI (agy). agy can only be signed in to one account at a time; Switch replaces agy's sign-in with the selected account, and agy sessions started afterwards use it. The account agy was already signed in with is added here automatically, so switching away never loses it.",
       "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings, so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",
       "claudeHelpWsl": "Official Claude Code subscription accounts (Pro / Max / Team). Not supported yet while the Claude config folder is in WSL.",
@@ -4701,9 +4488,7 @@
     "enterpriseDomain": "Enterprise domain",
     "enterpriseDomainRequired": "Enter the enterprise domain first, e.g. company.ghe.com",
     "codexReauthNote": "Missing a sign-in credential (id_token), so it can't be used for Codex managed binding",
-    "xaiReauthNote": "Sign-in credential expired; providers using it won't work",
     "statusLoading": "Loading accounts…",
-    "xaiStatusLoadFailed": "Couldn't load xAI accounts. Try again.",
     "retry": "Retry",
     "loginFailed": "Sign-in didn't finish",
     "pending": {

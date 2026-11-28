@@ -105,9 +105,7 @@ async fn forward(upstream: &str, uri: &Uri, headers: &HeaderMap) -> Option<Respo
     let client = match super::http_client::no_redirect_for_url(&url) {
         Ok(client) => client,
         Err(error) => {
-            log::warn!(
-                "[Codex] 官方模型列表客户端构建失败，交给 Codex 用自带列表: {error}"
-            );
+            log::warn!("[Codex] 官方模型列表客户端构建失败，交给 Codex 用自带列表: {error}");
             return None;
         }
     };

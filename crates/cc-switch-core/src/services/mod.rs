@@ -20,14 +20,16 @@ pub mod session_usage;
 #[cfg(feature = "session-monitor")]
 pub mod session_usage_codex;
 pub mod skill;
-pub mod sql_helpers;
 pub mod subscription;
 pub mod subscription_agy;
 pub mod usage_cache;
 pub mod usage_http;
-pub mod usage_stats;
 pub mod webdav_auto_sync;
 
+pub use crate::database::usage::{
+    DailyStats, LogFilters, ModelStats, PaginatedLogs, ProviderLimitStatus, ProviderStats,
+    RequestLogDetail, UsageSummary, UsageSummaryByApp,
+};
 pub use mcp::McpService;
 pub use omo::OmoService;
 pub use prompt::PromptService;
@@ -35,10 +37,6 @@ pub use provider::{ProviderService, ProviderSortUpdate, SwitchResult};
 pub use proxy::ProxyService;
 pub use skill::{DiscoverableSkill, Skill, SkillRepo, SkillService};
 pub use usage_cache::UsageCache;
-pub use usage_stats::{
-    DailyStats, LogFilters, ModelStats, PaginatedLogs, ProviderLimitStatus, ProviderStats,
-    RequestLogDetail, UsageSummary, UsageSummaryByApp,
-};
 pub mod coding_plan;
 pub mod model_fetch;
 pub mod s3;
@@ -52,5 +50,3 @@ pub mod session_usage_opencode;
 pub mod sync_protocol;
 pub mod webdav;
 pub mod webdav_sync;
-
-pub mod subscription_xai;

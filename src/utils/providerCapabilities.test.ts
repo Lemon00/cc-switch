@@ -1,4 +1,3 @@
-import type { AppId } from "@/lib/api";
 import type { Provider } from "@/types";
 import {
   providerNeedsRouting,
@@ -180,31 +179,8 @@ describe("providerNeedsRouting", () => {
     expect(providerNeedsRouting("codex", fixed)).toBe(false);
     expect(providerNeedsRouting("codex", managed)).toBe(false);
   });
-  it("官方供应商一律不需要路由（即便 providerType 是 OAuth）", () => {
-    const apps: AppId[] = ["claude", "codex"];
-    for (const app of apps) {
-      expect(
-        providerNeedsRouting(
-          app,
-          mkProvider({
-            category: "official",
-            meta: { providerType: "xai_oauth" },
-          }),
-        ),
-      ).toBe(false);
-    }
-  });
+
   describe("托管 OAuth：providerType 权威，与 apiFormat 无关（P2）", () => {
-    it("Claude 下 xai_oauth 需要路由", () => {
-      expect(
-        providerNeedsRouting(
-          "claude",
-          mkProvider({
-            meta: { providerType: "xai_oauth", apiFormat: "openai_responses" },
-          }),
-        ),
-      ).toBe(true);
-    });
     it("Claude 下 codex_oauth 即便 apiFormat 被改成 anthropic 仍需路由", () => {
       expect(
         providerNeedsRouting(
@@ -220,26 +196,6 @@ describe("providerNeedsRouting", () => {
         providerNeedsRouting(
           "claude",
           mkProvider({ meta: { providerType: "codex_oauth" } }),
-        ),
-      ).toBe(true);
-    });
-    it("Claude 下 github_copilot 需要路由", () => {
-      expect(
-        providerNeedsRouting(
-          "claude",
-          mkProvider({
-            meta: { providerType: "github_copilot", apiFormat: "openai_chat" },
-          }),
-        ),
-      ).toBe(true);
-    });
-    it("Codex 下 xai_oauth 需要路由（原生 Responses 也要注入 token）", () => {
-      expect(
-        providerNeedsRouting(
-          "codex",
-          mkProvider({
-            meta: { providerType: "xai_oauth", apiFormat: "openai_responses" },
-          }),
         ),
       ).toBe(true);
     });

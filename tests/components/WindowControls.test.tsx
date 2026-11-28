@@ -1,16 +1,22 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, act, cleanup } from "@testing-library/react";
+import { render, act, cleanup, screen } from "@testing-library/react";
 type ResizeCb = () => void;
 const mockState = {
   isMaximizedDelayMs: 0,
   onResizedDelayMs: 0,
   shouldFailIsMaximized: false,
+  maximized: false,
+  reads: 0,
+  cleanupFailure: "" as "" | "throw" | "reject",
   activeListeners: new Set<ResizeCb>(),
   reset() {
     this.isMaximizedDelayMs = 0;
     this.onResizedDelayMs = 0;
     this.shouldFailIsMaximized = false;
+    this.maximized = false;
+    this.reads = 0;
+    this.cleanupFailure = "";
     this.activeListeners.clear();
   },
   triggerResize() {
@@ -22,13 +28,15 @@ const mockState = {
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     isMaximized: async () => {
+      mockState.reads++;
+      const maximized = mockState.maximized;
       if (mockState.isMaximizedDelayMs > 0) {
         await new Promise((r) => setTimeout(r, mockState.isMaximizedDelayMs));
       }
       if (mockState.shouldFailIsMaximized) {
         throw new Error("simulated isMaximized error");
       }
-      return false;
+      return maximized;
     },
     onResized: async (cb: ResizeCb) => {
       if (mockState.onResizedDelayMs > 0) {
@@ -37,6 +45,10 @@ vi.mock("@tauri-apps/api/window", () => ({
       mockState.activeListeners.add(cb);
       return () => {
         mockState.activeListeners.delete(cb);
+        if (mockState.cleanupFailure === "throw")
+          throw new Error("cleanup failed");
+        if (mockState.cleanupFailure === "reject")
+          return Promise.reject(new Error("cleanup failed"));
       };
     },
     minimize: async () => {},
@@ -56,7 +68,53 @@ describe("WindowControls", () => {
   afterEach(() => {
     cleanup();
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
+  it("reads changes made while the resize subscription is being registered", async () => {
+    mockState.onResizedDelayMs = 10;
+    render(<WindowControls />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5);
+      mockState.maximized = true;
+      mockState.triggerResize();
+      await vi.advanceTimersByTimeAsync(5);
+    });
+    expect(
+      screen.getByRole("button", { name: "header.windowRestore" }),
+    ).toBeInTheDocument();
+  });
+  it("coalesces resize bursts and does not apply an obsolete in-flight snapshot", async () => {
+    render(<WindowControls />);
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    expect(mockState.reads).toBe(1);
+    mockState.isMaximizedDelayMs = 20;
+    act(() => mockState.triggerResize());
+    mockState.maximized = true;
+    act(() => {
+      for (let i = 0; i < 30; i++) mockState.triggerResize();
+    });
+    expect(mockState.reads).toBe(2);
+    await act(async () => vi.advanceTimersByTimeAsync(40));
+    expect(mockState.reads).toBe(3);
+    expect(
+      screen.getByRole("button", { name: "header.windowRestore" }),
+    ).toBeInTheDocument();
+  });
+  it.each(["throw", "reject"] as const)(
+    "handles listener cleanup failure (%s)",
+    async (mode) => {
+      const report = vi.spyOn(console, "error").mockImplementation(() => {});
+      const { unmount } = render(<WindowControls />);
+      await act(async () => vi.advanceTimersByTimeAsync(0));
+      mockState.cleanupFailure = mode;
+      expect(() => unmount()).not.toThrow();
+      await act(async () => vi.advanceTimersByTimeAsync(0));
+      expect(report).toHaveBeenCalledWith(
+        "Failed to unsubscribe tauri://resize event",
+        expect.any(Error),
+      );
+    },
+  );
   it("cleans up onResized listener when unmounted before registration resolves (StrictMode)", async () => {
     mockState.isMaximizedDelayMs = 2;
     mockState.onResizedDelayMs = 4;

@@ -16,6 +16,7 @@
 //! 库从识别出混合布局前最后一次成功扫描时开始计数，不回填旧版本漏算的历史；
 //! 从没扫描过的库和单一布局一样，首次扫描导入全部历史。
 
+use crate::database::usage::{find_model_pricing, should_skip_session_insert, DedupKey};
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::opencode_config::get_opencode_db_path;
@@ -23,7 +24,6 @@ use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
     cost_columns, metadata_modified_nanos, update_sync_state, SessionSyncResult,
 };
-use crate::services::usage_stats::{find_model_pricing, should_skip_session_insert, DedupKey};
 use rust_decimal::Decimal;
 use std::collections::HashSet;
 use std::fs;
@@ -123,7 +123,13 @@ fn sync_opencode_usage_from_path(
         rusqlite::Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(|e| AppError::Database(format!("无法打开 opencode.db: {e}")))?;
     let schema = detect_schema(&opencode_conn)?;
-    let cursors = crate::services::session_usage::load_sync_cursors(db)?;
+    let cursors = crate::services::session_usage::load_sync_cursors(
+        db,
+        [
+            db_path_str.clone(),
+            format!("{db_path_str}:mixed-v1-v2-since"),
+        ],
+    )?;
 
     // 混合布局只统计起点之后更新的消息（毫秒，与 time_updated 同单位）：
     // 不回填旧版本漏算的历史，也避免明细已汇总删除的旧消息被重新导入而重复计数。
@@ -175,6 +181,12 @@ fn sync_opencode_usage_from_path(
 
     // 查询所有会话
     let sessions = query_sessions(&opencode_conn, schema)?;
+    let cursors = crate::services::session_usage::load_sync_cursors(
+        db,
+        sessions
+            .iter()
+            .map(|(session_id, _)| format!("{db_path_str}:{session_id}")),
+    )?;
 
     for (session_id, time_updated) in &sessions {
         // 检查会话是否需要重新同步
@@ -804,7 +816,7 @@ mod tests {
 
     fn mixed_cutoff(db: &Database, path: &std::path::Path) -> Option<i64> {
         let key = format!("{}:mixed-v1-v2-since", path.to_string_lossy());
-        crate::services::session_usage::load_sync_cursors(db)
+        crate::services::session_usage::load_sync_cursors(db, [key.clone()])
             .unwrap()
             .get(&key)
             .map(|c| c.last_modified)

@@ -73,11 +73,6 @@ describe("Chinese locale", () => {
     expect(translations.get("settings.s3Sync.presets.cosHint")).toContain(
       "ap-beijing",
     );
-    expect(
-      translations.get("settings.manualUninstallBunLauncherHint"),
-    ).toContain("OpenClaw Bun launcher");
-    expect(translations.get("prompts.contentPlaceholderHermes")).toMatch(
-      /^# SOUL\.md\n/,
-    );
+    expect(translations.has("prompts.contentPlaceholderHermes")).toBe(false);
   });
 });

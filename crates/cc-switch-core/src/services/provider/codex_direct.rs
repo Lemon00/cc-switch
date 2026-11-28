@@ -410,7 +410,6 @@ pub(super) fn project(provider: &Provider) -> Result<CodexProjection, AppError> 
     CodexProjection::of(&RowInput {
         settings: &provider.settings_config,
         official: is_official(provider),
-        proxy_injected_oauth: provider.uses_proxy_injected_oauth(),
     })
 }
 

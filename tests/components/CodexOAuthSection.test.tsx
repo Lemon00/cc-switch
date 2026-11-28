@@ -21,15 +21,11 @@ vi.mock("@/components/CodexOauthAccountQuota", () => ({
     return <div data-testid="account-quota">{accountId}</div>;
   },
 }));
-vi.mock("@/components/providers/forms/CopilotAuthSection", () => ({
-  CopilotAuthSection: () => <div />,
-}));
+
 vi.mock("@/components/providers/forms/ClaudeOfficialSection", () => ({
   ClaudeOfficialSection: () => <div />,
 }));
-vi.mock("@/components/providers/forms/XaiOAuthSection", () => ({
-  XaiOAuthSection: () => <div />,
-}));
+
 vi.mock("@/components/providers/KimiAccountLogin", () => ({
   KimiAccountLogin: () => <div />,
 }));
@@ -58,7 +54,6 @@ describe("CodexOAuthSection", () => {
           avatar_url: null,
           authenticated_at: 0,
           is_default: true,
-          github_domain: "",
           reauth_required: false,
           requires_reauth: false,
         },
@@ -69,7 +64,6 @@ describe("CodexOAuthSection", () => {
           avatar_url: null,
           authenticated_at: 1,
           is_default: false,
-          github_domain: "",
           reauth_required: false,
           requires_reauth: false,
         },

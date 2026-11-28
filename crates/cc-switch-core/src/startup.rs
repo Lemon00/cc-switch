@@ -100,7 +100,13 @@ pub fn run_startup_imports(
                 )?;
                 log::debug!("Startup import {key}/{} completed ({count})", app.as_str());
             }
-            Err(error) => failures.push(format!("{}: {error}", app.as_str())),
+            // This aggregate is logged by startup callers. TOML diagnostics
+            // include the original line, which may contain a credential.
+            Err(error) => failures.push(format!(
+                "{}: {}",
+                app.as_str(),
+                crate::error_for_log(&error.to_string())
+            )),
         }
     }
     if failures.is_empty() {
@@ -151,8 +157,9 @@ pub fn initialize_common_config_snippets(state: &crate::store::AppState) {
                         );
                     }
                     Err(e) => log::warn!(
-                        "✗ Failed to save config snippet for {}: {e}",
-                        app_type.as_str()
+                        "✗ Failed to save config snippet for {}: {}",
+                        app_type.as_str(),
+                        crate::error_for_log(&e.to_string())
                     ),
                 }
             }
@@ -161,8 +168,9 @@ pub fn initialize_common_config_snippets(state: &crate::store::AppState) {
                 app_type.as_str()
             ),
             Err(e) => log::warn!(
-                "✗ Failed to extract config snippet for {}: {e}",
-                app_type.as_str()
+                "✗ Failed to extract config snippet for {}: {}",
+                app_type.as_str(),
+                crate::error_for_log(&e.to_string())
             ),
         }
     }
@@ -186,8 +194,9 @@ pub fn initialize_common_config_snippets(state: &crate::store::AppState) {
             ) {
                 all_ok = false;
                 log::warn!(
-                    "✗ Failed to migrate legacy common-config usage for {}: {e}",
-                    app_type.as_str()
+                    "✗ Failed to migrate legacy common-config usage for {}: {}",
+                    app_type.as_str(),
+                    crate::error_for_log(&e.to_string())
                 );
             }
         }
@@ -239,6 +248,31 @@ mod tests {
 
     const KEY: &str = "startup_import_test";
     const APPS: &[AppType] = &[AppType::Claude, AppType::Codex];
+
+    #[test]
+    fn startup_import_diagnostics_omit_config_source_and_preserve_retry_progress() {
+        let db = Database::memory().unwrap();
+        let secret = "sk-startup-regression-secret";
+        let malformed = format!("experimental_bearer_token = \"{secret}\" !\n");
+        let error = run_startup_imports(
+            &db,
+            KEY,
+            APPS,
+            || Ok(true),
+            |app| {
+                if app == &AppType::Codex {
+                    crate::codex_config::validate_config_toml(&malformed)?;
+                }
+                Ok(0)
+            },
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(!error.contains(secret), "{error}");
+        assert!(error.contains("line 1"), "{error}");
+        assert!(error.contains("codex"), "{error}");
+        assert_eq!(db.get_setting(KEY).unwrap().as_deref(), Some("[\"codex\"]"));
+    }
 
     #[test]
     fn startup_import_retries_only_failed_sources_even_after_table_is_nonempty() {

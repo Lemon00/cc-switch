@@ -20,6 +20,7 @@ pub async fn request_failover_switch(
     app_type: &str,
     provider_id: &str,
     provider_name: &str,
+    route_revision: u64,
 ) -> Result<bool, AppError> {
     let manager = &state.failover_manager;
     let serial = manager.switch_serial();
@@ -30,7 +31,13 @@ pub async fn request_failover_switch(
         tray_refresh,
     };
     manager
-        .try_switch(Some(&ctx), app_type, provider_id, provider_name)
+        .try_switch(
+            Some(&ctx),
+            app_type,
+            provider_id,
+            provider_name,
+            route_revision,
+        )
         .await
 }
 
@@ -83,6 +90,7 @@ impl FailoverSwitchManager {
         app_type: &str,
         provider_id: &str,
         provider_name: &str,
+        route_revision: u64,
     ) -> Result<bool, AppError> {
         let switch_key = format!("{app_type}:{provider_id}");
 
@@ -119,7 +127,7 @@ impl FailoverSwitchManager {
             key: switch_key,
         };
 
-        self.do_switch(ctx, app_type, provider_id, provider_name)
+        self.do_switch(ctx, app_type, provider_id, provider_name, route_revision)
             .await
     }
 
@@ -129,6 +137,7 @@ impl FailoverSwitchManager {
         app_type: &str,
         provider_id: &str,
         provider_name: &str,
+        route_revision: u64,
     ) -> Result<bool, AppError> {
         // 只有处于代理模式的应用才允许执行故障转移切换
         let Ok(app_enum) = app_type.parse::<crate::app_config::AppType>() else {
@@ -148,10 +157,14 @@ impl FailoverSwitchManager {
         };
 
         // 只换代理的路由，不写客户端文件。
-        let switched =
-            crate::mode::controller::record_failover_route(ctx.state, &app_enum, provider_id)
-                .await
-                .map_err(AppError::Message)?;
+        let switched = crate::mode::controller::record_failover_route(
+            ctx.state,
+            &app_enum,
+            provider_id,
+            route_revision,
+        )
+        .await
+        .map_err(AppError::Message)?;
 
         if !switched {
             return Ok(false);

@@ -1,6 +1,6 @@
 [package]
 name = "cc-switch-core"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 rust-version = "1.85"
 description = "cc-switch backend core: database, providers, proxy, live writers. No Tauri, no WebKit."

@@ -645,24 +645,3 @@ mod tests {
         );
     }
 }
-
-#[cfg(test)]
-mod pi_prompt_tests {
-    use super::*;
-    use crate::database::Database;
-
-    use serial_test::serial;
-    use std::sync::Arc;
-
-    fn prompt(enabled: bool) -> Prompt {
-        Prompt {
-            id: "test-prompt".to_string(),
-            name: "Test prompt".to_string(),
-            content: "managed content".to_string(),
-            description: None,
-            enabled,
-            created_at: Some(1),
-            updated_at: Some(1),
-        }
-    }
-}

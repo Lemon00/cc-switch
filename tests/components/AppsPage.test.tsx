@@ -119,7 +119,6 @@ function candidate(
     is_path_default: true,
     plan,
     unavailable_reason: null,
-    reinstalled_by_updater: false,
     ...overrides,
   };
 }
@@ -416,9 +415,12 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10000 }, () => {
         screen.queryByRole("option", { name: "Homebrew (formula)" }),
       ).not.toBeInTheDocument();
       await user.click(await screen.findByRole("option", { name: "pnpm" }));
-      expect(dialog.getAllByRole("listitem")).toHaveLength(1);
+      expect(dialog.getAllByRole("listitem")).toHaveLength(2);
       expect(
         dialog.getByText("pnpm remove -g opencode-ai"),
+      ).toBeInTheDocument();
+      expect(
+        dialog.getByText("pnpm remove -g @opencode/cli"),
       ).toBeInTheDocument();
       expect(dialog.queryByText("OpenClaw")).not.toBeInTheDocument();
       expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
@@ -728,7 +730,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10000 }, () => {
         version: "1.0.50",
         source: "nvm",
         is_path_default: false,
-        reinstalled_by_updater: true,
       }),
       candidate(null, {
         path: "/opt/tools/codex",
@@ -751,9 +752,6 @@ describe("AppsPage concurrent CLI upgrades", { timeout: 10000 }, () => {
       dialog.getByText(
         "Cannot automatically uninstall Codex at /opt/tools/codex.",
       ),
-    ).toBeInTheDocument();
-    expect(
-      dialog.getByText("settings.toolUninstallReinstalledByUpdater"),
     ).toBeInTheDocument();
     expect(
       dialog.getByRole("button", { name: "settings.manualUninstallCommands" }),

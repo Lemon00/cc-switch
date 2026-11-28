@@ -804,7 +804,7 @@ dependencies = [
 
 [[package]]
 name = "cc-switch"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "arboard",
@@ -872,7 +872,7 @@ dependencies = [
 
 [[package]]
 name = "cc-switch-core"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "async-stream",

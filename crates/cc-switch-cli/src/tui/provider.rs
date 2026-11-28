@@ -11,14 +11,17 @@ pub(super) const FIELDS: &[&str] = &[
     "模型",
     "原始配置 JSON（含凭据）",
     "Codex config.toml",
+    "代理推理参数 JSON",
 ];
 
+#[derive(Clone)]
 pub(super) struct ProviderDraft {
     pub original: Provider,
     pub provider: Provider,
     pub base: Value,
     pub app: AppType,
     pub field: usize,
+    pub is_new: bool,
 }
 
 impl ProviderDraft {
@@ -54,6 +57,52 @@ impl ProviderDraft {
             base,
             app,
             field: 0,
+            is_new: false,
+        })
+    }
+
+    pub fn create(
+        state: &AppState,
+        app: AppType,
+        source: Option<&Provider>,
+    ) -> Result<Self, String> {
+        let settings = if app == AppType::Codex {
+            json!({"auth": {}, "config": "model_provider = \"custom\"\nmodel = \"\"\n\n[model_providers.custom]\nname = \"custom\"\nbase_url = \"\"\nwire_api = \"responses\"\n"})
+        } else {
+            json!({"env": {}, "config": {}})
+        };
+        let mut original = source
+            .cloned()
+            .unwrap_or_else(|| Provider::with_id(String::new(), String::new(), settings, None));
+        original.id = super::data::new_id();
+        original.name = source
+            .map(|p| format!("{} 副本", p.name))
+            .unwrap_or_default();
+        original.sort_index = None;
+        let base = if app == AppType::Codex {
+            ProviderService::editor_view_with_meta(
+                state,
+                app.clone(),
+                &original.settings_config,
+                original.category.as_deref(),
+                None,
+                original.meta.as_ref(),
+            )
+            .map_err(|e| e.to_string())?
+            .settings
+        } else {
+            original.settings_config.clone()
+        };
+        validate_settings(&app, &base)?;
+        let mut provider = original.clone();
+        provider.settings_config = base.clone();
+        Ok(Self {
+            original,
+            provider,
+            base,
+            app,
+            field: 0,
+            is_new: true,
         })
     }
 
@@ -61,12 +110,15 @@ impl ProviderDraft {
         if self.app == AppType::Codex {
             FIELDS.len()
         } else {
-            FIELDS.len() - 1
+            5
         }
     }
 
     pub fn dirty(&self) -> bool {
-        self.provider.name != self.original.name || self.provider.settings_config != self.base
+        self.provider.name != self.original.name
+            || self.provider.settings_config != self.base
+            || serde_json::to_value(&self.provider.meta).unwrap()
+                != serde_json::to_value(&self.original.meta).unwrap()
     }
 
     pub fn field_text(&self, field: usize) -> String {
@@ -122,6 +174,11 @@ impl ProviderDraft {
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .into(),
+            6 => serde_json::to_string_pretty(
+                &serde_json::to_value(self.provider.meta.clone().unwrap_or_default()).unwrap()
+                    ["codexChatReasoning"],
+            )
+            .unwrap_or_default(),
             _ => String::new(),
         }
     }
@@ -136,6 +193,18 @@ impl ProviderDraft {
                 return Err("名称不能为空".into());
             }
             self.provider.name = text.trim().into();
+            return Ok(());
+        }
+        if field == 6 {
+            let reasoning = super::form::parse_json(text)?;
+            if !reasoning.is_object() && !reasoning.is_null() {
+                return Err("推理参数必须是 JSON 对象或 null".into());
+            }
+            let mut meta =
+                serde_json::to_value(self.provider.meta.clone().unwrap_or_default()).unwrap();
+            meta["codexChatReasoning"] = reasoning;
+            self.provider.meta =
+                Some(serde_json::from_value(meta).map_err(|_| "推理参数的字段类型不正确")?);
             return Ok(());
         }
         let mut next = self.provider.settings_config.clone();
@@ -196,11 +265,31 @@ impl ProviderDraft {
     }
 
     pub fn save(&self, state: &AppState) -> Result<(), String> {
-        if !self.dirty() {
+        if !self.is_new && !self.dirty() {
             return Ok(());
+        }
+        if self.provider.name.trim().is_empty() {
+            return Err("名称不能为空".into());
         }
         let _guard =
             super::super::lock_proxy_control(&super::super::app_dir().join("cli-control.lock"))?;
+        if self.is_new {
+            validate_settings(&self.app, &self.provider.settings_config)?;
+            let editor = (self.app == AppType::Codex).then(|| EditorSave {
+                base: self.base.clone(),
+                draft: Some(self.original.settings_config.clone()),
+                on_conflict: Default::default(),
+            });
+            ProviderService::add_from_editor(
+                state,
+                self.app.clone(),
+                self.provider.clone(),
+                false,
+                editor,
+            )
+            .map_err(|e| e.to_string())?;
+            return Ok(());
+        }
         let current = state
             .db
             .get_provider_by_id(&self.original.id, &self.app)

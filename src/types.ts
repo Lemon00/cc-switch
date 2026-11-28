@@ -114,11 +114,6 @@ export interface AuthBinding {
   authProvider?: string;
   accountId?: string;
 }
-export interface ClaudeDesktopModelRoute {
-  model: string;
-  labelOverride?: string;
-  supports1m?: boolean;
-}
 export type CodexChatThinkingParam =
   | "none"
   | "thinking"
@@ -164,10 +159,6 @@ export interface ProviderMeta {
   custom_endpoints?: Record<string, CustomEndpoint>;
   // 是否在切换/同步到 live 时应用通用配置片段
   commonConfigEnabled?: boolean;
-  // Claude Desktop 3P 配置写入模式
-  claudeDesktopMode?: "direct" | "proxy";
-  // Claude Desktop 本地路由模式：Claude-safe route -> upstream model
-  claudeDesktopModelRoutes?: Record<string, ClaudeDesktopModelRoute>;
   // 用量查询脚本配置
   usage_script?: UsageScript;
   // 请求地址管理：测速后自动选择最佳端点
@@ -186,9 +177,9 @@ export interface ProviderMeta {
     | "openai_chat"
     | "openai_responses"
     | "gemini_native";
-  // Managed Codex Copilot uses this instead of apiFormat. Missing/unknown means auto.
+
   // Keep the raw string so selections from newer versions survive an edit/save.
-  codexCopilotApiFormat?: string;
+
   // 通用认证绑定
   authBinding?: AuthBinding;
   // Claude 认证字段名
@@ -222,10 +213,9 @@ export interface ProviderMeta {
   liveConfigManaged?: boolean;
   // Source format is needed for package-less OpenCode built-in overrides.
   opencodeConfigFormat?: "v1" | "v2";
-  // 供应商类型（用于识别 Copilot 等特殊供应商）
+
   providerType?: string;
-  // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
-  githubAccountId?: string;
+
   // Stack 模式下这家 Claude Code 供应商发布的模型；没有时按模型映射发布，空列表什么都不发布
   stackModels?: ClaudeStackModel[];
 }
@@ -263,7 +253,7 @@ export type CodexApiFormat =
   | "openai_chat"
   | "anthropic"
   | "gemini_native";
-export type CodexCopilotApiFormat = "auto" | "openai_responses" | "openai_chat";
+
 export interface CodexCatalogModel {
   model: string;
   displayName?: string;
@@ -468,8 +458,6 @@ export interface Settings {
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）
   currentProviderClaude?: string;
-  // 当前 Claude Desktop 供应商 ID（优先于数据库 is_current）
-  currentProviderClaudeDesktop?: string;
   // 当前 Codex 供应商 ID（优先于数据库 is_current）
   currentProviderCodex?: string;
   // 当前 Gemini 供应商 ID（优先于数据库 is_current）
@@ -686,7 +674,7 @@ export interface SessionMessage {
   role: string;
   /**
    * 旧格式的纯文本内容：只有 blocks 缺失时（旧后端）才下发，
-   * 有 blocks 时前端一律从 blocks 推导（见 reader/turns.ts `messageText`）
+   * 有 blocks 时前端一律从 blocks 推导（见 lib/sessions/turns.ts `messageText`）
    */
   content?: string;
   ts?: number;

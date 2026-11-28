@@ -56,14 +56,14 @@ fn resolve_secret_for_request(
 
 #[cfg(test)]
 fn s3_sync_mutex() -> &'static tokio::sync::Mutex<()> {
-    s3_sync_service::sync_mutex()
+    crate::services::sync_protocol::sync_mutex()
 }
 
 async fn run_with_s3_lock<T, Fut>(operation: Fut) -> Result<T, AppError>
 where
     Fut: std::future::Future<Output = Result<T, AppError>>,
 {
-    s3_sync_service::run_with_sync_lock(operation).await
+    crate::services::sync_protocol::run_with_sync_lock(operation).await
 }
 
 async fn run_download_with_s3_lock<T, U, DownloadFut, Project, ProjectFut>(

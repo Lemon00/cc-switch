@@ -23,7 +23,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { getBaseName } from "../utils";
-import { getAgentReaderStyle } from "./agentStyles";
+import { getAgentReaderStyle } from "@/lib/sessions/agentStyles";
 import { ReaderContext, type ReaderContextValue } from "./context";
 import { transcriptToMarkdown, turnToMarkdown } from "./exportMarkdown";
 import { useReaderT } from "./i18n";
@@ -42,7 +42,7 @@ import {
 } from "./SessionReaderHeader";
 import { SessionStep } from "./SessionStep";
 import { SessionTimeline } from "./SessionTimeline";
-import { isFailureStep } from "./toolSummary";
+import { isFailureStep } from "@/lib/sessions/toolSummary";
 import {
   buildTurnIndex,
   buildTurns,
@@ -55,7 +55,7 @@ import {
   type ReaderRow,
   type SearchMatch,
   type SessionTurn,
-} from "./turns";
+} from "@/lib/sessions/turns";
 /** 「展开全部过程」偏好（与会话列表的分组方式一样存在 localStorage） */
 const EXPAND_ALL_STORAGE_KEY = "cc-switch.sessionReader.expandTimelines";
 const readExpandAll = () => {
@@ -450,17 +450,7 @@ export function SessionReader({
     ],
   );
   const noResumeReason = !session.resumeCommand
-    ? session.providerId === "openclaw"
-      ? t("sessionManager.noResumeOpenclaw", {
-          defaultValue: "OpenClaw 会话由网关管理，不能在终端恢复",
-        })
-      : session.providerId === "hermes"
-        ? t("sessionManager.noResumeHermes", {
-            defaultValue: "暂不支持从命令行恢复 Hermes 会话",
-          })
-        : t("sessionManager.noResumeCommand", {
-            defaultValue: "此会话无法恢复",
-          })
+    ? t("sessionManager.noResumeCommand", { defaultValue: "此会话无法恢复" })
     : null;
   const loadingFirst =
     !failed &&

@@ -379,13 +379,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     ],
     defaultColor: "#000000",
   },
-  copilot: {
-    name: "copilot",
-    displayName: "copilot",
-    category: "other",
-    keywords: [],
-    defaultColor: "currentColor",
-  },
+
   etok: {
     name: "etok",
     displayName: "ETok",
@@ -483,13 +477,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["git", "version control"],
     defaultColor: "#181717",
   },
-  githubcopilot: {
-    name: "githubcopilot",
-    displayName: "githubcopilot",
-    category: "other",
-    keywords: [],
-    defaultColor: "currentColor",
-  },
+
   google: {
     name: "google",
     displayName: "Google",
@@ -603,14 +591,6 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "other",
     keywords: [],
     defaultColor: "currentColor",
-  },
-  omp: {
-    name: "omp",
-    displayName: "Oh My Pi",
-    category: "ai-provider",
-    shape: "tile",
-    keywords: ["omp", "oh my pi", "oh-my-pi", "pi"],
-    defaultColor: "#9b4dff",
   },
   ollama: {
     name: "ollama",
@@ -734,13 +714,7 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: [],
     defaultColor: "currentColor",
   },
-  xai: {
-    name: "xai",
-    displayName: "xai",
-    category: "other",
-    keywords: [],
-    defaultColor: "currentColor",
-  },
+
   yi: {
     name: "yi",
     displayName: "yi",

@@ -1,6 +1,6 @@
 #![allow(non_snake_case)]
 
-use tauri::{AppHandle, State};
+use tauri::AppHandle;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -8,7 +8,6 @@ use crate::app_config::AppType;
 use crate::codex_config;
 use crate::config::{self, get_claude_settings_path, ConfigStatus};
 use crate::settings;
-use crate::store::AppState;
 
 #[tauri::command]
 pub async fn get_claude_config_status() -> Result<ConfigStatus, String> {
@@ -49,7 +48,7 @@ fn validate_common_config_snippet(app_type: &str, snippet: &str) -> Result<(), S
     }
 
     match app_type {
-        "claude" | "gemini" | "omo" | "omo-slim" => {
+        "claude" | "omo" | "omo-slim" => {
             serde_json::from_str::<serde_json::Value>(snippet)
                 .map_err(invalid_json_format_error)?;
         }
@@ -65,10 +64,7 @@ fn validate_common_config_snippet(app_type: &str, snippet: &str) -> Result<(), S
 }
 
 #[tauri::command]
-pub async fn get_config_status(
-    state: State<'_, AppState>,
-    app: String,
-) -> Result<ConfigStatus, String> {
+pub async fn get_config_status(app: String) -> Result<ConfigStatus, String> {
     match AppType::from_str(&app).map_err(|e| e.to_string())? {
         AppType::Claude => Ok(config::get_claude_config_status()),
 

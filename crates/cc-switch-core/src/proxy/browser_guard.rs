@@ -113,17 +113,12 @@ fn strip_lan_credentials(headers: &mut HeaderMap, expected: Option<&str>) {
     }
 }
 
-/// Claude Desktop's namespace already requires its gateway token, which a page
-/// cannot know, so the desktop app is not held to the header rules.
-const TOKEN_PROTECTED_PREFIX: &str = "/claude-desktop/";
-
 fn lan_request_authorized(request: &Request, listen_address: &str, token: Option<&str>) -> bool {
     is_loopback_listener(listen_address)
         || request
             .extensions()
             .get::<PeerAddr>()
             .is_some_and(|peer| peer.0.ip().to_canonical().is_loopback())
-        || request.uri().path().starts_with(TOKEN_PROTECTED_PREFIX)
         || token.is_some_and(|token| valid_lan_token(request.headers(), token))
 }
 
@@ -132,7 +127,6 @@ fn local_peer_requires_host_check(request: &Request, token: Option<&str>) -> boo
         .extensions()
         .get::<PeerAddr>()
         .is_some_and(|peer| peer.0.ip().to_canonical().is_loopback())
-        && !request.uri().path().starts_with(TOKEN_PROTECTED_PREFIX)
         && !token.is_some_and(|token| valid_lan_token(request.headers(), token))
 }
 
@@ -199,12 +193,12 @@ pub(super) async fn reject_browser_requests(
 }
 
 fn check_request(
-    path: &str,
+    _path: &str,
     headers: &HeaderMap,
     listen_address: &str,
     client_host: Option<&str>,
 ) -> Result<(), &'static str> {
-    if !path.starts_with(TOKEN_PROTECTED_PREFIX) && headers.contains_key(header::ORIGIN) {
+    if headers.contains_key(header::ORIGIN) {
         return Err("requests from web pages are not accepted");
     }
     if is_loopback_listener(listen_address) {
@@ -470,7 +464,7 @@ mod tests {
     }
 
     #[test]
-    fn any_origin_is_rejected_outside_claude_desktop() {
+    fn any_origin_is_rejected() {
         for origin in ["https://evil.example", "null", "tauri://localhost"] {
             let h = headers(&[("host", "127.0.0.1:15721"), ("origin", origin)]);
             for path in ["/v1/messages", "/v1/responses", "/v1beta/models", "/status"] {
@@ -482,11 +476,16 @@ mod tests {
     }
 
     #[test]
-    fn claude_desktop_keeps_its_token_check_only() {
+    fn retired_routes_do_not_bypass_browser_checks() {
+        let request = Request::builder()
+            .uri("/claude-desktop/v1/messages")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert!(!lan_request_authorized(&request, "0.0.0.0", None));
         let h = headers(&[("host", "127.0.0.1:15721"), ("origin", "app://claude")]);
         assert_eq!(
             check_request("/claude-desktop/v1/messages", &h, "127.0.0.1", None),
-            Ok(())
+            Err("requests from web pages are not accepted")
         );
         // Rebinding still applies there: the Host rule is not exempted.
         let h = headers(&[("host", "rebind.evil.example:15721")]);

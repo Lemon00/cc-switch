@@ -3,6 +3,7 @@
 //! 实现 Anthropic ↔ OpenAI 格式转换，用于 OpenRouter 支持
 //! 参考: anthropic-proxy-rs
 
+use super::codex_chat_common::chat_thinking_part_text;
 use super::inline_think::split_leading_think_block;
 use crate::proxy::{
     error::ProxyError,
@@ -63,12 +64,6 @@ pub fn is_openai_o_series(model: &str) -> bool {
         && model.as_bytes().get(1).is_some_and(|b| b.is_ascii_digit())
 }
 
-/// Detect Responses-compatible models that support reasoning effort.
-///
-/// Supported families:
-/// - o-series: o1, o3, o4-mini, etc.
-/// - GPT-5+: gpt-5, gpt-5.1, gpt-5.4, gpt-5-codex, etc.
-/// - xAI Grok 4.5+ (`grok-4.x` with numeric minor version x ≥ 5,
 ///   so future releases like grok-4.10 need no whitelist update); retain the
 ///   previous `grok-build-*` family for saved providers.
 pub fn supports_reasoning_effort(model: &str) -> bool {
@@ -109,17 +104,6 @@ fn supports_max_reasoning_effort(model: &str) -> bool {
     }
 }
 
-/// Resolve the appropriate OpenAI `reasoning_effort` from an Anthropic request body.
-///
-/// Priority:
-/// 1. Explicit `output_config.effort` — preserves the user's intent directly.
-///    `low`/`medium`/`high`/`xhigh` map 1:1 (`xhigh` is what Claude Code's
-///    `/effort xhigh` sends); `max` stays `max` for models that support a
-///    distinct max tier, otherwise it falls back to `xhigh`. Unknown values are ignored.
-///    When thinking is off (`thinking` absent or `disabled`) the effort drops to
-///    the lowest tier: Claude Code keeps sending `effort` with thinking turned
-///    off (and Workflow subagents send `disabled` + effort), and forwarding it
-///    verbatim would make OpenAI/xAI reason at full strength anyway. `none` /
 ///    `minimal` are not accepted by every whitelisted model, so the floor is `low`.
 ///    Models whose omitted `thinking` still means adaptive (the 5.x Claude models) are
 ///    made explicit before the transform by
@@ -371,60 +355,6 @@ pub fn inject_openai_stream_include_usage(result: &mut Value) {
             result["stream_options"] = json!({ "include_usage": true });
         }
     }
-}
-
-/// Send mid-conversation system messages as `user` messages at their position.
-///
-/// Only for upstreams that hoist every `role: system` message into one leading
-/// instruction (GitHub Copilot's chat endpoint does this for Gemini models).
-/// Claude Code appends a new system message each turn, so hoisting rewrites
-/// the start of the request and the upstream prefix cache misses the whole
-/// history. The leading run of system messages is kept as is; later ones
-/// become `user` messages in place, so the converted request is append-only
-/// across turns. A system message between an assistant `tool_calls` message
-/// and its `tool` results is moved right after the results, keeping them
-/// adjacent. Same approach as `anthropic_to_gemini` (#9450).
-pub(crate) fn demote_mid_conversation_system_messages(result: &mut Value) {
-    fn has_role(message: &Value, role: &str) -> bool {
-        message.get("role").and_then(Value::as_str) == Some(role)
-    }
-
-    let Some(messages) = result.get_mut("messages").and_then(Value::as_array_mut) else {
-        return;
-    };
-    let leading = messages
-        .iter()
-        .take_while(|message| has_role(message, "system"))
-        .count();
-    if !messages[leading..]
-        .iter()
-        .any(|message| has_role(message, "system"))
-    {
-        return;
-    }
-
-    let tail = messages.split_off(leading);
-    let mut deferred = Vec::new();
-    for mut message in tail {
-        if has_role(&message, "system") {
-            let empty = match message.get("content") {
-                None | Some(Value::Null) => true,
-                Some(Value::String(text)) => text.is_empty(),
-                Some(Value::Array(parts)) => parts.is_empty(),
-                Some(_) => false,
-            };
-            if !empty {
-                message["role"] = json!("user");
-                deferred.push(message);
-            }
-            continue;
-        }
-        if !has_role(&message, "tool") {
-            messages.append(&mut deferred);
-        }
-        messages.push(message);
-    }
-    messages.append(&mut deferred);
 }
 
 /// Translate an Anthropic `tool_choice` into the OpenAI Chat Completions form.
@@ -758,6 +688,12 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
                             if !text.is_empty() {
                                 push_text(&mut content, text);
                             }
+                        }
+                    }
+                    // Mistral 开思考后的分段 content（#9902）
+                    "thinking" => {
+                        if let Some(thinking) = chat_thinking_part_text(part) {
+                            content.push(json!({"type": "thinking", "thinking": thinking}));
                         }
                     }
                     "refusal" => {
@@ -1156,82 +1092,6 @@ mod tests {
             "You are Claude Code.\nBe concise."
         );
         assert!(result["messages"][0].get("cache_control").is_none());
-    }
-
-    #[test]
-    fn demote_mid_conversation_system_keeps_leading_run_and_tool_adjacency() {
-        let mut result = json!({
-            "messages": [
-                {"role": "system", "content": "head"},
-                {"role": "system", "content": "env"},
-                {"role": "user", "content": "q"},
-                {"role": "assistant", "content": null, "tool_calls": [
-                    {"id": "a", "type": "function", "function": {"name": "f", "arguments": "{}"}},
-                    {"id": "b", "type": "function", "function": {"name": "f", "arguments": "{}"}}
-                ]},
-                {"role": "system", "content": "between"},
-                {"role": "tool", "tool_call_id": "a", "content": "1"},
-                {"role": "system", "content": ""},
-                {"role": "tool", "tool_call_id": "b", "content": "2"},
-                {"role": "user", "content": "next"},
-                {"role": "system", "content": [{"type": "text", "text": "tail"}]}
-            ]
-        });
-
-        demote_mid_conversation_system_messages(&mut result);
-
-        assert_eq!(
-            result["messages"],
-            json!([
-                {"role": "system", "content": "head"},
-                {"role": "system", "content": "env"},
-                {"role": "user", "content": "q"},
-                {"role": "assistant", "content": null, "tool_calls": [
-                    {"id": "a", "type": "function", "function": {"name": "f", "arguments": "{}"}},
-                    {"id": "b", "type": "function", "function": {"name": "f", "arguments": "{}"}}
-                ]},
-                {"role": "tool", "tool_call_id": "a", "content": "1"},
-                {"role": "tool", "tool_call_id": "b", "content": "2"},
-                {"role": "user", "content": "between"},
-                {"role": "user", "content": "next"},
-                {"role": "user", "content": [{"type": "text", "text": "tail"}]}
-            ])
-        );
-    }
-
-    #[test]
-    fn demote_mid_conversation_system_is_append_only_across_turns() {
-        let turn = |extra: Vec<Value>| {
-            let mut messages = vec![
-                json!({"role": "system", "content": "head"}),
-                json!({"role": "user", "content": "q"}),
-                json!({"role": "assistant", "content": null, "tool_calls": [
-                    {"id": "a", "type": "function", "function": {"name": "f", "arguments": "{}"}}
-                ]}),
-                json!({"role": "system", "content": "budget 1"}),
-                json!({"role": "tool", "tool_call_id": "a", "content": "1"}),
-            ];
-            messages.extend(extra);
-            let mut result = json!({ "messages": messages });
-            demote_mid_conversation_system_messages(&mut result);
-            result["messages"].as_array().unwrap().clone()
-        };
-
-        let first = turn(vec![]);
-        let second = turn(vec![
-            json!({"role": "assistant", "content": "done"}),
-            json!({"role": "system", "content": "budget 2"}),
-        ]);
-        assert_eq!(&second[..first.len()], &first[..]);
-
-        // Requests without a later system message are left untouched.
-        let mut plain = json!({"messages": [
-            {"role": "system", "content": "head"},
-            {"role": "user", "content": "q"}
-        ]});
-        let before = plain.clone();
-        demote_mid_conversation_system_messages(&mut plain);
-        assert_eq!(plain, before);
     }
 
     #[test]
@@ -2189,6 +2049,34 @@ mod tests {
         assert_eq!(result["content"][0]["text"], "Hello");
         assert_eq!(result["content"][1]["type"], "text");
         assert_eq!(result["content"][1]["text"], "I can't do that");
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_with_mistral_thinking_chunks() {
+        // #9902：Mistral 开思考后 content 是 thinking / text 分段数组
+        let input = json!({
+            "id": "chatcmpl-mistral",
+            "model": "mistral-large-4",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "thinking", "thinking": [{"type": "text", "text": "We "}, {"type": "text", "text": "add"}]},
+                        {"type": "text", "text": "391"}
+                    ]
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5}
+        });
+
+        let result = openai_to_anthropic(input).unwrap();
+        assert_eq!(result["content"][0]["type"], "thinking");
+        assert_eq!(result["content"][0]["thinking"], "We add");
+        assert_eq!(result["content"][1]["type"], "text");
+        assert_eq!(result["content"][1]["text"], "391");
+        assert_eq!(result["content"].as_array().unwrap().len(), 2);
     }
 
     #[test]

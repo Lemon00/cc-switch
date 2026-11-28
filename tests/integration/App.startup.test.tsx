@@ -164,9 +164,28 @@ vi.mock("@/contexts/UpdateContext", () => ({
   useUpdate: () => ({ hasUpdate: false, updateInfo: null }),
 }));
 // 设置页要 ThemeProvider，这里只看导航进去时发生了什么
-vi.mock("@/components/settings/SettingsPage", () => ({
-  SettingsPage: () => <div data-testid="settings-page" />,
-}));
+vi.mock("@/components/settings/SettingsPage", async () => {
+  const { useState } = await import("react");
+  const { useUnsavedChangesState } = await vi.importActual<
+    typeof import("@/lib/unsavedChanges")
+  >("@/lib/unsavedChanges");
+  return {
+    SettingsPage: ({ section }: { section: string }) => {
+      const [draft, setDraft] = useState("");
+      useUnsavedChangesState(draft !== "");
+      return (
+        <div data-testid="settings-page">
+          <span data-testid="settings-section">{section}</span>
+          <input
+            aria-label="settings-draft"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+          />
+        </div>
+      );
+    },
+  };
+});
 vi.mock("@/components/skills/UnifiedSkillsPanel", () => ({
   // v7：Skills 的页头（添加 / 检查更新 / 存储与同步）在面板自己里面
   default: ({ initialView }: { initialView?: string }) => {
@@ -251,6 +270,58 @@ describe("Startup navigation regressions", () => {
     windowMocks.onScaleChanged.mockImplementation(listen);
     localStorage.removeItem("cc-switch-last-view");
     localStorage.removeItem("cc-switch-last-app");
+  });
+  it("preserves settings drafts and their leave guard through shortcut navigation", async () => {
+    localStorage.setItem("cc-switch-last-view", "settings");
+    const { default: App } = await import("@/App");
+    renderApp(App);
+    const input = await screen.findByLabelText("settings-draft");
+    fireEvent.change(input, { target: { value: "/unsaved/config" } });
+    expect(hasUnsavedChanges()).toBe(true);
+    fireEvent.keyDown(window, { key: ",", ctrlKey: true });
+    expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument();
+    expect(input).toHaveValue("/unsaved/config");
+    expect(hasUnsavedChanges()).toBe(true);
+    fireEvent.keyDown(window, { key: "Escape" });
+    await screen.findByTestId("confirm-dialog");
+    fireEvent.click(screen.getByText("cancel-delete"));
+    expect(input).toHaveValue("/unsaved/config");
+    expect(hasUnsavedChanges()).toBe(true);
+    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.click(await screen.findByText("confirm-delete"));
+    await screen.findByTestId("provider-list");
+    expect(hasUnsavedChanges()).toBe(false);
+  });
+  it("retains the settings leave guard when the tray changes settings sections", async () => {
+    let pending: unknown = null;
+    let takes = 0;
+    server.use(
+      http.post("http://tauri.local/take_tray_navigation", () => {
+        takes++;
+        const value = pending;
+        pending = null;
+        return HttpResponse.json(value as any);
+      }),
+    );
+    localStorage.setItem("cc-switch-last-view", "settings");
+    const { default: App } = await import("@/App");
+    renderApp(App);
+    const input = await screen.findByLabelText("settings-draft");
+    await waitFor(() => expect(takes).toBe(1));
+    fireEvent.change(input, { target: { value: "/unsaved/config" } });
+    pending = { section: "data" };
+    act(() => emitTauriEvent("tray-navigate", null));
+    await waitFor(() =>
+      expect(screen.getByTestId("settings-section")).toHaveTextContent("data"),
+    );
+    expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument();
+    expect(input).toHaveValue("/unsaved/config");
+    expect(hasUnsavedChanges()).toBe(true);
+    fireEvent.click(sidebarApp("settings.sections.general"));
+    expect(input).toHaveValue("/unsaved/config");
+    expect(hasUnsavedChanges()).toBe(true);
+    fireEvent.keyDown(window, { key: "Escape" });
+    await screen.findByTestId("confirm-dialog");
   });
   it("does not mount a restored app-specific page for a different app", async () => {
     const { default: App } = await import("@/App");

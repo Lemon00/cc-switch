@@ -223,22 +223,21 @@ Stack Trace (Backtrace)
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let _ = rotate_crash_log_if_needed(&log_path);
-        let saved = if let Ok(mut file) =
-            OpenOptions::new().create(true).append(true).open(&log_path)
-        {
-            match file
-                .write_all(crash_entry.as_bytes())
-                .and_then(|_| file.flush())
-            {
-                Ok(()) => true,
-                Err(e) => {
-                    eprintln!("[CC-Switch] Failed to write crash log: {e}");
-                    false
+        let saved =
+            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
+                match file
+                    .write_all(crash_entry.as_bytes())
+                    .and_then(|_| file.flush())
+                {
+                    Ok(()) => true,
+                    Err(e) => {
+                        eprintln!("[CC-Switch] Failed to write crash log: {e}");
+                        false
+                    }
                 }
-            }
-        } else {
-            false
-        };
+            } else {
+                false
+            };
         drop(crash_log_guard);
 
         if saved {

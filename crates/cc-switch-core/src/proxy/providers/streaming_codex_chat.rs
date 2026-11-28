@@ -2,12 +2,15 @@
 
 use super::codex_responses_sse as sse;
 use super::{
-    codex_chat_common::{extract_reasoning_field_text, tool_call_extra_content},
+    codex_chat_common::{
+        chat_content_segments, extract_reasoning_field_text, tool_call_extra_content,
+        ChatContentSegment,
+    },
     codex_compaction,
     inline_think::InlineThinkSplitter,
     transform_codex_chat::{
-        chat_error_to_response_error, chat_usage_to_responses_usage,
-        custom_tool_input_from_chat_arguments, response_id_from_chat_id,
+        chat_error_to_response_error, chat_reasoning_item_id, chat_usage_to_responses_usage,
+        custom_tool_input_from_chat_arguments, response_id_from_chat_id, response_message_item_id,
         response_status_from_finish_reason, response_tool_call_item_from_chat_name,
         response_tool_call_item_id_from_chat_name, CodexToolContext,
     },
@@ -152,9 +155,20 @@ impl ChatToResponsesState {
                 self.append_reasoning_to_active_tools(&reasoning);
             }
 
-            if let Some(content) = delta.get("content").and_then(|v| v.as_str()) {
-                if !content.is_empty() {
-                    events.extend(self.push_content_delta(content));
+            // content 可能是分段数组（Mistral 的 thinking / text 段，#9902），按顺序处理。
+            for segment in delta
+                .get("content")
+                .map(chat_content_segments)
+                .unwrap_or_default()
+            {
+                match segment {
+                    ChatContentSegment::Thinking(thinking) => {
+                        events.extend(self.push_reasoning_delta(&thinking));
+                        self.append_reasoning_to_active_tools(&thinking);
+                    }
+                    ChatContentSegment::Text(content) => {
+                        events.extend(self.push_content_delta(&content));
+                    }
                 }
             }
 
@@ -280,7 +294,7 @@ impl ChatToResponsesState {
 
         if !self.reasoning.added {
             let output_index = self.next_output_index();
-            let item_id = format!("rs_{}", self.response_id);
+            let item_id = chat_reasoning_item_id(&self.response_id, output_index);
             self.reasoning.output_index = Some(output_index);
             self.reasoning.item_id = item_id.clone();
             self.reasoning.added = true;
@@ -305,7 +319,7 @@ impl ChatToResponsesState {
 
         if !self.text.added {
             let output_index = self.next_output_index();
-            let item_id = format!("{}_msg", self.response_id);
+            let item_id = response_message_item_id(&self.response_id);
             self.text.output_index = Some(output_index);
             self.text.item_id = item_id.clone();
             self.text.added = true;
@@ -1021,6 +1035,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn streamed_message_item_id_uses_msg_prefix() {
+        // Regression test for #9054 (streaming path): the message item ID
+        // must begin with `msg_`, not `resp_..._msg`.
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_1\",\"created\":123,\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let done = events
+            .iter()
+            .find(|event| {
+                event["type"] == "response.output_item.done" && event["item"]["type"] == "message"
+            })
+            .unwrap();
+        assert_eq!(done["item"]["id"], "msg_chatcmpl_1");
+    }
+
+    #[tokio::test]
+    async fn converts_mistral_chunked_content_to_reasoning_and_text() {
+        // #9902：Mistral 开思考后 delta.content 在分段数组和字符串之间切换，
+        // 修复前只按字符串读，数组段全部丢失，流式回复为空。
+        let output = collect(vec![
+            "data: {\"id\":\"c1\",\"created\":1,\"model\":\"mistral-large-4\",\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\n",
+            "data: {\"id\":\"c1\",\"created\":1,\"model\":\"mistral-large-4\",\"choices\":[{\"delta\":{\"content\":[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\"We \"}]}]}}]}\n\n",
+            "data: {\"id\":\"c1\",\"created\":1,\"model\":\"mistral-large-4\",\"choices\":[{\"delta\":{\"content\":[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\"add\"}],\"closed\":true},{\"type\":\"text\",\"text\":\"39\"}]}}]}\n\n",
+            "data: {\"id\":\"c1\",\"created\":1,\"model\":\"mistral-large-4\",\"choices\":[{\"delta\":{\"content\":\"1\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+        let items = completed["response"]["output"].as_array().unwrap();
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["type"], "reasoning");
+        assert_eq!(items[0]["summary"][0]["text"], "We add");
+        assert_eq!(items[1]["type"], "message");
+        assert_eq!(items[1]["content"][0]["text"], "391");
+    }
+
+    #[tokio::test]
     async fn converts_reasoning_content_chat_sse_to_responses_reasoning_events() {
         let output = collect(vec![
             "data: {\"id\":\"chatcmpl_reason\",\"created\":123,\"model\":\"deepseek-reasoner\",\"choices\":[{\"delta\":{\"reasoning_content\":\"Need context. \"}}]}\n\n",
@@ -1041,6 +1100,40 @@ mod tests {
         let reasoning_pos = output.find("\"type\":\"reasoning\"").unwrap();
         let message_pos = output.find("\"type\":\"message\"").unwrap();
         assert!(reasoning_pos < message_pos);
+    }
+
+    #[tokio::test]
+    async fn reasoning_item_id_is_never_a_bare_hex_official_lookup_shape() {
+        // #9054：有的上游回复 id 是 32 位十六进制，旧格式 `rs_resp_<32hex>` 在直连切回
+        // 官方时会被按 id 回查 404。带序号后不再被回查；added、done、completed 三处要一致，
+        // Codex 靠它把思考摘要对到进行中的条目上。
+        let output = collect(vec![
+            "data: {\"id\":\"dba7d7f2a5431337cbcef8bcb6e27b76\",\"created\":1,\"model\":\"glm-5\",\"choices\":[{\"delta\":{\"reasoning_content\":\"Think.\"}}]}\n\n",
+            "data: {\"id\":\"dba7d7f2a5431337cbcef8bcb6e27b76\",\"created\":1,\"model\":\"glm-5\",\"choices\":[{\"delta\":{\"content\":\"Done\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let reasoning_item_id = |event_type: &str| {
+            events
+                .iter()
+                .find(|event| event["type"] == event_type && event["item"]["type"] == "reasoning")
+                .map(|event| event["item"]["id"].clone())
+                .unwrap()
+        };
+        let expected = "rs_resp_dba7d7f2a5431337cbcef8bcb6e27b76_0";
+        assert_eq!(reasoning_item_id("response.output_item.added"), expected);
+        assert_eq!(reasoning_item_id("response.output_item.done"), expected);
+        let summary_done = events
+            .iter()
+            .find(|event| event["type"] == "response.reasoning_summary_text.done")
+            .unwrap();
+        assert_eq!(summary_done["item_id"], expected);
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+        assert_eq!(completed["response"]["output"][0]["id"], expected);
     }
 
     #[tokio::test]
